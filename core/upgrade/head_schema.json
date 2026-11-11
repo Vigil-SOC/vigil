@@ -649,6 +649,76 @@
   "nullable": false,
   "type": "timestamp with time zone"
  },
+ "column auth_links.attempts": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column auth_links.channel": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(10)"
+ },
+ "column auth_links.email": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column auth_links.expired_noted_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column auth_links.expires_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column auth_links.invited_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column auth_links.issued_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column auth_links.kind": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(10)"
+ },
+ "column auth_links.link_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column auth_links.principal_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column auth_links.revoked_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column auth_links.role_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
+ },
+ "column auth_links.token_hash": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(64)"
+ },
+ "column auth_links.used_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column breached_passwords.added_at": {
   "default": "now()",
   "nullable": false,
@@ -4409,6 +4479,10 @@
  "constraint audit_webhook_state.audit_webhook_state_pkey": "PRIMARY KEY (id)",
  "constraint auth_keys.auth_keys_pkey": "PRIMARY KEY (purpose, version)",
  "constraint auth_keys.auth_keys_state_check": "CHECK ((state = ANY (ARRAY['current'::text, 'verify_only'::text, 'decrypt_only'::text, 'retired'::text])))",
+ "constraint auth_links.auth_links_invited_by_fkey": "FOREIGN KEY (invited_by) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint auth_links.auth_links_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['invite'::character varying, 'reset'::character varying])::text[])))",
+ "constraint auth_links.auth_links_pkey": "PRIMARY KEY (link_id)",
+ "constraint auth_links.auth_links_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint breached_passwords.breached_passwords_pkey": "PRIMARY KEY (entry)",
  "constraint case_attachments.case_attachments_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_attachments.case_attachments_pkey": "PRIMARY KEY (attachment_id)",
@@ -4723,6 +4797,7 @@
  "index audit_webhook_state_pkey": "CREATE UNIQUE INDEX audit_webhook_state_pkey ON public.audit_webhook_state USING btree (id)",
  "index auth_keys_one_current": "CREATE UNIQUE INDEX auth_keys_one_current ON public.auth_keys USING btree (purpose) WHERE (state = 'current'::text)",
  "index auth_keys_pkey": "CREATE UNIQUE INDEX auth_keys_pkey ON public.auth_keys USING btree (purpose, version)",
+ "index auth_links_pkey": "CREATE UNIQUE INDEX auth_links_pkey ON public.auth_links USING btree (link_id)",
  "index breached_passwords_pkey": "CREATE UNIQUE INDEX breached_passwords_pkey ON public.breached_passwords USING btree (entry)",
  "index case_attachments_pkey": "CREATE UNIQUE INDEX case_attachments_pkey ON public.case_attachments USING btree (attachment_id)",
  "index case_audit_logs_pkey": "CREATE UNIQUE INDEX case_audit_logs_pkey ON public.case_audit_logs USING btree (audit_id)",
@@ -4974,6 +5049,8 @@
  "index uniq_findings_source_extid": "CREATE UNIQUE INDEX uniq_findings_source_extid ON public.findings USING btree (data_source, external_id) WHERE ((data_source IS NOT NULL) AND (external_id IS NOT NULL))",
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
+ "index uq_auth_links_open_invite": "CREATE UNIQUE INDEX uq_auth_links_open_invite ON public.auth_links USING btree (lower(email)) WHERE (((kind)::text = 'invite'::text) AND (used_at IS NULL) AND (revoked_at IS NULL))",
+ "index uq_auth_links_token_hash": "CREATE UNIQUE INDEX uq_auth_links_token_hash ON public.auth_links USING btree (token_hash)",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
@@ -5285,6 +5362,28 @@
  },
  "relation auth_keys": {
   "acl": [
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation auth_links": {
+  "acl": [
+   "app:DELETE",
    "app:INSERT",
    "app:SELECT",
    "app:UPDATE",

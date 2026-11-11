@@ -1868,6 +1868,18 @@ export const bootstrapApi = {
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
+// Invites: a person sets up their own account through a single-use link.
+export const invitesApi = {
+  list: () => api.get<Schema<'InviteList'>>('/users/invites'),
+  create: (body: Schema<'InviteRequest'>) => api.post<Schema<'InviteIssued'>>('/users/invites', body),
+  resend: (linkId: string, channel: Schema<'ResendRequest'>['channel']) =>
+    api.post<Schema<'InviteIssued'>>(`/users/invites/${encodeURIComponent(linkId)}/resend`, { channel }),
+  revoke: (linkId: string) => api.delete(`/users/invites/${encodeURIComponent(linkId)}`),
+  // Public. The value rides in a header so no log line carries it; opening a link uses nothing up.
+  check: (token: string) => api.get<Schema<'InviteCheck'>>('/auth/invite', { headers: { 'X-Invite-Token': token } }),
+  accept: (body: Schema<'AcceptInvite'>) => api.post<{ message: string }>('/auth/accept-invite', body),
+}
+
 export const authApi = {
   // Public password reset. `request` answers the same whether or not the email
   // matches an account; the emailed link lands on /reset-password?token=…

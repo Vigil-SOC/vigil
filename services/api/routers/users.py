@@ -20,6 +20,7 @@ from core.audit import retention
 from core.auth import current_user as current_user_module
 from core.auth import (
     dormancy,
+    invites,
     mcp_credential_service,
     mfa_methods,
     principals,
@@ -39,7 +40,6 @@ from core.auth.auth_service import (
 )
 from core.auth.deactivation import deactivate_account, when_committed
 from core.auth.identity import claim_sign_in_names, identifier_in_use
-from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.permissions import (
     CATALOG,
     KNOWN_PERMISSIONS,
@@ -51,10 +51,13 @@ from core.auth.permissions import (
     require_person_permission,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
+from core.config import get_settings
+from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import Case, Principal, Role, User
+from core.storage.models import AuthLink, Case, Principal, Role, User
 from core.storage.schemas import RoleSchema, UserSchema
+from core.storage.schemas.base import IsoDateTime
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.upgrade.adopt import LEGACY_ROLE_IDS
@@ -79,16 +82,6 @@ ROUTER_META = RouterMeta(
 
 
 # Request/Response Models
-class CreateUserRequest(BaseModel):
-    """Create user request."""
-
-    username: str
-    email: EmailStr
-    password: str
-    full_name: str
-    role_id: str
-
-
 SERVICE_ACCOUNT_NAME = r"^[a-z0-9][a-z0-9._-]{2,63}$"
 
 
@@ -652,6 +645,245 @@ def list_people(
     return [Person(username=u, display_name=(n or "").strip() or None) for u, n in rows]
 
 
+class InviteRequest(BaseModel):
+    """Invite an address to set up their own account."""
+
+    email: EmailStr = Field(max_length=200)
+    role_id: str
+    channel: Literal["email", "copy"]
+
+
+class ResendRequest(BaseModel):
+    channel: Literal["email", "copy"]
+
+
+class InviteEntry(BaseModel):
+    link_id: str
+    email: str
+    role_id: str
+    invited_by: Optional[str] = None
+    invited_by_name: Optional[str] = None
+    channel: Literal["email", "copy"]
+    issued_at: IsoDateTime
+    expires_at: IsoDateTime
+    expired: bool
+
+
+class InviteList(BaseModel):
+    """The pending invites, and what Email needs before it can be offered."""
+
+    invites: list[InviteEntry]
+    email_missing: list[str]
+
+
+class InviteIssued(BaseModel):
+    """A new link. ``token`` and ``link`` come back once, for a copied link only;
+    ``link`` is empty when VIGIL_FRONTEND_URL isn't set and the console builds
+    it from its own address."""
+
+    invite: InviteEntry
+    token: Optional[str] = None
+    link: Optional[str] = None
+
+
+def _invite_entry(session: Session, row: AuthLink) -> InviteEntry:
+    who = (
+        session.query(User.full_name, User.username)
+        .filter(User.principal_id == row.invited_by)
+        .first()
+    )
+    return InviteEntry(
+        link_id=row.link_id,
+        email=row.email or "",
+        role_id=row.role_id or "",
+        invited_by=row.invited_by,
+        invited_by_name=(who and (who.full_name or who.username)) or None,
+        channel=row.channel or "copy",
+        issued_at=row.issued_at,
+        expires_at=row.expires_at,
+        expired=invites.is_expired(row),
+    )
+
+
+def _email_missing() -> list[str]:
+    """What has to be set before an invite can be emailed; empty when it can."""
+    missing = []
+    if not mail_is_configured():
+        missing.append("VIGIL_EMAIL_BACKEND=smtp")
+    if not get_settings().vigil_frontend_url.strip():
+        missing.append("VIGIL_FRONTEND_URL")
+    return missing
+
+
+def _refuse_invite_actor(current_user: User, session: Session) -> None:
+    """Inviting is a person's own act, and the invite is theirs to answer for."""
+    if not _acts_as_person(current_user, session) or not _principal_kind(
+        current_user, session
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inviting needs a person's own sign-in",
+        )
+
+
+def _refuse_held_address(session: Session, email: str) -> None:
+    """An address an account already holds is not invited: bring that account back."""
+    held = (
+        session.query(User, Principal.deleted_at)
+        .join(Principal, Principal.principal_id == User.principal_id)
+        .filter(func.lower(User.email) == email.casefold())
+        .first()
+    )
+    if held:
+        user, deleted_at = held
+        if deleted_at is not None:
+            detail = (
+                f"{email} belongs to a deleted account. Restore it instead of inviting."
+            )
+        elif not user.is_active:
+            detail = f"{email} belongs to a deactivated account. Reactivate it instead of inviting."
+        else:
+            detail = f"{email} already has an account."
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    # Its own pending invite is the one being replaced.
+    mine = invites.open_for(session, email)
+    if identifier_in_use(session, email, except_link_id=mine and mine.link_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{email} is already used as a sign-in name.",
+        )
+
+
+def _issue_invite(
+    session: Session, current_user: User, email: str, role_id: str, channel: str
+) -> InviteIssued:
+    settings = get_settings()
+    base = settings.vigil_frontend_url.strip()
+    if channel == invites.EMAIL and (missing := _email_missing()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Email isn't available: set {' and '.join(missing)}, "
+            "or copy the link instead.",
+        )
+    role = session.get(Role, role_id)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
+        )
+    _refuse_uncovered(
+        current_user, role.permissions, session, "Cannot invite to this role"
+    )
+    # An address is a sign-in name: hold it so two invites or sign-ups can't race.
+    claim_sign_in_names(session, email)
+    _refuse_held_address(session, email)
+    row, token = invites.issue(
+        session, email, role_id, current_user.principal_id, channel
+    )
+    entry = _invite_entry(session, row)
+    if channel == invites.EMAIL:
+        link = invites.link_url(base, token)
+        who = current_user.full_name or current_user.username
+        when_committed(
+            session,
+            lambda: send_email(
+                to=email,
+                subject="You're invited to Vigil SOC",
+                body=(
+                    f"{who} invited you to Vigil SOC as {role.name}.\n\n"
+                    "Open the link below to choose your username and password. "
+                    "It is valid for 24 hours and can only be used once.\n\n"
+                    f"{link}\n\n"
+                    "If you weren't expecting this, you can ignore this email."
+                ),
+            ),
+        )
+        return InviteIssued(invite=entry)
+    return InviteIssued(
+        invite=entry, token=token, link=invites.link_url(base, token) if base else None
+    )
+
+
+@router.get("/invites", response_model=InviteList)
+def list_invites(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Invites not yet accepted or revoked, expired ones too (users.write)."""
+    with _denials(current_user, "invite.list"):
+        deny_unless(current_user.user_id, "users.write")
+    rows = invites.pending(session)
+    for row in rows:
+        invites.note_expired(session, row)
+    return InviteList(
+        invites=[_invite_entry(session, row) for row in rows],
+        email_missing=_email_missing(),
+    )
+
+
+@router.post(
+    "/invites",
+    response_model=InviteIssued,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_step_up("users.write")],
+)
+def create_invite(
+    request: InviteRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Invite an address, replacing its pending invite if it has one."""
+    with _denials(current_user, "invite.create"):
+        deny_unless(current_user.user_id, "users.write")
+        _refuse_invite_actor(current_user, session)
+        return _issue_invite(
+            session, current_user, str(request.email), request.role_id, request.channel
+        )
+
+
+@router.post(
+    "/invites/{link_id}/resend",
+    response_model=InviteIssued,
+    dependencies=[_step_up("users.write")],
+)
+def resend_invite(
+    link_id: str,
+    request: ResendRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """A new link for a pending invite; the earlier one stops working."""
+    with _denials(current_user, "invite.resend"):
+        deny_unless(current_user.user_id, "users.write")
+        _refuse_invite_actor(current_user, session)
+        row = invites.get(session, link_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found"
+            )
+        return _issue_invite(
+            session, current_user, row.email, row.role_id, request.channel
+        )
+
+
+@router.delete("/invites/{link_id}", dependencies=[_step_up("users.write")])
+def revoke_invite(
+    link_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Cancel a pending invite; its link stops working."""
+    with _denials(current_user, "invite.revoke"):
+        deny_unless(current_user.user_id, "users.write")
+        _refuse_invite_actor(current_user, session)
+    row = invites.get(session, link_id, lock=True)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found"
+        )
+    invites.revoke(session, row, current_user.principal_id)
+    return {"message": "Invite revoked"}
+
+
 @router.get("/{user_id}")
 def get_user(
     user_id: str,
@@ -958,88 +1190,6 @@ def unlock_user(
         identity_confirmed_by=body.identity_confirmed_by,
     )
     return _dump_accounts(session, [user])[0]
-
-
-@router.post(
-    "/", status_code=status.HTTP_201_CREATED, dependencies=[_step_up("users.write")]
-)
-def create_user(
-    request: CreateUserRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    session: UnitOfWorkSession,
-):
-    """
-    Create a new user (requires users.write permission).
-
-    Args:
-        request: User creation details
-        current_user: Current authenticated user
-        session: Database session
-
-    Returns:
-        Created user information
-    """
-    with _denials(current_user, "user.create"):
-        deny_unless(current_user.user_id, "users.write")
-        return _create_user(request, current_user, session)
-
-
-def _create_user(request: CreateUserRequest, current_user: User, session: Session):
-    # Check permission
-    deny_unless(current_user.user_id, "users.write")
-
-    # Validate password against the full strength policy. Penalize passwords
-    # built from the new account's own identifiers.
-    try:
-        validate_password_strength(
-            request.password,
-            user_inputs=[request.username, request.email],
-        )
-    except PasswordPolicyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=exc.as_detail(),
-        )
-
-    # Verify role exists
-    role = session.query(Role).filter(Role.role_id == request.role_id).first()
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
-        )
-
-    _refuse_uncovered(
-        current_user, role.permissions, session, "Cannot assign this role"
-    )
-    # An account that holds a role is a widening.
-    _refuse_machine_widening(current_user, session, None, role.permissions)
-
-    # Create user
-    user = AuthService.create_user(
-        username=request.username,
-        email=request.email,
-        password=request.password,
-        full_name=request.full_name,
-        role_id=request.role_id,
-        session=session,
-    )
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username or email already exists",
-        )
-
-    trail_events.record(
-        session,
-        "user.created",
-        {"personal": trail_events.personal(user)},
-        actor=current_user.principal_id,
-        principal=user.principal_id,
-        role_id=user.role_id,
-    )
-    logger.info(f"User created by {current_user.username}: {user.username}")
-    return UserSchema.dump(user)
 
 
 @router.post(

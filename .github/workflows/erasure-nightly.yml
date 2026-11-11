@@ -244,9 +244,13 @@ jobs:
             || { echo "::error::role-viewer holds audit.manage: its erasure would wait seven days"; exit 1; }
 
           # N throwaway accounts. Erasure blanks one without audit.manage at once.
+          # Each is invited by the admin and accepts through the public route, as a person would.
           for i in $(seq "$N"); do
-            expect "$(call "$WORK/body.json" "${ports[0]}" POST /api/users/ \
-              "{\"username\":\"erase-$i\",\"email\":\"erase-$i@example.com\",\"password\":\"Aa1!$(openssl rand -hex 12)\",\"full_name\":\"Erase $i\",\"role_id\":\"role-viewer\"}")" 201 "create erase-$i"
+            expect "$(call "$WORK/body.json" "${ports[0]}" POST /api/users/invites \
+              "{\"email\":\"erase-$i@example.com\",\"role_id\":\"role-viewer\",\"channel\":\"copy\"}")" 201 "invite erase-$i"
+            invite=$(jq -r .token "$WORK/body.json")
+            expect "$(TOKEN= call "$WORK/body.json" "${ports[0]}" POST /api/auth/accept-invite \
+              "{\"token\":\"$invite\",\"username\":\"erase-$i\",\"password\":\"Aa1!$(openssl rand -hex 12)\"}")" 200 "accept erase-$i"
           done
           # The user API does not show a principal_id; read each from the database.
           psql() { kubectl -n durable exec sts/durable-vigil-postgres -- psql -U deeptempo -d deeptempo_soc -At -c "$1"; }
