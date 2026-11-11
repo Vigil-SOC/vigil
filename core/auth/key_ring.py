@@ -677,11 +677,20 @@ def restore_ring(
     return opened
 
 
+def _apps_on(session) -> int:
+    return session.execute(
+        text(
+            "SELECT count(*) FROM public.users "
+            "WHERE mfa_enabled AND mfa_secret IS NOT NULL"
+        )
+    ).scalar_one()
+
+
 def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> int:
     """Clear the authenticator secret of each person whose secret no live MFA
     key opens (everyone's, when ``everyone``), so they enrol again. MFA stays on
-    for a person with a security key. Returns how many people were reset (those
-    who had MFA on)."""
+    for a person with a security key. Returns how many people with the app on lost
+    it (counted in the database, so the count never derives from a secret)."""
     keys = [] if everyone else _read(session, secret).get("mfa", [])
     fernet = encryptor_from(keys) if keys else None
     keyed = session.execute(
@@ -689,13 +698,13 @@ def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> i
     ).scalar_one()
     rows = session.execute(
         text("""
-            SELECT user_id, principal_id, mfa_secret, mfa_enabled FROM public.users
+            SELECT user_id, principal_id, mfa_secret FROM public.users
             WHERE mfa_secret LIKE :prefix FOR UPDATE
         """),
         {"prefix": "%" if everyone else _FERNET_TOKEN_PREFIX + "%"},
     ).all()
-    reset = 0
-    for user_id, principal, token, enabled in rows:
+    before = _apps_on(session)
+    for user_id, principal, token in rows:
         try:
             if fernet is not None:
                 fernet.decrypt(token.encode())
@@ -715,8 +724,7 @@ def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> i
             """),
             {"u": user_id, "keyed": bool(has_key)},
         )
-        reset += bool(enabled)
-    return reset
+    return before - _apps_on(session)
 
 
 def reset_all_mfa(operator: str) -> int:
