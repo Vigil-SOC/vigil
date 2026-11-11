@@ -11,13 +11,15 @@ from zxcvbn import zxcvbn
 
 from core.auth import breached_list, session_policy
 from core.auth.password_hash import MAX_PASSWORD_LENGTH
-from core.config import get_settings
 from core.platform import notices
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# zxcvbn score a password must reach (0-4). Fixed: AUTH_MIN_ZXCVBN_SCORE is retired.
+MIN_ZXCVBN_SCORE = 3
 
 _BLOCKLIST_PATH = (
     Path(__file__).resolve().parent.parent.parent / "data" / "common_passwords.txt"
@@ -151,10 +153,8 @@ def validate_password_strength(
     """
     policy = session_policy.policy()
     limit = min_length if min_length is not None else policy.password_min_length
-    threshold = (
-        min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
-    )
-    # zxcvbn scores run 0-4; clamp so a misconfigured 5+ can't reject every
+    threshold = min_score if min_score is not None else MIN_ZXCVBN_SCORE
+    # zxcvbn scores run 0-4; clamp so a caller's 5+ can't reject every
     # password and a negative value can't underflow the check.
     threshold = max(0, min(4, threshold))
 

@@ -76,12 +76,13 @@ def _hmac(tag: str) -> Callable[[str], bytes]:
     return lambda s: hmac.new(s.encode(), tag.encode(), hashlib.sha256).digest()
 
 
+# A refresh token's lifetime. Fixed: JWT_REFRESH_EXPIRATION_DAYS is retired.
+REFRESH_EXPIRATION_DAYS = 7
+
 # Overlaps are each purpose's longest token: sign-ins 24 h or the refresh
 # token's lifetime if longer, run tokens 31 d (tool_principal.RUN_TTL), reset
 # links 1 h, single sign-on state 5 min.
-_SIGNIN_OVERLAP = max(
-    timedelta(hours=24), timedelta(days=get_settings().jwt_refresh_expiration_days)
-)
+_SIGNIN_OVERLAP = max(timedelta(hours=24), timedelta(days=REFRESH_EXPIRATION_DAYS))
 PURPOSES: dict[str, Purpose] = {
     "signin": Purpose(_SIGNIN_OVERLAP, lambda s: s.encode()),
     "run": Purpose(timedelta(days=31), _hmac("vigil-tool-principal")),

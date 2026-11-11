@@ -100,7 +100,7 @@ A database that has Vigil's tables but no `alembic_version` table was installed 
 3. revokes leftover grants to the `deeptempo` role (the role itself stays) and deletes the old `admin`, `analyst` and `viewer` roles that no user holds. A role that a user still holds is kept, and the report names it under `adoption.kept_roles`. Move those users to another role when you can;
 4. applies the schema changes made since the release it found: from 0.7.0, files `40` to `45`, `mfa_last_totp_step` and the two `findings` noise columns; from 0.8.0, `mfa_last_totp_step`, the two `findings` noise columns, `44` and `45`;
 5. re-applies `30_vigil_app_role.sql`, so `vigil_app` can log in and has grants on every table;
-6. compares the result with the schema revision `0001_baseline` creates. If the two match, it records revision `0001_baseline` in the same transaction. Revisions `0004` and `0007` run after that stamp, as on a fresh install, and add the session-cutoff and conversation-generation columns.
+6. compares the result with the schema revision `0001_baseline` creates. If the two match, it records revision `0001_baseline` in the same transaction. Revisions `0004` and `0007` run after that stamp, as on a fresh install, and add the session-cutoff and conversation-generation columns. Revision `0061` then drops the session-cutoff column (`users.tokens_valid_after`) again: nothing has read it since the sign-in row became the revocation record, and fresh installs and adopted databases both reach head without it.
 
 The command reads `system_config.schema_version` but never writes or deletes it. `--check` runs the same transaction and then rolls it back. For a database it can adopt, `--check` answers `needs_restore_point` and its reason says that adoption would run, so the pre-upgrade backup is taken as for any other upgrade.
 
@@ -121,3 +121,31 @@ If the drift report names something you did not change, or a change you need to 
 ## How long adoption is supported
 
 Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at least six months after the release that introduced `0001_baseline`. From that release on, an install still on 0.7.0 or 0.8.0 must first upgrade through a release that still adopts.
+
+## What the sign-in changes do on upgrade day
+
+An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.
+
+**Every sign-in ends once.** Revision `0042_server_enforced_sign_ins` ends every open sign-in with the reason `upgrade`, because the tokens already issued carry no refresh generation or stored browser. Everyone signs in again, once. A service account is no exception: its open sign-in ends, its password is unchanged, and whatever uses it has to sign in again. A shift change is a good time to upgrade.
+
+**Dormancy clocks start at the upgrade.** Revision `0048_dormancy` sets every account's `dormancy_floor` to the time it ran. An account's idle time is counted from the latest of its last sign-in, its credentials' last use, its creation and that floor, so nobody is deactivated for time that passed before the rule existed. The first account can be deactivated once the session policy's `dormancy_days` (default 35) have passed since the upgrade. `null` turns the sweep off.
+
+**Failure counts reset.** Revision `0047_lockout_policy` sets every account's failed-login count to 0. Locks are the session policy's now (`auth.session_policy`).
+
+**The first sign-in of each person, in order:**
+
+1. The password is checked. A lock refuses it even when it is right. A good password stored as a bcrypt hash is replaced by a PBKDF2 hash at once; the password itself and `password_changed_at` do not change.
+2. If the account has two-step sign-in, the code or key is checked. An old recovery code (from before the new hashing) is accepted once. The whole old set is then voided and a new set is shown once, so the person must keep those. A person who signed in with the app code gets the new set the same way, as their stored set is from the old scheme.
+3. The password is checked against the breached-password list and the policy: a listed password, one past its maximum age, or one under 15 characters without two-step sign-in is not accepted for a sign-in. The answer is `password_change_required` with a reset link, and the person chooses a new password. A spent code stays spent.
+4. The sign-in is created. If the account is already at the sign-in limit, its oldest open sign-in ends.
+
+**Settings that left.** These are fixed and ignored when set; the API logs one line per variable at start: `JWT_ACCESS_EXPIRATION_MINUTES` (30 minutes), `JWT_REFRESH_EXPIRATION_DAYS` (7 days), `AUTH_MIN_ZXCVBN_SCORE` (3), `PASSWORD_RESET_TTL_SECONDS` (3600 seconds). `AUTH_LOCKOUT_THRESHOLD`, `AUTH_LOCKOUT_DURATION_MINUTES` (now the session policy's lockout fields) and `REVOCATION_FAIL_OPEN` (Redis no longer holds revocation state) are also ignored. Remove all of them from a copied `.env` and from Helm values.
+
+**Password hashes.** Revision `0040_password_scheme_stamp` writes the upgrade time once, to `system_config` key `auth.password_scheme_upgraded_at`; a re-run never overwrites it. Read it with:
+
+```sql
+SELECT value #>> '{}' AS password_scheme_upgraded_at
+FROM system_config WHERE key = 'auth.password_scheme_upgraded_at';
+```
+
+Each bcrypt password hash is replaced at that person's first good sign-in. The old hashing ends 12 months after the date in that row. A person who has not signed in by then sets a new password with a reset link. To find accounts that have not signed in, open Settings > Users: the Last Login column shows each account's last sign-in, and "Never" for an account that has none.

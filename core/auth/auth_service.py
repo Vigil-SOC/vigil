@@ -5,6 +5,7 @@ Handles password hashing, JWT generation/validation, MFA, and session management
 """
 
 import logging
+import os
 import re
 import secrets
 import time
@@ -15,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import jwt
 import pyotp
 from cryptography.fernet import MultiFernet
+from dotenv import dotenv_values
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
@@ -26,7 +28,7 @@ from core.auth import (
     session_policy,
 )
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
-from core.config import get_settings
+from core.config import _settings_env_file, get_settings
 from core.exceptions import default_on_error
 from core.storage.models import Principal, Role, User
 from core.storage.unit_of_work import unit_of_work
@@ -89,8 +91,30 @@ key_ring.wrapping_secret()
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_EXPIRATION_MINUTES = get_settings().jwt_access_expiration_minutes
-JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
+# Fixed: the host settings that used to set these are retired.
+JWT_ACCESS_EXPIRATION_MINUTES = 30
+JWT_REFRESH_EXPIRATION_DAYS = key_ring.REFRESH_EXPIRATION_DAYS
+
+
+def warn_retired_settings() -> None:
+    """Log once, at API start, each retired host setting still in the
+    environment or .env: it is ignored. ``Settings`` drops unknown names
+    silently, so this reads them itself."""
+    from core.auth import password_reset, password_validator
+
+    env_file = _settings_env_file()
+    env = dict(dotenv_values(env_file)) if env_file else {}
+    env.update(os.environ)
+    names = {k.upper() for k in env}
+    for name, fixed in (
+        ("JWT_ACCESS_EXPIRATION_MINUTES", f"{JWT_ACCESS_EXPIRATION_MINUTES} minutes"),
+        ("JWT_REFRESH_EXPIRATION_DAYS", f"{JWT_REFRESH_EXPIRATION_DAYS} days"),
+        ("AUTH_MIN_ZXCVBN_SCORE", f"{password_validator.MIN_ZXCVBN_SCORE}"),
+        ("PASSWORD_RESET_TTL_SECONDS", f"{password_reset.RESET_TTL_SECONDS} seconds"),
+    ):
+        if name in names:
+            logger.warning("%s is ignored: the value is fixed at %s.", name, fixed)
+
 
 # Old codes were 8 hex characters, new ones 16
 _RECOVERY_CODE = re.compile(r"[0-9A-F]{8}|[0-9A-F]{16}")

@@ -512,6 +512,10 @@ async def _startup(app: FastAPI):
     _build_services(app)
     _announce_mcp_surface()
 
+    from core.auth.auth_service import warn_retired_settings
+
+    warn_retired_settings()
+
     _testing = get_settings().testing
 
     # Initialize Sentry error tracking (was never called before — bug fix)
