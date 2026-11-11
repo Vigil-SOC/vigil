@@ -603,19 +603,12 @@ def update_task(
 ):
     """Update task. Who updated it is the signed-in user."""
 
+    # A blank assignee unassigns; a refusal raises before anything is written.
     task = case_records_service.update_task(
-        session,
-        task_id,
-        data.model_dump(exclude={"assignee"}),
-        signed_in=current_user.username,
+        session, task_id, data.model_dump(), signed_in=current_user.username
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    if data.assignee is not None:
-        # Set here, not through update_task, which skips None: blank unassigns.
-        # A refusal raises and the request's transaction rolls the rest back.
-        task.assignee = resolve_assignee(session, data.assignee, current=task.assignee)
-        session.flush()
     # Judged once status and assignee are both applied; a refusal rolls it all back.
     require_current_owner(session, task.assignee, is_open=task_is_open(task.status))
     return CaseTaskSchema.dump(task)

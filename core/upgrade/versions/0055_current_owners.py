@@ -15,11 +15,7 @@ from sqlalchemy import text
 from core.upgrade.revision import stash_report
 
 revision = "0055_current_owners"
-down_revision = (
-    "0054_get_case_shell",
-    "0054_merge_0053_heads",
-    "0054_security_keys",
-)
+down_revision = "0054_security_keys"
 
 # {table} and {key} are fixed names below, never input.
 _REWRITE = """

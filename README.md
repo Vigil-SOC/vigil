@@ -122,7 +122,7 @@ Then open http://localhost:6988 and create the admin account on the bootstrap sc
 
 Sign-in cookies are `Secure` by default (`VIGIL_COOKIE_SECURE=true`), so the console needs HTTPS: Chromium accepts them on `http://localhost`, but reached by IP or hostname over plain HTTP (or in Safari, even on localhost) sign-in fails. Set `VIGIL_COOKIE_SECURE=false` only for loopback or SSH-tunnel access (see `env.example`).
 
-Security keys (WebAuthn) are tied to the hostname the console is reached at: set `VIGIL_CONSOLE_HOSTNAME` (no scheme or port) and keep `VIGIL_COOKIE_SECURE=true`, or use `localhost`; otherwise keys stay off and sign-in by password and authenticator app is unchanged.
+Security keys (WebAuthn) are tied to the hostname the console is reached at: set `VIGIL_CONSOLE_HOSTNAME` (no scheme or port) and keep `VIGIL_COOKIE_SECURE=true`, or use `localhost`; otherwise keys stay off and sign-in by password and authenticator app is unchanged ([security keys](docs/security-keys.md)).
 
 `start.sh` provisions the pinned Python with [uv](https://docs.astral.sh/uv/), installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional), initializes the schema and reference data, and launches the API, the agent layer, and the frontend. No LogLM or cloud API key is needed to reach a running UI.
 
@@ -358,6 +358,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 | [Helm](https://vigilsoc.org/docs/helm/) | Chart values, secrets, install |
 | [Splunk testing](https://vigilsoc.org/docs/splunk-testing/) · [Postgres → Splunk](https://vigilsoc.org/docs/postgres-to-splunk/) | Test data and export scripts |
 | [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
+| [Security keys](docs/security-keys.md) | The hostname and HTTPS rule, an internal CA for air-gapped consoles, and what "keys unavailable" means |
 | [Operator endpoints](docs/operator-endpoints.md) | API routes with no console screen: secrets backend status, dotenv → encrypted migration |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure |
 | [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
