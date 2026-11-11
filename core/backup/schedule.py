@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from core.backup.create import (
+    PAIR_PREFIX,
     SKIPPED_MESSAGE,
     WRAPPING_TAG,
     BackupError,
@@ -232,7 +233,6 @@ def _run_destination(dest: Destination, *, bifrost_data: str | None) -> None:
         )
         _forget(dest, path, extra)
         forget_pre_upgrade(dest.repo, path, extra, _upgrade_dir())
-        forget_orphan_wrapping_keys(dest.repo, path, extra)
         _write_status(dest.name, snapshot_id)
 
 
@@ -345,12 +345,29 @@ def _forget(
         raise BackupError(f"restic forget failed: {_output(proc)}")
 
 
-def forget_orphan_wrapping_keys(
+@dataclass(frozen=True)
+class _Tagged:
+    snapshot_id: str
+    taken_at: datetime
+
+
+def forget_pre_upgrade(
+    repo: str,
+    passphrase: Path,
+    extra: Mapping[str, str] | None,
+    upgrade_dir: Path | None,
+) -> None:
+    """Retention after a snapshot: older pre-upgrade ones, then the wrapping-key
+    snapshots whose main snapshot is gone."""
+    _forget_old_pre_upgrade(repo, passphrase, extra, upgrade_dir)
+    _forget_orphan_wrapping_keys(repo, passphrase, extra)
+
+
+def _forget_orphan_wrapping_keys(
     repo: str, passphrase: Path, extra: Mapping[str, str] | None
 ) -> None:
-    """Drop each ``wrapping-key`` snapshot whose main snapshot is gone (the
-    forgets above never match its tag). Remote repositories keep to their bucket
-    rules, as for ``_forget``."""
+    """Forget each ``wrapping-key`` snapshot whose paired main snapshot no longer
+    exists. Local repositories only, as ``_forget``."""
     local = _local_repo(repo)
     if local is None or not (local / "config").is_file():
         return
@@ -360,35 +377,36 @@ def forget_orphan_wrapping_keys(
         check=False,
     )
     try:
-        snaps = [s for s in json.loads(proc.stdout) if isinstance(s, dict)]
-    except (json.JSONDecodeError, TypeError):
+        listed = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except json.JSONDecodeError:
+        listed = None
+    if not isinstance(listed, list):
         return
-    present = {f"main:{s.get('id')}" for s in snaps}
-    orphans = [
-        s["id"]
-        for s in snaps
-        if WRAPPING_TAG in (s.get("tags") or [])
-        and isinstance(s.get("id"), str)
-        and not present.intersection(s.get("tags") or [])
-    ]
-    if not orphans:
+    mains, wrapping = [], []
+    for snap in listed:
+        tags = snap.get("tags") or []
+        (wrapping if WRAPPING_TAG in tags else mains).append((snap.get("id"), tags))
+    ids = [snap_id for snap_id, _ in mains if isinstance(snap_id, str)]
+    drop = []
+    for snap_id, tags in wrapping:
+        paired = [t[len(PAIR_PREFIX) :] for t in tags if t.startswith(PAIR_PREFIX)]
+        # A short id and a full one name one snapshot when one starts the other.
+        if paired and not any(
+            i.startswith(p) or p.startswith(i) for p in paired for i in ids
+        ):
+            drop.append(snap_id)
+    if not drop:
         return
-    proc = _run(
-        _priority_prefix() + ["restic", "-r", repo, "forget", "--prune", *orphans],
+    forgot = _run(
+        _priority_prefix() + ["restic", "-r", repo, "forget", "--prune", *drop],
         env=_restic_env(passphrase, extra),
         check=False,
     )
-    if proc.returncode != 0:
-        raise BackupError(f"restic forget failed: {_output(proc)}")
+    if forgot.returncode != 0:
+        raise BackupError(f"restic forget failed: {_output(forgot)}")
 
 
-@dataclass(frozen=True)
-class _Tagged:
-    snapshot_id: str
-    taken_at: datetime
-
-
-def forget_pre_upgrade(
+def _forget_old_pre_upgrade(
     repo: str,
     passphrase: Path,
     extra: Mapping[str, str] | None,

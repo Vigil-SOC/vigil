@@ -258,6 +258,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     + (f": {_word(p['reason'])}" if p.get("reason") else ""),
     "auth.denied": lambda p: "Was refused"
     + (f" {p['attempted']}" if p.get("attempted") else ""),
+    "sso.required_on": "Turned on Require single sign-on",
+    "sso.required_off": lambda p: "Turned off Require single sign-on"
+    + (f" from the host: {p['reason']}" if p.get("reason") else ""),
     "auth.password_changed": "Changed their password",
     "auth.password_reset": "Reset their password",
     "auth.mfa_enabled": "Turned on two-step sign-in",
@@ -270,16 +273,15 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.keys_adopted": "Adopted the signing and encryption key ring",
     "auth.key_rotated": lambda p: f"Rotated the {_key_purpose(p)} key",
     "auth.key_retired": lambda p: f"Retired the {_key_purpose(p)} key",
-    "auth.keys_reset": "Replaced the key ring after a restore could not open it",
-    "auth.wrapping_key_rotated": "Rotated the key that wraps the key ring",
-    "auth.wrapping_key_due": "The key that wraps the key ring is nearly a year old",
-    "auth.wrapping_key_overdue": "The key that wraps the key ring is over a year old",
-    "auth.key_rotation_failed": lambda p: (
-        f"Could not rotate the {_key_purpose(p)} key"
-        if p.get("purpose") != "wrapping"
-        else "Could not rotate the key that wraps the key ring"
-    ),
-    "auth.key_rotation_recovered": "Key rotation works again",
+    "auth.key_ring_reset": "Replaced the key ring: a restore could not open it",
+    "auth.key_ring_rewrapped": "Wrapped the key ring under this install's secret",
+    "auth.wrapping_key_rotated": "Rotated the secret that wraps the key ring",
+    "auth.wrapping_key_due": "The secret that wraps the key ring is due for rotation",
+    "auth.wrapping_key_overdue": "The secret that wraps the key ring is overdue",
+    "auth.key_rotation_failed": lambda p: f"Could not rotate the {_key_purpose(p)} key",
+    "auth.key_rotation_recovered": lambda p: f"Rotated the late {_key_purpose(p)} key",
+    "auth.mfa_reset_all": "Cleared every authenticator app",
+    "auth.emergency_rotation": "Rotated keys with no overlap, in an emergency",
     "credential.minted": "Issued an API token",
     "credential.rotated": lambda p: "Rotated an API token"
     + (" (suspected compromise)" if p.get("compromised") else ""),

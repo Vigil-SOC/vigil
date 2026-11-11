@@ -8,7 +8,7 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -27,6 +27,7 @@ from core.auth import (
     session_policy,
     sign_ins,
     sso,
+    sso_settings,
     step_up,
     trail_events,
 )
@@ -52,9 +53,19 @@ from core.auth.auth_service import (
     raise_if_locked,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
-from core.auth.current_user import DEV_MODE, _detached, mfa_setup_route, setup_needed
+from core.auth.current_user import (
+    DEV_MODE,
+    _check_sign_in,
+    _detached,
+    mfa_setup_route,
+    setup_needed,
+)
 from core.auth.deactivation import when_committed
-from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.identity import (
+    claim_sign_in_names,
+    identifier_in_use,
+    matching_accounts,
+)
 from core.auth.mcp_credential_service import looks_like_api_token
 from core.auth.password_reset import (
     decode_reset_token,
@@ -211,6 +222,8 @@ class BootstrapStatusResponse(BaseModel):
     required: bool
     # Single sign-on is on: the login page offers "Sign in with SSO".
     sso_enabled: bool = False
+    # Require single sign-on is in force: the page offers only "Sign in with SSO".
+    require_sso: bool = False
 
 
 class BootstrapRequest(BaseModel):
@@ -494,8 +507,11 @@ def bootstrap_status(session: UnitOfWorkSession):
     an instance with an empty user table cannot be signed into at all. The
     login screen asks this to offer first-account creation instead.
     """
+    s = sso_settings.settings()
     return BootstrapStatusResponse(
-        required=not has_human_user(session), sso_enabled=sso.is_on()
+        required=not has_human_user(session),
+        sso_enabled=sso.is_on(s),
+        require_sso=sso.required(s),
     )
 
 
@@ -804,6 +820,21 @@ def login(
             refusal.get("principal"),
         )
 
+    # Require single sign-on: refuse before the password is checked, so it neither
+    # counts toward a lock nor tells a right password from a wrong one. Only a
+    # service account goes on, and not from a browser, where it is refused anyway:
+    # there every name, known or not, gets the same answer.
+    if sso.required():
+        matches = matching_accounts(session, payload.username_or_email)
+        machine = len(matches) == 1 and _is_service_account(matches[0])
+        if not machine or _is_browser_request(request):
+            if len(matches) == 1:
+                refusal["principal"] = matches[0].principal_id
+            failed("sso_required")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
+            )
+
     # Authenticate user
     try:
         user = AuthService.authenticate_user(
@@ -1065,17 +1096,70 @@ def _sso_failed(source: Optional[str], refusal: sso.Refused, attempted: str = ""
     return _sso_redirect(f"{context_path_prefix()}/login?sso_error={refusal.code}")
 
 
+def _safe_return(path: Optional[str]) -> str:
+    """A same-origin path to come back to, else the console's root: never an open redirect."""
+    if (
+        path
+        and path.startswith("/")
+        and not path.startswith("//")
+        and "\\" not in path
+        and path.isprintable()
+    ):
+        return path
+    return f"{context_path_prefix()}/"
+
+
+def _with_outcome(path: str, outcome: str) -> str:
+    return f"{path}{'&' if '?' in path else '?'}sso_confirm={outcome}"
+
+
+def _confirming(request: Request) -> Optional[dict]:
+    """The open sign-in an access cookie names, for Confirm it's you through the provider."""
+    raw = request.cookies.get(ACCESS_COOKIE_NAME)
+    payload = AuthService.verify_jwt_token(raw) if raw else None
+    if not payload or payload.get("token_type") != "access" or not payload.get("sid"):
+        return None
+    user, refusal = _check_sign_in(
+        payload.get("user_id"), payload["sid"], request.headers.get("user-agent"), False
+    )
+    if user is None or refusal:
+        return None
+    # Only for whom the refusal offers it: anyone else confirms the Vigil way.
+    with unit_of_work() as session:
+        if not step_up.at_provider(session, user.principal_id, payload["sid"]):
+            return None
+    return {
+        "sid": payload["sid"],
+        "principal": user.principal_id,
+        "started": int(datetime.now(timezone.utc).timestamp()),
+    }
+
+
 @router.get("/sso/start", include_in_schema=False)
 @limiter.limit("10/minute", key_func=sso_rate_key)
-def sso_start(request: Request):
+def sso_start(request: Request, confirm: Optional[str] = None):
     """Send the browser to the provider: code flow with PKCE, state and nonce,
-    bound to this browser by a signed cookie that lives five minutes."""
+    bound to this browser by a signed cookie that lives five minutes.
+
+    ``confirm``: the path to come back to after Confirm it's you at the provider
+    (#4285), for the sign-in this browser already holds."""
+    held = None
+    if confirm is not None:
+        held = _confirming(request)
+        if held is None:
+            # Back with "failed": the console's next request refreshes or signs out as it should.
+            return _sso_redirect(_with_outcome(_safe_return(confirm), "failed"))
+        held["return"] = _safe_return(confirm)
     try:
-        url, binding = sso.begin(sso.provider())
-    except sso.Refused as refusal:
+        url, binding = sso.begin(sso.provider(), held)
+    except (sso.Refused, key_ring.KeyRingError) as exc:
+        if held is not None:
+            logger.info("Confirm it's you through SSO did not start: %s", exc)
+            return _sso_redirect(_with_outcome(held["return"], "failed"))
+        refusal = (
+            exc if isinstance(exc, sso.Refused) else sso.Refused("key_ring_unavailable")
+        )
         return _sso_failed(client_host(request), refusal)
-    except key_ring.KeyRingError:
-        return _sso_failed(client_host(request), sso.Refused("key_ring_unavailable"))
     res = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
     # Lax, not the auth cookies' setting: it has to ride the provider's top-level redirect back.
     res.set_cookie(
@@ -1104,6 +1188,8 @@ def sso_callback(
     seen: dict = {}
     try:
         held = sso.binding(request.cookies.get(sso.COOKIE), state)
+        if isinstance(held.get("confirm"), dict):
+            return _sso_confirm(held, code, error, source)
         if error or not code:
             raise sso.Refused("provider_error" if error else "no_code")
         p = sso.provider()
@@ -1121,6 +1207,46 @@ def sso_callback(
     res = _sso_redirect(f"{context_path_prefix()}/")
     _set_cookies_for(res, *tokens)
     return res
+
+
+def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResponse:
+    """Confirm it's you at the provider (#4285, epic decision 2): the same subject,
+    signed in again just now, reopens the window on the sign-in already open. No
+    sign-in, cookie, account, link or role is touched."""
+    c = held["confirm"]
+    back, sid, pid = _safe_return(c.get("return")), c["sid"], c["principal"]
+    try:
+        if error or not code:
+            raise sso.Refused("provider_error" if error else "no_code")
+        p = sso.provider()
+        claims = sso.verify(p, sso.exchange(p, code, held["verifier"]), held["nonce"])
+        with unit_of_work() as session:
+            link = sso.linked(session, p.settings.issuer, claims["sub"])
+    except sso.Refused as refusal:
+        # Nothing was answered (a cancel, a provider fault): not a failed confirmation.
+        logger.info("Confirm it's you through SSO refused: %s", refusal.reason)
+        return _sso_redirect(_with_outcome(back, "failed"))
+    auth_time = claims.get("auth_time")
+    problem = None
+    if link is None or link.principal_id != pid:
+        problem = "subject_mismatch"
+    elif (
+        not isinstance(auth_time, (int, float))
+        or isinstance(auth_time, bool)
+        or auth_time < c["started"] - sso.LEEWAY
+    ):
+        problem = "auth_time_stale"
+    if problem:
+        logger.info("Confirm it's you through SSO failed: %s", problem)
+        # The third in a row ends the sign-in; the console's next request shows it.
+        step_up._fail(sid, pid, source)
+        return _sso_redirect(_with_outcome(back, "failed"))
+    with unit_of_work() as session:
+        # Still the person who confirms at the provider, with the sign-in still open.
+        done = step_up.at_provider(session, pid, sid) and step_up.confirmed(
+            session, pid, sid, source
+        )
+    return _sso_redirect(_with_outcome(back, "ok" if done else "failed"))
 
 
 def _sso_username(session: Session, claims: dict) -> str:
@@ -2523,8 +2649,11 @@ def password_reset_request(
     """
     settings = get_settings()
     user = session.query(User).filter(User.email == body.email).first()
-    # A service account's password belongs to its program: no reset mail.
-    if user and user.is_active and not _is_service_account(user):
+    # A service account's password belongs to its program: no reset mail. Nor
+    # any while single sign-on is required; the answer stays the same.
+    if sso.required():
+        logger.info("Password reset refused: single sign-on is required")
+    elif user and user.is_active and not _is_service_account(user):
         token = generate_reset_token(user)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
@@ -2579,6 +2708,11 @@ async def password_reset_confirm(
     token so any existing sessions die. A rejected password leaves the
     token usable.
     """
+    # A link issued before single sign-on was required is not honoured now.
+    if await asyncio.to_thread(sso.required):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
+        )
     claim = decode_reset_token(body.token)
     if not claim:
         raise HTTPException(

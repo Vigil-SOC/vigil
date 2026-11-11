@@ -3,18 +3,12 @@
 The database dump is ``pg_dump -Fc`` under a ``pg_export_snapshot()`` id, so
 the manifest's row counts describe that dump. A second run exits without
 queueing when the session advisory lock is already held.
-
-JWT_SECRET_KEY wraps the key ring in the dump, so it is saved apart: the main
-snapshot's ``.env`` copy leaves the line out, and a second snapshot in the same
-repository (tag ``wrapping-key`` and ``main:<id>``) holds only that value. It is
-the same repository and passphrase, so this separates the key from the dump, not
-from whoever holds the repository. A secret Vigil generated into ``secrets.enc``
-stays in the state directory, which the main snapshot holds.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -37,15 +31,20 @@ from core.secrets import get_secret
 from core.storage.connection import DatabaseConfig
 from core.version import __version__
 
+logger = logging.getLogger(__name__)
+
 # Session lock, distinct from services/api/routers/auth.py _BOOTSTRAP_LOCK.
 LOCK_CLASSID = 1287
 LOCK_OBJID = 1
 SKIPPED_MESSAGE = "skipped: a backup is already running"
 
-# The snapshot that holds only the wrapping secret, tagged with the main one's id.
+# The wrapping key (JWT_SECRET_KEY) is kept out of the snapshot's copy of .env and
+# written as a second snapshot in the same repository (#4181): tagged
+# ``wrapping-key`` and ``main-<id>`` of the snapshot it pairs with.
 WRAPPING_TAG = "wrapping-key"
-WRAPPING_FILE = "wrapping-secret"
-_JWT_LINE = re.compile(r"^\s*(?:export\s+)?JWT_SECRET_KEY\s*=")
+PAIR_PREFIX = "main-"
+WRAPPING_FILE = "vigil-wrapping-key"
+_JWT_ENV_LINE = re.compile(r"^(\s*(?:export\s+)?JWT_SECRET_KEY\s*=)(.*)$")
 
 PRE_RESTORE_PREFIX = ".vigil-pre-restore-"
 STAGE_PREFIX = ".vigil-restore-stage-"
@@ -157,7 +156,7 @@ def create_snapshot(
                         f"{exc}; failed to remove snapshot {snap}: {detail}"
                     ) from exc
                 raise
-            _save_wrapping_key(repo, passphrase, snap, staging, priority, extra_env)
+            _write_wrapping_key(repo, passphrase, snap, priority, extra_env)
             return snap
     finally:
         lock.close()
@@ -378,69 +377,10 @@ def _locations(staging: Path, bifrost_data: str | None) -> list[Location]:
         # Unset, skills sit in the State Directory and are copied with it.
         _skills(settings.vigil_skills_path or ""),
         _file_or_absent("intent", intent_file()),
-        _env_copy(staging, REPO_ROOT / ".env"),
+        _env(staging),
         _bifrost(staging, bifrost_data),
     ]
     return locations
-
-
-def _save_wrapping_key(
-    repo: str,
-    passphrase: Path,
-    main: str,
-    staging: Path,
-    priority: list[str],
-    extra_env: Mapping[str, str] | None,
-) -> None:
-    """Write the wrapping secret as a snapshot of its own, after the main one
-    verified, so the pairing tag carries the final id. A failure removes the main
-    snapshot too: the filtered ``.env`` would leave it without its key."""
-    secret = get_secret("JWT_SECRET_KEY")
-    if not secret:
-        return  # set outside this install; nothing here holds it
-    folder = staging / "wrapping-key"
-    folder.mkdir()
-    file = folder / WRAPPING_FILE
-    file.touch(mode=0o600)
-    file.write_text(secret, encoding="utf-8")
-    pair = None
-    try:
-        # Not tagged "manual" or "scheduled": it is never counted as a backup.
-        pair = _restic_backup(
-            repo,
-            passphrase,
-            [str(file)],
-            priority,
-            (WRAPPING_TAG, f"main:{main}"),
-            extra_env,
-        )
-        raw = _checked(
-            priority + ["restic", "-r", repo, "dump", pair, str(file)],
-            env=_restic_env(passphrase, extra_env),
-            what="wrapping key",
-        )
-        if raw.stdout != secret:
-            raise BackupError("verification failed: wrapping key differs")
-    except BackupError as exc:
-        for snap in (pair, main):
-            if snap:
-                _forget_snapshot(repo, passphrase, snap, priority, extra_env)
-        raise BackupError(f"the wrapping key could not be saved: {exc}") from exc
-
-
-def _env_copy(staging: Path, path: Path) -> Location:
-    """The repo ``.env`` without its JWT_SECRET_KEY line."""
-    if not path.is_file():
-        return Location("env", "skipped", reason="absent")
-    dest = staging / "env" / path.name
-    dest.parent.mkdir()
-    original = path.read_bytes().decode("utf-8")
-    kept = [
-        line for line in original.splitlines(keepends=True) if not _JWT_LINE.match(line)
-    ]
-    dest.write_text("".join(kept), encoding="utf-8")
-    shutil.copymode(path, dest)
-    return Location("env", "included", path=str(dest))
 
 
 def _existing(name: str, path: Path, *, directory: bool) -> Location:
@@ -460,6 +400,51 @@ def _file_or_absent(name: str, path: Path) -> Location:
     if path.is_file():
         return Location(name, "included", path=str(path))
     return Location(name, "skipped", reason="absent")
+
+
+def _env(staging: Path) -> Location:
+    """The repo-root .env without its JWT_SECRET_KEY line, staged as a copy."""
+    src = REPO_ROOT / ".env"
+    if not src.is_file():
+        return Location("env", "skipped", reason="absent")
+    dest = staging / "env" / ".env"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    kept = [
+        line
+        for line in src.read_text(
+            encoding="utf-8", errors="surrogateescape"
+        ).splitlines(keepends=True)
+        if not _JWT_ENV_LINE.match(line.rstrip("\r\n"))
+    ]
+    dest.write_text("".join(kept), encoding="utf-8", errors="surrogateescape")
+    os.chmod(dest, 0o600)
+    return Location("env", "included", path=str(dest))
+
+
+def _write_wrapping_key(
+    repo: str,
+    passphrase: Path,
+    main_id: str,
+    priority: list[str],
+    extra_env: Mapping[str, str] | None,
+) -> None:
+    """The second snapshot, after the main one passed verification. The main
+    snapshot restores without it, so a failure here is logged, not raised."""
+    secret = get_secret("JWT_SECRET_KEY")
+    if not secret:
+        logger.warning("JWT_SECRET_KEY is not set here; no wrapping-key snapshot")
+        return
+    proc = subprocess.run(
+        priority
+        + ["restic", "-r", repo, "backup", "--stdin", "--stdin-filename", WRAPPING_FILE]
+        + ["--tag", WRAPPING_TAG, "--tag", PAIR_PREFIX + main_id],
+        env=_restic_env(passphrase, extra_env),
+        input=secret,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        logger.warning("wrapping-key snapshot failed: %s", _output(proc))
 
 
 def _bifrost(staging: Path, bifrost_data: str | None) -> Location:

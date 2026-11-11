@@ -1,8 +1,6 @@
 """Stage a snapshot, check it, and swap it in. ``--test`` discards the stage.
 
-After a swap, sign everyone out by rotating the sign-in and run-token keys, open
-the key ring (under the install's JWT secret, else the paired snapshot's
-wrapping key, else replace it and have MFA people enrol again), reject pending
+After a swap, rotate the JWT secret, re-encrypt MFA secrets, reject pending
 approvals, and write one trail entry. ``--test`` returns before any of that.
 A snapshot from before the trail still gets the config audit row.
 
@@ -46,8 +44,11 @@ from core.auth import dormancy, key_ring, sign_in_runs, sign_ins
 from core.auth.mfa_coverage import SETTINGS_LINK
 from core.backup.connection import backup_database_config
 from core.backup.create import (
+    PAIR_PREFIX,
     PRE_RESTORE_PREFIX,
     STAGE_PREFIX,
+    WRAPPING_FILE,
+    WRAPPING_TAG,
     BackupError,
     _checked,
     _child_env,
@@ -58,7 +59,6 @@ from core.backup.create import (
     _restic_env,
     _run,
 )
-from core.backup.schedule import _parse_time
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
 from core.response.approval_service import ActionStatus
@@ -95,7 +95,6 @@ SELECT run_id, seq,
 """
 
 _APP_NAME = f"vigil-backup-{os.getpid()}"
-_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 _JWT_ENV_LINE = re.compile(r"^(\s*(?:export\s+)?JWT_SECRET_KEY\s*=\s*)(.*)$")
 
 
@@ -142,8 +141,7 @@ def restore_snapshot(
         _assert_no_other_clients(cfg)
 
     restic = _restic(repo, test)
-    if snapshot == "latest":
-        snapshot = _latest_backup(restic, passphrase, priority)
+    snapshot = _resolve_snapshot(restic, passphrase, snapshot, priority)
     manifest, dump_in_snapshot, snapshot_id = _load_manifest(
         restic, passphrase, snapshot, priority
     )
@@ -152,7 +150,6 @@ def restore_snapshot(
     created_at = manifest.get("created_at")
     if not isinstance(created_at, str) or not created_at.strip():
         raise BackupError("manifest has no created_at")
-    paired_key = _paired_wrapping_key(restic, passphrase, snapshot_id, priority)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged_name = _suffixed(cfg.database, "_stage_", stamp)
     pre_name = _suffixed(cfg.database, "_pre_restore_", stamp)
@@ -189,7 +186,6 @@ def restore_snapshot(
                 f"rows: ok ({len(tables)} tables)",
                 "ledger: ok",
                 f"secrets: {secrets}",
-                f"wrapping key: {'paired snapshot' if paired_key else 'none paired'}",
             ]
             if test:
                 lines.append("discarded staged copies")
@@ -199,7 +195,8 @@ def restore_snapshot(
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
             _check_erasure_list(root, dump_in_snapshot)
-            swap_lines, abandoned, earlier = _swap(
+            paired_key = _paired_wrapping_key(restic, passphrase, snapshot_id, priority)
+            swap_lines, abandoned, live_ring = _swap(
                 cfg, staged_name, pre_name, placed, stamp
             )
             lines.extend(swap_lines)
@@ -224,7 +221,7 @@ def restore_snapshot(
                         abandoned,
                         reapplied_at,
                         paired_key,
-                        earlier,
+                        live_ring,
                     )
                 )
                 _record_restored(manifest, snapshot_id, discarded)
@@ -310,6 +307,65 @@ def _other_clients(
 def _restic(repo: str, test: bool) -> list[str]:
     # --test only reads, so it takes no lock and a read-only repository works.
     return ["restic", "-r", repo, *(["--no-lock"] if test else [])]
+
+
+def _snapshots(restic: list[str], passphrase: Path, priority: list[str]) -> list[dict]:
+    raw = _checked(
+        priority + [*restic, "snapshots", "--json"],
+        env=_restic_env(passphrase),
+        what="restic snapshots",
+    )
+    try:
+        listed = json.loads(raw.stdout)
+    except json.JSONDecodeError as exc:
+        raise BackupError(f"snapshots could not be read: {exc}") from exc
+    if not isinstance(listed, list):
+        return []
+    return [s for s in listed if isinstance(s, dict)]
+
+
+def _resolve_snapshot(
+    restic: list[str], passphrase: Path, snapshot: str, priority: list[str]
+) -> str:
+    """``latest`` is the newest backup, not the newest snapshot: the wrapping-key
+    snapshot written after each backup is never what a restore wants."""
+    if snapshot != "latest":
+        return snapshot
+    mains = [
+        s
+        for s in _snapshots(restic, passphrase, priority)
+        if WRAPPING_TAG not in (s.get("tags") or [])
+    ]
+    if not mains:
+        raise BackupError("the repository has no backup to restore")
+    return max(mains, key=lambda s: str(s.get("time")))["id"]
+
+
+def _paired_wrapping_key(
+    restic: list[str], passphrase: Path, snapshot_id: str, priority: list[str]
+) -> str | None:
+    """The JWT_SECRET_KEY backed up with ``snapshot_id``, or None for a backup
+    taken before they were paired (or whose pairing could not be read)."""
+    try:
+        for snap in _snapshots(restic, passphrase, priority):
+            tags = snap.get("tags") or []
+            if WRAPPING_TAG not in tags:
+                continue
+            paired = [t[len(PAIR_PREFIX) :] for t in tags if t.startswith(PAIR_PREFIX)]
+            # A short id and a full one name one snapshot when one starts the other.
+            if not any(
+                snapshot_id.startswith(p) or p.startswith(snapshot_id) for p in paired
+            ):
+                continue
+            raw = _checked(
+                priority + [*restic, "dump", snap["id"], f"/{WRAPPING_FILE}"],
+                env=_restic_env(passphrase),
+                what="wrapping-key snapshot",
+            )
+            return raw.stdout.strip() or None
+    except BackupError as exc:
+        logger.warning("could not read the paired wrapping key: %s", exc)
+    return None
 
 
 def _load_manifest(
@@ -535,8 +591,6 @@ def _stage_locations(
         if not src.exists():
             raise BackupError(f"{name} is missing from the snapshot")
         target = _target_for(name, settings, bifrost_data)
-        if name == "env" and src.is_file():
-            _keep_live_jwt(src, target)
         is_dir = src.is_dir()
         if target.exists() and target.is_dir() != is_dir:
             kind = "directory" if is_dir else "file"
@@ -553,6 +607,8 @@ def _stage_locations(
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dest))
             continue
+        if name == "env":
+            _keep_live_jwt(src, target)
         if not is_dir:
             # Copied from the restic target, which outlives the swap.
             _remember_created(target.parent, created_dirs)
@@ -565,6 +621,25 @@ def _stage_locations(
             raise BackupError(f"staging path already exists: {dest}")
         shutil.move(str(src), str(dest))
         placed.append(_Placed(name, dest, target, is_dir=True))
+
+
+def _keep_live_jwt(staged: Path, live: Path) -> None:
+    """A snapshot's .env from #4181 on has no JWT_SECRET_KEY line, and must not
+    take the install's secret away: carry the live file's line over. An older
+    snapshot's .env still has its own, as before."""
+    if not live.is_file() or _env_jwt(staged) is not None:
+        return
+    mine = [
+        line
+        for line in live.read_text(encoding="utf-8").splitlines(keepends=True)
+        if _JWT_ENV_LINE.match(line.rstrip("\r\n"))
+    ]
+    if not mine:
+        return
+    body = staged.read_text(encoding="utf-8")
+    if body and not body.endswith("\n"):
+        body += "\n"
+    staged.write_text(body + "".join(mine), encoding="utf-8")
 
 
 def _enclosing(placed: list[_Placed], target: Path) -> _Placed | None:
@@ -730,7 +805,7 @@ def _swap(
     # Read and release before the rename. A connection left on the live
     # database makes _other_clients refuse the swap.
     abandoned = _abandoned_tip(cfg)
-    earlier = _earlier_ring(cfg)
+    live_ring = _live_ring(cfg)
     admin = _connect_as(cfg, database="postgres", autocommit=True)
     renamed = False
     try:
@@ -752,7 +827,7 @@ def _swap(
     finally:
         admin.close()
     try:
-        return _swap_files(placed, stamp), abandoned, earlier
+        return _swap_files(placed, stamp), abandoned, live_ring
     except Exception:
         try:
             _rollback_database(cfg, staged_name, pre_name)
@@ -956,95 +1031,6 @@ def _snapshot_id(
     return snapshot_id
 
 
-WRAPPING_TAG = "wrapping-key"
-WRAPPING_FILE = "wrapping-secret"
-
-
-def _latest_backup(restic: list[str], passphrase: Path, priority: list[str]) -> str:
-    """restic's own ``latest`` would pick a wrapping-key snapshot: the newest of
-    the others is the backup."""
-    raw = _checked(
-        priority + [*restic, "snapshots", "--json"],
-        env=_restic_env(passphrase),
-        what="restic snapshots",
-    )
-    try:
-        found = [
-            snap
-            for snap in json.loads(raw.stdout)
-            if isinstance(snap, dict) and WRAPPING_TAG not in (snap.get("tags") or [])
-        ]
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise BackupError(f"snapshots could not be read: {exc}") from exc
-    if not found:
-        raise BackupError("the repository has no backup to restore")
-    # Parsed: restic writes the local offset, so strings do not order across a DST change.
-    return max(found, key=lambda snap: _parse_time(snap.get("time")) or _EPOCH)["id"]
-
-
-def _paired_wrapping_key(
-    restic: list[str], passphrase: Path, snapshot_id: str, priority: list[str]
-) -> str | None:
-    """The JWT_SECRET_KEY the backup saved in its own snapshot (``create`` writes
-    it after the main one passes verification, tagged with the main id). None for
-    a snapshot with no pair, which restores as before."""
-    env = _restic_env(passphrase)
-    listed = _run(
-        priority + [*restic, "snapshots", "--json", "--tag", f"main:{snapshot_id}"],
-        env=env,
-        check=False,
-    )
-    try:
-        found = json.loads(listed.stdout) if listed.returncode == 0 else []
-    except json.JSONDecodeError:
-        return None
-    pair = next(
-        (
-            snap["id"]
-            for snap in reversed(found)
-            if isinstance(snap, dict)
-            and WRAPPING_TAG in (snap.get("tags") or [])
-            and isinstance(snap.get("id"), str)
-        ),
-        None,
-    )
-    if pair is None:
-        return None
-    files = _run(priority + [*restic, "ls", pair], env=env, check=False)
-    path = next(
-        (
-            line
-            for line in files.stdout.splitlines()
-            if files.returncode == 0 and Path(line).name == WRAPPING_FILE
-        ),
-        None,
-    )
-    if path is None:
-        return None
-    dumped = _run(priority + [*restic, "dump", pair, path], env=env, check=False)
-    return dumped.stdout.strip() or None if dumped.returncode == 0 else None
-
-
-def _keep_live_jwt(staged: Path, live: Path) -> None:
-    """The snapshot's ``.env`` has no JWT_SECRET_KEY (an older one has the backed-up
-    value): the live file's line stays, since that is the install's secret."""
-    if not live.is_file():
-        return
-    mine = [
-        line
-        for line in live.read_text(encoding="utf-8").splitlines()
-        if _JWT_ENV_LINE.match(line)
-    ]
-    if not mine:
-        return
-    kept = [
-        line
-        for line in staged.read_text(encoding="utf-8").splitlines()
-        if not _JWT_ENV_LINE.match(line)
-    ]
-    staged.write_text("\n".join([*kept, mine[-1]]) + "\n", encoding="utf-8")
-
-
 def _actor(actor: str | None) -> str:
     if actor is not None and actor.strip():
         return actor.strip()
@@ -1080,25 +1066,37 @@ def _abandoned_tip(cfg: DatabaseConfig) -> dict | None:
     return {"seq": int(tip.seq), "hash": str(tip.entry_hash)}
 
 
-def _earlier_ring(cfg: DatabaseConfig) -> dict[tuple[str, int], str]:
-    """The live key ring's (purpose, version) to state, before the swap: what the
-    restored ring must not bring back. Empty when there is no ring."""
+def _live_ring(cfg: DatabaseConfig) -> dict:
+    """What the live key ring knows, read before the swap: the retired (purpose,
+    version) pairs, which a restore must keep retired, and the highest version of
+    each purpose, which it must not reuse. Disposed before return, as above."""
     engine = create_engine(
         _config_for(cfg, cfg.database).get_database_url(), poolclass=NullPool
     )
     try:
         with engine.connect() as conn:
-            if (
-                conn.execute(sa_text("SELECT to_regclass('public.auth_keys')")).scalar()
-                is None
-            ):
-                return {}
-            rows = conn.execute(
-                sa_text("SELECT purpose, version, state FROM public.auth_keys")
+            if not conn.execute(
+                sa_text("SELECT to_regclass('public.auth_keys') IS NOT NULL")
+            ).scalar_one():
+                return {"retired": [], "highest": {}}
+            retired = conn.execute(
+                sa_text(
+                    "SELECT purpose, version FROM public.auth_keys "
+                    "WHERE state = 'retired'"
+                )
+            ).all()
+            highest = conn.execute(
+                sa_text(
+                    "SELECT purpose, max(version) FROM public.auth_keys "
+                    "GROUP BY purpose"
+                )
             ).all()
     finally:
         engine.dispose()
-    return {(purpose, int(version)): state for purpose, version, state in rows}
+    return {
+        "retired": [(p, v) for p, v in retired],
+        "highest": {p: v for p, v in highest},
+    }
 
 
 def _restore_values(
@@ -1108,6 +1106,7 @@ def _restore_values(
     rotated: bool,
     ended: int,
     stopped: int,
+    apps_cleared: int,
 ) -> dict:
     return {
         "snapshot_id": snapshot_id,
@@ -1116,6 +1115,7 @@ def _restore_values(
         "jwt_rotated": rotated,
         "sign_ins_ended": ended,
         "runs_stopped": stopped,
+        "apps_cleared": apps_cleared,
     }
 
 
@@ -1126,6 +1126,7 @@ def _record_restore(
     rotated: bool,
     ended: int,
     stopped: int,
+    apps_cleared: int,
     actor: str,
     abandoned: dict | None,
     failure: BackupError | None,
@@ -1138,7 +1139,9 @@ def _record_restore(
     A failure is part of this entry; it is not a later update. The entry is
     flagged unconfirmed, and a feed-on restore pauses later writes (decision 11).
     """
-    values = _restore_values(snapshot_id, created_at, expired, rotated, ended, stopped)
+    values = _restore_values(
+        snapshot_id, created_at, expired, rotated, ended, stopped, apps_cleared
+    )
     with get_db_manager().session_scope() as session:
         if _trail_ready(session):
             payload = {
@@ -1173,15 +1176,14 @@ def _settle_restored(
     actor: str,
     abandoned: dict | None,
     reapplied_at: datetime,
-    paired_key: str | None = None,
-    earlier: dict | None = None,
+    paired_key: str | None,
+    live_ring: dict,
 ) -> list[str]:
     created_at: str = manifest["created_at"]
     failure: BackupError | None = None
     expired = 0
-    ended = stopped = 0
+    ended = stopped = apps_cleared = 0
     rotated = False
-    ring_reset, mfa_reset = False, 0
     new_secret = False
     from_env = False
     # True once settle has reached the point where today's audit row is written.
@@ -1196,21 +1198,15 @@ def _settle_restored(
         from_env = old_key is None and bool(env_key)
         if from_env:
             old_key = env_key
-        # A new host has no secret: the backup's paired one is the install's.
-        adopted = old_key is None and bool(paired_key)
-        if adopted:
-            old_key = paired_key
         new_key = secrets.token_urlsafe(48)
-        expired, new_secret, ring_reset, mfa_reset = _reencrypt_and_expire(
-            old_key, new_key, snapshot_id, created_at, actor, paired_key, earlier or {}
+        expired, new_secret, apps_cleared = _reencrypt_and_expire(
+            old_key, new_key, snapshot_id, created_at, actor, paired_key, live_ring
         )
         # With no key anywhere, a deployment outside this install sets it. A
         # jwt_secret written here would never be read.
         if old_key is not None:
             if new_secret:
-                _write_jwt_stores(new_key, secrets_only=from_env or adopted)
-            elif adopted:
-                _write_jwt_stores(old_key, secrets_only=True)
+                _write_jwt_stores(new_key, secrets_only=from_env)
             rotated = True
         legacy = True
         if not rotated:
@@ -1227,9 +1223,7 @@ def _settle_restored(
     # Apart from the key step: a failed key step still ends the sign-ins, and a
     # failed ending is still reported and recorded.
     try:
-        ended, stopped = _end_restored_sessions(
-            created_at, reapplied_at, ring_reset, mfa_reset
-        )
+        ended, stopped = _end_restored_sessions(created_at, reapplied_at, apps_cleared)
     except Exception as exc:
         ending = BackupError(f"could not end the restored sign-ins: {exc}")
         failure = BackupError(f"{failure}\n{ending}") if failure else ending
@@ -1241,6 +1235,7 @@ def _settle_restored(
             rotated,
             ended,
             stopped,
+            apps_cleared,
             actor,
             abandoned,
             failure,
@@ -1262,13 +1257,10 @@ def _settle_restored(
         f"runs stopped: {stopped}",
         "integration credentials and user accounts date from the backup",
     ]
-    if ring_reset:
-        lines.append(
-            "key ring: could not be opened under this install's JWT_SECRET_KEY "
-            "or the paired backup key, so it was replaced; no old token verifies"
+    if apps_cleared:
+        lines.insert(
+            4, f"people who must set up their authenticator app: {apps_cleared}"
         )
-    if mfa_reset:
-        lines.append(f"authenticator secrets cleared (set up again): {mfa_reset}")
     if from_env and new_secret:
         lines.append(
             "the new JWT_SECRET_KEY is in "
@@ -1280,10 +1272,7 @@ def _settle_restored(
 
 
 def _end_restored_sessions(
-    created_at: str,
-    reapplied_at: datetime,
-    ring_reset: bool = False,
-    mfa_reset: int = 0,
+    created_at: str, reapplied_at: datetime, apps_cleared: int = 0
 ) -> tuple[int, int]:
     """End every open sign-in, stop every in-flight run, open the dormancy grace
     and tell the holders of ``sessions.manage`` once; returns (sign-ins ended,
@@ -1311,22 +1300,16 @@ def _end_restored_sessions(
     stopped = sign_in_runs._stop(runs)
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
-    _tell_session_holders(
-        created_at, ended + erased, len(stopped), ring_reset, mfa_reset
-    )
+    _tell_session_holders(created_at, ended + erased, len(stopped), apps_cleared)
     return ended + erased, len(stopped)
 
 
 def _tell_session_holders(
-    created_at: str,
-    ended: int,
-    stopped: int,
-    ring_reset: bool = False,
-    mfa_reset: int = 0,
+    created_at: str, ended: int, stopped: int, apps_cleared: int = 0
 ) -> None:
     """One notice to each active person who holds ``sessions.manage``. No names,
     no tokens."""
-    from core.auth.permissions import permission_holders
+    from core.auth import permissions
     from core.platform.notices import notify
 
     until = dormancy.grace_until()
@@ -1339,18 +1322,13 @@ def _tell_session_holders(
         "backup, so dormancy deactivates nobody and warns nobody until "
         f"{until:%Y-%m-%d} UTC. Locks set after the backup are gone."
     )
-    # Only when something was reset: keys that were fine are not mentioned.
-    if ring_reset:
+    if apps_cleared:
         message += (
-            " The backup's key ring could not be opened, so its keys were replaced."
+            f" The backup's key ring could not be opened, so {apps_cleared} "
+            f"{'person' if apps_cleared == 1 else 'people'} must set up the "
+            "authenticator app again."
         )
-    if mfa_reset:
-        message += (
-            f" {mfa_reset} {'person' if mfa_reset == 1 else 'people'} must set "
-            "up the authenticator app again."
-        )
-    with unit_of_work() as session:
-        holders = permission_holders("sessions.manage", session)
+    holders = permissions.holders("sessions.manage")
     for principal in holders:
         try:
             notify(
@@ -1410,28 +1388,41 @@ def _reencrypt_and_expire(
     snapshot_id: str,
     created_at: str,
     actor: str,
-    paired_key: str | None = None,
-    earlier: dict | None = None,
-) -> tuple[int, bool, bool, int]:
+    paired_key: str | None,
+    live_ring: dict,
+) -> tuple[int, bool, int]:
     """Expire pending approvals and sign everyone out; returns the count, whether
-    JWT_SECRET_KEY must change (a database from before the key ring), whether the
-    ring had to be replaced, and how many people lost their authenticator secret.
+    JWT_SECRET_KEY must change (a database from before the key ring), and how many
+    people must set up their authenticator app again.
 
-    With a ring, the wrapping secret stays: ``_settle_ring`` opens the ring and
-    writes new sign-in and run-token keys with no overlap, so old sessions and
-    run tokens stop verifying. Without one, as before the ring: the secret
-    rotates and MFA secrets move to a key derived from the new one.
+    With a ring, the wrapping secret stays. The ring opens under it, or under the
+    backup's paired wrapping key and is re-wrapped, or it is replaced (no old token
+    verifies, and secrets no live MFA key opens are cleared). Versions retired
+    before the restore stay retired. New sign-in and run-token keys are written
+    with no overlap, so old sessions and run tokens stop verifying. Without a
+    ring, as before it: the secret rotates and MFA secrets move to a key derived
+    from the new one.
     """
     reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
     decided_at = utcnow()
-    legacy = ring_reset = False
-    mfa_reset = 0
+    legacy = False
+    apps_cleared = 0
     try:
         with get_db_manager().session_scope() as session:
             if old_key and _ring_present(session):
-                ring_reset, mfa_reset = _settle_ring(
-                    session, old_key, paired_key, earlier or {}, actor
+                kept = key_ring.restore_ring(
+                    session, old_key, paired_key, live_ring, operator=actor
                 )
+                if kept:  # a replaced ring has no old key left to rotate
+                    for purpose in ("signin", "run"):
+                        key_ring.rotate(
+                            purpose,
+                            session=session,
+                            secret=old_key,
+                            overlap=timedelta(0),
+                            operator=actor,
+                        )
+                apps_cleared = key_ring.clear_unreadable_apps(session, old_key)
             elif old_key:
                 legacy = True
                 _rewrap_mfa(session, old_key, new_key)
@@ -1445,74 +1436,11 @@ def _reencrypt_and_expire(
                 row.rejection_reason = reason
                 row.approved_by = actor
                 row.approved_at = decided_at
-            return len(pending), legacy, ring_reset, mfa_reset
+            return len(pending), legacy, apps_cleared
     except BackupError:
         raise
     except Exception as exc:
         raise BackupError(f"could not settle the restored database: {exc}") from exc
-
-
-def _opens(session, secret: str) -> bool:
-    try:
-        key_ring._read(session, secret)
-    except key_ring.KeyRingError:
-        return False
-    return True
-
-
-def _settle_ring(
-    session, secret: str, paired: str | None, earlier: dict, actor: str
-) -> tuple[bool, int]:
-    """Open the restored ring under the install's secret, else the paired
-    snapshot's wrapping key (the ring is then wrapped under the install's secret),
-    else replace it. Never fails for a missing key: a replaced ring leaves every
-    old token unverifiable. Returns (ring replaced, people whose app secret went)."""
-    replaced = False
-    if not _opens(session, secret):
-        if paired and paired != secret and _opens(session, paired):
-            key_ring.rewrap(session, paired, secret)
-        else:
-            key_ring.reset(session, secret, earlier, operator=actor)
-            replaced = True
-    if not replaced:
-        key_ring.reconcile(session, secret, earlier, operator=actor)
-        for purpose in ("signin", "run"):
-            key_ring.rotate(
-                purpose,
-                session=session,
-                secret=secret,
-                overlap=timedelta(0),
-                operator=actor,
-            )
-    return replaced, _reset_unopenable_mfa(session, secret)
-
-
-def _reset_unopenable_mfa(session, secret: str) -> int:
-    """Clear the authenticator secret of anyone no live MFA key opens, with their
-    recovery codes and last step, so they enrol again. MFA stays on for a person
-    with a security key: ``mfa_enabled`` means "has a method". Returns the count."""
-    from core.auth import security_keys
-
-    fernet = key_ring.encryptor_from(key_ring._read(session, secret).get("mfa", []))
-    users = (
-        session.query(User)
-        .filter(User.mfa_secret.like(key_ring._FERNET_TOKEN_PREFIX + "%"))
-        .all()
-    )
-    reset = 0
-    for user in users:
-        try:
-            fernet.decrypt(user.mfa_secret.encode())
-            continue
-        except InvalidToken:
-            pass
-        user.mfa_secret = None
-        user.mfa_recovery_codes = []
-        user.mfa_last_totp_step = None
-        if not security_keys.keys_of(session, user.principal_id):
-            user.mfa_enabled = False
-        reset += 1
-    return reset
 
 
 def _ring_present(session) -> bool:

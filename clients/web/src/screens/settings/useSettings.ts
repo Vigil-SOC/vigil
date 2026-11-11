@@ -269,6 +269,9 @@ export interface User {
   is_active: boolean
   is_verified: boolean
   mfa_enabled: boolean
+  /** signs in with a password, and/or through the SSO provider (a linked subject) */
+  has_password: boolean
+  has_sso: boolean
   last_login: string | null
   login_count: number
   principal_kind: 'person' | 'service_account'

@@ -26,6 +26,7 @@ from core.auth import (
     session_policy,
     sign_ins,
     sso,
+    sso_settings,
     step_up,
     trail_events,
 )
@@ -227,15 +228,17 @@ def _manager_accounts(
     users: Optional[dict[str, tuple[str, bool]]] = None,
 ) -> list[User]:
     """Active people who can sign in (a password, or a single sign-on link while
-    it is on) whose role holds roles.manage, with ``roles`` ({id: permissions})
-    and ``users`` ({id: (role_id, is_active)}) applied as if saved. Locked ones
-    included."""
+    it is on; only the link while it is required) whose role holds roles.manage,
+    with ``roles`` ({id: permissions}) and ``users`` ({id: (role_id, is_active)})
+    applied as if saved. Locked ones included."""
     held = {role.role_id: role.permissions for role in session.query(Role)}
     held.update(roles or {})
     people = (
         _not_deleted(session.query(User)).filter(Principal.kind == principals.PERSON)
     ).all()
-    linked = sso.linked_principals(session) if sso.is_on() else set()
+    current = sso_settings.settings()
+    linked = sso.linked_principals(session) if sso.is_on(current) else set()
+    required = sso.required(current)
     found = []
     for user in people:
         role_id, active = (users or {}).get(
@@ -243,7 +246,7 @@ def _manager_accounts(
         )
         if (
             active
-            and (user.password_hash or user.principal_id in linked)
+            and (user.principal_id in linked or (user.password_hash and not required))
             and (held.get(role_id) or {}).get(ROLES_MANAGE)
         ):
             found.append(user)
@@ -429,10 +432,14 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         .group_by(Case.assignee)
         .all()
     )
+    linked = sso.linked_principals(session)
     now = utcnow()
     dumped = []
     for user in users:
         entry = UserSchema.dump(user)
+        # How the account signs in (#4285); never the hash or the subject.
+        entry["has_password"] = bool(user.password_hash)
+        entry["has_sso"] = user.principal_id in linked
         entry["status"] = _account_status(user, user.principal_id in deleted)
         entry["open_cases"] = open_cases.get(user.username, 0)
         machine = _is_service_account(user)

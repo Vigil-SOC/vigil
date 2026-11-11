@@ -83,6 +83,16 @@ def is_on(current: Optional[sso_settings.SsoSettings] = None) -> bool:
     )
 
 
+def required(current: Optional[sso_settings.SsoSettings] = None) -> bool:
+    """Require single sign-on in force: on, and SSO itself working, so a broken row locks nobody out."""
+    s = current or sso_settings.settings()
+    return bool(s.require_sso and is_on(s))
+
+
+# The one detail a refused password sign-in gets while it is required.
+REQUIRED_DETAIL = "Your organization signs in with SSO"
+
+
 def redirect_uri() -> str:
     """The address the provider sends the browser back to: the one the card shows."""
     return default_base_url(get_settings()).rstrip("/") + sso_settings.CALLBACK_PATH
@@ -114,20 +124,25 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def begin(p: Provider) -> tuple[str, str]:
-    """The provider's authorization address and the signed cookie that binds it."""
+def begin(p: Provider, confirm: Optional[dict] = None) -> tuple[str, str]:
+    """The provider's authorization address and the signed cookie that binds it.
+
+    ``confirm``: Confirm it's you for a sign-in already open (#4285). It rides in
+    the cookie, and the provider is asked for a fresh sign-in.
+    """
     state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
-    cookie = key_ring.sign(
-        "sso",
-        {
-            "state": state,
-            "nonce": nonce,
-            "verifier": verifier,
-            "exp": datetime.now(timezone.utc) + LIFE,
-        },
-    )
+    held = {
+        "state": state,
+        "nonce": nonce,
+        "verifier": verifier,
+        "exp": datetime.now(timezone.utc) + LIFE,
+    }
+    if confirm:
+        held["confirm"] = confirm
+    cookie = key_ring.sign("sso", held)
     query = urlencode(
         {
+            **({"prompt": "login", "max_age": 0} if confirm else {}),
             "response_type": "code",
             "client_id": p.settings.client_id,
             "redirect_uri": redirect_uri(),

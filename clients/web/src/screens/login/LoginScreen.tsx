@@ -49,6 +49,8 @@ export default function LoginScreen() {
   const ssoError = new URLSearchParams(location.search).get('sso_error')
   const [error, setError] = useState(ssoError ? SSO_ERRORS[ssoError] ?? SSO_ERRORS.failed : '')
   const [ssoEnabled, setSsoEnabled] = useState(false)
+  // Require single sign-on: the page offers only "Sign in with SSO", no password form.
+  const [requireSso, setRequireSso] = useState(false)
   // the reset screen hands off a "password updated" notice, or asks to open
   // the forgot-password view
   const navState = location.state as { notice?: string; forgot?: boolean } | null
@@ -81,6 +83,7 @@ export default function LoginScreen() {
       .then((res) => {
         setNeedsBootstrap(res.data.required)
         setSsoEnabled(!!res.data.sso_enabled)
+        setRequireSso(!!res.data.require_sso)
       })
       .catch(() => setNeedsBootstrap(false))
   }, [])
@@ -258,6 +261,8 @@ export default function LoginScreen() {
     ? 'New recovery codes'
     : needsBootstrap
     ? 'Create your account'
+    : requireSso
+    ? 'Sign in'
     : forgot
       ? 'Reset your password'
       : showMfa
@@ -269,6 +274,8 @@ export default function LoginScreen() {
     ? 'Your old recovery codes no longer work. Keep these instead.'
     : needsBootstrap
     ? 'No account exists yet. Set up the first administrator.'
+    : requireSso
+    ? 'Your organization signs in with SSO.'
     : forgot
       ? 'Enter the email on your account to request a reset link.'
       : showMfa
@@ -281,7 +288,7 @@ export default function LoginScreen() {
 
   return (
     <AuthLayout
-      screenLabel={forgot ? 'Forgot password' : 'Sign in'}
+      screenLabel={forgot && !requireSso ? 'Forgot password' : 'Sign in'}
       overlay={
         setupOpen && (
           <TwoStepDialog
@@ -407,6 +414,11 @@ export default function LoginScreen() {
             )}
           </button>
         </form>
+      ) : requireSso ? (
+        <a className="btn-signin" href={SSO_START}>
+          <Icon name="key" size={17} />
+          Sign in with SSO
+        </a>
       ) : forgot ? (
         <form onSubmit={handleResetRequest} autoComplete="on" noValidate>
           {!resetSent && (

@@ -1,8 +1,8 @@
-"""When each key ring row was last wrapped, for the wrapping key's age (#4181)."""
+"""Record when each ring key was last wrapped under the wrapping secret (#4181)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0060_key_wrapped_at"
+revision = "0060_auth_keys_wrapped_at"
 down_revision = "0059_erased_sign_ins"
 
 

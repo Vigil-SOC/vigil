@@ -28,7 +28,6 @@ from core.backup.schedule import (
     DESTINATIONS_FILENAME,
     Destination,
     _load_destinations,
-    forget_orphan_wrapping_keys,
     forget_pre_upgrade,
     prepared_destination,
 )
@@ -252,7 +251,6 @@ def _snapshot_default(
         _log_skip(report)
     if passphrase.is_file() and (repo / "config").is_file():
         forget_pre_upgrade(str(repo), passphrase, None, upgrade_dir)
-        forget_orphan_wrapping_keys(str(repo), passphrase, None)
     return snapshot_id
 
 
@@ -283,7 +281,6 @@ def _snapshot_configured(
         else:
             _log_skip(report)
         forget_pre_upgrade(dest.repo, passphrase, extra, upgrade_dir)
-        forget_orphan_wrapping_keys(dest.repo, passphrase, extra)
         return snapshot_id
 
 
