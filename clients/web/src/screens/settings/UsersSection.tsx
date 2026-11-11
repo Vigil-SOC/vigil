@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Icon } from '../../shared/icons'
+import { Icon, type IconName } from '../../shared/icons'
 import '../../shared/kit.css'
 import {
   ConfirmDialog,
   Field,
+  OverlayPortal,
   Popup,
   Select,
   SettingsCard,
@@ -333,15 +334,12 @@ function PeopleAndRoles({ notify }: SectionProps) {
             <thead>
               <tr>
                 <th style={{ minWidth: 'var(--col-main-min)' }}>
-                  Username
-                  <span className="col-low-note">Full name, MFA and last login are hidden while Ask Vigil is open</span>
+                  Account
+                  <span className="col-low-note">Last login is hidden while Ask Vigil is open</span>
                 </th>
-                <th className="col-low">Full Name</th>
-                <th>Email</th>
                 <th>Role</th>
-                <th>Signs in with</th>
+                <th>Sign-in &amp; MFA</th>
                 <th>Status</th>
-                <th className="col-low">MFA</th>
                 <th className="col-low">Last Login</th>
                 <th className="col-act" style={{ textAlign: 'right' }}>Actions</th>
               </tr>
@@ -349,21 +347,24 @@ function PeopleAndRoles({ notify }: SectionProps) {
             <tbody>
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
+                  <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
                     {search.trim() || statusFilter !== 'current' ? 'No accounts match.' : 'No users found.'}
                   </td>
                 </tr>
               )}
               {users.map((u) => (
                 <tr key={u.user_id}>
-                  <td>{u.username}</td>
-                  <td className="col-low" style={{ whiteSpace: 'normal' }}>
-                    <span className="line-clamp-2 break-words" title={u.full_name}>
-                      {u.full_name}
-                    </span>
+                  <td className="cell-wrap">
+                    {/* full name over username · email; with no full name, the username leads */}
+                    <div className="cell-clamp" title={u.full_name?.trim() || u.username}>
+                      {u.full_name?.trim() || u.username}
+                    </div>
+                    <div className="muted cell-clamp" title={u.status === 'erased' ? undefined : u.email}>
+                      {u.full_name?.trim() && `${u.username} · `}
+                      {/* an erased account's email is an opaque placeholder */}
+                      {u.status === 'erased' ? '—' : u.email}
+                    </div>
                   </td>
-                  {/* an erased account's email is an opaque placeholder */}
-                  <td className="muted">{u.status === 'erased' ? '—' : u.email}</td>
                   <td>
                     <div className="flex flex-col items-start gap-1">
                       <span className="chip">{roleName(u.role_id)}</span>
@@ -375,12 +376,19 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     </div>
                   </td>
                   <td>
-                    {/* stacked, as in Role: side by side the table outgrows the Settings page */}
-                    <div className="flex flex-col items-start gap-1">
+                    <div className="flex items-center gap-1.5">
                       {u.has_sso && <span className="chip sel">SSO</span>}
                       {u.has_password && <span className="chip">Password</span>}
                       {u.principal_kind === 'service_account' && !u.has_password && <span className="chip">Token only</span>}
                       {!u.has_sso && !u.has_password && u.principal_kind !== 'service_account' && <span className="muted">—</span>}
+                      {/* the provider carries the second step for an account that signs in only there */}
+                      {!u.mfa_enabled && u.has_sso && !u.has_password ? (
+                        <span className="status dropped" title="Two-step sign-in is up to the SSO provider">At provider</span>
+                      ) : (
+                        <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`} title={`Two-step sign-in ${u.mfa_enabled ? 'enabled' : 'disabled'}`}>
+                          {u.mfa_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td>
@@ -390,7 +398,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     </span>
                     {u.status === 'locked' && (
                       <div className="text-xs text-tx-3 mt-1" title={lockedFrom(u)}>
-                        <Icon name="lock" size={11} /> {u.locked_until ? 'Until ' + new Date(u.locked_until).toLocaleString() : 'Until unlocked'}
+                        <Icon name="lock" size={11} /> {u.locked_until ? 'Until ' + lockEnd(u.locked_until) : 'Until unlocked'}
                       </div>
                     )}
                     {u.status === 'active' && u.deactivating_at && (
@@ -399,72 +407,41 @@ function PeopleAndRoles({ notify }: SectionProps) {
                       </div>
                     )}
                   </td>
-                  <td className="col-low">
-                    {/* the provider carries the second step for an account that signs in only there */}
-                    {!u.mfa_enabled && u.has_sso && !u.has_password ? (
-                      <span className="status dropped" title="Two-step sign-in is up to the SSO provider">At provider</span>
-                    ) : (
-                      <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>
-                        {u.mfa_enabled ? 'Enabled' : 'Disabled'}
-                      </span>
-                    )}
-                  </td>
                   <td className="muted col-low">
                     {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
                   </td>
                   <td className="col-act" style={{ textAlign: 'right' }}>
-                    <div className="inline-flex gap-1.5">
-                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
-                        <button className="btn ghost icon" title="Sign-ins" onClick={() => setSignInsOf(u)}>
-                          <Icon name="clock" size={15} />
-                        </button>
-                      )}
-                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
-                        <button className="btn ghost icon" title="Sign-in methods" onClick={() => setMethodsOf(u)}>
-                          <Icon name="shield" size={15} />
-                        </button>
-                      )}
-                      {canWrite && u.status === 'locked' && covers(u.role_id) && u.user_id !== me?.user_id && (
-                        <button className="btn ghost icon" title="Unlock" onClick={() => setUnlockOf(u)}>
-                          <Icon name="lock" size={15} />
-                        </button>
-                      )}
-                      {/* a locked row has Unlock here; its Sign-in methods offer the reset, so the row stays as wide */}
-                      {canWrite && u.status === 'active' && covers(u.role_id) && u.user_id !== me?.user_id && u.principal_kind !== 'service_account' && (
-                        <button className="btn ghost icon" title="Reset password" onClick={() => setResetOf(u)}>
-                          <Icon name="key" size={15} />
-                        </button>
-                      )}
-                      {canWrite && (live(u) || u.status === 'deactivated') && (
-                        <button className="btn ghost icon" title="Edit" onClick={() => openEdit(u)}>
-                          <Icon name="edit" size={15} />
-                        </button>
-                      )}
-                      {canWrite && live(u) && covers(u.role_id) && u.user_id !== me?.user_id && (
-                        <button className="btn ghost icon" title="Deactivate" onClick={() => setStatusAct({ user: u, act: 'deactivate' })}>
-                          <Icon name="pause" size={15} />
-                        </button>
-                      )}
-                      {canWrite && u.status === 'deactivated' && covers(u.role_id) && (
-                        <button className="btn ghost icon" title="Reactivate" onClick={() => setStatusAct({ user: u, act: 'reactivate' })}>
-                          <Icon name="play" size={15} />
-                        </button>
-                      )}
-                      {canDelete && u.status === 'deleted' && covers(u.role_id) && (
-                        <button className="btn ghost icon" title="Restore" onClick={() => setStatusAct({ user: u, act: 'restore' })}>
-                          <Icon name="refresh" size={15} />
-                        </button>
-                      )}
-                      {canDelete && (live(u) || u.status === 'deactivated') && (
-                        <button
-                          className="btn ghost icon"
-                          title="Delete"
-                          onClick={() => setConfirmDelete(u)}
-                        >
-                          <Icon name="trash" size={15} />
-                        </button>
-                      )}
-                    </div>
+                    {(() => {
+                      // Edit stays on the row; the rest share one ⋯ menu so the table fits its card
+                      const other = canWrite && covers(u.role_id) && u.user_id !== me?.user_id
+                      const items: RowItem[] = []
+                      if (other && live(u)) {
+                        items.push({ label: 'Sign-ins', icon: 'clock', onSelect: () => setSignInsOf(u) })
+                        items.push({ label: 'Sign-in methods', icon: 'shield', onSelect: () => setMethodsOf(u) })
+                      }
+                      if (other && u.status === 'locked') items.push({ label: 'Unlock', icon: 'lock', onSelect: () => setUnlockOf(u) })
+                      if (other && u.status === 'active' && u.principal_kind !== 'service_account') {
+                        items.push({ label: 'Reset password', icon: 'key', onSelect: () => setResetOf(u) })
+                      }
+                      if (other && live(u)) items.push({ label: 'Deactivate', icon: 'pause', onSelect: () => setStatusAct({ user: u, act: 'deactivate' }) })
+                      if (canWrite && u.status === 'deactivated' && covers(u.role_id)) {
+                        items.push({ label: 'Reactivate', icon: 'play', onSelect: () => setStatusAct({ user: u, act: 'reactivate' }) })
+                      }
+                      if (canDelete && u.status === 'deleted' && covers(u.role_id)) {
+                        items.push({ label: 'Restore', icon: 'refresh', onSelect: () => setStatusAct({ user: u, act: 'restore' }) })
+                      }
+                      if (canDelete && (live(u) || u.status === 'deactivated')) items.push({ label: 'Delete', icon: 'trash', onSelect: () => setConfirmDelete(u) })
+                      return (
+                        <div className="inline-flex gap-1.5">
+                          {canWrite && (live(u) || u.status === 'deactivated') && (
+                            <button className="btn ghost icon" title="Edit" aria-label={`Edit ${u.username}`} onClick={() => openEdit(u)}>
+                              <Icon name="edit" size={15} />
+                            </button>
+                          )}
+                          {items.length > 0 && <RowMenu label={`More actions for ${u.username}`} items={items} />}
+                        </div>
+                      )
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -703,6 +680,111 @@ const ACT_BODY: Record<StatusAct, string> = {
   restore: 'The account comes back deactivated, with its password and two-step sign-in, and they are told. Its tokens stay revoked. Reactivate it to let them sign in.',
 }
 
+type RowItem = { label: string; icon: IconName; onSelect: () => void }
+
+/** A row's ⋯ menu. Fixed and portaled, as UserMenu's, so the table's scroll box can't clip it.
+    Arrows, Tab, Home and End move between items; Escape closes and returns focus to ⋯. */
+function RowMenu({ label, items }: { label: string; items: RowItem[] }) {
+  const [pos, setPos] = useState<{ right: number; maxHeight: number; top?: number; bottom?: number } | null>(null)
+  const btn = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!pos) return
+    menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true })
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (!btn.current?.contains(t) && !menu.current?.contains(t)) setPos(null)
+    }
+    // fixed to where ⋯ was: once the page or the table scrolls, it would float off its row (not, say, Ask Vigil's thread)
+    const onScroll = (e: Event) => {
+      const t = e.target as Node
+      if (t === document || t.contains(btn.current)) setPos(null)
+    }
+    const shut = () => setPos(null)
+    document.addEventListener('mousedown', onDoc)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', shut)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', shut)
+    }
+  }, [pos])
+
+  const toggle = () => {
+    if (pos) return setPos(null)
+    const r = btn.current!.getBoundingClientRect()
+    const right = Math.max(8, window.innerWidth - r.right)
+    const below = window.innerHeight - r.bottom - 12
+    const above = r.top - 12
+    // opens upward when the list doesn't fit below and there is more room above; scrolls when neither fits
+    setPos(
+      below < items.length * 36 + 24 && above > below
+        ? { right, bottom: window.innerHeight - r.top + 4, maxHeight: above }
+        : { right, top: r.bottom + 4, maxHeight: below },
+    )
+  }
+
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const all = [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+    const at = all.indexOf(document.activeElement as HTMLElement)
+    const go = (i: number) => all[(i + all.length) % all.length]?.focus()
+    if (e.key === 'Escape') {
+      setPos(null)
+      btn.current?.focus()
+    } else if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) go(at + 1)
+    else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) go(at - 1)
+    else if (e.key === 'Home') go(0)
+    else if (e.key === 'End') go(all.length - 1)
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  return (
+    <>
+      <button
+        ref={btn}
+        className="btn ghost icon"
+        title="More actions"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={!!pos}
+        onClick={toggle}
+      >
+        <Icon name="more" size={15} />
+      </button>
+      {pos && (
+        <OverlayPortal>
+          <div
+            ref={menu}
+            className="user-pop"
+            role="menu"
+            aria-label={label}
+            onKeyDown={onKey}
+            style={{ position: 'fixed', ...pos, zIndex: 80, width: 'auto', minWidth: 190 }}
+          >
+            {items.map((it) => (
+              <button
+                key={it.label}
+                role="menuitem"
+                onClick={() => {
+                  setPos(null)
+                  btn.current?.focus() // the dialog it opens returns focus here
+                  it.onSelect()
+                }}
+              >
+                <Icon name={it.icon} size={14} /> {it.label}
+              </button>
+            ))}
+          </div>
+        </OverlayPortal>
+      )}
+    </>
+  )
+}
+
 const STATUS_LABEL: Record<AccountStatus, string> = {
   active: 'Active',
   locked: 'Locked',
@@ -748,6 +830,15 @@ function OpenCases({ user }: { user: User }) {
   )
 }
 
+
+/** a lock lasts minutes or hours: the time alone today, else the day too, so Status stays narrow */
+function lockEnd(iso: string): string {
+  const d = new Date(iso)
+  const time = { hour: 'numeric', minute: '2-digit' } as const
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString(undefined, time)
+    : d.toLocaleString(undefined, { month: 'short', day: 'numeric', ...time })
+}
 
 // when and where the lock was set, as a sentence
 function lockedFrom(u: User): string {

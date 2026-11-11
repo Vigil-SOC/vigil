@@ -4522,6 +4522,25 @@
       z-index: 3; /* above the sticky header row's other cells */
    }
 
+   /* a Settings cell of prose: it wraps, and each line stops at two (DESIGN.md §7). Not Tailwind's
+      line-clamp-2: the utilities layer would outrank the focus-within rule that shows the rest. */
+   .settings-content .tbl tbody td.cell-wrap {
+      white-space: normal;
+      overflow-wrap: anywhere; /* a long email breaks anywhere, so it can't widen the column */
+   }
+
+   .cell-clamp {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+   }
+
+   /* the row opens nowhere: tabbing to its actions shows the rest */
+   .settings-content .tbl tbody tr:focus-within .cell-clamp {
+      -webkit-line-clamp: unset;
+   }
+
    .settings-content .tbl tbody tr:hover>.col-act {
       background: linear-gradient(var(--hover), var(--hover)), linear-gradient(90deg, transparent, var(--bg1) 12px);
    }
