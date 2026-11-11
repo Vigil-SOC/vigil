@@ -12,7 +12,7 @@ from core.agents import tool_registry
 from core.agents.custom_agent_service import CustomAgentService
 from core.audit import reads, trail
 from core.auth.permissions import permission_refusal
-from core.cases.agent_closure import actor, service_session
+from core.cases.agent_closure import acting_principal, actor, service_session
 from core.cases.assignee import (
     OwnerNotCurrent,
     require_current_owner,
@@ -1349,6 +1349,7 @@ def create_approval_action(
             reason=reason,
             evidence=evidence or [],
             created_by=actor(),
+            created_by_principal_id=acting_principal(),
             human_only=True,
         )
         return jdump(

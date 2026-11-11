@@ -168,6 +168,20 @@ def actor_identity(
     return principal, name
 
 
+def acting_principal() -> Optional[str]:
+    """The principal this tool call acts as, for a row that names its proposer.
+
+    Inside a run, its signed claims name who (the person, else the agent); over
+    /mcp, the bound caller does.
+    """
+    from core.auth.tool_principal import current_claims
+
+    claims = current_claims()
+    if claims is not None:
+        return claims.person_id or claims.agent_id
+    return actor_identity()[0]
+
+
 def activity_actor(
     explicit: Optional[str] = None, session: Optional[Session] = None
 ) -> dict[str, str]:

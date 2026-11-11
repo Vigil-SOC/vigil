@@ -47,7 +47,7 @@ Claude Code then asks for two values: your Vigil's address (for example `http://
 
 ## What it cannot do
 
-**Approve.** An MCP credential cannot release an action. `approve_action` over `/mcp` leaves the action pending, and a run's checkpoint cannot be answered with a directive. Approving happens in Vigil's Approvals with a signed-in person (or `POST /api/v1/approvals/{id}/approve` with a signed-in session). Rejecting works from the session.
+**Approve from the session.** Over `/mcp`, `approve_action` leaves the action pending, and `send_directive` with `approve`, `reject` or `benign` does not answer a run's checkpoint. Approving happens in Vigil's Approvals. The credential is a `vgl_api_` API token, though, and it also reaches Vigil's HTTP API as its holder: if that person holds `ai_decisions.approve`, `POST /api/v1/approvals/{id}/approve` with the token approves the action. Four-eyes still applies. A proposal from the session (`create_approval_action`) is recorded as that person's, so with four-eyes on, someone else must approve it. Rejecting works from the session.
 
 ## Privacy: where the data goes
 
