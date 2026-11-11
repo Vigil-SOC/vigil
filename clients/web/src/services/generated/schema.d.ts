@@ -1270,12 +1270,10 @@ export interface paths {
         put?: never;
         /**
          * Password Reset Confirm
-         * @description Complete a password reset. Validates the signed token and that the
-         *     password hasn't changed since it was issued, enforces the password
-         *     strength policy + reuse check, rotates the hash (which voids this and
-         *     every other outstanding reset link), and revokes every outstanding
-         *     token so any existing sessions die. A rejected password leaves the
-         *     token usable.
+         * @description Complete a password reset. The link's row is locked, so two confirms of one
+         *     link serialize and the second finds it used. Enforces the password strength
+         *     policy and reuse check, uses the link up, closes every other open one, and
+         *     ends the account's sign-ins. A rejected password leaves the link usable.
          */
         post: operations["post_api_auth_password-reset_confirm"];
         delete?: never;
@@ -1299,7 +1297,7 @@ export interface paths {
          *     email maps to an account — otherwise the response shape leaks which
          *     emails are registered.
          *
-         *     The actual email (with the signed reset token) is sent asynchronously
+         *     The actual email (with a one-hour, single-use link) is sent asynchronously
          *     via the configured email backend. The default ConsoleBackend sends nothing;
          *     with DEV_MODE on it logs the link.
          */
@@ -7119,6 +7117,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/mfa/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset User Mfa
+         * @description Remove every two-step method the person has (the authenticator app,
+         *     security keys, recovery codes) and end their sign-ins, with a typed reason.
+         *     Exempt from the last-manager guard: it warns instead. The MFA requirement
+         *     asks them to set it up again at their next sign-in.
+         */
+        post: operations["post_api_users_user_id_mfa_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/reactivate": {
         parameters: {
             query?: never;
@@ -7135,6 +7156,36 @@ export interface paths {
          */
         post: operations["post_api_users_user_id_reactivate"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/reset-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Reset Link
+         * @description The person's open reset link, never its value. users.write over the account.
+         */
+        get: operations["get_api_users_user_id_reset-link"];
+        put?: never;
+        /**
+         * Issue Reset Link
+         * @description A one-hour, single-use reset link for the person, replacing any open one:
+         *     emailed to their address, or returned once to hand over. It never touches
+         *     two-step sign-in. They and the other holders of users.write are told.
+         */
+        post: operations["post_api_users_user_id_reset-link"];
+        /**
+         * Revoke Reset Link
+         * @description Cancel the person's open reset link; it stops working.
+         */
+        delete: operations["delete_api_users_user_id_reset-link"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12171,6 +12222,36 @@ export interface components {
             /** Type */
             type: string;
         };
+        /**
+         * MfaResetRequest
+         * @description A typed reason and how the person's identity was confirmed, both kept.
+         */
+        MfaResetRequest: {
+            /**
+             * Identity Confirmed By
+             * @enum {string}
+             */
+            identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
+            /** Reason */
+            reason: string;
+            /**
+             * Suspected Compromise
+             * @default false
+             */
+            suspected_compromise: boolean;
+        };
+        /** MfaResetResult */
+        MfaResetResult: {
+            /** Ended */
+            ended: number;
+            /**
+             * Tokens Revoked
+             * @default 0
+             */
+            tokens_revoked: number;
+            /** Warning */
+            warning?: string | null;
+        };
         /** MintRequest */
         MintRequest: {
             /** Expires In Days */
@@ -12986,6 +13067,64 @@ export interface components {
              * @enum {string}
              */
             channel: "email" | "copy";
+        };
+        /** ResetLinkEntry */
+        ResetLinkEntry: {
+            /** Channel */
+            channel: string;
+            /** Expires At */
+            expires_at: string;
+            /** Issued At */
+            issued_at: string;
+            /** Issued By Name */
+            issued_by_name?: string | null;
+            /** Link Id */
+            link_id: string;
+        };
+        /**
+         * ResetLinkIssued
+         * @description ``token`` and ``link`` come back once, for a copied link only; ``link`` is
+         *     empty when VIGIL_FRONTEND_URL isn't set and the console builds it.
+         */
+        ResetLinkIssued: {
+            /** Link */
+            link?: string | null;
+            reset_link: components["schemas"]["ResetLinkEntry"];
+            /** Token */
+            token?: string | null;
+            /**
+             * Tokens Revoked
+             * @default 0
+             */
+            tokens_revoked: number;
+        };
+        /**
+         * ResetLinkRequest
+         * @description Send the person a reset link, or copy one to hand over. A copied link
+         *     needs how their identity was confirmed.
+         */
+        ResetLinkRequest: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "email" | "copy";
+            /** Identity Confirmed By */
+            identity_confirmed_by?: ("in_person" | "video_call" | "phone_call_back" | "other_verified_channel") | null;
+            /**
+             * Suspected Compromise
+             * @default false
+             */
+            suspected_compromise: boolean;
+        };
+        /**
+         * ResetLinkState
+         * @description The person's open reset link, if any, and what Email needs first.
+         */
+        ResetLinkState: {
+            /** Email Missing */
+            email_missing: string[];
+            reset_link?: components["schemas"]["ResetLinkEntry"] | null;
         };
         /**
          * ResolutionStepAdd
@@ -14147,6 +14286,7 @@ export interface components {
         /**
          * UnlockRequest
          * @description How the manager confirmed the person is who they say. Kept in the trail.
+         *     ``suspected_compromise`` also revokes the person's API tokens.
          */
         UnlockRequest: {
             /**
@@ -14154,6 +14294,11 @@ export interface components {
              * @enum {string}
              */
             identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
+            /**
+             * Suspected Compromise
+             * @default false
+             */
+            suspected_compromise: boolean;
         };
         /**
          * UpdateConversationRequest
@@ -27244,7 +27389,147 @@ export interface operations {
             };
         };
     };
+    post_api_users_user_id_mfa_reset: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MfaResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaResetResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_users_user_id_reset-link": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetLinkState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_reset-link": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetLinkIssued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_users_user_id_reset-link": {
         parameters: {
             query?: never;
             header?: {

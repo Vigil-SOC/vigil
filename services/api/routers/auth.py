@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
@@ -68,13 +68,7 @@ from core.auth.identity import (
     matching_accounts,
 )
 from core.auth.mcp_credential_service import looks_like_api_token
-from core.auth.password_reset import (
-    decode_reset_token,
-    default_base_url,
-    generate_reset_token,
-    is_current,
-    reset_link,
-)
+from core.auth.password_reset import default_base_url, reset_link
 from core.auth.password_validator import (
     USERS_LINK,
     PasswordPolicyError,
@@ -367,6 +361,10 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_history = previous[:keep]
     user.password_hash = new_hash
     user.password_changed_at = utcnow()
+    # A new password closes every reset link still open (a confirm's own is used).
+    invites.revoke_resets(
+        object_session(user), user.principal_id, user.principal_id, "password_changed"
+    )
 
 
 def _min_age_refusal(user: User) -> Optional[JSONResponse]:
@@ -614,14 +612,14 @@ def _end_others_after_change(
         )
 
 
-def _tell_person(session: Session, user: User, title: str, message: str) -> None:
+def _tell_person(
+    session: Session, user: User, title: str, message: str, kind: str = "mfa_change"
+) -> None:
     """Tell the person once the change commits. Never a code: notices are emailed."""
     principal = user.principal_id
 
     def send() -> None:
-        notify(
-            principal, "mfa_change", title, message, link="/settings", priority="high"
-        )
+        notify(principal, kind, title, message, link="/settings", priority="high")
 
     when_committed(session, send)
 
@@ -997,7 +995,9 @@ def login(
                     "detail": {
                         "code": PASSWORD_CHANGE_REQUIRED,
                         "message": f"{exc}. Choose a new password to sign in.",
-                        "reset_token": generate_reset_token(user, forced=True),
+                        "reset_token": invites.issue_reset(
+                            session, user, invites.SIGNIN, user.principal_id
+                        )[1],
                     }
                 },
             )
@@ -1915,6 +1915,10 @@ def _apply_profile_update(
         changed.append("email")
         user.email = email
         user.is_verified = False
+        # A link mailed to the old address must not outlive it.
+        invites.revoke_resets(
+            session, user.principal_id, user.principal_id, "email_changed"
+        )
 
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits.
@@ -2655,7 +2659,7 @@ def password_reset_request(
     email maps to an account — otherwise the response shape leaks which
     emails are registered.
 
-    The actual email (with the signed reset token) is sent asynchronously
+    The actual email (with a one-hour, single-use link) is sent asynchronously
     via the configured email backend. The default ConsoleBackend sends nothing;
     with DEV_MODE on it logs the link.
     """
@@ -2666,7 +2670,7 @@ def password_reset_request(
     if sso.required():
         logger.info("Password reset refused: single sign-on is required")
     elif user and user.is_active and not _is_service_account(user):
-        token = generate_reset_token(user)
+        _, token = invites.issue_reset(session, user, invites.SELF, user.principal_id)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
         body_text = (
@@ -2677,7 +2681,11 @@ def password_reset_request(
             f"{link}\n\n"
             "If you did not request this reset, you can ignore this email."
         )
-        send_email(to=user.email, subject=subject, body=body_text)
+        # Once the link's row has committed: mail never carries a link that isn't.
+        to = user.email
+        when_committed(
+            session, lambda: send_email(to=to, subject=subject, body=body_text)
+        )
         logger.info("Password reset requested for %s", user.user_id)
     else:
         # Unknown address, inactive user or service account — log for ops visibility but
@@ -2707,34 +2715,38 @@ def _reset_request_message(settings) -> str:
 
 @router.post("/password-reset/confirm")
 @limiter.limit("5/hour", key_func=reset_confirm_rate_key)
-async def password_reset_confirm(
+def password_reset_confirm(
     request: Request,
     body: PasswordResetConfirm,
     session: UnitOfWorkSession,
 ):
     """
-    Complete a password reset. Validates the signed token and that the
-    password hasn't changed since it was issued, enforces the password
-    strength policy + reuse check, rotates the hash (which voids this and
-    every other outstanding reset link), and revokes every outstanding
-    token so any existing sessions die. A rejected password leaves the
-    token usable.
+    Complete a password reset. The link's row is locked, so two confirms of one
+    link serialize and the second finds it used. Enforces the password strength
+    policy and reuse check, uses the link up, closes every other open one, and
+    ends the account's sign-ins. A rejected password leaves the link usable.
     """
     # A link issued before single sign-on was required is not honoured now.
-    if await asyncio.to_thread(sso.required):
+    if sso.required():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
         )
-    claim = decode_reset_token(body.token)
-    if not claim:
-        raise HTTPException(
+    row = invites.find(session, body.token, lock=True, kind=invites.RESET)
+    if not invites.usable(row):
+        if row is not None:
+            invites.note_expired(session, row)
+        # Returned, not raised, so the expiry's trail entry stays.
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_INVALID_RESET_TOKEN,
+            content={"detail": _INVALID_RESET_TOKEN},
         )
 
-    # Locked so two confirms of one link serialize: the second reads the
-    # password_changed_at the first wrote, and fails is_current.
-    user = await asyncio.to_thread(_get_user, session, claim.user_id, True)
+    user = (
+        session.query(User)
+        .filter(User.principal_id == row.principal_id)
+        .with_for_update()
+        .first()
+    )
     if user is not None and _is_service_account(user):
         logger.warning("Refused password reset for service account %s", user.username)
         raise HTTPException(
@@ -2746,23 +2758,16 @@ async def password_reset_confirm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account no longer eligible for reset",
         )
-    if not is_current(claim, user):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=_INVALID_RESET_TOKEN,
-        )
 
     # The minimum age limits a voluntary change only: not the reset sign-in
-    # forced, nor one that unlocks a locked account.
-    if not claim.forced and not _account_is_locked(user):
+    # forced or an administrator issued, nor one that unlocks a locked account.
+    if not invites.forced(row) and not _account_is_locked(user):
         if refused := _min_age_refusal(user):
             return refused
 
     try:
-        await asyncio.to_thread(
-            validate_password_strength,
-            body.new_password,
-            user_inputs=[user.username, user.email],
+        validate_password_strength(
+            body.new_password, user_inputs=[user.username, user.email]
         )
     except PasswordPolicyError as exc:
         raise HTTPException(
@@ -2770,34 +2775,31 @@ async def password_reset_confirm(
             detail=exc.as_detail(),
         )
 
-    try:
-        await asyncio.to_thread(_apply_new_password, user, body.new_password)
-        # Clear any active lockout so the user can immediately log in.
-        clear_lock(user)
-        # The reset token's holder acted; they have no session.
-        await asyncio.to_thread(
-            trail_events.record,
-            session,
-            "auth.password_reset",
-            {"source_ip": client_host(request)},
-            actor=user.principal_id,
-            principal=user.principal_id,
-        )
-
-        await asyncio.to_thread(
-            sign_ins.end_all_for_user, user.user_id, sign_ins.ACCOUNT_CHANGED, session
-        )
-
-        logger.info("Password reset completed for user: %s", user.username)
-        return {"message": "Password reset successfully"}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Password reset error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset password",
-        )
+    row.used_at = utcnow()
+    _apply_new_password(user, body.new_password)
+    # Clear any active lockout so the user can immediately log in.
+    clear_lock(user)
+    # The link's holder acted; they have no session.
+    trail_events.record(
+        session,
+        "auth.password_reset",
+        {"source_ip": client_host(request)},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        link_id=row.link_id,
+        channel=row.channel,
+    )
+    sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, session)
+    _tell_person(
+        session,
+        user,
+        "Your password was reset",
+        "Your password was reset through a reset link and your sign-ins ended. "
+        "If this wasn't you, tell an admin now.",
+        kind="password_reset",
+    )
+    logger.info("Password reset completed for user: %s", user.username)
+    return {"message": "Password reset successfully"}
 
 
 class InviteCheck(BaseModel):

@@ -6,7 +6,7 @@ import AuthLayout from './AuthLayout'
 import { requestErrorMessage } from './requestErrorMessage'
 
 // Landing page for the emailed /reset-password?token=… link. Public: the
-// signed token is the credential. AuthProvider's /auth/me GET on mount seeds
+// link's single-use token is the credential. AuthProvider's /auth/me GET on mount seeds
 // the csrf_token cookie the confirm POST needs in a fresh browser.
 export default function ResetPasswordScreen() {
   const navigate = useNavigate()

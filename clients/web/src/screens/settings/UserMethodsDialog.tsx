@@ -4,17 +4,27 @@ import { mfaApi } from '../../services/api'
 import { Icon } from '../../shared/icons'
 import MfaMethodsList, { type MfaMethod } from '../../shared/MfaMethodsList'
 import { Popup } from '../../shared/ui'
+import { MfaResetDialog } from './RecoveryDialogs'
 
-/** Someone else's sign-in methods, read-only, for a holder of users.write over the account. */
+/** Someone else's sign-in methods, for a holder of users.write over the account, who may reset them. */
 export default function UserMethodsDialog({
   user,
+  notify,
+  canReset,
   onClose,
+  onReset,
+  onResetPassword,
 }: {
   user: { user_id: string; username: string }
+  notify: (kind: 'ok' | 'err', msg: string) => void
+  canReset: boolean
   onClose: () => void
+  onReset?: () => void
+  onResetPassword?: () => void
 }) {
   const [rows, setRows] = useState<MfaMethod[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [resetting, setResetting] = useState(false)
 
   useEffect(() => {
     mfaApi
@@ -22,6 +32,10 @@ export default function UserMethodsDialog({
       .then((res) => setRows(res.data))
       .catch((err) => setError(requestErrorMessage(err, "Couldn't load their sign-in methods.")))
   }, [user.user_id])
+
+  if (resetting) {
+    return <MfaResetDialog user={user} notify={notify} onClose={onClose} onDone={onReset} />
+  }
 
   return (
     <Popup open onClose={onClose} title={`Sign-in methods · ${user.username}`} width={520}>
@@ -32,7 +46,17 @@ export default function UserMethodsDialog({
           </div>
         )}
         {rows === null && !error ? <div className="text-sm text-tx-3 py-6 text-center">Loading…</div> : rows && <MfaMethodsList methods={rows} />}
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2.5 flex-wrap">
+          {canReset && onResetPassword && (
+            <button className="btn ghost" onClick={onResetPassword}>
+              <Icon name="key" /> Reset password
+            </button>
+          )}
+          {canReset && !!rows?.length && (
+            <button className="btn danger" onClick={() => setResetting(true)}>
+              Reset two-step sign-in
+            </button>
+          )}
           <button className="btn ghost" onClick={onClose}>
             Close
           </button>

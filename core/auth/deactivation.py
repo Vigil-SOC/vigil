@@ -14,7 +14,7 @@ from urllib.parse import quote
 from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session
 
-from core.auth import mcp_credential_service, sign_ins, trail_events
+from core.auth import invites, mcp_credential_service, sign_ins, trail_events
 from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
@@ -78,6 +78,8 @@ def deactivate_account(
                     credential_id=credential.credential_id,
                 )
     sign_ins.end_all_for_user(user.user_id, sign_ins.DEACTIVATED, session=session)
+    if record_trail:  # else the caller revokes its reset links and records them
+        invites.revoke_resets(session, user.principal_id, actor, "deactivated")
     session.flush()
     if not by_person:
         _tell_managers_of_work(session, user)
