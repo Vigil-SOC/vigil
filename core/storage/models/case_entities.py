@@ -868,7 +868,7 @@ class CaseNotification(Base):
     # Notification details
     notification_type: Mapped[str] = mapped_column(
         String(50), nullable=False
-    )  # case_assigned, comment_mention, sla_warning, escalation, etc.
+    )  # comment_mention, new_comment, intake_surge, etc.
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
 
