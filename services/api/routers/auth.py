@@ -899,7 +899,9 @@ def login(
     auth_method = "mfa" if user.mfa_enabled and not app_not_counted else "password"
     if step_down:
         auth_method = (
-            sign_ins.MFA_STEP_DOWN if step_down == "app" else sign_ins.RECOVERY_STEP_DOWN
+            sign_ins.MFA_STEP_DOWN
+            if step_down == "app"
+            else sign_ins.RECOVERY_STEP_DOWN
         )
     sign_ins.start(
         session,
@@ -1708,7 +1710,8 @@ def verify_mfa(
 
 def _recovery_window(request: Request, session: Session) -> bool:
     """Whether this is a key-only person's recovery sign-in, still inside its
-    privileged window and with keys still unavailable: the sign-in stands in for the code."""
+    privileged window and with keys still unavailable: the sign-in stands in for the code.
+    """
     row = session.get(SignIn, _session_sid(request) or "")
     return bool(
         row
