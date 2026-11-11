@@ -4529,6 +4529,16 @@
       overflow-wrap: anywhere; /* a long email breaks anywhere, so it can't widen the column */
    }
 
+   /* The invite's address and teams share the main column. Once the card is narrower
+      than that column plus the sticky actions, those actions cover the line, so it
+      wraps in the space to their left. */
+   @container main (max-width: 420px) {
+      .invite-who {
+         max-width: 8rem;
+         overflow-wrap: break-word;
+      }
+   }
+
    .cell-clamp {
       display: -webkit-box;
       -webkit-box-orient: vertical;
