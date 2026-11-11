@@ -6116,6 +6116,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/session-policy/breached-list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description The shipped list's date and size, what has been imported, and whether it is stale.
+         */
+        get: operations["get_api_session-policy_breached-list"];
+        put?: never;
+        /**
+         * Import List
+         * @description Add the entries of a plain-text file, one per line, to the breached list.
+         *
+         *     Entries under 12 characters, email-shaped ones and blanks are dropped; the
+         *     rest are lowercased and added, never removed. Every accepted import counts as
+         *     a refresh, even one that adds nothing. The trail records the counts and the
+         *     file's SHA-256, never an entry. What a file may be used for is the operator's
+         *     licence to read, not Vigil's.
+         */
+        post: operations["post_api_session-policy_breached-list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills": {
         parameters: {
             query?: never;
@@ -8997,6 +9027,11 @@ export interface components {
             /** Ruled Out Events */
             ruled_out_events?: string | null;
         };
+        /** Body_import_list_api_session_policy_breached_list_post */
+        Body_import_list_api_session_policy_breached_list_post: {
+            /** File */
+            file: string;
+        };
         /** Body_ingest_from_string_api_ingest_ingest_string_post */
         Body_ingest_from_string_api_ingest_ingest_string_post: {
             /** Data */
@@ -11139,6 +11174,21 @@ export interface components {
             /** Verdicts Written */
             verdicts_written: number;
         };
+        /** ImportResult */
+        ImportResult: {
+            /** Added */
+            added: number;
+            /** Already Listed */
+            already_listed: number;
+            /** Read */
+            read: number;
+            /** Refreshed At */
+            refreshed_at?: string | null;
+            /** Sha256 */
+            sha256: string;
+            /** Skipped */
+            skipped: number;
+        };
         /**
          * IngestionJobStatus
          * @description Snapshot of a background ingestion job.
@@ -11528,6 +11578,23 @@ export interface components {
             is_default?: boolean | null;
             /** Name */
             name?: string | null;
+        };
+        /** ListStatus */
+        ListStatus: {
+            /** Imported Count */
+            imported_count: number;
+            /** Last Import At */
+            last_import_at?: string | null;
+            /** Last Import Sha256 */
+            last_import_sha256?: string | null;
+            /** Refreshed At */
+            refreshed_at?: string | null;
+            /** Shipped Count */
+            shipped_count: number;
+            /** Shipped Date */
+            shipped_date?: string | null;
+            /** Stale */
+            stale: boolean;
         };
         /**
          * LlmPathHealth
@@ -24842,6 +24909,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    "get_api_session-policy_breached-list": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_session-policy_breached-list": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_list_api_session_policy_breached_list_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

@@ -16,6 +16,7 @@ from core.storage.models.ai import (
     LLMProviderConfig,
 )
 from core.storage.models.auth import (
+    BreachedPassword,
     McpCredential,
     Principal,
     Role,
@@ -154,6 +155,7 @@ __all__ = [
     "RUN_LIVE_STATE",
     "LLMInteractionLog",
     "LLMProviderConfig",
+    "BreachedPassword",
     "McpCredential",
     "Principal",
     "SiemSearch",

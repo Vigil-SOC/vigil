@@ -4,6 +4,7 @@ import { errorText } from '../../shared/errorText'
 import { Icon } from '../../shared/icons'
 import { utcDayClock } from '../../shared/utc'
 import { ConfirmDialog, NumberInput, Select, SettingsCard, Toggle } from '../../shared/ui'
+import BreachedListCard from './BreachedListCard'
 import type { SectionProps } from './types'
 
 type Rules = SessionPolicyBody['password_character_rules']
@@ -335,6 +336,7 @@ export default function SessionsSection({ notify }: SectionProps) {
     </div>
   )
   return (
+    <>
     <SettingsCard
       title="Sign-in limits, MFA, lockout and password rules"
       desc="How long a sign-in lasts, whose sign-in needs MFA, when failed sign-ins lock an account, when an unused one is deactivated, and what a new password must be. A saved change applies to every open sign-in at its next request."
@@ -421,5 +423,7 @@ export default function SessionsSection({ notify }: SectionProps) {
         }
       />
     </SettingsCard>
+    <BreachedListCard notify={notify} />
+    </>
   )
 }
