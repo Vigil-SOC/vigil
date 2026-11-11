@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { basePath } from '../config/basePath'
 import { useAuth } from '../contexts/AuthContext'
 import { requestErrorMessage } from '../screens/login/requestErrorMessage'
 import { confirmApi, mfaApi } from '../services/api'
@@ -7,6 +9,7 @@ import { CONFIRMATION_REQUIRED, registerStepUp, type StepUpDetail } from '../ser
 import { Icon } from '../shared/icons'
 import { Field, PasswordInput, Popup } from '../shared/ui'
 import TwoStepDialog from './TwoStepDialog'
+import { useToast } from './toast'
 import { KEY_AFTER_CONTINUE, KeyWaiting } from './SecurityKeyParts'
 
 type Pending = { detail: StepUpDetail; resolve: () => void; reject: (reason?: unknown) => void }
@@ -44,7 +47,27 @@ export default function ConfirmItHost() {
     else entry?.reject(new Error('cancelled'))
   }
 
+  // Back from confirming at the provider: say how it went, and drop the marker from the address.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { notify } = useToast()
+  const params = new URLSearchParams(location.search)
+  const ssoOutcome = params.get(SSO_OUTCOME)
+  // once per arrival, though a dev render runs the effect twice
+  const told = useRef<string | null>(null)
+  useEffect(() => {
+    if (!ssoOutcome || told.current === location.key) return
+    told.current = location.key
+    if (ssoOutcome === 'ok') notify('ok', "Confirmed. Make your change again; Vigil won't ask for a while.")
+    else notify('err', "Vigil couldn't confirm it's you at your SSO provider. Try again, signing in as yourself.")
+    params.delete(SSO_OUTCOME)
+    const rest = params.toString()
+    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '', hash: location.hash }, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ssoOutcome])
+
   if (!pending) return null
+  if (pending.detail.variant === 'sso') return <ConfirmAtProvider detail={pending.detail} onCancel={() => finish(false)} />
   return pending.detail.code === CONFIRMATION_REQUIRED ? (
     <ConfirmIt detail={pending.detail} mfa={!!user?.mfa_enabled} onDone={finish} />
   ) : (
@@ -54,6 +77,39 @@ export default function ConfirmItHost() {
       note={`Two-step sign-in is needed to ${pending.detail.action}.`}
       onClose={() => finish(mfaOn.current)}
     />
+  )
+}
+
+// The callback's query mark on the way back from the provider.
+const SSO_OUTCOME = 'sso_confirm'
+
+/** No password and no Vigil MFA: confirm by signing in again at the provider, then come back here (#4285). */
+function ConfirmAtProvider({ detail, onCancel }: { detail: StepUpDetail; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const go = () => {
+    setBusy(true)
+    // a plain navigation: the server answers with the provider's redirect, and the callback returns here
+    const back = window.location.pathname + window.location.search
+    window.location.assign(`${basePath}/api/auth/sso/start?confirm=${encodeURIComponent(back)}`)
+  }
+  return (
+    <Popup open onClose={() => !busy && onCancel()} title={`Confirm it's you to ${detail.action}`} width={480}>
+      <div className="flex flex-col gap-3.5">
+        <p className="m-0 text-sm text-tx-2 leading-relaxed">
+          You haven't confirmed in the last {detail.window_minutes ?? 10} minutes. You sign in through SSO, so
+          you confirm by signing in there again. You'll come back to this page; then make the change again.
+        </p>
+        {/* wraps: a provider's host can be long */}
+        <div className="flex flex-wrap justify-end gap-2.5 mt-1">
+          <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" disabled={busy} autoFocus onClick={go}>
+            {busy ? 'Opening…' : `Confirm at ${detail.provider || 'your SSO provider'}`}
+          </button>
+        </div>
+      </div>
+    </Popup>
   )
 }
 

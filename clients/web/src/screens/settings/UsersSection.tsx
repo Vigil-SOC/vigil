@@ -361,6 +361,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
                 <th className="col-low">Full Name</th>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Signs in with</th>
                 <th>Status</th>
                 <th className="col-low">MFA</th>
                 <th className="col-low">Last Login</th>
@@ -370,7 +371,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
             <tbody>
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
+                  <td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
                     {search.trim() || statusFilter !== 'current' ? 'No accounts match.' : 'No users found.'}
                   </td>
                 </tr>
@@ -396,6 +397,14 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     </div>
                   </td>
                   <td>
+                    {/* stacked, as in Role: side by side the table outgrows the Settings page */}
+                    <div className="flex flex-col items-start gap-1">
+                      {u.has_sso && <span className="chip sel">SSO</span>}
+                      {u.has_password && <span className="chip">Password</span>}
+                      {!u.has_sso && !u.has_password && <span className="muted">—</span>}
+                    </div>
+                  </td>
+                  <td>
                     <span className={`state-pill ${STATUS_TONE[u.status]}`}>
                       <span className="state-dot" aria-hidden="true" />
                       {STATUS_LABEL[u.status]}
@@ -412,9 +421,14 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     )}
                   </td>
                   <td className="col-low">
-                    <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>
-                      {u.mfa_enabled ? 'Enabled' : 'Disabled'}
-                    </span>
+                    {/* the provider carries the second step for an account that signs in only there */}
+                    {!u.mfa_enabled && u.has_sso && !u.has_password ? (
+                      <span className="status dropped" title="Two-step sign-in is up to the SSO provider">At provider</span>
+                    ) : (
+                      <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`}>
+                        {u.mfa_enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    )}
                   </td>
                   <td className="muted col-low">
                     {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
