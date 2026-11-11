@@ -1107,7 +1107,7 @@ def _restore_values(
     ended: int,
     stopped: int,
     apps_cleared: int,
-    passwords_to_reset: int,
+    resets_needed: int,
 ) -> dict:
     return {
         "snapshot_id": snapshot_id,
@@ -1117,7 +1117,7 @@ def _restore_values(
         "sign_ins_ended": ended,
         "runs_stopped": stopped,
         "apps_cleared": apps_cleared,
-        "passwords_to_reset": passwords_to_reset,
+        "passwords_to_reset": resets_needed,
     }
 
 
@@ -1129,7 +1129,7 @@ def _record_restore(
     ended: int,
     stopped: int,
     apps_cleared: int,
-    passwords_to_reset: int,
+    resets_needed: int,
     actor: str,
     abandoned: dict | None,
     failure: BackupError | None,
@@ -1150,7 +1150,7 @@ def _record_restore(
         ended,
         stopped,
         apps_cleared,
-        passwords_to_reset,
+        resets_needed,
     )
     with get_db_manager().session_scope() as session:
         if _trail_ready(session):
@@ -1192,7 +1192,7 @@ def _settle_restored(
     created_at: str = manifest["created_at"]
     failure: BackupError | None = None
     expired = 0
-    ended = stopped = apps_cleared = passwords_to_reset = 0
+    ended = stopped = apps_cleared = resets_needed = 0
     rotated = False
     new_secret = False
     from_env = False
@@ -1209,7 +1209,7 @@ def _settle_restored(
         if from_env:
             old_key = env_key
         new_key = secrets.token_urlsafe(48)
-        expired, new_secret, apps_cleared, passwords_to_reset = _reencrypt_and_expire(
+        expired, new_secret, apps_cleared, resets_needed = _reencrypt_and_expire(
             old_key, new_key, snapshot_id, created_at, actor, paired_key, live_ring
         )
         # With no key anywhere, a deployment outside this install sets it. A
@@ -1234,7 +1234,7 @@ def _settle_restored(
     # failed ending is still reported and recorded.
     try:
         ended, stopped = _end_restored_sessions(
-            created_at, reapplied_at, apps_cleared, passwords_to_reset
+            created_at, reapplied_at, apps_cleared, resets_needed
         )
     except Exception as exc:
         ending = BackupError(f"could not end the restored sign-ins: {exc}")
@@ -1248,7 +1248,7 @@ def _settle_restored(
             ended,
             stopped,
             apps_cleared,
-            passwords_to_reset,
+            resets_needed,
             actor,
             abandoned,
             failure,
@@ -1274,8 +1274,8 @@ def _settle_restored(
         lines.insert(
             4, f"people who must set up their authenticator app: {apps_cleared}"
         )
-    if passwords_to_reset:
-        lines.insert(4, f"people who must reset their password: {passwords_to_reset}")
+    if resets_needed:
+        lines.insert(4, f"people who must reset their password: {resets_needed}")
     if from_env and new_secret:
         lines.append(
             "the new JWT_SECRET_KEY is in "
@@ -1290,7 +1290,7 @@ def _end_restored_sessions(
     created_at: str,
     reapplied_at: datetime,
     apps_cleared: int = 0,
-    passwords_to_reset: int = 0,
+    resets_needed: int = 0,
 ) -> tuple[int, int]:
     """End every open sign-in, stop every in-flight run, open the dormancy grace
     and tell the holders of ``sessions.manage`` once; returns (sign-ins ended,
@@ -1319,7 +1319,7 @@ def _end_restored_sessions(
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
     _tell_session_holders(
-        created_at, ended + erased, len(stopped), apps_cleared, passwords_to_reset
+        created_at, ended + erased, len(stopped), apps_cleared, resets_needed
     )
     return ended + erased, len(stopped)
 
@@ -1329,7 +1329,7 @@ def _tell_session_holders(
     ended: int,
     stopped: int,
     apps_cleared: int = 0,
-    passwords_to_reset: int = 0,
+    resets_needed: int = 0,
 ) -> None:
     """One notice to each active person who holds ``sessions.manage``. No names,
     no tokens."""
@@ -1352,9 +1352,9 @@ def _tell_session_holders(
             f"{'person' if apps_cleared == 1 else 'people'} must set up the "
             "authenticator app again."
         )
-    if passwords_to_reset:
+    if resets_needed:
         message += (
-            f" {passwords_to_reset} {'person' if passwords_to_reset == 1 else 'people'}"
+            f" {resets_needed} {'person' if resets_needed == 1 else 'people'}"
             " must reset the password, because the key that protected it is gone; "
             "their recovery codes are removed until they make new ones."
         )
@@ -1437,7 +1437,7 @@ def _reencrypt_and_expire(
     reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
     decided_at = utcnow()
     legacy = False
-    apps_cleared = passwords_to_reset = 0
+    apps_cleared = resets_needed = 0
     try:
         with get_db_manager().session_scope() as session:
             if old_key and _ring_present(session):
@@ -1454,7 +1454,7 @@ def _reencrypt_and_expire(
                             operator=actor,
                         )
                 apps_cleared = key_ring.clear_unreadable_apps(session, old_key)
-                passwords_to_reset = key_ring.unreadable_passwords(session)
+                resets_needed = key_ring.people_with_unreadable_hash(session)
             elif old_key:
                 legacy = True
                 _rewrap_mfa(session, old_key, new_key)
@@ -1468,7 +1468,7 @@ def _reencrypt_and_expire(
                 row.rejection_reason = reason
                 row.approved_by = actor
                 row.approved_at = decided_at
-            return len(pending), legacy, apps_cleared, passwords_to_reset
+            return len(pending), legacy, apps_cleared, resets_needed
     except BackupError:
         raise
     except Exception as exc:

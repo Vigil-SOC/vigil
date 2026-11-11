@@ -21,8 +21,8 @@ from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
     key_ring,
-    password_hash,
     mfa_methods,
+    password_hash,
     principals,
     security_keys,
     session_policy,
@@ -2796,9 +2796,7 @@ async def password_reset_confirm(
         )
 
     try:
-        unread = await asyncio.to_thread(
-            _apply_new_password, user, body.new_password
-        )
+        unread = await asyncio.to_thread(_apply_new_password, user, body.new_password)
         # Clear any active lockout so the user can immediately log in.
         clear_lock(user)
         # The reset token's holder acted; they have no session.

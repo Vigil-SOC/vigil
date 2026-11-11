@@ -854,7 +854,7 @@ def clear_unreadable_apps(session, secret: Optional[str], *, everyone=False) -> 
     return before - _apps_on(session)
 
 
-def unreadable_passwords(session) -> int:
+def people_with_unreadable_hash(session) -> int:
     """How many people's password hash names a pepper version no live key holds,
     so they must reset it. Counted in the database from the version in the
     prefix, never from a hash. Service accounts are left out: their gateway
@@ -983,7 +983,7 @@ def emergency(purposes: list[str], operator: str) -> int:
         )
     stopped = _stop_runs(operator)
     with unit_of_work() as session:
-        reset = unreadable_passwords(session) if "pepper" in purposes else 0
+        reset = people_with_unreadable_hash(session) if "pepper" in purposes else 0
     with unit_of_work() as session:
         _trail(
             session,
