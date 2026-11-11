@@ -234,7 +234,8 @@ def _days(n: int) -> str:
 def expiry_warning(user: User) -> list[dict[str, str]]:
     """The bell's condition for a person whose password expires within a week."""
     due = expires_at(user, session_policy.policy().password_max_age_days)
-    if due is None or user.service_account is True:
+    # No password (SSO-only person; stored as "") means nothing to change
+    if due is None or user.service_account is True or not user.password_hash:
         return []
     left = math.ceil((due - utcnow()).total_seconds() / 86400)
     if left > WARN_DAYS:
@@ -262,8 +263,11 @@ def stale_service_accounts(user: User) -> list[dict[str, str]]:
             .filter(User.is_active.is_(True), User.service_account.is_(True))
             .all()
         )
+        # Token-only accounts have no password to rotate
         names = sorted(
-            a.username for a in accounts if expires_at(a, max_age) <= utcnow()
+            a.username
+            for a in accounts
+            if a.password_hash and expires_at(a, max_age) <= utcnow()
         )
     if not names:
         return []
