@@ -9,7 +9,9 @@ A PBKDF2 hash is stored encrypted under the key ring's ``pepper`` key (#4298):
 ``pepper-<version>$<Fernet token>``, the token wrapping the string above. A
 database copy without the ring can check no password. bcrypt entries stay bare.
 A ring that cannot be read raises ``KeyRingError`` (never a "no match"); a
-wrapped entry no key opens simply never matches.
+wrapped entry no key opens simply never matches. An entry naming a pepper version
+no live key holds (an emergency rotation, a restore under a new ring) is
+``unreadable``: the person must reset the password.
 """
 
 import base64
@@ -17,6 +19,7 @@ import hmac
 import os
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import bcrypt
 from cryptography.fernet import InvalidToken
@@ -65,6 +68,18 @@ def seal(plain: str, key: key_ring.Key | None = None) -> str:
 
 def is_plain_pbkdf2(entry: str) -> bool:
     return isinstance(entry, str) and entry.startswith(SCHEME + "$")
+
+
+def unreadable(entry: Optional[str]) -> bool:
+    """True for a wrapped entry whose pepper version no live key holds: it can
+    never match, and only a password reset replaces it. Not a wrong password."""
+    if not entry or not entry.startswith(_PEPPER_PREFIX):
+        return False
+    try:
+        version = int(entry.partition("$")[0][len(_PEPPER_PREFIX) :])
+    except ValueError:
+        return True
+    return key_ring.find(PEPPER, version) is None
 
 
 def _open(entry: str) -> str:
