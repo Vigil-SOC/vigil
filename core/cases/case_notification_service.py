@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 WATCHER_NOTIFICATION_TYPES = frozenset(
     {
         "new_comment",  # core/cases/case_collaboration_service.py
-        "sla_warning",  # notify_sla_warning, below
     }
 )
 
@@ -140,66 +139,6 @@ class CaseNotificationService:
                     "comment_author": comment_author,
                     "comment_content": comment_content,
                 },
-                session=session,
-            )
-
-            return True
-
-    def notify_sla_warning(
-        self,
-        case_id: str,
-        threshold_percent: int,
-        sla_type: str,
-        session: Optional[Session] = None,
-    ) -> bool:
-        """
-        Notify about approaching SLA deadline.
-
-        Args:
-            case_id: Case ID
-            threshold_percent: Percentage of SLA elapsed
-            sla_type: Type of SLA (response or resolution)
-            session: Database session (optional)
-
-        Returns:
-            True if successful
-        """
-        with unit_of_work(session) as session:
-            case = session.query(Case).filter(Case.case_id == case_id).first()
-            if not case:
-                return False
-
-            # Notify assignee if assigned
-            if case.assignee:
-                urgency = "urgent" if threshold_percent >= 90 else "high"
-
-                self.create_notification(
-                    user_id=case.assignee,
-                    notification_type="sla_warning",
-                    title=f"SLA Warning: {threshold_percent}% Elapsed",
-                    message=(
-                        f'Case "{case.title}" has reached {threshold_percent}% '
-                        f"of its {sla_type} SLA deadline"
-                    ),
-                    case_id=case_id,
-                    delivery_channel="ui",
-                    priority=urgency,
-                    metadata={
-                        "threshold_percent": threshold_percent,
-                        "sla_type": sla_type,
-                    },
-                    session=session,
-                )
-
-            # Also notify watchers
-            self.notify_watchers(
-                case_id=case_id,
-                notification_type="sla_warning",
-                title=f"SLA Warning: {threshold_percent}%",
-                message=(
-                    f'Case "{case.title}" has reached {threshold_percent}% '
-                    f"of its {sla_type} SLA deadline"
-                ),
                 session=session,
             )
 
