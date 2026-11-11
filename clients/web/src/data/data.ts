@@ -89,6 +89,8 @@ export interface CaseRow {
   ownerName: string
   /** The stored owner is not a current account. */
   ownerStale: boolean
+  /** The stored owner's state from the read; null when unassigned. */
+  ownerState?: 'current' | 'not_current' | null
   findings: number
   /** Read on the case page only; the queue reads 0. */
   alertsSinceLastRun: number

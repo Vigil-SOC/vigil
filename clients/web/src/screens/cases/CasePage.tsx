@@ -22,7 +22,8 @@ import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
-import type { CaseRow } from '../../data/data'
+import type { CaseRecord } from '../../data/data'
+import { OwnerFix, PersonPicker, isOwnerNotCurrent } from '../../shared/people'
 import type { ChatSeed } from '../../shared/types'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
@@ -1030,7 +1031,7 @@ export function CasePage({
   /** The tab and run to land on; an unknown tab lands on Summary, a run not on the case on All runs. */
   openTab?: string | null
   openRun?: string | null
-  c: CaseRow | null
+  c: CaseRecord | null
   created: string
   combinedState: string
   investigations: CaseInvestigationRef[]
@@ -1088,7 +1089,13 @@ export function CasePage({
   const [agreement, setAgreement] = useState<WorkflowAgreement[]>([])
   const [agreementKey, setAgreementKey] = useState(0)
   const [ceiling, setCeiling] = useState<Ceiling | null>(null)
-  const canReadAudit = useAuth().hasPermission('audit.read')
+  const { hasPermission } = useAuth()
+  const canReadAudit = hasPermission('audit.read')
+  const canAssign = hasPermission('cases.assign')
+  // Reopen's owner: the stored one unless changed here; sent only when changed.
+  const storedOwner = c?.stored.assignee ?? ''
+  const [reopenOwner, setReopenOwner] = useState<string | null>(null)
+  const [reopenStale, setReopenStale] = useState('') // the owner a Reopen was refused over
   const [needsItems, setNeedsItems] = useState<NeedsYouItem[]>([])
   const [needsCount, setNeedsCount] = useState(0)
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null)
@@ -1167,6 +1174,8 @@ export function CasePage({
     setAskSeed(null)
     setFocusEvidence(null)
     setNote('')
+    setReopenOwner(null)
+    setReopenStale('')
     setChip('all')
     setRunFilter(openRun ?? null)
     setEvidenceLimits({})
@@ -1503,12 +1512,19 @@ export function CasePage({
   const reopen = async () => {
     setBusy(true)
     setNote('')
+    setReopenStale('')
+    const owner = reopenOwner ?? storedOwner
     try {
-      await casesApi.update(id, { status: 'open' })
+      await casesApi.update(id, {
+        status: 'open',
+        ...(owner !== storedOwner ? { assignee: owner } : {}),
+      })
       setAssessed(null)
+      setReopenOwner(null)
       onChanged()
     } catch (e) {
-      setNote(errorDetail(e, 'Couldn’t reopen the case'))
+      if (isOwnerNotCurrent(e)) setReopenStale(storedOwner)
+      else setNote(errorDetail(e, 'Couldn’t reopen the case'))
     } finally {
       setBusy(false)
     }
@@ -1734,10 +1750,20 @@ export function CasePage({
                       )}
                       {assessed && <span className="case-assess-done">{[assessed, agreementText(workflowAgreement)?.text].filter(Boolean).join(' · ')}</span>}
                       {canWrite && (
-                        <div className="case-actions">
+                        <div className="case-actions case-reopen">
+                          <span className="case-reopen-owner">
+                            <PersonPicker
+                              label="Owner when reopened"
+                              value={reopenOwner ?? storedOwner}
+                              state={reopenOwner === null || reopenOwner === storedOwner ? c?.ownerState : undefined}
+                              onSelect={setReopenOwner}
+                              disabled={!canAssign || busy}
+                            />
+                          </span>
                           <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
                         </div>
                       )}
+                      {reopenStale && <OwnerFix owner={reopenStale} canChange={canAssign} />}
                     </div>
                   )}
                 </section>

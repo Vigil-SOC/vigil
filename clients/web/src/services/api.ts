@@ -1916,6 +1916,11 @@ export const signInsApi = {
     } satisfies Schema<'EndSignInsRequest'>),
 }
 
+// Current people, for the owner and assignee pickers: a person sign-in with cases.assign or cases.write.
+export const peopleApi = {
+  list: () => api.get<Schema<'Person'>[]>('/users/people'),
+}
+
 // The session policy: how long a sign-in lasts. A save needs the version from the read.
 export type SessionPolicy = Schema<'PolicyOut'>
 export type SessionPolicyBody = Schema<'SessionPolicy'>

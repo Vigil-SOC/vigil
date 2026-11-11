@@ -13,7 +13,7 @@ from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from core.audit import retention
@@ -45,6 +45,7 @@ from core.auth.permissions import (
     STEP_UP,
     builtin_diff,
     deny_unless,
+    require_person_permission,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
 from core.platform.notices import notify
@@ -534,6 +535,45 @@ def list_users(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list users",
         )
+
+
+class Person(BaseModel):
+    """One current person, as a picker shows them."""
+
+    username: str
+    display_name: Optional[str] = None
+
+
+@router.get("/people", response_model=list[Person])
+def list_people(
+    session: UnitOfWorkSession,
+    _: Annotated[
+        User,
+        Depends(
+            require_person_permission(
+                "cases.assign", "cases.write", refuse_machine=True
+            )
+        ),
+    ],
+):
+    """Every current person, for the owner and assignee pickers.
+
+    Current is ``owner_states``'s test: active, not a service account, not
+    deleted. A person's own sign-in holding cases.assign or cases.write only.
+    """
+    rows = session.execute(
+        select(User.username, User.full_name)
+        .join(Principal, Principal.principal_id == User.principal_id)
+        .where(
+            User.is_active.is_(True),
+            User.service_account.is_not(True),
+            Principal.deleted_at.is_(None),
+        )
+        .order_by(
+            func.lower(func.coalesce(func.nullif(User.full_name, ""), User.username))
+        )
+    ).all()
+    return [Person(username=u, display_name=(n or "").strip() or None) for u, n in rows]
 
 
 @router.get("/{user_id}")
