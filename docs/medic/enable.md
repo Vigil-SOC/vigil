@@ -11,9 +11,9 @@ On Compose and Helm, Medic reads the backend only through its own read-only gate
 - a Viewer named `medic-` plus 12 random characters (`a-z0-9`), so the name can't be guessed;
 - a random 64-character password that only the gateway holds;
 - never locked out by failed logins. A lock would let anyone who learns the name blind Medic. Failed logins are still counted and logged.
-- The users API won't give it any role except Viewer. No API can make an account a service account.
+- The users API won't give it any role except Viewer, and no one can mint it a token. Other service accounts are made on Settings › System › Users, are token-only and have an accountable person; none of them is Medic's.
 
-The account is created by `python -m core.auth.service_account ensure <name>`. It runs in the backend's environment and reads the password from stdin. Running it again with the same password changes nothing. Running it with a new password rotates the password and clears any failed-login count. Any other service account is deactivated, so an old name can't keep working. The command refuses to convert an existing account that belongs to a person.
+The account is created by `python -m core.auth.service_account ensure <name>`. It runs in the backend's environment and reads the password from stdin. Running it again with the same password changes nothing. Running it with a new password rotates the password and clears any failed-login count. Any other active Medic service account is deleted (its principal is marked deleted and the audit trail records each one), so an old name can't keep working. The command never reactivates an account: if Medic's account was deactivated, say during an incident, it refuses with exit code 77 (`<name> is deactivated; reactivate it on Team & access`) and changes nothing, and it never acts on a deleted one. It refuses to convert an existing account that belongs to a person.
 
 ## Docker Compose
 

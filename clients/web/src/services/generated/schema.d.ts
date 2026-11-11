@@ -6619,7 +6619,8 @@ export interface paths {
         put?: never;
         /**
          * Mint
-         * @description Issue a token for yourself. It is in this response and nowhere else.
+         * @description Issue a token for yourself, or for a service account if you hold users.write.
+         *     It is in this response and nowhere else.
          */
         post: operations["post_api_tokens"];
         delete?: never;
@@ -6731,6 +6732,7 @@ export interface paths {
          *         limit: Maximum number of users to return
          *         role_id: Filter by role ID
          *         is_active: Filter by active status
+         *         service_account: Only service accounts (true) or only people (false)
          *         search: Search in username, email, or full name
          *         account_status: "current" (not deleted or erased), "all", or one status
          *         current_user: Current authenticated user
@@ -6849,6 +6851,49 @@ export interface paths {
          * @description Delete a custom role nobody holds.
          */
         delete: operations["delete_api_users_roles_role_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/service-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Service Account
+         * @description Create a service account: no password, no MFA, signed in by token only.
+         *     users.write, a person's own act, and a role the caller covers; a role holding
+         *     audit.read needs audit.forward too. Tokens are minted on /api/tokens.
+         */
+        post: operations["post_api_users_service-accounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/service-accounts/{user_id}/accountable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reassign Service Account
+         * @description Name another person accountable for a service account. users.write over the
+         *     account, and a person's own act; recorded in the trail.
+         */
+        put: operations["put_api_users_service-accounts_user_id_accountable"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -10744,6 +10789,23 @@ export interface components {
             } | null;
         };
         /**
+         * CreateServiceAccountRequest
+         * @description Create a token-only account for an integration, with the person answerable for it.
+         */
+        CreateServiceAccountRequest: {
+            /** Accountable */
+            accountable: string;
+            /** Name */
+            name: string;
+            /** Purpose */
+            purpose: string;
+            /**
+             * Role Id
+             * @default role-viewer
+             */
+            role_id: string;
+        };
+        /**
          * CreateUserRequest
          * @description Create user request.
          */
@@ -11955,6 +12017,8 @@ export interface components {
             expires_in_days?: number | null;
             /** Label */
             label: string;
+            /** User Id */
+            user_id?: string | null;
         };
         /** ModelInfoResponse */
         ModelInfoResponse: {
@@ -12659,6 +12723,11 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /** ReassignRequest */
+        ReassignRequest: {
+            /** Accountable */
+            accountable: string;
         };
         /**
          * RecoveryCodesResponse
@@ -26332,6 +26401,7 @@ export interface operations {
                 limit?: number;
                 role_id?: string | null;
                 is_active?: boolean | null;
+                service_account?: boolean | null;
                 search?: string | null;
                 status?: "current" | "all" | "active" | "locked" | "deactivated" | "deleted" | "erased";
             };
@@ -26544,6 +26614,78 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_service-accounts": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateServiceAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_users_service-accounts_user_id_accountable": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReassignRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

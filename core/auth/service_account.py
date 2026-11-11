@@ -9,8 +9,9 @@ The password comes on stdin, never argv or env: ``docker exec`` and ``kubectl
 exec`` record the full command line. The account is a Viewer with
 ``service_account = true``, so failed logins never lock it (a lock would let
 anyone who learns the name blind Medic; see ``AuthService._record_failed_attempt``)
-and the users API won't give it another role. Other service accounts may hold
-any role; Medic's stays Viewer. To recover from a lockout on roles, see
+and the users API won't give it another role. Other service accounts, made through
+``POST /api/users/service-accounts``, may hold any role; Medic's stays Viewer and
+has no tokens. To recover from a lockout on roles, see
 ``core.auth.recover_admin``. The name is random so it can't be
 guessed; the password is the gateway's alone.
 
@@ -18,9 +19,13 @@ guessed; the password is the gateway's alone.
 (failure count and any lock cleared). Every run also puts back what a stolen
 gateway session could change through ``/api/auth/me``: the email (a reset
 address) and MFA (which would lock the gateway out). Any other active Medic
-service account is retired, so a re-minted name leaves no stale login behind. It refuses an
-existing account that is not a Viewer service account. Nothing it prints or logs
-holds the password.
+service account is retired, so a re-minted name leaves no stale login behind:
+its principal is marked deleted (as deleting it on Team & access does) and the
+trail gets a ``user.deleted`` entry for each. It refuses an existing account
+that is not a Viewer service account, one that was deleted, and one that is
+deactivated: it never reactivates, so a deactivation made in an incident stands
+until a person reactivates it on Team & access (exit 77, nothing changed).
+Nothing it prints or logs holds the password.
 
 Exit codes (sysexits, so a caller can tell them from ``docker compose exec``'s
 own failures): 0 done · 64 bad input · 70 database error · 77 refused · 75
@@ -39,8 +44,9 @@ from typing import Optional, TextIO
 from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
-from core.auth import key_ring, principals, sign_ins
+from core.auth import key_ring, principals, sign_ins, trail_events
 from core.auth.auth_service import AuthService
+from core.auth.deactivation import deactivate_account
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.storage.connection import get_db_manager
 from core.storage.models import Principal, Role, User
@@ -142,6 +148,12 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 raise ServiceAccountError(
                     f"{username} was deleted; enable with a new name"
                 )
+            # Whoever deactivated it (in an incident, say) reactivates it. Refused
+            # before anything changes, so a refused run leaves the account as it was.
+            if not user.is_active:
+                raise ServiceAccountError(
+                    f"{username} is deactivated; reactivate it on Team & access"
+                )
             if user.role_id != VIEWER_ROLE_ID:
                 raise ServiceAccountError(
                     f"{username} holds {user.role_id}; Medic's account is Viewer only"
@@ -155,7 +167,6 @@ def ensure(username: str, password: str) -> tuple[str, int]:
                 sign_ins.end_all_for_user(
                     user.user_id, sign_ins.ACCOUNT_CHANGED, session
                 )
-            user.is_active = True
             user.failed_login_count = 0
             user.locked_until = None
             if identifier_in_use(session, email, except_user_id=user.user_id):
@@ -174,9 +185,27 @@ def ensure(username: str, password: str) -> tuple[str, int]:
             User.username.like("medic-%"),
             User.username != username,
             User.is_active.is_(True),
+            User.principal_id.in_(
+                session.query(Principal.principal_id).filter(
+                    Principal.deleted_at.is_(None)
+                )
+            ),
         )
-        for other in others:
-            other.is_active = False
+        for other in others.all():
+            if not _USERNAME.fullmatch(other.username):
+                continue  # medic-<anything> is not Medic's: only its own pattern
+            # Deleted, as the users API deletes: the row and its trail stay.
+            principals.mark_deleted(session, other.principal_id)
+            deactivate_account(
+                session, other, actor=principals.SYSTEM_PRINCIPAL_ID, by_person=True
+            )
+            trail_events.record(
+                session,
+                "user.deleted",
+                actor=principals.SYSTEM_PRINCIPAL_ID,
+                principal=other.principal_id,
+                note="retired: Medic's service account was rotated to a new name",
+            )
             retired += 1
         return outcome, retired
 
