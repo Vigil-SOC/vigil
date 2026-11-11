@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
 
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
@@ -25,7 +24,7 @@ from core.response.ceiling import (
     CeilingRefusal,
     CeilingWriteError,
     _raises,
-    ceiling_view,
+    ceiling_read,
     loosens,
     own_tool_names,
     read_ceiling,
@@ -34,7 +33,6 @@ from core.response.ceiling import (
     update_ceiling,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.connection import get_db_session
 from core.storage.models import ToolEffectClass, User
 
 router = APIRouter()
@@ -76,45 +74,8 @@ class CeilingResponse(BaseModel):
     workflows: Dict[str, Dict[str, Any]] = {}
 
 
-def _labels(ids: set) -> Dict[str, str]:
-    """Principal id to its label; blank or erased labels are left out."""
-    if not ids:
-        return {}
-    with get_db_session() as session:
-        rows = session.execute(
-            text(
-                "SELECT principal_id, label FROM public.principals "
-                "WHERE principal_id = ANY(:ids)"
-            ),
-            {"ids": list(ids)},
-        ).all()
-    return {pid: label.strip() for pid, label in rows if label and label.strip()}
-
-
 def _view() -> CeilingResponse:
-    stored = read_ceiling()
-    view = ceiling_view(stored)
-    labels = _labels(
-        {
-            e.get("by")
-            for e in stored.workflows.values()
-            if e.get("by") not in (None, "system")
-        }
-    )
-    return CeilingResponse(
-        act_reversible=view.act_reversible,
-        act_irreversible=view.act_irreversible,
-        stopped=view.stopped,
-        read=view.read,
-        write=view.write,
-        propose=view.propose,
-        environment_locked=view.environment_locked,
-        four_eyes=view.four_eyes,
-        workflows={
-            wid: {**entry, "by_label": labels.get(entry.get("by"))}
-            for wid, entry in stored.workflows.items()
-        },
-    )
+    return CeilingResponse(**ceiling_read())
 
 
 def _http(exc: CeilingRefusal) -> HTTPException:
