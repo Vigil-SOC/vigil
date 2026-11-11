@@ -1,6 +1,6 @@
 {
   "name": "vigil",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Work your own Vigil SOC from Claude Code: read the queue and cases, start and steer investigations and hunts, see what waits on a person, and read the trail. Vigil's kernel does the work; the session starts, steers and reads it.",
   "author": {
     "name": "Vigil-SOC",
@@ -9,7 +9,13 @@
   "homepage": "https://vigilsoc.org",
   "repository": "https://github.com/Vigil-SOC/vigil",
   "license": "Apache-2.0",
-  "keywords": ["security", "soc", "mcp", "incident-response", "threat-hunting"],
+  "keywords": [
+    "security",
+    "soc",
+    "mcp",
+    "incident-response",
+    "threat-hunting"
+  ],
   "userConfig": {
     "vigil_url": {
       "type": "string",

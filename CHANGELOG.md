@@ -116,6 +116,50 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.1.0 (2026-11-11)
+
+## What's Changed
+* Helm: deploy the read-only shell sidecar with ingress from the backend only and no egress (#4200) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4213
+* Dormancy as policy: warn, then deactivate idle accounts (closes #4176) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4221
+* fix(#4196): grant mitre_analyst telemetry_search to validate drafted rules by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4197
+* Prove a saved rule on its SIEM's own events; promote only a copy shown to fire (#4212) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4214
+* Require MFA: forced setup at sign-in, bell warning and daily count (closes #4177) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4231
+* Investigate reads its case only through the shell; delete case_records and read_case_evidence (#4201) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4228
+* Name the rule fields no event read holds when a replay is unproven (#4157) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4215
+* Wazuh Sees names a field no archived event holds as Missing field (#4216, 1 of 2) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4217
+* Splunk Sees names a field no event of its source holds as Missing field (#4216, 2 of 2) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4222
+* Draft with Vigil: the model drafts a proposal from a Case and its own SIEM events (#4157) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4229
+* Password length, character rules and history in the session policy (part of #4175) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4209
+* Step-up: Confirm it's you before privileged changes (closes #4179) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4238
+* Remove the unit tests the repo doesn't keep (closes #4210) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4244
+* Count only a replay on the SIEM's own events as validated in metrics and coverage (#4212) by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4218
+* Prove an agent's saved rule on its SIEM's events before it can go live (#4212) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4230
+* Account lifecycle: deactivate, reactivate and restore as their own acts; erased accounts free their names; the guard counts who can sign in (#4225) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4243
+* API tokens on the HTTP API: judged alone, machine caller, fixed lifetimes, rotate, admin view by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4247
+* Settings › Sessions: controls for Require MFA, lockout and dormancy, with the loosening confirmation by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4254
+* Password length down to 12 with MFA, and maximum and minimum password age (part of #4175) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4245
+* Changing your own sign-in methods asks again, recovery removes every method, managers see a person's methods (#4233) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4255
+* Erasure blanks case assignments that name the erased assignee (GHSA-wwr4-84wc-rjgr) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4252
+* Agents read a case only through the shell: drop get_case from the agent catalogue (#4239) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4253
+* Security keys, the server: registration, listing, removal, and signing in with a key (#4234) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4261
+* Open the MCP surface and mint a first API token from a shell (#4250) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4256
+* Run lifecycle over /mcp: start, list, read and steer a run; reject as the caller (#4248) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4259
+* Security keys, the console: sign in with a key, manage keys, the unavailable explanation, and the docs by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4267
+* Record the previous and new holder on owner and task-assignee changes (#4264) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4268
+* Require phishing-resistant MFA: the policy setting, the app stops counting, and the key-only sign-in by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4270
+* Import a newer breached-password list offline, and warn when the list is stale by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4258
+* A restore ends every sign-in, stops every run, and holds dormancy for 7 days by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4272
+* A new sign-in that ends another under the sign-in limit tells the person, and two in an hour tell managers by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4273
+* Imports store the username when an imported assignee names one active person by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4274
+* Catalog and oversight reads over /mcp: workflows, operator agents, the ceiling, the trail (#4249) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4257
+* Open work needs a current owner: rewrite stored owners once, refuse stale open saves, owner_state on reads (#4263) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4269
+* Erasure records itself on the Compose deployment, and refuses when it can't by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4276
+* The Claude Code client: clients/claude-code with its MCP entry, SOC skills and marketplace file by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4277
+* Pick colleagues from a people list: owner and assignee pickers, with the fix offered where a save is refused (#4265) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4279
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.0.2...v1.1.0
+
 ## 1.0.2 (2026-11-10)
 
 ## What's Changed
