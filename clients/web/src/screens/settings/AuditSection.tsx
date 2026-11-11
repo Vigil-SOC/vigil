@@ -366,7 +366,7 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
 }
 
 const EMPTY_POLICY: AuditRetention = {
-  effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, erasures: [],
+  effective_days: null, pending_days: null, pending_on: null, unconfirmed: false, erasure_unconfirmed: false, blocked: null, erasures: [],
 }
 
 /** Period and erasure, in the same card as verify. Mutations need audit.manage; the unconfirmed line does not. */
@@ -491,6 +491,9 @@ function RetentionCard({ notify }: SectionProps) {
             Erasure of {item.principal_id} takes effect {utcDayClock(item.on) ?? item.on} UTC.
           </p>
         ))}
+        {policy.blocked && (
+          <p className="audit-unconfirmed" role="status">Erasure is blocked: {policy.blocked}</p>
+        )}
         {policy.erasure_unconfirmed && (
           <p className="audit-unconfirmed" role="status">This erasure announcement has not left the box.</p>
         )}
