@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0055_restore_end_reason"
-down_revision = "0054_security_keys"
+revision = "0056_restore_end_reason"
+down_revision = "0055_breached_passwords"
 
 
 def upgrade() -> None:
