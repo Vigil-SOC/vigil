@@ -1422,7 +1422,7 @@ def _reencrypt_and_expire(
                             overlap=timedelta(0),
                             operator=actor,
                         )
-                apps_cleared = key_ring.clear_unopenable_mfa(session, old_key)
+                apps_cleared = key_ring.clear_unreadable_apps(session, old_key)
             elif old_key:
                 legacy = True
                 _rewrap_mfa(session, old_key, new_key)

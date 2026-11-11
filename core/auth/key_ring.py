@@ -681,7 +681,7 @@ def _apps_on(session) -> int:
     ).scalar_one()
 
 
-def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> int:
+def clear_unreadable_apps(session, secret: Optional[str], *, everyone=False) -> int:
     """Clear the authenticator secret of each person whose secret no live MFA
     key opens (everyone's, when ``everyone``), so they enrol again. MFA stays on
     for a person with a security key. Returns how many people with the app on lost
@@ -727,11 +727,11 @@ def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> i
     return before - _apps_on(session)
 
 
-def clear_all_mfa(operator: str) -> int:
+def clear_all_apps(operator: str) -> int:
     """Everyone with an authenticator app enrols again: for the case where the MFA
     key and the database were both exposed. Returns how many people lost the app."""
     with unit_of_work() as session:
-        cleared = clear_unopenable_mfa(session, None, everyone=True)
+        cleared = clear_unreadable_apps(session, None, everyone=True)
         _trail(session, "auth.mfa_reset_all", operator, people=cleared)
     return cleared
 
@@ -941,7 +941,7 @@ def main(argv=None) -> int:
         if not args.yes:
             print("this clears every authenticator app; pass --yes", file=sys.stderr)
             return 1
-        print(f"{clear_all_mfa(getpass.getuser())} people must set up the app again")
+        print(f"{clear_all_apps(getpass.getuser())} people must set up the app again")
         return 0
     try:
         if args.command == "rewrap":
