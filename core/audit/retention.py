@@ -174,6 +174,7 @@ def erase(
         raise RetentionError("a principal is required")
     if outside_path() is None:
         raise RetentionError("VIGIL_UPGRADE_DIR is unset")
+    _check_writable()
     if not _exists(session, principal_id):
         raise RetentionError("unknown principal")
     # Holding the permission is the role grant on a principal that still exists.
@@ -511,6 +512,20 @@ def _arm_file(session) -> None:
 
     event.listen(session, "after_commit", _committed, once=True)
     event.listen(session, "after_rollback", _rolled_back, once=True)
+
+
+def _check_writable() -> None:
+    """Refuse before blanking when the list can't be written after the commit.
+
+    A blanking whose id never reaches the list is undone by a restore.
+    """
+    path = outside_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError as exc:
+        raise RetentionError(f"the erasure list is not writable: {path}") from exc
 
 
 def _write_exact(body: str) -> None:
