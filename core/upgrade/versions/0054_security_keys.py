@@ -1,4 +1,7 @@
-"""A person's security keys: one row per registered WebAuthn credential (#4234)."""
+"""A person's security keys: one row per registered WebAuthn credential (#4234).
+
+Follows `0054_get_case_shell`, so the chain has one head.
+"""
 
 from core.upgrade.revision import run_sql
 
