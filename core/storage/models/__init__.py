@@ -22,6 +22,7 @@ from core.storage.models.auth import (
     Role,
     SecurityKey,
     SignIn,
+    SsoLink,
     User,
 )
 from core.storage.models.autonomy import ToolEffectClass
@@ -162,6 +163,7 @@ __all__ = [
     "DetectionRuleException",
     "SecurityKey",
     "SignIn",
+    "SsoLink",
     "MedicLastSeen",
     "Role",
     "SLAPolicy",

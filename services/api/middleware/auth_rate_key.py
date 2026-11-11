@@ -76,6 +76,11 @@ def login_rate_key(request: Request) -> str:
     return f"login:missing:{client_host(request)}"
 
 
+def sso_rate_key(request: Request) -> str:
+    """Single sign-on start and callback carry no account until the provider answers."""
+    return f"sso:{client_host(request)}"
+
+
 def refresh_rate_key(request: Request) -> str:
     token = request.cookies.get(REFRESH_COOKIE_NAME) or ""
     if not token:

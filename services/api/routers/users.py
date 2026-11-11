@@ -25,6 +25,7 @@ from core.auth import (
     principals,
     session_policy,
     sign_ins,
+    sso,
     step_up,
     trail_events,
 )
@@ -225,14 +226,16 @@ def _manager_accounts(
     roles: Optional[dict[str, Optional[dict]]] = None,
     users: Optional[dict[str, tuple[str, bool]]] = None,
 ) -> list[User]:
-    """Active people with a password whose role holds roles.manage, with
-    ``roles`` ({id: permissions}) and ``users`` ({id: (role_id, is_active)})
-    applied as if saved. Locked ones included."""
+    """Active people who can sign in (a password, or a single sign-on link while
+    it is on) whose role holds roles.manage, with ``roles`` ({id: permissions})
+    and ``users`` ({id: (role_id, is_active)}) applied as if saved. Locked ones
+    included."""
     held = {role.role_id: role.permissions for role in session.query(Role)}
     held.update(roles or {})
     people = (
         _not_deleted(session.query(User)).filter(Principal.kind == principals.PERSON)
     ).all()
+    linked = sso.linked_principals(session) if sso.is_on() else set()
     found = []
     for user in people:
         role_id, active = (users or {}).get(
@@ -240,7 +243,7 @@ def _manager_accounts(
         )
         if (
             active
-            and user.password_hash
+            and (user.password_hash or user.principal_id in linked)
             and (held.get(role_id) or {}).get(ROLES_MANAGE)
         ):
             found.append(user)

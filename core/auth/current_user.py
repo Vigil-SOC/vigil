@@ -69,12 +69,19 @@ NEEDS_KEY = "Add a security key to continue"
 
 
 def setup_needed(
-    db: Session, user: User, held: list[str], current: session_policy.SessionPolicy
+    db: Session,
+    user: User,
+    held: list[str],
+    current: session_policy.SessionPolicy,
+    via_sso: bool = False,
 ) -> Optional[str]:
     """Why the requirement holds this account at setup, or None: it is covered and
     has no MFA, or it is covered by require_phishing_resistant, holds no key and
     keys are available (unavailable, the app still counts: a step-down). The one
-    check behind the gate and the console's setup screen."""
+    check behind the gate and the console's setup screen. A sign-in through single
+    sign-on is never held: the provider carries the MFA."""
+    if via_sso:
+        return None
     machine = user.service_account is True
     if not user.mfa_enabled and session_policy.mfa_covered(
         held, machine, current.require_mfa
@@ -216,7 +223,13 @@ def _check_sign_in(
             sign_ins.end(sid, over, db)
             return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, over)
 
-        needed = None if setup_route else setup_needed(db, user, held, current)
+        needed = (
+            None
+            if setup_route
+            else setup_needed(
+                db, user, held, current, via_sso=row.auth_method == sign_ins.SSO
+            )
+        )
         if needed:
             return None, (
                 status.HTTP_403_FORBIDDEN,

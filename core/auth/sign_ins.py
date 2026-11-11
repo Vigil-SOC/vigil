@@ -45,7 +45,9 @@ SIGN_IN_LIMIT = "sign_in_limit"
 # unavailable (a step-down), or a key-only person's recovery code doing so.
 MFA_STEP_DOWN = "mfa_step_down"
 RECOVERY_STEP_DOWN = "recovery_step_down"
-WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN)
+# Through the single sign-on provider, which carries its own MFA (#4284).
+SSO = "sso"
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO)
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
