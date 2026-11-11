@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.config import is_demo_mode
-from core.exceptions import DatabaseError
+from core.exceptions import DatabaseError, TeamRefused
 from core.storage import case_trail_hook
 from core.storage.connection import (
     SchemaDriftError,
@@ -16,7 +16,6 @@ from core.storage.connection import (
 from core.storage.schemas import CaseSchema, FindingSchema
 from core.storage.score import optional_float
 from core.storage.service import IP_FACET_KEYS, DatabaseService
-from core.teams import TeamRefused
 
 logger = logging.getLogger(__name__)
 

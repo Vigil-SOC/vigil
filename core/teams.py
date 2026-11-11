@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core.audit.trail import SYSTEM
 from core.auth import trail_events
 from core.auth.principals import PERSON
-from core.exceptions import SOCError
+from core.exceptions import TeamRefused
 from core.storage.models import (
     AuthLink,
     Case,
@@ -28,14 +28,6 @@ from core.storage.models import (
 from core.time import utcnow
 
 NAME_MAX = 100
-
-
-class TeamRefused(SOCError):
-    """A team change the caller can correct."""
-
-    def __init__(self, message: str, status_code: int = 409):
-        super().__init__(message, "TEAM_REFUSED")
-        self.status_code = status_code
 
 
 def clean_name(raw: str) -> str:

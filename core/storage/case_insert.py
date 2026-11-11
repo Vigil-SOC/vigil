@@ -12,10 +12,18 @@ from typing import Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.exceptions import TeamRefused
 from core.storage import case_trail_hook
-from core.storage.models import Case, Finding
-from core.teams import TeamRefused, default_team
+from core.storage.models import Case, Finding, Team
 from core.time import utcnow
+
+
+def _default_team(session: Session) -> Team:
+    """The one team with ``is_default``. Never looked up by name."""
+    team = session.scalars(select(Team).where(Team.is_default.is_(True))).first()
+    if team is None:
+        raise TeamRefused("There is no default team.", 500)
+    return team
 
 
 def insert_case(
@@ -36,7 +44,7 @@ def insert_case(
     finding_ids: Optional[Sequence[str]] = None,
 ) -> Case:
     """Insert one case on the caller's session. Does not commit."""
-    team = default_team(session)
+    team = _default_team(session)
     if team.archived_at is not None:
         raise TeamRefused(f"{team.name} is archived.", 409)
     now = utcnow()

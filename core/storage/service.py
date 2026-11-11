@@ -20,7 +20,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
 
-from core.exceptions import default_on_error
+from core.exceptions import TeamRefused, default_on_error
 from core.storage import case_trail_hook
 from core.storage.case_insert import insert_case
 from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
@@ -36,7 +36,6 @@ from core.storage.models import (
 )
 from core.storage.schemas import FindingSchema
 from core.storage.technique_confidence import rank_by_confidence
-from core.teams import TeamRefused
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
