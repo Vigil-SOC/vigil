@@ -129,6 +129,15 @@ export default function UserMenu({
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams, authBypassed])
 
+  // The bell's sign-in-limit notice links here with ?sign_ins=1.
+  useEffect(() => {
+    if (!searchParams.get('sign_ins')) return
+    setSignInsOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('sign_ins')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
   const openSignIns = () => {
     setOpen(false)
     avatarRef.current?.focus()
