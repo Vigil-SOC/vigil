@@ -85,7 +85,7 @@ class SignIn(Base):
     last_action_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
-    # 'password', 'mfa', 'mfa_step_down' or 'recovery_step_down'
+    # 'password', 'mfa', 'mfa_step_down', 'recovery_step_down' or 'sso'
     auth_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default="password", server_default="password"
     )
@@ -148,6 +148,32 @@ class SecurityKey(Base):
     __table_args__ = (
         Index("idx_security_keys_principal", "principal_id"),
         Index("uq_security_keys_credential", "credential_id", unique=True),
+    )
+
+
+class SsoLink(Base):
+    """An account's identity at the single sign-on provider (#4284): the
+    provider's issuer and subject. One subject names one account; the link is
+    made at the first sign-in through the provider. ``core/auth/sso.py`` owns it.
+    """
+
+    __tablename__ = "sso_links"
+
+    link_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    principal_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("principals.principal_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    issuer: Mapped[str] = mapped_column(Text, nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("idx_sso_links_principal", "principal_id"),
+        Index("uq_sso_links_subject", "issuer", "subject", unique=True),
     )
 
 

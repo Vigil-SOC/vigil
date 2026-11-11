@@ -59,6 +59,7 @@ _KEY_PURPOSES = {
     "setup": "first-run code",
     "mfa": "authenticator-secret",
     "webauthn": "security-key-challenge",
+    "sso": "single sign-on state",
 }
 
 
@@ -245,7 +246,8 @@ _COUNTED = frozenset({"findings.ingested"})
 
 _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
-    "auth.sign_in": "Signed in",
+    "auth.sign_in": lambda p: "Signed in"
+    + (" through single sign-on" if p.get("method") == "sso" else ""),
     "auth.sign_out": "Signed out",
     "auth.sign_in_ended": _sign_in_ended,
     "auth.confirmed": lambda p: "Confirmed it's them"
@@ -275,7 +277,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "credential.expired": "Refused an expired API token",
     "credential.refused": "Refused a token of an inactive account",
     "credential.expiry_set": "Set an API token to expire in 90 days",
-    "user.created": "Created an account",
+    "user.created": lambda p: "Created an account"
+    + (" through single sign-on" if p.get("via") == "sso" else ""),
     "user.updated": lambda p: "Updated an account" + _fields(p.get("changed")),
     "user.deleted": "Deleted an account",
     "user.disabled": "Disabled an account",

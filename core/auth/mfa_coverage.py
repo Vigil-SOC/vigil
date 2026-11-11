@@ -6,12 +6,12 @@ a live warning for those who manage sessions and a daily entry on the audit trai
 
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from core.auth import security_keys, session_policy, trail_events
 from core.platform import notices
-from core.storage.models import Role, SecurityKey, User
+from core.storage.models import Role, SecurityKey, SsoLink, User
 from core.storage.unit_of_work import unit_of_work
 
 ACTION = "auth.mfa_coverage_gap"
@@ -21,12 +21,23 @@ LOCK = 4177
 SETTINGS_LINK = "/settings?section=sessions"
 
 
+def _signs_in_by_password():
+    """Leaves out an account with no password and a single sign-on link: it signs
+    in only through the provider, which carries the MFA (#4284)."""
+    linked = select(SsoLink.link_id).where(SsoLink.principal_id == User.principal_id)
+    return or_(func.coalesce(User.password_hash, "") != "", ~linked.exists())
+
+
 def without_mfa(session: Session, level: str = "everyone") -> int:
     """Active accounts ``level`` would cover that have no MFA yet."""
     users = (
         session.query(User.service_account, Role.permissions)
         .outerjoin(Role, Role.role_id == User.role_id)
-        .filter(User.is_active.is_(True), User.mfa_enabled.isnot(True))
+        .filter(
+            User.is_active.is_(True),
+            User.mfa_enabled.isnot(True),
+            _signs_in_by_password(),
+        )
         .all()
     )
     return sum(
@@ -46,7 +57,7 @@ def without_key(session: Session, level: str) -> int:
     users = (
         session.query(User.service_account, Role.permissions)
         .outerjoin(Role, Role.role_id == User.role_id)
-        .filter(User.is_active.is_(True), ~keyed.exists())
+        .filter(User.is_active.is_(True), ~keyed.exists(), _signs_in_by_password())
         .all()
     )
     return sum(

@@ -471,11 +471,13 @@ def _revoke(session, principal_id: str) -> None:
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
     sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
-    if _table(session, "security_keys"):
-        session.execute(
-            text("DELETE FROM public.security_keys WHERE principal_id = :id"),
-            {"id": principal_id},
-        )
+    for table in ("security_keys", "sso_links"):
+        if _table(session, table):
+            # {table} is one of the fixed names above.
+            session.execute(
+                text(f"DELETE FROM public.{table} WHERE principal_id = :id"),
+                {"id": principal_id},
+            )
 
 
 def _queue_append(session, ids: list[str]) -> None:

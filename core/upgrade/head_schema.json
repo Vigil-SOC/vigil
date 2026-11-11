@@ -3876,6 +3876,31 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column sso_links.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column sso_links.issuer": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column sso_links.link_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column sso_links.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column sso_links.subject": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column system_config.config_type": {
   "default": "'general'::character varying",
   "nullable": false,
@@ -4527,6 +4552,8 @@
  "constraint sketch_mappings.sketch_mappings_pkey": "PRIMARY KEY (id)",
  "constraint skill_reads.skill_reads_pkey": "PRIMARY KEY (id)",
  "constraint sla_policies.sla_policies_pkey": "PRIMARY KEY (policy_id)",
+ "constraint sso_links.sso_links_pkey": "PRIMARY KEY (link_id)",
+ "constraint sso_links.sso_links_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint system_config.system_config_pkey": "PRIMARY KEY (key)",
  "constraint threat_indicators.threat_indicators_pkey": "PRIMARY KEY (id)",
  "constraint threat_indicators.threat_indicators_unique": "UNIQUE (source, indicator_type, indicator_value)",
@@ -4886,6 +4913,7 @@
  "index idx_sla_policy_active": "CREATE INDEX idx_sla_policy_active ON public.sla_policies USING btree (is_active)",
  "index idx_sla_policy_default": "CREATE INDEX idx_sla_policy_default ON public.sla_policies USING btree (is_default)",
  "index idx_sla_policy_priority": "CREATE INDEX idx_sla_policy_priority ON public.sla_policies USING btree (priority_level)",
+ "index idx_sso_links_principal": "CREATE INDEX idx_sso_links_principal ON public.sso_links USING btree (principal_id)",
  "index idx_system_config_type": "CREATE INDEX idx_system_config_type ON public.system_config USING btree (config_type)",
  "index idx_system_config_updated_at": "CREATE INDEX idx_system_config_updated_at ON public.system_config USING btree (updated_at)",
  "index idx_threat_indicators_last_seen": "CREATE INDEX idx_threat_indicators_last_seen ON public.threat_indicators USING btree (last_seen DESC)",
@@ -4927,6 +4955,7 @@
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
  "index skill_reads_pkey": "CREATE UNIQUE INDEX skill_reads_pkey ON public.skill_reads USING btree (id)",
  "index sla_policies_pkey": "CREATE UNIQUE INDEX sla_policies_pkey ON public.sla_policies USING btree (policy_id)",
+ "index sso_links_pkey": "CREATE UNIQUE INDEX sso_links_pkey ON public.sso_links USING btree (link_id)",
  "index system_config_pkey": "CREATE UNIQUE INDEX system_config_pkey ON public.system_config USING btree (key)",
  "index threat_indicators_pkey": "CREATE UNIQUE INDEX threat_indicators_pkey ON public.threat_indicators USING btree (id)",
  "index threat_indicators_unique": "CREATE UNIQUE INDEX threat_indicators_unique ON public.threat_indicators USING btree (source, indicator_type, indicator_value)",
@@ -4937,6 +4966,7 @@
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
+ "index uq_sso_links_subject": "CREATE UNIQUE INDEX uq_sso_links_subject ON public.sso_links USING btree (issuer, subject)",
  "index user_preferences_pkey": "CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (user_id)",
  "index users_email_key": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)",
  "index users_pkey": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (user_id)",
@@ -7028,6 +7058,28 @@
   "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation sla_policies": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation sso_links": {
   "acl": [
    "app:DELETE",
    "app:INSERT",

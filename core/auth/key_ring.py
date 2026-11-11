@@ -74,7 +74,7 @@ def _hmac(tag: str) -> Callable[[str], bytes]:
 
 # Overlaps are each purpose's longest token: sign-ins 24 h or the refresh
 # token's lifetime if longer, run tokens 31 d (tool_principal.RUN_TTL), reset
-# links 1 h.
+# links 1 h, single sign-on state 5 min.
 _SIGNIN_OVERLAP = max(
     timedelta(hours=24), timedelta(days=get_settings().jwt_refresh_expiration_days)
 )
@@ -86,6 +86,8 @@ PURPOSES: dict[str, Purpose] = {
     "mfa": Purpose(None, lambda s: hashlib.sha256(s.encode()).digest()),
     # Security-key challenges (#4234): minutes long, bound to the account.
     "webauthn": Purpose(timedelta(minutes=10), _hmac("vigil-webauthn-challenge")),
+    # Single sign-on's browser binding (#4284): state, nonce and verifier, 5 minutes.
+    "sso": Purpose(timedelta(minutes=5), _hmac("vigil-sso-state")),
 }
 
 

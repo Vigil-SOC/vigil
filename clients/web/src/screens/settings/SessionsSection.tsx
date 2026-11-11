@@ -86,7 +86,7 @@ const MFA: { value: Mfa; label: string; text: string }[] = [
   { value: 'everyone', label: 'Everyone', text: 'everyone' },
 ]
 const MFA_TITLE = 'Require MFA'
-const MFA_HINT = 'Whose sign-in needs two-step verification. Someone it covers who has none set up is held at setup until they do. Service accounts are never covered.'
+const MFA_HINT = 'Whose sign-in needs two-step verification. Someone it covers who has none set up is held at setup until they do. Service accounts are never covered. A single sign-on sign-in meets this and phishing-resistant MFA through the provider.'
 const mfaText = (v: string | null | undefined) => MFA.find((m) => m.value === v)?.text ?? String(v)
 const KEYS: { value: Keys; label: string; text: string }[] = [
   { value: 'nobody', label: 'Nobody', text: 'nobody' },

@@ -6,28 +6,36 @@ Handles login, logout, token refresh, password management, and MFA.
 
 import asyncio
 import logging
+import re
+import uuid
 from datetime import datetime, timedelta
 from typing import Annotated, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
+    key_ring,
     mfa_methods,
+    principals,
     security_keys,
     session_policy,
     sign_ins,
+    sso,
     step_up,
     trail_events,
 )
 from core.auth.auth_cookies import (
     ACCESS_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
+    _cookie_secure,
     clear_auth_cookies,
+    context_path_prefix,
     set_auth_cookies,
 )
 from core.auth.auth_service import (
@@ -67,9 +75,10 @@ from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import SIGN_IN_LIMIT_KIND, notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import SecurityKey, SignIn, User
+from core.storage.models import Principal, Role, SecurityKey, SignIn, SsoLink, User
 from core.storage.schemas import UserSchema
 from core.storage.schemas.base import IsoDateTime, OptDateTime
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
@@ -79,6 +88,7 @@ from services.api.middleware.auth_rate_key import (
     reset_confirm_rate_key,
     reset_request_rate_key,
     session_rate_key,
+    sso_rate_key,
 )
 from services.api.middleware.client_address import client_host
 from services.api.middleware.rate_limit import limiter
@@ -199,6 +209,8 @@ class BootstrapStatusResponse(BaseModel):
     """Whether the instance still needs its first account."""
 
     required: bool
+    # Single sign-on is on: the login page offers "Sign in with SSO".
+    sso_enabled: bool = False
 
 
 class BootstrapRequest(BaseModel):
@@ -447,13 +459,15 @@ def _continue_sign_in(
     )
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
     row.expires_at = _exp_datetime(refresh_payload.get("exp"))
-    return access_token, refresh_token, _user_payload(user, session)
+    return access_token, refresh_token, _user_payload(user, session, sid)
 
 
-def _user_payload(user: User, session: Session) -> dict:
+def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> dict:
     """User dict plus resolved permissions — the shape the SPA gates on.
     Login/refresh must include it, not just /me: the client stores the user
-    from the login response and checks permissions before any /me refresh."""
+    from the login response and checks permissions before any /me refresh.
+    ``sid`` is the sign-in asking: one through single sign-on is never held at setup."""
+    row = session.get(SignIn, sid) if sid else None
     payload = UserSchema.dump(user)
     payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
     # The console holds this person at MFA setup until it is done.
@@ -464,6 +478,7 @@ def _user_payload(user: User, session: Session) -> dict:
             user,
             [name for name, on in payload["permissions"].items() if on],
             session_policy.policy(),
+            via_sso=row is not None and row.auth_method == sign_ins.SSO,
         )
     )
     # Whether this install has security keys, and why not when it has none.
@@ -479,7 +494,9 @@ def bootstrap_status(session: UnitOfWorkSession):
     an instance with an empty user table cannot be signed into at all. The
     login screen asks this to offer first-account creation instead.
     """
-    return BootstrapStatusResponse(required=not has_human_user(session))
+    return BootstrapStatusResponse(
+        required=not has_human_user(session), sso_enabled=sso.is_on()
+    )
 
 
 @router.post("/bootstrap", status_code=status.HTTP_201_CREATED)
@@ -1019,6 +1036,323 @@ def _exp_datetime(exp_ts) -> Optional[datetime]:
     return datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
 
 
+# --- single sign-on (#4284) ----------------------------------------------------
+
+
+def _sso_cookie_path() -> str:
+    return f"{context_path_prefix()}/api/auth/sso/"
+
+
+def _sso_redirect(location: str) -> RedirectResponse:
+    """A 302 that also clears the attempt's cookie: it is good for one callback."""
+    res = RedirectResponse(location, status_code=status.HTTP_302_FOUND)
+    res.delete_cookie(
+        sso.COOKIE,
+        path=_sso_cookie_path(),
+        secure=_cookie_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+    return res
+
+
+def _sso_failed(source: Optional[str], refusal: sso.Refused, attempted: str = ""):
+    """The login page with one of three fixed messages; the real reason goes to the trail."""
+    trail_events.sign_in_failed(
+        source, attempted, f"sso:{refusal.reason}", refusal.principal
+    )
+    logger.info("Single sign-on refused: %s", refusal.reason)
+    return _sso_redirect(f"{context_path_prefix()}/login?sso_error={refusal.code}")
+
+
+@router.get("/sso/start", include_in_schema=False)
+@limiter.limit("10/minute", key_func=sso_rate_key)
+def sso_start(request: Request):
+    """Send the browser to the provider: code flow with PKCE, state and nonce,
+    bound to this browser by a signed cookie that lives five minutes."""
+    try:
+        url, binding = sso.begin(sso.provider())
+    except sso.Refused as refusal:
+        return _sso_failed(client_host(request), refusal)
+    except key_ring.KeyRingError:
+        return _sso_failed(client_host(request), sso.Refused("key_ring_unavailable"))
+    res = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    # Lax, not the auth cookies' setting: it has to ride the provider's top-level redirect back.
+    res.set_cookie(
+        sso.COOKIE,
+        binding,
+        max_age=int(sso.LIFE.total_seconds()),
+        path=_sso_cookie_path(),
+        secure=_cookie_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+    return res
+
+
+@router.get("/sso/callback", include_in_schema=False)
+@limiter.limit("10/minute", key_func=sso_rate_key)
+def sso_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    """Where the provider sends the browser back: check the reply and the ID
+    token, find or create the account, and sign it in as a password would."""
+    source = client_host(request)
+    seen: dict = {}
+    try:
+        held = sso.binding(request.cookies.get(sso.COOKIE), state)
+        if error or not code:
+            raise sso.Refused("provider_error" if error else "no_code")
+        p = sso.provider()
+        claims = sso.verify(p, sso.exchange(p, code, held["verifier"]), held["nonce"])
+        seen["email"] = claims["email"]
+        with unit_of_work() as session:
+            tokens = _sso_sign_in(session, request, p.settings, claims, source)
+    except sso.Refused as refusal:
+        return _sso_failed(source, refusal, refusal.attempted or seen.get("email", ""))
+    except (
+        Exception
+    ):  # noqa: BLE001 - e.g. a concurrent first sign-in's link: never a 500
+        logger.exception("Single sign-on callback failed")
+        return _sso_failed(source, sso.Refused("unexpected"), seen.get("email", ""))
+    res = _sso_redirect(f"{context_path_prefix()}/")
+    _set_cookies_for(res, *tokens)
+    return res
+
+
+def _sso_username(session: Session, claims: dict) -> str:
+    """A free username from the token: preferred_username, else the email's local part."""
+    wanted = claims.get("preferred_username")
+    if not isinstance(wanted, str) or "@" in wanted:
+        wanted = claims["email"].split("@", 1)[0]
+    base = re.sub(r"[^A-Za-z0-9._-]", "", wanted)[:80] or "user"
+    if base.lower().startswith(("medic-", ERASED_PREFIX)):
+        base = f"sso-{base}"
+    for n in range(1, 1000):
+        name = base if n == 1 else f"{base}-{n}"
+        claim_sign_in_names(session, name)
+        if not identifier_in_use(session, name):
+            return name
+    raise sso.Refused("no_free_username")
+
+
+def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[User]:
+    """The account this subject signs in as (None: create one), refused when it
+    can't. Nothing is written here, so a refusal leaves no trace but the trail's."""
+    email = claims["email"].strip()
+    link = sso.linked(session, s.issuer, claims["sub"])
+    if link is not None:
+        user = (
+            session.query(User)
+            .filter(User.principal_id == link.principal_id)
+            .with_for_update()
+            .first()
+        )
+        notes["linked_by"] = "subject"
+    else:
+        claim_sign_in_names(session, email)
+        matches = (
+            session.query(User)
+            .filter(func.lower(User.email) == email.casefold())
+            .with_for_update()
+            .all()
+        )
+        if len(matches) > 1:
+            raise sso.Refused("email_ambiguous")
+        user = matches[0] if matches else None
+        if user is None:
+            if identifier_in_use(session, email):
+                raise sso.Refused("email_in_use")
+            notes["linked_by"] = "created"
+            return None
+        notes["linked_by"] = "email"
+    if user is None:
+        raise sso.Refused("linked_account_missing")
+    principal = session.get(Principal, user.principal_id)
+    pid = user.principal_id
+    if is_erased(user.username, pid):
+        raise sso.Refused("account_erased", principal=pid)
+    if principal is None or principal.deleted_at is not None:
+        raise sso.Refused("account_deleted", principal=pid)
+    if _is_service_account(user) or principal.kind != principals.PERSON:
+        raise sso.Refused("service_account", principal=pid)
+    if not user.is_active:
+        raise sso.Refused("account_deactivated", sso.DEACTIVATED, pid)
+    if link is None:
+        other = session.query(SsoLink).filter(
+            SsoLink.principal_id == pid, SsoLink.issuer == s.issuer
+        )
+        if other.first() is not None:
+            # Linked already to another subject at this provider: not taken by email.
+            raise sso.Refused("linked_to_other_subject", principal=pid)
+    return user
+
+
+def _sso_role(s, claims: dict, notes: dict) -> Optional[tuple[str, str]]:
+    """(role, group) of the first mapping whose group the token carries, exact strings."""
+    groups = sso.groups_of(claims, s.groups_claim)
+    if groups is None:
+        notes["groups"] = "claim_missing"
+        return None
+    for mapping in s.group_roles:
+        if mapping.group in groups:
+            return mapping.role_id, mapping.group
+    notes["groups"] = "no_match"
+    return None
+
+
+def _sso_sign_in(
+    session: Session, request: Request, s, claims: dict, source: Optional[str]
+) -> tuple[str, str]:
+    """Find, link or create the account, apply name, email and role from the
+    token, and start the sign-in. Returns the access and refresh tokens."""
+    from services.api.routers.users import _leaves_no_manager
+
+    notes: dict = {}
+    user = _sso_account(session, s, claims, notes)
+    match = _sso_role(s, claims, notes)
+    email = claims["email"].strip()
+    given = " ".join(
+        str(claims[k]) for k in ("given_name", "family_name") if claims.get(k)
+    )
+    name = claims.get("name") if isinstance(claims.get("name"), str) else given
+    name = (name or "").strip()[:200] or None  # users.full_name
+
+    if user is None:
+        role_id = match[0] if match else s.default_role_id
+        if session.get(Role, role_id) is None:
+            raise sso.Refused("role_missing")
+        username = _sso_username(session, claims)
+        user = User(
+            user_id=f"user-{uuid.uuid4().hex[:12]}",
+            username=username,
+            email=email,
+            password_hash="",
+            full_name=name or username,
+            role_id=role_id,
+            is_active=True,
+            is_verified=True,
+            mfa_enabled=False,
+            login_count=0,
+        )
+        principals.add_for_user(session, user)
+        session.add(user)
+        session.flush()
+        trail_events.record(
+            session,
+            "user.created",
+            {"personal": trail_events.personal(user)},
+            actor=SYSTEM,
+            principal=user.principal_id,
+            role_id=role_id,
+            via="sso",
+            provider=s.issuer,
+            group=match[1] if match else None,
+        )
+        # Invites (#4226) are not on main yet; whichever lands second revokes a pending one here.
+    else:
+        changed = []
+        if name and name != user.full_name:
+            user.full_name = name
+            changed.append("full_name")
+        if email != user.email:
+            claim_sign_in_names(session, email)
+            if identifier_in_use(session, email, except_user_id=user.user_id):
+                notes["email_conflict"] = True
+            else:
+                user.email = email
+                changed.append("email")
+        if changed:
+            trail_events.record(
+                session,
+                "user.updated",
+                {"personal": {k: getattr(user, k) for k in changed}},
+                actor=SYSTEM,
+                principal=user.principal_id,
+                changed=changed,
+                via="sso",
+            )
+        if match and match[0] != user.role_id:
+            role = session.get(Role, match[0])
+            if role is None:
+                notes["role_kept"] = "role_missing"
+            elif _leaves_no_manager(
+                session, users={user.user_id: (role.role_id, True)}
+            ):
+                notes["role_kept"] = "last_role_manager"
+            else:
+                previous = session.get(Role, user.role_id)
+                before = sorted(
+                    k
+                    for k, v in ((previous and previous.permissions) or {}).items()
+                    if v
+                )
+                trail_events.record(
+                    session,
+                    "user.role_changed",
+                    actor=SYSTEM,
+                    principal=user.principal_id,
+                    role_id=role.role_id,
+                    previous_role_id=user.role_id,
+                    permissions_before=before,
+                    permissions_after=sorted(
+                        k for k, v in (role.permissions or {}).items() if v
+                    ),
+                    via="sso",
+                    group=match[1],
+                )
+                user.role_id = role.role_id
+                # The new sign-in starts after this, so every open one ends.
+                _end_others_after_change(session, user, None, source)
+    if notes.get("linked_by") != "subject":
+        sso.link(session, user.principal_id, s.issuer, claims["sub"])
+    session.flush()
+
+    ua = request.headers.get("user-agent")
+    sid = sign_ins.new_id()
+    limit = _limits(user, session)
+    access_token = AuthService.generate_jwt_token(user, "access", sid=sid)
+    refresh_token = AuthService.generate_jwt_token(
+        user,
+        "refresh",
+        sid=sid,
+        generation=0,
+        not_after=utcnow() + limit.absolute,
+    )
+    refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
+    evicted = sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
+    sign_ins.start(
+        session,
+        sid,
+        user.principal_id,
+        _exp_datetime(refresh_payload.get("exp")),
+        auth_method=sign_ins.SSO,
+        user_agent=ua,
+        address=source,
+    )
+    if evicted:
+        _tell_of_eviction(session, user, sid, ua, source)
+    user.last_login = utcnow()
+    user.login_count = (user.login_count or 0) + 1
+    trail_events.record(
+        session,
+        "auth.sign_in",
+        {"source_ip": source},
+        actor=user.principal_id,
+        sign_in=sid,
+        method=sign_ins.SSO,
+        provider=s.issuer,
+        amr=claims.get("amr"),
+        acr=claims.get("acr"),
+        **notes,
+    )
+    logger.info("User signed in through single sign-on: %s", user.username)
+    return access_token, refresh_token
+
+
 @router.post("/logout")
 @mfa_setup_route
 async def logout(
@@ -1392,7 +1726,7 @@ def get_current_user_info(
         User information with permissions, and when the sign-in goes idle and ends
     """
     return {
-        **_user_payload(current_user, session),
+        **_user_payload(current_user, session, _session_sid(request)),
         "sign_in": _sign_in_timing(request, current_user, session),
     }
 

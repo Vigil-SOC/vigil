@@ -9197,6 +9197,11 @@ export interface components {
         BootstrapStatusResponse: {
             /** Required */
             required: boolean;
+            /**
+             * Sso Enabled
+             * @default false
+             */
+            sso_enabled: boolean;
         };
         /** Bounds */
         Bounds: {

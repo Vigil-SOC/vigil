@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth, type LoginResult, type MfaOffer } from '../../contexts/AuthContext'
+import { basePath } from '../../config/basePath'
 import { authApi, bootstrapApi } from '../../services/api'
 import { assertWith, cancelPrompt, KeyProblem, NoKeyUsed, SECURITY_KEYS_DOCS } from '../../services/webauthn'
 import { Icon } from '../../shared/icons'
@@ -8,6 +9,16 @@ import TwoStepDialog, { RecoveryCodes } from '../../shell/TwoStepDialog'
 import { KeyWaiting } from '../../shell/SecurityKeyParts'
 import AuthLayout from './AuthLayout'
 import { requestErrorMessage } from './requestErrorMessage'
+
+// The provider's callback lands on /login?sso_error=<code>; the real reason is on the trail (decision 7).
+const SSO_ERRORS: Record<string, string> = {
+  failed: "Vigil couldn't sign you in with SSO. Try again. If it keeps failing, tell your Vigil administrator.",
+  deactivated: 'Your Vigil account is deactivated. Ask your Vigil administrator to turn it back on.',
+  email_not_verified:
+    "Your company sign-in hasn't verified your email address, so Vigil can't sign you in. Ask your IT team to verify it.",
+}
+// A plain navigation: the server answers with the provider's redirect.
+const SSO_START = `${basePath}/api/auth/sso/start`
 
 export default function LoginScreen() {
   const navigate = useNavigate()
@@ -35,7 +46,9 @@ export default function LoginScreen() {
   // a recovery code removed this person's methods: setup opens over this screen
   const [setupOpen, setSetupOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const ssoError = new URLSearchParams(location.search).get('sso_error')
+  const [error, setError] = useState(ssoError ? SSO_ERRORS[ssoError] ?? SSO_ERRORS.failed : '')
+  const [ssoEnabled, setSsoEnabled] = useState(false)
   // the reset screen hands off a "password updated" notice, or asks to open
   // the forgot-password view
   const navState = location.state as { notice?: string; forgot?: boolean } | null
@@ -44,7 +57,7 @@ export default function LoginScreen() {
 
   // drop the handoff from history so a reload doesn't replay it
   useEffect(() => {
-    if (navState?.notice || navState?.forgot) navigate('.', { replace: true, state: from ? { from } : null })
+    if (navState?.notice || navState?.forgot || ssoError) navigate('.', { replace: true, state: from ? { from } : null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [resetSent, setResetSent] = useState(false)
@@ -65,7 +78,10 @@ export default function LoginScreen() {
     // creation on an instance that already has users.
     bootstrapApi
       .status()
-      .then((res) => setNeedsBootstrap(res.data.required))
+      .then((res) => {
+        setNeedsBootstrap(res.data.required)
+        setSsoEnabled(!!res.data.sso_enabled)
+      })
       .catch(() => setNeedsBootstrap(false))
   }, [])
 
@@ -259,7 +275,9 @@ export default function LoginScreen() {
         ? recovery
           ? 'This removes your sign-in methods and signs you out everywhere else.'
           : 'Confirm your identity to finish signing in.'
-        : 'Authenticate to access the operations console.'
+        : ssoEnabled
+          ? 'Use your company sign-in or your Vigil password.'
+          : 'Authenticate to access the operations console.'
 
   return (
     <AuthLayout
@@ -437,6 +455,17 @@ export default function LoginScreen() {
       <form onSubmit={handleSubmit} autoComplete="on" noValidate>
         {!showMfa ? (
           <>
+            {ssoEnabled && (
+              <>
+                <a className="btn-sso" href={SSO_START}>
+                  <Icon name="key" size={17} />
+                  Sign in with SSO
+                </a>
+                <div className="auth-divider" role="separator">
+                  <span>or use your password</span>
+                </div>
+              </>
+            )}
             <div className="field">
               <label htmlFor="auth-user">Username or email</label>
               <div className="ctrl">
