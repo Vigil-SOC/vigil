@@ -577,15 +577,10 @@ def rewrap(session, old: str, new: str, *, operator=None, reason: str) -> int:
 
 
 def _has_wrapped_at(session) -> bool:
-    return (
-        session.execute(
-            text("""
+    return session.execute(text("""
                 SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                 AND table_name = 'auth_keys' AND column_name = 'wrapped_at'
-            """)
-        ).first()
-        is not None
-    )
+            """)).first() is not None
 
 
 def _marker(session, purpose: str, version: int) -> None:
@@ -711,10 +706,15 @@ def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> i
                 continue
         except InvalidToken:
             pass
-        has_key = keyed and session.execute(
-            text("SELECT 1 FROM public.security_keys WHERE principal_id = :p LIMIT 1"),
-            {"p": principal},
-        ).first()
+        has_key = (
+            keyed
+            and session.execute(
+                text(
+                    "SELECT 1 FROM public.security_keys WHERE principal_id = :p LIMIT 1"
+                ),
+                {"p": principal},
+            ).first()
+        )
         session.execute(
             text("""
                 UPDATE public.users SET mfa_secret = NULL, mfa_last_totp_step = NULL,
@@ -727,13 +727,13 @@ def clear_unopenable_mfa(session, secret: Optional[str], *, everyone=False) -> i
     return before - _apps_on(session)
 
 
-def reset_all_mfa(operator: str) -> int:
+def clear_all_mfa(operator: str) -> int:
     """Everyone with an authenticator app enrols again: for the case where the MFA
-    key and the database were both exposed. Returns how many people were reset."""
+    key and the database were both exposed. Returns how many people lost the app."""
     with unit_of_work() as session:
-        reset = clear_unopenable_mfa(session, None, everyone=True)
-        _trail(session, "auth.mfa_reset_all", operator, people=reset)
-    return reset
+        cleared = clear_unopenable_mfa(session, None, everyone=True)
+        _trail(session, "auth.mfa_reset_all", operator, people=cleared)
+    return cleared
 
 
 def wrapped_since(session=None) -> Optional[datetime]:
@@ -905,10 +905,10 @@ def main(argv=None) -> int:
         help="after changing JWT_SECRET_KEY where it is defined: wrap the ring under "
         "the new value (asks for the old one)",
     )
-    reset = sub.add_parser(
+    clear = sub.add_parser(
         "reset-mfa", help="clear every authenticator app, so everyone enrols again"
     )
-    reset.add_argument("--yes", action="store_true", help="do it")
+    clear.add_argument("--yes", action="store_true", help="do it")
     sub.add_parser("status", help="list the keys that are not retired")
     inv = sub.add_parser("inventory", help="list every key, retired ones too")
     inv.add_argument("--json", action="store_true", help="JSON instead of TSV")
@@ -941,7 +941,7 @@ def main(argv=None) -> int:
         if not args.yes:
             print("this clears every authenticator app; pass --yes", file=sys.stderr)
             return 1
-        print(f"{reset_all_mfa(getpass.getuser())} people must set up the app again")
+        print(f"{clear_all_mfa(getpass.getuser())} people must set up the app again")
         return 0
     try:
         if args.command == "rewrap":
@@ -951,9 +951,7 @@ def main(argv=None) -> int:
                 new = wrapping_secret()
                 if _opens(session, new):
                     raise KeyRingError("the ring is already wrapped under this secret")
-                rewrap(
-                    session, old, new, operator=getpass.getuser(), reason="rotation"
-                )
+                rewrap(session, old, new, operator=getpass.getuser(), reason="rotation")
             print("the key ring is wrapped under the current JWT_SECRET_KEY")
             return 0
         if args.command == "emergency":

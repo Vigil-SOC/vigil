@@ -195,9 +195,7 @@ def restore_snapshot(
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
             _check_erasure_list(root, dump_in_snapshot)
-            paired_key = _paired_wrapping_key(
-                restic, passphrase, snapshot_id, priority
-            )
+            paired_key = _paired_wrapping_key(restic, passphrase, snapshot_id, priority)
             swap_lines, abandoned, live_ring = _swap(
                 cfg, staged_name, pre_name, placed, stamp
             )
@@ -1108,7 +1106,7 @@ def _restore_values(
     rotated: bool,
     ended: int,
     stopped: int,
-    mfa_reset: int,
+    apps_cleared: int,
 ) -> dict:
     return {
         "snapshot_id": snapshot_id,
@@ -1117,7 +1115,7 @@ def _restore_values(
         "jwt_rotated": rotated,
         "sign_ins_ended": ended,
         "runs_stopped": stopped,
-        "mfa_reset": mfa_reset,
+        "apps_cleared": apps_cleared,
     }
 
 
@@ -1128,7 +1126,7 @@ def _record_restore(
     rotated: bool,
     ended: int,
     stopped: int,
-    mfa_reset: int,
+    apps_cleared: int,
     actor: str,
     abandoned: dict | None,
     failure: BackupError | None,
@@ -1142,7 +1140,7 @@ def _record_restore(
     flagged unconfirmed, and a feed-on restore pauses later writes (decision 11).
     """
     values = _restore_values(
-        snapshot_id, created_at, expired, rotated, ended, stopped, mfa_reset
+        snapshot_id, created_at, expired, rotated, ended, stopped, apps_cleared
     )
     with get_db_manager().session_scope() as session:
         if _trail_ready(session):
@@ -1184,7 +1182,7 @@ def _settle_restored(
     created_at: str = manifest["created_at"]
     failure: BackupError | None = None
     expired = 0
-    ended = stopped = mfa_reset = 0
+    ended = stopped = apps_cleared = 0
     rotated = False
     new_secret = False
     from_env = False
@@ -1201,7 +1199,7 @@ def _settle_restored(
         if from_env:
             old_key = env_key
         new_key = secrets.token_urlsafe(48)
-        expired, new_secret, mfa_reset = _reencrypt_and_expire(
+        expired, new_secret, apps_cleared = _reencrypt_and_expire(
             old_key, new_key, snapshot_id, created_at, actor, paired_key, live_ring
         )
         # With no key anywhere, a deployment outside this install sets it. A
@@ -1225,7 +1223,7 @@ def _settle_restored(
     # Apart from the key step: a failed key step still ends the sign-ins, and a
     # failed ending is still reported and recorded.
     try:
-        ended, stopped = _end_restored_sessions(created_at, reapplied_at, mfa_reset)
+        ended, stopped = _end_restored_sessions(created_at, reapplied_at, apps_cleared)
     except Exception as exc:
         ending = BackupError(f"could not end the restored sign-ins: {exc}")
         failure = BackupError(f"{failure}\n{ending}") if failure else ending
@@ -1237,7 +1235,7 @@ def _settle_restored(
             rotated,
             ended,
             stopped,
-            mfa_reset,
+            apps_cleared,
             actor,
             abandoned,
             failure,
@@ -1259,8 +1257,10 @@ def _settle_restored(
         f"runs stopped: {stopped}",
         "integration credentials and user accounts date from the backup",
     ]
-    if mfa_reset:
-        lines.insert(4, f"people who must set up their authenticator app: {mfa_reset}")
+    if apps_cleared:
+        lines.insert(
+            4, f"people who must set up their authenticator app: {apps_cleared}"
+        )
     if from_env and new_secret:
         lines.append(
             "the new JWT_SECRET_KEY is in "
@@ -1272,7 +1272,7 @@ def _settle_restored(
 
 
 def _end_restored_sessions(
-    created_at: str, reapplied_at: datetime, mfa_reset: int = 0
+    created_at: str, reapplied_at: datetime, apps_cleared: int = 0
 ) -> tuple[int, int]:
     """End every open sign-in, stop every in-flight run, open the dormancy grace
     and tell the holders of ``sessions.manage`` once; returns (sign-ins ended,
@@ -1300,12 +1300,12 @@ def _end_restored_sessions(
     stopped = sign_in_runs._stop(runs)
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
-    _tell_session_holders(created_at, ended + erased, len(stopped), mfa_reset)
+    _tell_session_holders(created_at, ended + erased, len(stopped), apps_cleared)
     return ended + erased, len(stopped)
 
 
 def _tell_session_holders(
-    created_at: str, ended: int, stopped: int, mfa_reset: int = 0
+    created_at: str, ended: int, stopped: int, apps_cleared: int = 0
 ) -> None:
     """One notice to each active person who holds ``sessions.manage``. No names,
     no tokens."""
@@ -1322,10 +1322,10 @@ def _tell_session_holders(
         "backup, so dormancy deactivates nobody and warns nobody until "
         f"{until:%Y-%m-%d} UTC. Locks set after the backup are gone."
     )
-    if mfa_reset:
+    if apps_cleared:
         message += (
-            f" The backup's key ring could not be opened, so {mfa_reset} "
-            f"{'person' if mfa_reset == 1 else 'people'} must set up the "
+            f" The backup's key ring could not be opened, so {apps_cleared} "
+            f"{'person' if apps_cleared == 1 else 'people'} must set up the "
             "authenticator app again."
         )
     holders = permissions.holders("sessions.manage")
@@ -1406,7 +1406,7 @@ def _reencrypt_and_expire(
     reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
     decided_at = utcnow()
     legacy = False
-    mfa_reset = 0
+    apps_cleared = 0
     try:
         with get_db_manager().session_scope() as session:
             if old_key and _ring_present(session):
@@ -1422,7 +1422,7 @@ def _reencrypt_and_expire(
                             overlap=timedelta(0),
                             operator=actor,
                         )
-                mfa_reset = key_ring.clear_unopenable_mfa(session, old_key)
+                apps_cleared = key_ring.clear_unopenable_mfa(session, old_key)
             elif old_key:
                 legacy = True
                 _rewrap_mfa(session, old_key, new_key)
@@ -1436,7 +1436,7 @@ def _reencrypt_and_expire(
                 row.rejection_reason = reason
                 row.approved_by = actor
                 row.approved_at = decided_at
-            return len(pending), legacy, mfa_reset
+            return len(pending), legacy, apps_cleared
     except BackupError:
         raise
     except Exception as exc:
