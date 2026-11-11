@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import Text, cast, or_, select
 from sqlalchemy.orm import Session
 
+from core.cases.assignee import with_owner_state
 from core.storage.case_repository import CaseRepository
 from core.storage.models import (
     Case,
@@ -89,7 +90,7 @@ class CaseSearchService:
             )
 
             return {
-                "results": CaseSchema.dump_many(cases),
+                "results": with_owner_state(session, CaseSchema.dump_many(cases)),
                 "total": total_count,
                 "limit": limit,
                 "offset": offset,

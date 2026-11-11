@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional
 
+from core.cases.assignee import owner_states
 from core.cases.combined_state import QueueItem
 from core.cases.linked_entities import finding_entities
 from core.findings.source_evidence import project_finding_source_evidence_for_list
@@ -442,6 +443,10 @@ def case_queue(
                     needs_you=case_id in needs,
                     description=description if isinstance(description, str) else None,
                     sla_paused=False,
+                    # No database in demo mode, so no stored owner is current.
+                    owner_state=owner_states(None, [assignee_value]).get(
+                        assignee_value
+                    ),
                 )
             )
         )

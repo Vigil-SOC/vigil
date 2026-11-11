@@ -23,6 +23,10 @@ from core.storage.schemas.case_entities import (
     CaseWatcherSchema,
 )
 
+# Whether a case's or task's stored owner is a current person (core/cases/assignee.py);
+# null when unassigned. Required, so a read that forgets to fill it fails loudly.
+OwnerStateField = Optional[Literal["current", "not_current"]]
+
 
 class CaseSuccessResponse(BaseModel):
     """Mutation that only reports whether it landed."""
@@ -71,6 +75,7 @@ class CaseQueueItem(BaseModel):
     needs_you: bool = False
     description: Optional[str] = None
     sla_paused: bool = False
+    owner_state: OwnerStateField
 
 
 class CaseQueueStrip(BaseModel):
@@ -143,6 +148,7 @@ class CaseDetailResponse(CaseSchema):
     linked_findings: list[CaseLinkedFinding] = []
     # Merged after the case's newest run started, so that run did not read them.
     alerts_since_last_run: int = 0
+    owner_state: OwnerStateField
 
 
 class CaseRuleCard(BaseModel):
@@ -239,8 +245,12 @@ class CaseIOCExportResponse(BaseModel):
     content: Any
 
 
+class CaseTaskRead(CaseTaskSchema):
+    owner_state: OwnerStateField
+
+
 class CaseTasksResponse(BaseModel):
-    tasks: list[CaseTaskSchema]
+    tasks: list[CaseTaskRead]
 
 
 class CaseRelatedSchema(CaseRelationshipSchema):
@@ -271,8 +281,12 @@ class CaseMergeResponse(BaseModel):
     message: str
 
 
+class CaseSearchResult(CaseSchema):
+    owner_state: OwnerStateField
+
+
 class CaseSearchResponse(BaseModel):
-    results: list[CaseSchema]
+    results: list[CaseSearchResult]
     total: int
     limit: int
     offset: int

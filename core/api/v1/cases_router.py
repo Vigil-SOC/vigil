@@ -28,12 +28,22 @@ from sqlalchemy.orm import Session
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
-from core.cases.assignee import resolve_assignee
+from core.cases.assignee import (
+    owner_states,
+    require_current_owner,
+    resolve_assignee,
+    with_owner_state,
+)
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
-from core.cases.case_status import CaseStatus, record_status_change, status_change
+from core.cases.case_status import (
+    CLOSED,
+    CaseStatus,
+    record_status_change,
+    status_change,
+)
 from core.cases.closure import PERSON_CHANNELS, ClosureCategory
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
@@ -365,9 +375,17 @@ def get_cases(
         strip = repo.strip(
             now=now, needs_you_ids=needs_you_ids, alerts_span=alerts_span
         )
+        states = owner_states(session, (row.assignee for row in rows))
     return {
         "cases": [
-            asdict(queue_item(row, now, needs_you=row.case_id in needs_you_ids))
+            asdict(
+                queue_item(
+                    row,
+                    now,
+                    needs_you=row.case_id in needs_you_ids,
+                    owner_state=states.get(row.assignee or ""),
+                )
+            )
             for row in rows
         ],
         "total": total,
@@ -462,6 +480,7 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
             session, [run.run_id for run in runs]
         )
     case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
+    with_owner_state(session, [case])
     if session is not None:
         case["alerts_since_last_run"] = case_records_service.alerts_since_last_run(
             session, case_id
@@ -603,6 +622,13 @@ def update_case(
                 "content": case_data.notes,
             },
         ]
+
+    # Open work keeps a current owner or none, whatever this save changed.
+    require_current_owner(
+        session,
+        updates["assignee"] if "assignee" in updates else case.get("assignee"),
+        is_open=updates.get("status", case.get("status")) != CLOSED,
+    )
 
     change = status_change(case.get("status"), case_data.status)
 

@@ -2660,7 +2660,7 @@ export interface paths {
         };
         /**
          * Get Tasks
-         * @description Get all tasks for case.
+         * @description Get all tasks for case, each with its owner's state.
          */
         get: operations["get_api_cases_case_id_tasks"];
         put?: never;
@@ -9318,6 +9318,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Owner State */
+            owner_state: ("current" | "not_current") | null;
             /** Priority */
             priority?: string | null;
             /**
@@ -9705,6 +9707,8 @@ export interface components {
              * @default false
              */
             needs_you: boolean;
+            /** Owner State */
+            owner_state: ("current" | "not_current") | null;
             /** Priority */
             priority?: string | null;
             /**
@@ -10049,9 +10053,62 @@ export interface components {
             /** Offset */
             offset: number;
             /** Results */
-            results: components["schemas"]["CaseSchema"][];
+            results: components["schemas"]["CaseSearchResult"][];
             /** Total */
             total: number;
+        };
+        /** CaseSearchResult */
+        CaseSearchResult: {
+            /**
+             * Activities
+             * @default []
+             */
+            activities: unknown[];
+            /** Assignee */
+            assignee?: string | null;
+            /** Case Id */
+            case_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Finding Ids */
+            finding_ids?: string[];
+            /**
+             * Mitre Techniques
+             * @default []
+             */
+            mitre_techniques: string[];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: unknown[];
+            /** Owner State */
+            owner_state: ("current" | "not_current") | null;
+            /** Priority */
+            priority?: string | null;
+            /**
+             * Resolution Steps
+             * @default []
+             */
+            resolution_steps: unknown[];
+            /** Status */
+            status?: string | null;
+            /**
+             * Tags
+             * @default []
+             */
+            tags: string[];
+            /**
+             * Timeline
+             * @default []
+             */
+            timeline: unknown[];
+            /** Title */
+            title?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * CaseSuccessResponse
@@ -10073,6 +10130,43 @@ export interface components {
             };
             /** Total */
             total: number;
+        };
+        /** CaseTaskRead */
+        CaseTaskRead: {
+            /** Actual Hours */
+            actual_hours?: number | null;
+            /** Assignee */
+            assignee?: string | null;
+            /** Case Id */
+            case_id?: string | null;
+            /** Checklist Items */
+            checklist_items?: unknown[];
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Due Date */
+            due_date?: string | null;
+            /** Estimated Hours */
+            estimated_hours?: number | null;
+            /** Owner State */
+            owner_state: ("current" | "not_current") | null;
+            /** Parent Task Id */
+            parent_task_id?: number | null;
+            /** Priority */
+            priority?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Task Id */
+            task_id?: number | null;
+            /** Task Order */
+            task_order?: number | null;
+            /** Title */
+            title?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * CaseTaskSchema
@@ -10115,7 +10209,7 @@ export interface components {
         /** CaseTasksResponse */
         CaseTasksResponse: {
             /** Tasks */
-            tasks: components["schemas"]["CaseTaskSchema"][];
+            tasks: components["schemas"]["CaseTaskRead"][];
         };
         /** CaseUnresolvedFinding */
         CaseUnresolvedFinding: {

@@ -11,16 +11,18 @@ import logging
 from typing import Callable
 from urllib.parse import quote
 
-from sqlalchemy import event, func
+from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session
 
 from core.auth import mcp_credential_service, sign_ins, trail_events
+from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
 
 logger = logging.getLogger(__name__)
 
-OPEN_TASKS = ("pending", "in_progress")
+# Open is anything not done, so a free-text or missing status counts as open.
+OPEN_TASKS = or_(CaseTask.status.is_(None), CaseTask.status.notin_(TASK_DONE))
 
 
 def when_committed(session: Session, send: Callable[[], None]) -> None:
@@ -94,7 +96,7 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
     tasks = (
         session.query(func.count())
         .select_from(CaseTask)
-        .filter(CaseTask.assignee == user.username, CaseTask.status.in_(OPEN_TASKS))
+        .filter(CaseTask.assignee == user.username, OPEN_TASKS)
         .scalar()
     )
     if not (cases or tasks):

@@ -20,7 +20,13 @@ from pydantic import BaseModel, Field, field_validator
 from core.agents.projections import read_events
 from core.auth.permissions import deny_unless, permission_gate
 from core.cases import case_journal_service, case_records_service
-from core.cases.assignee import resolve_assignee, resolve_escalation_target
+from core.cases.assignee import (
+    require_current_owner,
+    resolve_assignee,
+    resolve_escalation_target,
+    task_is_open,
+    with_owner_state,
+)
 from core.cases.case_attachment_service import attach_document
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
@@ -564,10 +570,10 @@ async def add_task(
 
 
 @router.get("/{case_id}/tasks", response_model=CaseTasksResponse)
-async def get_tasks(case_id: str):
-    """Get all tasks for case."""
-    tasks = case_records_service.list_tasks(case_id)
-    return {"tasks": CaseTaskSchema.dump_many(tasks)}
+def get_tasks(case_id: str, session: OptionalUnitOfWorkSession):
+    """Get all tasks for case, each with its owner's state."""
+    tasks = CaseTaskSchema.dump_many(case_records_service.list_tasks(case_id))
+    return {"tasks": with_owner_state(session, tasks)}
 
 
 class TaskUpdate(BaseModel):
@@ -603,6 +609,8 @@ def update_task(
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # Judged once status and assignee are both applied; a refusal rolls it all back.
+    require_current_owner(session, task.assignee, is_open=task_is_open(task.status))
     return CaseTaskSchema.dump(task)
 
 

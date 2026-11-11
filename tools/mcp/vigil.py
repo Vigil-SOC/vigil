@@ -13,7 +13,14 @@ from core.agents.custom_agent_service import CustomAgentService
 from core.audit import reads, trail
 from core.auth.permissions import permission_refusal
 from core.cases.agent_closure import actor, service_session
-from core.cases.assignee import resolve_assignee, resolve_escalation_target
+from core.cases.assignee import (
+    OwnerNotCurrent,
+    require_current_owner,
+    resolve_assignee,
+    resolve_escalation_target,
+    task_is_open,
+    with_owner_state,
+)
 from core.cases.case_status import CaseStatus
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.response.ceiling import ceiling_read
@@ -1020,6 +1027,10 @@ def update_case_task(
             )
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
+            # Judged with status and assignee both applied; raising rolls back.
+            require_current_owner(
+                session, task.assignee, is_open=task_is_open(task.status)
+            )
             payload = CaseTaskSchema.dump(task)
             case_id = task.case_id
             title = task.title
@@ -1049,6 +1060,8 @@ def update_case_task(
                 "task": payload,
             }
         )
+    except OwnerNotCurrent as e:
+        return jdump({"error": e.message, "code": e.code})
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1060,8 +1073,13 @@ def get_case_tasks(case_id: str) -> str:
     try:
         from core.cases import case_records_service
 
-        tasks = case_records_service.list_tasks(case_id)
-        payload = CaseTaskSchema.dump_many(tasks)
+        payload = CaseTaskSchema.dump_many(case_records_service.list_tasks(case_id))
+        # Demo mode has no database and no accounts: nothing is current.
+        if get_data_service().is_using_database():
+            with service_session() as session:
+                with_owner_state(session, payload)
+        else:
+            with_owner_state(None, payload)
 
         return jdump(
             {
