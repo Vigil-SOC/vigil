@@ -9926,9 +9926,11 @@ export interface components {
          * CaseCreate
          * @description Case creation request.
          *
-         *     ``restricted`` (or a ``readers`` list) creates the case restricted in the same
-         *     insert, so its content is never open. ``readers`` are principal ids; left
-         *     out, the list is the defaults (you, when you are a person or service account).
+         *     ``restricted`` (or a ``readers`` or ``reader_teams`` list) creates the case
+         *     restricted in the same insert, so its content is never open. ``readers`` are
+         *     principal ids; left out, the list is the defaults (you, when you are a person
+         *     or service account). ``reader_teams`` are team ids whose members read it:
+         *     naming one is a person's own act and needs users.read; never the default team.
          */
         CaseCreate: {
             /**
@@ -9943,6 +9945,8 @@ export interface components {
              * @default medium
              */
             priority: string;
+            /** Reader Teams */
+            reader_teams?: string[] | null;
             /** Readers */
             readers?: string[] | null;
             /** Restricted */
@@ -10509,8 +10513,8 @@ export interface components {
         };
         /**
          * CaseReadersChange
-         * @description Change a restricted case's readers. Removing narrows; adding widens and
-         *     needs a person acting directly.
+         * @description Change a restricted case's readers and reader teams. Removing narrows;
+         *     adding widens and needs a person acting directly.
          */
         CaseReadersChange: {
             /**
@@ -10519,10 +10523,20 @@ export interface components {
              */
             add: string[];
             /**
+             * Add Teams
+             * @default []
+             */
+            add_teams: string[];
+            /**
              * Remove
              * @default []
              */
             remove: string[];
+            /**
+             * Remove Teams
+             * @default []
+             */
+            remove_teams: string[];
         };
         /**
          * CaseRecordResponse
@@ -10608,9 +10622,12 @@ export interface components {
         /**
          * CaseRestrict
          * @description Restrict an open case. ``readers`` (principal ids) is the whole list in one
-         *     act; left out, it is the owner, the task assignees, and you.
+         *     act; left out, it is the owner, the task assignees, and you. ``reader_teams``
+         *     (team ids) adds teams whose members read it, a person's own act.
          */
         CaseRestrict: {
+            /** Reader Teams */
+            reader_teams?: string[] | null;
             /** Readers */
             readers?: string[] | null;
         };
