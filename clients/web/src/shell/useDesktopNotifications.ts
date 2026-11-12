@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { configApi, findingsApi } from '../services/api'
+import { configApi, findingsApi, noticesApi } from '../services/api'
 import { notificationService } from '../services/notifications'
 
 interface ListedFinding {
@@ -27,9 +27,13 @@ export function useDesktopNotifications() {
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let noticeTimer: ReturnType<typeof setTimeout> | undefined
     // Newest arrival already accounted for, plus the ids that share that exact timestamp.
     let mark: string | undefined
     const tieIds = new Set<string>()
+    // Highest notice id already accounted for. Null until the first poll, which
+    // only records a baseline (0 when the bell is empty) and raises nothing.
+    let noticeBaseline: number | null = null
     const supported = typeof window !== 'undefined' && 'Notification' in window
 
     const setMark = (list: ListedFinding[], next: string) => {
@@ -86,6 +90,34 @@ export function useDesktopNotifications() {
       }
     }
 
+    const noticeTick = async () => {
+      try {
+        const res = await noticesApi.list()
+        const all = [...(res.data?.notices || []), ...(res.data?.earlier || [])]
+        let highest = 0
+        for (const notice of all) {
+          if (notice.id > highest) highest = notice.id
+        }
+        if (noticeBaseline === null) {
+          noticeBaseline = highest
+        } else {
+          const baseline = noticeBaseline
+          const fresh = all
+            .filter((notice) => notice.id > baseline)
+            .sort((a, b) => a.id - b.id)
+          // Past the cap stay in the bell; the baseline still moves to the newest id.
+          if (all.length > 0) noticeBaseline = highest
+          fresh.slice(0, MAX_PER_TICK).forEach((notice) =>
+            notificationService.notifyNotice(notice),
+          )
+        }
+      } catch {
+        /* best-effort — backend may be unavailable */
+      } finally {
+        if (!cancelled) noticeTimer = setTimeout(noticeTick, POLL_MS)
+      }
+    }
+
     configApi
       .getGeneral()
       .then((res) => {
@@ -96,6 +128,7 @@ export function useDesktopNotifications() {
         // (the Settings toggle requests permission from a real user gesture)
         if (enabled && supported && Notification.permission === 'granted') {
           tick()
+          noticeTick()
         }
       })
       .catch(() => {
@@ -105,6 +138,7 @@ export function useDesktopNotifications() {
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
+      if (noticeTimer) clearTimeout(noticeTimer)
     }
   }, [])
 }

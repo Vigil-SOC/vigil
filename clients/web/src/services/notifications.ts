@@ -74,6 +74,23 @@ function notifyNewFinding(finding: {
   })
 }
 
+const MEDIC_LINK = /^\/medic\?incident=(inc_[0-9A-Za-z]{8,32})$/
+
+function notifyNotice(notice: {
+  id: number
+  title: string
+  message: string
+  link?: string | null
+}): void {
+  const incident = notice.link?.match(MEDIC_LINK)
+  show(notice.title, {
+    body: notice.message,
+    tag: incident ? `medic-${incident[1]}` : `notice-${notice.id}`,
+    requireInteraction: false,
+    data: { type: 'notice', id: notice.id },
+  })
+}
+
 function notifyInvestigationComplete(investigation: {
   finding_id?: string
   case_id?: string
@@ -96,5 +113,6 @@ export const notificationService = {
   requestPermission,
   setEnabled,
   notifyNewFinding,
+  notifyNotice,
   notifyInvestigationComplete,
 }
