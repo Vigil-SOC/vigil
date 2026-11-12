@@ -1438,15 +1438,18 @@ export interface AuditEntry {
   late: boolean
   entry_hash: string
   payload: Record<string, unknown>
-  source_ip: string | null
+  // A narrowed entry (restricted) leaves these off.
+  source_ip?: string | null
   actor_text: string | null
-  operator_text: string | null
-  attempted_name: string | null
-  personal: unknown
+  operator_text?: string | null
+  attempted_name?: string | null
+  personal?: unknown
   actor?: AuditPrincipal | null
   on_behalf_of?: AuditPrincipal | null
   /** What the entry was, in words, from the server. */
   sentence?: string
+  /** About a restricted case the reader can't read: who and when only (#4362). */
+  restricted?: boolean
 }
 
 export interface AuditTip { seq: number; hash: string }

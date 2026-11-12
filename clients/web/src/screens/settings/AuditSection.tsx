@@ -297,6 +297,7 @@ function ActorCell({ entry }: { entry: AuditEntry }) {
 
 function Marks({ entry }: { entry: AuditEntry }) {
   const marks: string[] = []
+  if (entry.restricted) marks.push('Restricted case')
   if (entry.late) marks.push('Recorded late')
   if (entry.payload.attribution != null) marks.push('Copied')
   if (entry.payload.awaiting === true) marks.push('Intent')
@@ -324,10 +325,11 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
     ['Occurred (UTC)', utcDayClock(entry.occurred_at) ?? entry.occurred_at],
     ['Actor', [nameOf(entry.actor, entry.actor_text ?? ''), kindLine(entry.actor), entry.actor?.label ? entry.actor.id : ''].filter(Boolean).join(' · ')],
     ['On behalf of', [nameOf(entry.on_behalf_of, str(p.on_behalf_of)), entry.on_behalf_of?.erased ? 'erased' : '', entry.on_behalf_of?.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')],
-    ['Operator text', entry.operator_text ?? ''],
+    // A narrowed entry has no operator text to show, not an empty one.
+    ...(entry.restricted ? [] : [['Operator text', entry.operator_text ?? ''] as [string, string]]),
     ['What it was', entry.sentence ?? ''],
     ['Action', str(p.action)],
-    ['Object', str(p.object)],
+    ...(entry.restricted ? [['Case', str(p.case_id)] as [string, string]] : [['Object', str(p.object)] as [string, string]]),
     ...(p.target != null ? [['Target', str(p.target)] as [string, string]] : []),
     ['Outcome', str(p.outcome) || (unknown ? 'outcome unknown' : '')],
     ['Hash', entry.entry_hash],
@@ -336,8 +338,14 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
   return (
     <div className="ag-detail" role="row">
       <div role="cell" className="ag-detail-card">
-        {(entry.late || unknown || p.attribution != null) && (
+        {(entry.restricted || entry.late || unknown || p.attribution != null) && (
           <div className="ag-notes">
+            {entry.restricted && (
+              <p>
+                <b>Restricted case.</b> You are not on this case’s reader list, so this entry shows who did what and when. Its
+                text and details show in the case’s own history, to its readers.
+              </p>
+            )}
             {entry.late && <p><b>Recorded late.</b> The trail could not take this entry when it happened; it was written afterwards with its original time.</p>}
             {unknown && <p><b>Outcome unknown.</b> This intent was recorded, and no result entry names it.</p>}
             {p.attribution != null && (
@@ -357,7 +365,7 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
           ))}
         </dl>
         <details className="ag-payload">
-          <summary>Full entry</summary>
+          <summary>{entry.restricted ? 'Entry, narrowed' : 'Full entry'}</summary>
           <pre>{JSON.stringify(p, null, 2)}</pre>
         </details>
       </div>

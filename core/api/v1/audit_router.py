@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from core.audit import reads, retention, trail
+from core.audit import narrow, reads, retention, trail
 from core.auth import current_user as current_user_module
 from core.auth.auth_service import _is_service_account
 from core.auth.current_user import get_current_user
@@ -87,6 +87,8 @@ class AuditEntry(BaseModel):
     entry_hash: str
     actor: Optional[AuditPrincipal] = None
     payload: AuditPayload
+    # About a case the caller may not read: who and when only (#4362).
+    restricted: Optional[bool] = None
 
 
 # The same keys as ``core.audit.reads.FEED_FIELDS``.
@@ -242,6 +244,7 @@ def export_entries(
     if not user.principal_id:
         raise HTTPException(status_code=403, detail="A principal is required")
     rows, tip = retention.carry_export(session, query, user.principal_id)
+    rows = narrow.entries(session, rows)
     return StreamingResponse(
         _ndjson(rows, tip),
         media_type="application/x-ndjson",
@@ -262,10 +265,11 @@ def poll_entries(
         raise HTTPException(status_code=422, detail="poll needs after")
     page = trail.poll(session, query, limit)
     if page.reset:
-        return {"reset": True, "tip": page.tip.public(), "restore": page.restore}
+        restore = narrow.entry(session, page.restore)
+        return {"reset": True, "tip": page.tip.public(), "restore": restore}
     rows = list(page.entries)
     _carried(session, rows)
-    return {"entries": rows, "tip": page.tip.public()}
+    return {"entries": narrow.entries(session, rows), "tip": page.tip.public()}
 
 
 @router.get("/verify", response_model=AuditVerification)

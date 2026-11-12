@@ -9549,6 +9549,8 @@ export interface components {
             /** Occurred At */
             occurred_at: string;
             payload: components["schemas"]["AuditPayload"];
+            /** Restricted */
+            restricted?: boolean | null;
             /** Seq */
             seq: number;
         } & {

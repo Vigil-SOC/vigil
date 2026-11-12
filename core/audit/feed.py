@@ -38,7 +38,7 @@ from urllib.parse import urlsplit
 import httpx
 from sqlalchemy import text
 
-from core.audit import retention, trail
+from core.audit import narrow, retention, trail
 from core.config import get_settings
 from core.secrets_manager import delete_secret, get_secret, set_secret
 from core.storage.config_service import get_config_service
@@ -519,6 +519,8 @@ def _send(clock: SendClock) -> None:
             return
         after = state.last_delivered_seq or 0
         rows = trail.read(session, trail.make_query(after=after), BATCH)
+        # No person reads what is forwarded: open cases only (#4362).
+        rows = narrow.entries(session, rows, narrow.nobody())
     if not rows:
         return
     try:
@@ -980,6 +982,7 @@ def _send_webhook(clock: SendClock) -> None:
             kept = [row for row in rows if row["seq"] <= state.pending_through]
             if kept:
                 rows, through = kept, kept[-1]["seq"]
+        rows = narrow.entries(session, rows, narrow.nobody())
         if not rows:
             if through > cursor:
                 session.execute(
