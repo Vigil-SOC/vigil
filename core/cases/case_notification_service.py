@@ -33,7 +33,7 @@ def may_receive(session: Session, case: Optional[Case], name: str) -> bool:
 
     if case is None:
         return True
-    return principal_reads_case(case, principal_of(session, name))
+    return principal_reads_case(case, principal_of(session, name), session)
 
 
 # The notification types a watcher can switch off via

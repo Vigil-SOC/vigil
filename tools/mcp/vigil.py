@@ -323,21 +323,39 @@ def update_case(
 
 @mcp.tool()
 @requires("cases.write")
-def restrict_case(case_id: str, readers: Optional[list] = None) -> str:
+def restrict_case(
+    case_id: str, readers: Optional[list] = None, reader_teams: Optional[list] = None
+) -> str:
     """Restrict an open case to its readers: usernames or principal ids, the whole
-    list. Left out, the owner, task assignees and the person you act for. Not frozen."""
-    return _call(tool_registry.restrict_case, case_id=case_id, readers=readers)
+    list. Left out, the owner, task assignees and the person you act for. Naming
+    teams is a person's act in the console and is refused here. Not frozen."""
+    return _call(
+        tool_registry.restrict_case,
+        case_id=case_id,
+        readers=readers,
+        reader_teams=reader_teams,
+    )
 
 
 @mcp.tool()
 @requires("cases.write")
 def change_case_readers(
-    case_id: str, remove: Optional[list] = None, add: Optional[list] = None
+    case_id: str,
+    remove: Optional[list] = None,
+    add: Optional[list] = None,
+    remove_teams: Optional[list] = None,
+    add_teams: Optional[list] = None,
 ) -> str:
-    """Remove readers from a restricted case; the list may not end empty. Adding is
-    a person's act in the console and is refused here. Not frozen."""
+    """Remove readers or reader teams from a restricted case; the list may not end
+    empty. Adding either is a person's act in the console and is refused here.
+    Not frozen."""
     return _call(
-        tool_registry.change_case_readers, case_id=case_id, remove=remove, add=add
+        tool_registry.change_case_readers,
+        case_id=case_id,
+        remove=remove,
+        add=add,
+        remove_teams=remove_teams,
+        add_teams=add_teams,
     )
 
 

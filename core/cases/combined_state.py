@@ -135,6 +135,7 @@ class QueueItem:
     # Restricted cases (#4354): the reader list, which only its readers see.
     restricted: bool = False
     readers: list = field(default_factory=list)
+    reader_teams: list = field(default_factory=list)
 
 
 def queue_item(
@@ -183,4 +184,5 @@ def queue_item(
         ),
         restricted=row.restricted,
         readers=list(row.readers),
+        reader_teams=list(row.reader_teams),
     )

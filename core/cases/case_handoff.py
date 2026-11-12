@@ -178,8 +178,7 @@ def _current_member(session: Session, username: Optional[str], team_id: str) -> 
 
 
 def _team_has_reader(session: Session, case: Case, team_id: str) -> bool:
-    """A restricted case may go only to a team with an active member who reads it.
-    Until team readers land (#4360), a reader is a named principal."""
+    """A restricted case may go only to a team with an active member who reads it."""
     if not case_restricted(case):
         return True
     members = session.scalars(
@@ -192,7 +191,7 @@ def _team_has_reader(session: Session, case: Case, team_id: str) -> bool:
             User.is_active.is_(True),
         )
     )
-    return any(principal_reads_case(case, member) for member in members)
+    return any(principal_reads_case(case, member, session) for member in members)
 
 
 def _may(

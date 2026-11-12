@@ -5,8 +5,10 @@ only changes the list. The caller has already loaded the case through that rule
 (a case it cannot read is a 404) and holds ``cases.write``.
 
 - Restricting takes the whole list in one act, and any principal may do it.
-- Removing names is open to any principal: it narrows.
-- Adding names, or lifting the restriction, widens: a person acting directly.
+- Removing names or teams is open to any principal: it narrows.
+- Adding names, naming a team (#4360), or lifting the restriction widens: a
+  person acting directly. Naming a team also needs ``users.read`` (teams come
+  from the teams list), and the default team is never named.
 - A service account is named only by itself, when it is the restricter.
 - A list left empty is refused (decision D on #4352).
 
@@ -16,7 +18,7 @@ Each change is one trail entry naming the actor and the change.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,12 +30,17 @@ from core.cases import case_trail
 from core.cases.agent_closure import principal_for_username
 from core.exceptions import SOCError
 from core.integrations.mcp.surface import current_caller
-from core.storage.models import Case, CaseTask, Principal, User
+from core.storage.models import Case, CaseTask, Principal, Team, User
 from core.time import utcnow
 
 PERSON_MUST = "A person must do this: adding readers or lifting a restriction widens who can read the case"
 PERSON_MUST_MERGE = "A person must do this: merging two restricted cases with different readers widens who can read each"
-NAME_ONE = "Name at least one reader"
+PERSON_MUST_TEAM = "A person must do this: naming a team widens who can read the case"
+NAME_ONE = "Name at least one reader or team"
+DEFAULT_TEAM = (
+    "The default team can't be named: every new account joins it with no "
+    "person present"
+)
 
 
 class ReadersRefused(SOCError):
@@ -54,6 +61,7 @@ class Restricter:
     service_account: bool = False
     person_direct: bool = False
     for_person: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 def http_restricter(session: Session, user: User) -> Restricter:
@@ -68,6 +76,7 @@ def http_restricter(session: Session, user: User) -> Restricter:
         principal_id=getattr(user, "principal_id", None),
         service_account=is_service_account(user),
         person_direct=direct,
+        user_id=getattr(user, "user_id", None),
     )
 
 
@@ -129,26 +138,59 @@ def _checked(
     return named
 
 
+def _checked_teams(
+    session: Session, team_ids: Sequence[str], actor: Restricter
+) -> List[str]:
+    """Team ids a person acting directly may name: each exists, none is the
+    default team. Naming a team widens, so a run, token or MCP call can't."""
+    from core.auth.permissions import missing_permission
+
+    ids = _unique(team_ids)
+    if not ids:
+        return []
+    if not actor.person_direct:
+        raise ReadersRefused(PERSON_MUST_TEAM, 403)
+    if missing_permission(actor.user_id or "", "users.read", session) is not None:
+        raise ReadersRefused("Naming a team needs users.read", 403)
+    found = {
+        team.team_id: team
+        for team in session.scalars(select(Team).where(Team.team_id.in_(ids)))
+    }
+    for team_id in ids:
+        team = found.get(team_id)
+        if team is None:
+            raise ReadersRefused(f"{team_id} is not a team")
+        if team.is_default:
+            raise ReadersRefused(DEFAULT_TEAM)
+    return ids
+
+
 def _initial(
     session: Session,
     case: Optional[Case],
     readers: Optional[Sequence[str]],
     actor: Restricter,
-) -> List[str]:
-    """The list a restriction starts with: ``readers`` as given, else the defaults."""
+    teams: Optional[Sequence[str]] = None,
+) -> Tuple[List[str], List[str]]:
+    """The lists a restriction starts with: ``readers`` as given, else the
+    defaults; and the teams named."""
+    named_teams = _checked_teams(session, teams or (), actor)
     if readers is None:
         names = _checked(
             session, default_readers(session, case, actor), actor, drop=True
         )
     else:
         names = _checked(session, readers, actor)
-    if not names:
+    if not names and not named_teams:
         raise ReadersRefused(NAME_ONE)
-    return names
+    return names, named_teams
 
 
-def _stamp(case: Case, readers: Optional[List[str]]) -> None:
+def _stamp(
+    case: Case, readers: Optional[List[str]], teams: Optional[List[str]] = None
+) -> None:
     case.reader_principal_ids = readers or None
+    case.reader_team_ids = teams or None
     case.updated_at = utcnow()
 
 
@@ -160,10 +202,14 @@ def _drop_watchers(session: Session, case: Case) -> None:
 
 
 def readers_for_new_case(
-    session: Session, readers: Optional[Sequence[str]], actor: Restricter
-) -> List[str]:
-    """The list a case is created restricted with: ``readers``, else the defaults."""
-    return _initial(session, None, readers, actor)
+    session: Session,
+    readers: Optional[Sequence[str]],
+    actor: Restricter,
+    teams: Optional[Sequence[str]] = None,
+) -> Tuple[List[str], List[str]]:
+    """The lists a case is created restricted with: ``readers``, else the
+    defaults, and ``teams``."""
+    return _initial(session, None, readers, actor, teams)
 
 
 def restrict(
@@ -171,16 +217,23 @@ def restrict(
     case: Case,
     readers: Optional[Sequence[str]],
     actor: Restricter,
+    teams: Optional[Sequence[str]] = None,
 ) -> List[str]:
-    """Restrict an open case to ``readers`` (the defaults when None)."""
+    """Restrict an open case to ``readers`` (the defaults when None) and ``teams``."""
     if case.reader_principal_ids or case.reader_team_ids:
         raise ReadersRefused(
             "This case is already restricted: add or remove readers instead", 409
         )
-    names = _initial(session, case, readers, actor)
-    _stamp(case, names)
+    names, named_teams = _initial(session, case, readers, actor, teams)
+    _stamp(case, names, named_teams)
     session.flush()
-    case_trail.append_case(session, case_trail.RESTRICT, case.case_id, readers=names)
+    case_trail.append_case(
+        session,
+        case_trail.RESTRICT,
+        case.case_id,
+        readers=names,
+        teams=named_teams or None,
+    )
     _drop_watchers(session, case)
     return names
 
@@ -191,31 +244,47 @@ def change_readers(
     actor: Restricter,
     add: Sequence[str] = (),
     remove: Sequence[str] = (),
+    add_teams: Sequence[str] = (),
+    remove_teams: Sequence[str] = (),
 ) -> List[str]:
-    """Add and remove names on a restricted case. Adding is a person's own act."""
+    """Add and remove names and teams on a restricted case. Adding is a
+    person's own act."""
     current = list(case.reader_principal_ids or [])
-    if not current and not case.reader_team_ids:
+    current_teams = list(case.reader_team_ids or [])
+    if not current and not current_teams:
         raise ReadersRefused("This case is open: restrict it first", 409)
     removed = [n for n in _unique(remove) if n in current]
     added = [n for n in _unique(add) if n not in current]
+    removed_teams = [t for t in _unique(remove_teams) if t in current_teams]
+    added_teams = [t for t in _unique(add_teams) if t not in current_teams]
     if added:
         if not actor.person_direct:
             raise ReadersRefused(PERSON_MUST, 403)
         _checked(session, added, actor)
+    _checked_teams(session, added_teams, actor)
     result = [n for n in current if n not in removed] + added
-    if not result and not case.reader_team_ids:
+    teams = [t for t in current_teams if t not in removed_teams] + added_teams
+    if not result and not teams:
         raise ReadersRefused(NAME_ONE)
-    if not added and not removed:
+    if not (added or removed or added_teams or removed_teams):
         return result
-    _stamp(case, result)
+    _stamp(case, result, teams)
     session.flush()
-    if added:
+    if added or added_teams:
         case_trail.append_case(
-            session, case_trail.READERS_ADD, case.case_id, added=added
+            session,
+            case_trail.READERS_ADD,
+            case.case_id,
+            added=added,
+            added_teams=added_teams or None,
         )
-    if removed:
+    if removed or removed_teams:
         case_trail.append_case(
-            session, case_trail.READERS_REMOVE, case.case_id, removed=removed
+            session,
+            case_trail.READERS_REMOVE,
+            case.case_id,
+            removed=removed,
+            removed_teams=removed_teams or None,
         )
         _drop_watchers(session, case)
     return result
@@ -224,14 +293,20 @@ def change_readers(
 def lift(session: Session, case: Case, actor: Restricter) -> None:
     """Open a restricted case to everyone again: a person's own act."""
     before = list(case.reader_principal_ids or [])
-    if not before and not case.reader_team_ids:
+    before_teams = list(case.reader_team_ids or [])
+    if not before and not before_teams:
         raise ReadersRefused("This case is not restricted", 409)
     if not actor.person_direct:
         raise ReadersRefused(PERSON_MUST, 403)
     _stamp(case, None)
-    case.reader_team_ids = None
     session.flush()
-    case_trail.append_case(session, case_trail.UNRESTRICT, case.case_id, readers=before)
+    case_trail.append_case(
+        session,
+        case_trail.UNRESTRICT,
+        case.case_id,
+        readers=before,
+        teams=before_teams or None,
+    )
 
 
 def _owners(session: Session, case: Case) -> List[str]:
@@ -275,14 +350,14 @@ def merge_readers(
             return
         if actor is None or not actor.person_direct:
             raise ReadersRefused(PERSON_MUST_MERGE, 403)
-        _stamp(target, mine + added)
-        target.reader_team_ids = (teams + added_teams) or None
+        _stamp(target, mine + added, teams + added_teams)
         session.flush()
         case_trail.append_case(
             session,
             case_trail.READERS_ADD,
             target.case_id,
             added=added,
+            added_teams=added_teams or None,
             merged_from=source.case_id,
         )
         return
@@ -299,14 +374,15 @@ def merge_readers(
         )
     if not held:
         readers = list(source.reader_principal_ids or [])
-        _stamp(target, readers)
-        target.reader_team_ids = list(source.reader_team_ids or []) or None
+        source_teams = list(source.reader_team_ids or [])
+        _stamp(target, readers, source_teams)
         session.flush()
         case_trail.append_case(
             session,
             case_trail.RESTRICT,
             target.case_id,
             readers=readers,
+            teams=source_teams or None,
             merged_from=source.case_id,
         )
 

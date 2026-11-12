@@ -674,7 +674,7 @@ def _named(session: Any, names: Optional[list]) -> Optional[list]:
 
 def _change_readers(case_id: str, change: Callable[[Any, Any, Any], Any]) -> Args:
     from core.auth.permissions import may_read_case
-    from core.cases.case_readers import PERSON_MUST, ReadersRefused
+    from core.cases.case_readers import ReadersRefused
     from core.storage.models import Case
 
     if not _data().is_using_database():
@@ -685,17 +685,24 @@ def _change_readers(case_id: str, change: Callable[[Any, Any, Any], Any]) -> Arg
             if case is None or not may_read_case(case):
                 return {"error": f"Case {case_id} not found"}
             readers = change(session, case, _restricter(session))
+            teams = list(case.reader_team_ids or [])
     except ReadersRefused as exc:
         # Chat and MCP have no direct person: say where it can be done.
-        message = exc.message.replace(
-            PERSON_MUST,
-            PERSON_MUST.replace("A person must do this", PERSON_IN_CONSOLE, 1),
-        )
+        message = exc.message
+        if message.startswith("A person must do this"):
+            message = message.replace("A person must do this", PERSON_IN_CONSOLE, 1)
         return {"error": message, "code": exc.code}
-    return {"success": True, "case_id": case_id, "readers": readers}
+    return {
+        "success": True,
+        "case_id": case_id,
+        "readers": readers,
+        "reader_teams": teams,
+    }
 
 
-def restrict_case(*, case_id: str, readers: Optional[list] = None) -> Args:
+def restrict_case(
+    *, case_id: str, readers: Optional[list] = None, reader_teams: Optional[list] = None
+) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
     from core.cases import case_readers
@@ -707,13 +714,20 @@ def restrict_case(*, case_id: str, readers: Optional[list] = None) -> Args:
                 "A run no person started names no reader: restrict without a "
                 "list (the owner and task assignees), then remove names"
             )
-        return case_readers.restrict(session, case, _named(session, readers), actor)
+        return case_readers.restrict(
+            session, case, _named(session, readers), actor, reader_teams
+        )
 
     return _change_readers(case_id, change)
 
 
 def change_case_readers(
-    *, case_id: str, remove: Optional[list] = None, add: Optional[list] = None
+    *,
+    case_id: str,
+    remove: Optional[list] = None,
+    add: Optional[list] = None,
+    remove_teams: Optional[list] = None,
+    add_teams: Optional[list] = None,
 ) -> Args:
     if refusal := permission_refusal("cases.write"):
         return refusal
@@ -727,6 +741,8 @@ def change_case_readers(
             actor,
             add=_named(session, add) or (),
             remove=_named(session, remove) or (),
+            add_teams=add_teams or (),
+            remove_teams=remove_teams or (),
         ),
     )
 

@@ -29,7 +29,7 @@ from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.auth.tool_principal import current_claims
 from core.integrations.mcp.surface import current_caller
 from core.storage import case_read_hook
-from core.storage.models import Case, User
+from core.storage.models import Case, TeamMembership, User
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -497,18 +497,44 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
     return {"error": f"{caller} may not do this: {permission} required"}
 
 
-# ---- Restricted cases (#4352, #4354) --------------------------------------
+# ---- Restricted cases (#4352, #4354, #4360) --------------------------------
 # The one read rule. A caller may read a case when it is open (no reader named),
-# or its bound principal is on the reader list, or it is an unattended run with
-# no person bound: the one built-in reader class (decision A). A person's token
+# or its bound principal is on the reader list or on a team named there (#4360;
+# archived teams too: archiving changes nothing a team grants), or it is an
+# unattended run with no person bound: the one built-in reader class (decision A). A person's token
 # and an agent acting for a person read as that person. Nothing bound reads no
 # restricted case. No Admin bypass: DEV_MODE takes the same test as its dev user.
 
 
 @dataclass(frozen=True)
 class CaseReader:
+    """``team_ids`` None means not yet looked up: read from ``team_memberships``
+    when a case names a team."""
+
     principal_id: Optional[str] = None
     builtin: bool = False
+    team_ids: Optional[frozenset] = None
+
+
+def teams_of(principal_id: Optional[str], session: Any = None) -> frozenset:
+    """Every team ``principal_id`` is on, archived ones included."""
+    if not principal_id:
+        return frozenset()
+    from sqlalchemy import select
+
+    with unit_of_work(session) as session:
+        return frozenset(
+            session.scalars(
+                select(TeamMembership.team_id).where(
+                    TeamMembership.principal_id == principal_id
+                )
+            )
+        )
+
+
+def case_reader_for(principal_id: Optional[str], session: Any = None) -> CaseReader:
+    """A reader for ``principal_id`` with its teams looked up now (on ``session``)."""
+    return CaseReader(principal_id, team_ids=teams_of(principal_id, session))
 
 
 _builtin_reader: ContextVar[bool] = ContextVar("vigil_builtin_reader", default=False)
@@ -553,13 +579,18 @@ def current_case_reader() -> CaseReader:
     return CaseReader(current_user_module.dev_principal.get())
 
 
-def _read_terms(reader: CaseReader, is_open: Any, named: Callable[[str], Any]):
+def _read_terms(
+    reader: CaseReader,
+    is_open: Any,
+    named: Callable[[str], Any],
+    on_team: Callable[[CaseReader], Any],
+):
     """The definition, once. ``None`` reads every case; else any one term."""
     if reader.builtin:
         return None
     if reader.principal_id is None:
         return [is_open]
-    return [is_open, named(reader.principal_id)]
+    return [is_open, named(reader.principal_id), on_team(reader)]
 
 
 def case_restricted(case: Any) -> bool:
@@ -572,22 +603,57 @@ def case_restricted(case: Any) -> bool:
 
 def may_read_case(case: Any, reader: Optional[CaseReader] = None) -> bool:
     """The single-record test, on a ``Case`` row."""
+    teams = getattr(case, "reader_team_ids", None) or []
+
+    def on_team(reader: CaseReader) -> bool:
+        held = reader.team_ids
+        if held is None:
+            # On the row's own session, when it has one: no second connection.
+            from sqlalchemy.orm import object_session
+            from sqlalchemy.orm.exc import UnmappedInstanceError
+
+            try:
+                session = object_session(case)
+            except UnmappedInstanceError:
+                session = None
+            held = teams_of(reader.principal_id, session)
+        return any(team in held for team in teams)
+
     terms = _read_terms(
         reader or current_case_reader(),
         not case_restricted(case),
         lambda principal: principal in (case.reader_principal_ids or []),
+        # Deferred: the membership lookup runs only when no earlier term reads it.
+        lambda reader: (lambda: on_team(reader)) if teams else False,
     )
-    return terms is None or any(terms)
+    return terms is None or any(t() if callable(t) else t for t in terms)
 
 
 def case_read_clause(reader: Optional[CaseReader] = None):
     """The same test as a SQL clause on ``cases``."""
-    from sqlalchemy import and_, false, func, or_, true
+    from sqlalchemy import String, and_, exists, false, func, or_, true
+    from sqlalchemy.dialects.postgresql import array
 
     is_open = and_(
         func.coalesce(func.cardinality(Case.reader_principal_ids), 0) == 0,
         func.coalesce(func.cardinality(Case.reader_team_ids), 0) == 0,
     )
+
+    def on_team(reader: CaseReader):
+        if reader.team_ids is not None:
+            if not reader.team_ids:
+                return false()
+            return func.coalesce(
+                Case.reader_team_ids.overlap(
+                    array(sorted(reader.team_ids), type_=String(50))
+                ),
+                false(),
+            )
+        return exists().where(
+            TeamMembership.principal_id == reader.principal_id,
+            Case.reader_team_ids.any(TeamMembership.team_id),
+        )
+
     terms = _read_terms(
         reader or current_case_reader(),
         is_open,
@@ -595,6 +661,7 @@ def case_read_clause(reader: Optional[CaseReader] = None):
         lambda principal: func.coalesce(
             Case.reader_principal_ids.any(principal), false()
         ),
+        on_team,
     )
     return true() if terms is None else or_(*terms)
 

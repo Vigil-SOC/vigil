@@ -784,6 +784,14 @@ def _refuse_held_address(session: Session, email: str) -> None:
         )
 
 
+def _person_direct(session: Session, user: User) -> bool:
+    """A person in their own session, not a token, run or MCP call: the one
+    caller that may widen who reads a restricted case (#4360)."""
+    from core.cases.case_readers import http_restricter
+
+    return http_restricter(session, user).person_direct
+
+
 def _issue_invite(
     session: Session,
     current_user: User,
@@ -811,7 +819,12 @@ def _issue_invite(
     # An address is a sign-in name: hold it so two invites or sign-ups can't race.
     claim_sign_in_names(session, email)
     _refuse_held_address(session, email)
-    chosen = teams.check_invite_teams(session, team_ids)
+    chosen = teams.check_invite_teams(
+        session,
+        team_ids,
+        actor=current_user.principal_id,
+        direct=_person_direct(session, current_user),
+    )
     row, token = invites.issue(
         session, email, role_id, current_user.principal_id, channel, chosen
     )
@@ -1084,7 +1097,13 @@ def add_team_member(
     """Add a person to a team. An archived team accepts no one (teams.manage)."""
     with _denials(current_user, "team.member_add"):
         deny_unless(current_user.user_id, "teams.manage")
-    teams.add_member(session, team_id, body.user_id, actor=current_user.principal_id)
+    teams.add_member(
+        session,
+        team_id,
+        body.user_id,
+        actor=current_user.principal_id,
+        direct=_person_direct(session, current_user),
+    )
     return _team_detail(session, session.get(Team, team_id))
 
 
