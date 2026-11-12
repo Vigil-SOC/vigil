@@ -1,7 +1,9 @@
 """Teams and who is on them.
 
-Membership routes work and grants nothing. The default team is the one row
-with ``is_default``, never a name looked up. A membership is a person principal.
+Membership routes work. It grants nothing, except reading the restricted cases
+that name the team (#4360): a join to such a team is judged by ``may_grant``.
+The default team is the one row with ``is_default``, never a name looked up.
+A membership is a person principal.
 """
 
 from __future__ import annotations
@@ -28,6 +30,9 @@ from core.storage.models import (
 from core.time import utcnow
 
 NAME_MAX = 100
+# Never names a case: a refused actor learns nothing about what it can't read.
+GRANTS_ACCESS = "Adding to this team grants access you don't hold."
+PERSON_MUST = "A person must do this: adding to this team grants access."
 
 
 def clean_name(raw: str) -> str:
@@ -145,12 +150,18 @@ def unarchive_team(session: Session, team_id: str, *, actor: str) -> Team:
     return team
 
 
-def add_member(session: Session, team_id: str, user_id: str, *, actor: str) -> User:
+def add_member(
+    session: Session, team_id: str, user_id: str, *, actor: str, direct: bool
+) -> User:
+    """``direct``: a person acting in their own session, which a join to a team
+    a restricted case names needs."""
     team = _lock(session, team_id)
     _refuse_archived(team)
     user = _person(session, user_id)
     if _has(session, team.team_id, user.principal_id):
         raise TeamRefused("This person is already on the team.", 409)
+    if not direct and _named(session, team.team_id):
+        raise TeamRefused(PERSON_MUST, 403)
     _insert(session, team, user.principal_id, actor)
     return user
 
@@ -177,8 +188,11 @@ def remove_member(
     return _removal_warning(session, team, user.principal_id)
 
 
-def check_invite_teams(session: Session, team_ids: Optional[list[str]]) -> list[str]:
-    """The ids an invite may store: each exists and is not archived."""
+def check_invite_teams(
+    session: Session, team_ids: Optional[list[str]], *, actor: str, direct: bool
+) -> list[str]:
+    """The ids an invite may store: each exists, is not archived, and its
+    issuer ``actor`` may grant what the team reads (``direct`` as add_member)."""
     chosen: list[str] = []
     seen: set[str] = set()
     for raw in team_ids or []:
@@ -197,8 +211,51 @@ def check_invite_teams(session: Session, team_ids: Optional[list[str]]) -> list[
     for team_id in chosen:
         team = locked[team_id]
         _refuse_archived(team)
+        _refuse_grant(session, team.team_id, actor, direct)
         out.append(team.team_id)
     return out
+
+
+def _named(session: Session, team_id: str) -> list:
+    """The reader lists of every restricted case naming ``team_id``."""
+    return list(
+        session.execute(
+            select(Case.reader_principal_ids, Case.reader_team_ids).where(
+                Case.reader_team_ids.any(team_id)
+            )
+        ).all()
+    )
+
+
+def may_grant(session: Session, team_id: str, actor: Optional[str]) -> bool:
+    """The join test, once: a team no restricted case names is open to any join;
+    else the actor is an active person who can read every case naming it."""
+    from core.auth.permissions import case_reader_for, may_read_case
+
+    cases = _named(session, team_id)
+    if not cases:
+        return True
+    principal = session.get(Principal, actor) if actor else None
+    if (
+        principal is None
+        or principal.deleted_at is not None
+        or principal.kind != PERSON
+    ):
+        return False
+    user = session.scalar(select(User).where(User.principal_id == actor))
+    if user is None or not user.is_active or user.service_account:
+        return False
+    reader = case_reader_for(actor, session)
+    return all(may_read_case(case, reader) for case in cases)
+
+
+def _refuse_grant(
+    session: Session, team_id: str, actor: Optional[str], direct: bool = True
+) -> None:
+    if not direct and _named(session, team_id):
+        raise TeamRefused(PERSON_MUST, 403)
+    if not may_grant(session, team_id, actor):
+        raise TeamRefused(GRANTS_ACCESS, 403)
 
 
 def join_default(session: Session, principal_id: str, *, actor: str) -> None:
@@ -209,13 +266,38 @@ def join_default(session: Session, principal_id: str, *, actor: str) -> None:
 def join_named(
     session: Session, principal_id: str, team_ids: list[str], *, actor: str
 ) -> None:
-    """The teams an invite named, instead of the default team."""
+    """The teams an invite named, instead of the default team.
+
+    Each join is judged as the invite's issuer, now: one the issuer may no
+    longer grant is skipped and recorded, and the rest go ahead. When every one
+    is skipped the person joins the default team instead.
+    """
     teams = [_lock(session, team_id) for team_id in sorted(set(team_ids))]
     by_id = {team.team_id: team for team in teams}
+    joined = False
     for team_id in team_ids:
         team = by_id[team_id]
         _refuse_archived(team)
+        if not may_grant(session, team.team_id, actor):
+            _record(
+                session,
+                "team.join_skipped",
+                actor,
+                team_id=team.team_id,
+                principal=principal_id,
+            )
+            continue
         _insert(session, team, principal_id, actor)
+        joined = True
+    if not joined:
+        join_default(session, principal_id, actor=SYSTEM)
+        _record(
+            session,
+            "team.join_defaulted",
+            actor,
+            team_id=default_team(session).team_id,
+            principal=principal_id,
+        )
 
 
 def join_for_new_account(
@@ -310,6 +392,8 @@ def _insert(session: Session, team: Team, principal_id: str, actor: str) -> None
         raise TeamRefused(f"{team.name} is archived.", 409)
     if _has(session, team.team_id, principal_id):
         return
+    if not may_grant(session, team.team_id, actor):
+        raise TeamRefused(GRANTS_ACCESS, 403)
     principal = session.get(Principal, principal_id)
     if (
         principal is None

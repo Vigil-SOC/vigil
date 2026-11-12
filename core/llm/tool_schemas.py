@@ -667,6 +667,11 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "items": {"type": "string"},
                     "description": "Usernames or principal ids allowed to read the case",
                 },
+                "reader_teams": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Refused: a person names teams in the console",
+                },
             },
             "required": ["case_id"],
         },
@@ -674,9 +679,10 @@ DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "change_case_readers",
         "description": (
-            "Remove readers from a restricted case. The list may not end empty. "
-            "Adding readers or lifting a restriction widens who can read the case: "
-            "only a person can do that, in the console, and it is refused here."
+            "Remove readers or reader teams from a restricted case. The list may "
+            "not end empty. Adding readers or teams, or lifting a restriction, "
+            "widens who can read the case: only a person can do that, in the "
+            "console, and it is refused here."
         ),
         "input_schema": {
             "type": "object",
@@ -691,6 +697,16 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Refused: a person adds readers in the console",
+                },
+                "remove_teams": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Team ids to remove",
+                },
+                "add_teams": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Refused: a person adds teams in the console",
                 },
             },
             "required": ["case_id"],

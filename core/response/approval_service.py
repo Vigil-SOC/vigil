@@ -1032,10 +1032,11 @@ DECIDE_PERMISSION = "ai_decisions.approve"
 
 def _restricted_cases(case_ids: set[str]) -> tuple[set[str], Dict[str, List[str]]]:
     """Of ``case_ids``: the ones the caller can't read, and each restricted
-    case's named readers."""
+    case's readers: the named principals and the members of named teams."""
     if not case_ids:
         return set(), {}
-    from core.auth.permissions import case_read_clause
+    from core.auth.permissions import case_read_clause, case_restricted
+    from core.storage.models import TeamMembership
 
     with get_db_manager().session_scope() as session:
         hidden = {
@@ -1044,14 +1045,24 @@ def _restricted_cases(case_ids: set[str]) -> tuple[set[str], Dict[str, List[str]
                 Case.case_id.in_(case_ids), ~case_read_clause()
             )
         }
+        rows = [
+            row
+            for row in session.query(
+                Case.case_id, Case.reader_principal_ids, Case.reader_team_ids
+            ).filter(Case.case_id.in_(case_ids - hidden))
+            if case_restricted(row)
+        ]
+        team_ids = {team for row in rows for team in row.reader_team_ids or []}
+        members: Dict[str, List[str]] = {}
+        if team_ids:
+            for team, principal in session.query(
+                TeamMembership.team_id, TeamMembership.principal_id
+            ).filter(TeamMembership.team_id.in_(team_ids)):
+                members.setdefault(team, []).append(principal)
         readers = {
-            cid: list(named or [])
-            for cid, named in session.query(
-                Case.case_id, Case.reader_principal_ids
-            ).filter(
-                Case.case_id.in_(case_ids - hidden),
-                func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
-            )
+            row.case_id: list(row.reader_principal_ids or [])
+            + [p for team in row.reader_team_ids or [] for p in members.get(team, [])]
+            for row in rows
         }
     return hidden, readers
 

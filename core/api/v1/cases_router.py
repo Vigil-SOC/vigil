@@ -158,9 +158,11 @@ async def _sync_upstream_status(case_id: str, new_status: str) -> None:
 class CaseCreate(BaseModel):
     """Case creation request.
 
-    ``restricted`` (or a ``readers`` list) creates the case restricted in the same
-    insert, so its content is never open. ``readers`` are principal ids; left
-    out, the list is the defaults (you, when you are a person or service account).
+    ``restricted`` (or a ``readers`` or ``reader_teams`` list) creates the case
+    restricted in the same insert, so its content is never open. ``readers`` are
+    principal ids; left out, the list is the defaults (you, when you are a person
+    or service account). ``reader_teams`` are team ids whose members read it:
+    naming one is a person's own act and needs users.read; never the default team.
     """
 
     title: str
@@ -170,25 +172,30 @@ class CaseCreate(BaseModel):
     status: CaseStatus = "open"
     restricted: Optional[bool] = None
     readers: Optional[List[str]] = None
+    reader_teams: Optional[List[str]] = None
 
 
 class CaseRestrict(BaseModel):
     """Restrict an open case. ``readers`` (principal ids) is the whole list in one
-    act; left out, it is the owner, the task assignees, and you."""
+    act; left out, it is the owner, the task assignees, and you. ``reader_teams``
+    (team ids) adds teams whose members read it, a person's own act."""
 
     model_config = ConfigDict(extra="forbid")
 
     readers: Optional[List[str]] = None
+    reader_teams: Optional[List[str]] = None
 
 
 class CaseReadersChange(BaseModel):
-    """Change a restricted case's readers. Removing narrows; adding widens and
-    needs a person acting directly."""
+    """Change a restricted case's readers and reader teams. Removing narrows;
+    adding widens and needs a person acting directly."""
 
     model_config = ConfigDict(extra="forbid")
 
     add: List[str] = []
     remove: List[str] = []
+    add_teams: List[str] = []
+    remove_teams: List[str] = []
 
 
 class CaseExpected(BaseModel):
@@ -625,18 +632,19 @@ def create_case(
     Returns:
         Created case
     """
-    readers = None
-    # ``restricted`` decides when sent; a reader list alone also restricts.
+    readers = reader_teams = None
+    # ``restricted`` decides when sent; a reader or team list alone also restricts.
     restricted = case_data.restricted
     if restricted is None:
-        restricted = case_data.readers is not None
+        restricted = case_data.readers is not None or case_data.reader_teams is not None
     if restricted:
         _refuse_demo_restrict()
         with unit_of_work() as session:
-            readers = case_readers.readers_for_new_case(
+            readers, reader_teams = case_readers.readers_for_new_case(
                 session,
                 case_data.readers,
                 case_readers.http_restricter(session, current_user),
+                case_data.reader_teams,
             )
     case = open_case(
         data_service,
@@ -646,6 +654,7 @@ def create_case(
         description=case_data.description,
         status=case_data.status,
         readers=readers,
+        reader_teams=reader_teams,
     )
 
     if not case:
@@ -702,7 +711,11 @@ def restrict_case(
     """
     case = _case_for_readers(session, case_id)
     case_readers.restrict(
-        session, case, body.readers, case_readers.http_restricter(session, current_user)
+        session,
+        case,
+        body.readers,
+        case_readers.http_restricter(session, current_user),
+        body.reader_teams,
     )
     return CaseSchema.dump(case)
 
@@ -731,6 +744,8 @@ def change_case_readers(
         case_readers.http_restricter(session, current_user),
         add=body.add,
         remove=body.remove,
+        add_teams=body.add_teams,
+        remove_teams=body.remove_teams,
     )
     return CaseSchema.dump(case)
 

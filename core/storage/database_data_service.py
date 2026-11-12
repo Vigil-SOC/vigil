@@ -479,6 +479,7 @@ class DatabaseDataService:
         case_id: Optional[str] = None,
         assignee: Optional[str] = None,
         readers: Optional[List[str]] = None,
+        reader_teams: Optional[List[str]] = None,
     ) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:
             return self._demo_service.create_case(
@@ -505,6 +506,7 @@ class DatabaseDataService:
                     priority=priority,
                     assignee=assignee,
                     readers=readers,
+                    reader_teams=reader_teams,
                 )
                 return CaseSchema.dump(case) if case else None
             except case_trail_hook.RAISED:

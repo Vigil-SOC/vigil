@@ -396,6 +396,7 @@ class CaseQueueRow:
     team_name: Optional[str] = None
     team_is_default: bool = False
     readers: Tuple[str, ...] = ()
+    reader_teams: Tuple[str, ...] = ()
     restricted: bool = False
 
 
@@ -892,6 +893,7 @@ class CaseRepository:
                     team_name=record["team_name"],
                     team_is_default=bool(record["team_is_default"]),
                     readers=tuple(record["reader_principal_ids"] or ()),
+                    reader_teams=tuple(record["reader_team_ids"] or ()),
                     restricted=bool(
                         record["reader_principal_ids"] or record["reader_team_ids"]
                     ),

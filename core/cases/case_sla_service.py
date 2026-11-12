@@ -652,10 +652,11 @@ def open_case(
     case_id: Optional[str] = None,
     assignee: Optional[str] = None,
     readers: Optional[List[str]] = None,
+    reader_teams: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Create a case and give it the default SLA for its priority.
 
-    ``readers`` creates it restricted in the same insert (#4354). Returns the
+    ``readers`` (and ``reader_teams``) create it restricted in the same insert (#4354). Returns the
     case even when no SLA could be assigned.
     """
     case = data.create_case(
@@ -667,6 +668,7 @@ def open_case(
         case_id=case_id,
         assignee=assignee,
         readers=readers,
+        reader_teams=reader_teams,
     )
     if not case:
         return None

@@ -15,7 +15,7 @@ from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session
 
 from core.auth import invites, mcp_credential_service, sign_ins, trail_events
-from core.auth.permissions import CaseReader, may_read_case
+from core.auth.permissions import case_reader_for, may_read_case
 from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
@@ -108,7 +108,7 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
         return
 
     def message(principal: str) -> str:
-        reader = CaseReader(principal)
+        reader = case_reader_for(principal, session)
         shown = sum(1 for case in cases if may_read_case(case, reader))
         return _work_message(user.username, shown, len(cases) - shown, tasks)
 

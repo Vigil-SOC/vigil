@@ -138,11 +138,17 @@ def _readers_of(case: Any) -> Any:
     )
 
 
-def principal_reads_case(case: Any, principal_id: Optional[str]) -> bool:
-    """The one read rule (#4354), asked for ``principal_id`` rather than the caller."""
-    from core.auth.permissions import CaseReader, may_read_case
+def principal_reads_case(
+    case: Any, principal_id: Optional[str], session: Optional[Session] = None
+) -> bool:
+    """The one read rule (#4354), asked for ``principal_id`` rather than the caller.
+    A case naming teams looks up the principal's on ``session`` when given."""
+    from core.auth.permissions import CaseReader, case_reader_for, may_read_case
 
-    return may_read_case(_readers_of(case), CaseReader(principal_id))
+    row = _readers_of(case)
+    if session is not None and getattr(row, "reader_team_ids", None):
+        return may_read_case(row, case_reader_for(principal_id, session))
+    return may_read_case(row, CaseReader(principal_id))
 
 
 def owner_reads_case(session: Session, case: Any, username: Optional[str]) -> bool:
@@ -154,7 +160,9 @@ def owner_reads_case(session: Session, case: Any, username: Optional[str]) -> bo
     row = _readers_of(case)
     if not case_restricted(row):
         return True
-    return principal_reads_case(row, principal_for_username(session, username or ""))
+    return principal_reads_case(
+        row, principal_for_username(session, username or ""), session
+    )
 
 
 def require_owner_reads(session: Session, case: Any, username: Optional[str]) -> None:
@@ -194,7 +202,7 @@ def _owners_cannot_read(session: Optional[Session], rows: list[dict], key: str) 
         (row.get("case_id"), owner)
         for row in rows
         if (owner := (row.get(key) or "").strip()) in names
-        and not principal_reads_case(row, ids.get(owner))
+        and not principal_reads_case(row, ids.get(owner), session)
     }
 
 

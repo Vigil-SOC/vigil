@@ -22,10 +22,14 @@ def _fields(names: Any) -> str:
     return ": " + ", ".join(_word(n) for n in names)
 
 
-def _readers(ids: Any) -> str:
-    if not isinstance(ids, (list, tuple)) or not ids:
-        return ""
-    return f" ({len(ids)} reader{'' if len(ids) == 1 else 's'})"
+def _count(ids: Any, noun: str) -> str:
+    n = len(ids) if isinstance(ids, (list, tuple)) else 0
+    return f"{n} {noun}{'' if n == 1 else 's'}" if n else ""
+
+
+def _readers(ids: Any, teams: Any = None) -> str:
+    parts = [p for p in (_count(ids, "reader"), _count(teams, "team")) if p]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def _config(p: Mapping[str, Any]) -> str:
@@ -405,6 +409,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "team.unarchived": "Brought a team back",
     "team.member_added": "Added a person to a team",
     "team.member_removed": "Removed a person from a team",
+    "team.join_skipped": "Skipped a team join an invite named: its issuer can't "
+    "read every restricted case naming the team",
+    "team.join_defaulted": "Put a person on the default team: every team their "
+    "invite named was skipped",
     "teams.placed": lambda p: (
         "Created the default team, joined "
         f"{p.get('people_joined', 0)} people and placed "
@@ -429,10 +437,14 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         if isinstance(p.get("kept"), int) and p["kept"]
         else ""
     ),
-    "case.restrict": lambda p: "Restricted the case" + _readers(p.get("readers")),
-    "case.readers.add": lambda p: "Added readers" + _readers(p.get("added")),
-    "case.readers.remove": lambda p: "Removed readers" + _readers(p.get("removed")),
-    "case.unrestrict": "Lifted the case's restriction",
+    "case.restrict": lambda p: "Restricted the case"
+    + _readers(p.get("readers"), p.get("teams")),
+    "case.readers.add": lambda p: "Added readers"
+    + _readers(p.get("added"), p.get("added_teams")),
+    "case.readers.remove": lambda p: "Removed readers"
+    + _readers(p.get("removed"), p.get("removed_teams")),
+    "case.unrestrict": lambda p: "Lifted the case's restriction"
+    + _readers(p.get("readers"), p.get("teams")),
     "case.task": "Added a task",
     "case.task.update": _task_update,
     "case.link": _link,

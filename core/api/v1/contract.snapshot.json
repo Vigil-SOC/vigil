@@ -794,7 +794,7 @@
         "type": "object"
       },
       "CaseCreate": {
-        "description": "Case creation request.\n\n``restricted`` (or a ``readers`` list) creates the case restricted in the same\ninsert, so its content is never open. ``readers`` are principal ids; left\nout, the list is the defaults (you, when you are a person or service account).",
+        "description": "Case creation request.\n\n``restricted`` (or a ``readers`` or ``reader_teams`` list) creates the case\nrestricted in the same insert, so its content is never open. ``readers`` are\nprincipal ids; left out, the list is the defaults (you, when you are a person\nor service account). ``reader_teams`` are team ids whose members read it:\nnaming one is a person's own act and needs users.read; never the default team.",
         "properties": {
           "description": {
             "default": "",
@@ -812,6 +812,20 @@
             "default": "medium",
             "title": "Priority",
             "type": "string"
+          },
+          "reader_teams": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reader Teams"
           },
           "readers": {
             "anyOf": [
