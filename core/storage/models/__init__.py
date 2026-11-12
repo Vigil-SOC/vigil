@@ -81,7 +81,7 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
-from core.storage.models.medic import MedicLastSeen
+from core.storage.models.medic import MedicLastSeen, MedicWatchState
 from core.storage.models.skill import SkillRead
 from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
@@ -168,6 +168,7 @@ __all__ = [
     "SignIn",
     "SsoLink",
     "MedicLastSeen",
+    "MedicWatchState",
     "Role",
     "SLAPolicy",
     "SharedIOC",

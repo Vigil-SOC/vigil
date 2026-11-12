@@ -2,7 +2,8 @@
 
 Medic is the ops-health watcher for a Vigil install (program name: System
 Watcher). It watches the install's own health, not security alerts. Phase 0 is
-observe-only: no fixes, and nothing leaves the site.
+observe-only: no fixes. Email goes only where the site has set up mail, and
+Medic itself never calls out.
 
 It is **off by default**. `VIGIL_MEDIC_ENABLED=true` turns it on; anything else
 and `run` logs why and exits 0.
