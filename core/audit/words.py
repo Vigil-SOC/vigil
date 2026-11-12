@@ -22,6 +22,12 @@ def _fields(names: Any) -> str:
     return ": " + ", ".join(_word(n) for n in names)
 
 
+def _readers(ids: Any) -> str:
+    if not isinstance(ids, (list, tuple)) or not ids:
+        return ""
+    return f" ({len(ids)} reader{'' if len(ids) == 1 else 's'})"
+
+
 def _config(p: Mapping[str, Any]) -> str:
     verb = {"create": "Added", "delete": "Removed"}.get(str(p.get("verb")), "Changed")
     key = p.get("config_key") or p.get("config_type")
@@ -417,7 +423,16 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.resolution_step": "Added a resolution step",
     "case.delete": "Deleted the case",
     "case.purge": lambda p: "Deleted every case"
-    + (f" ({p['count']})" if p.get("count") else ""),
+    + (f" ({p['count']})" if p.get("count") else "")
+    + (
+        f"; {p['kept']} restricted case{'' if p['kept'] == 1 else 's'} kept"
+        if isinstance(p.get("kept"), int) and p["kept"]
+        else ""
+    ),
+    "case.restrict": lambda p: "Restricted the case" + _readers(p.get("readers")),
+    "case.readers.add": lambda p: "Added readers" + _readers(p.get("added")),
+    "case.readers.remove": lambda p: "Removed readers" + _readers(p.get("removed")),
+    "case.unrestrict": "Lifted the case's restriction",
     "case.task": "Added a task",
     "case.task.update": _task_update,
     "case.link": _link,

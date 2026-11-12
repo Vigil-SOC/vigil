@@ -51,6 +51,15 @@ class Case(Base):
     )
     team: Mapped["Team"] = relationship(lazy="selectin")
 
+    # Restricted cases (#4354): who may read it. NULL or empty is open; the rule
+    # is core.auth.permissions.may_read_case / case_read_clause.
+    reader_principal_ids: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(Text), nullable=True
+    )
+    reader_team_ids: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(String(50)), nullable=True
+    )
+
     # Tags (array of strings)
     tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True, default=list)
 

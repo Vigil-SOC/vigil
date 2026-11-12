@@ -74,7 +74,12 @@ export default function GeneralSection({ notify }: SectionProps) {
       } else if (clearAction === 'cases') {
         const res = await casesApi.deleteAll()
         const count = res.data.deleted
-        notify('ok', count != null ? `Cleared ${count} cases and case metrics.` : 'Cases and metrics cleared.')
+        const kept = res.data.restricted_kept ?? 0
+        notify(
+          'ok',
+          (count != null ? `Cleared ${count} cases and case metrics.` : 'Cases and metrics cleared.') +
+            (kept ? ` ${kept} restricted case${kept === 1 ? '' : 's'} kept.` : ''),
+        )
       } else {
         const failed: string[] = []
         for (const [label, clear] of [

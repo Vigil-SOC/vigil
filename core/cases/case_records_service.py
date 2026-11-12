@@ -9,9 +9,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
+from core.auth.permissions import case_read_clause, may_read_case
 from core.cases import case_trail
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
@@ -48,6 +49,8 @@ RESET_KILL_REASON = "killed: case reset"
 class PurgeResult(NamedTuple):
     cases: int
     killed_investigation_ids: List[str]
+    # Restricted cases the caller may not read: left in place with their records.
+    kept: int = 0
 
 
 # Purged wholesale by :func:`purge_all_cases`; order matters only in that
@@ -429,7 +432,8 @@ def delete_case(session: Session, case_id: str) -> Optional[List[str]]:
     its ``case_id`` SET NULL out from under it.
     """
     case = session.get(Case, case_id)
-    if case is None:
+    # A restricted case the caller may not read is not there (#4354).
+    if case is None or not may_read_case(case):
         return None
 
     live = live_investigation_ids(session, case_id)
@@ -444,7 +448,9 @@ def delete_case(session: Session, case_id: str) -> Optional[List[str]]:
     return []
 
 
-def kill_live_case_investigations(session: Session) -> List[Investigation]:
+def kill_live_case_investigations(
+    session: Session, case_ids: Any = None
+) -> List[Investigation]:
     """Fail every live Case-bearing Investigation. Hunts are not selected.
 
     ``status=failed`` drops the row out of the supervision loop, which
@@ -452,14 +458,13 @@ def kill_live_case_investigations(session: Session) -> List[Investigation]:
     back. The workdir sidecar the kill endpoint also writes is the caller's:
     ``core`` cannot import the daemon that owns it.
     """
-    live = (
-        session.query(Investigation)
-        .filter(
-            Investigation.case_id.isnot(None),
-            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
-        )
-        .all()
+    query = session.query(Investigation).filter(
+        Investigation.case_id.isnot(None),
+        Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
     )
+    if case_ids is not None:
+        query = query.filter(Investigation.case_id.in_(case_ids))
+    live = query.all()
     for inv in live:
         inv.status = "failed"
         inv.master_review_notes = RESET_KILL_REASON
@@ -468,37 +473,50 @@ def kill_live_case_investigations(session: Session) -> List[Investigation]:
 
 
 def purge_all_cases(session: Session) -> PurgeResult:
-    """Delete every case and its derived records, killing live runs first.
+    """Delete every case the caller may read and its derived records, killing
+    live runs first.
 
     Live Case-bearing Investigations are failed before the delete so a
     finding-run is never left running with ``case_id`` SET NULL. Completed rows
     keep their ``case_id`` until the Case delete; the FK SET NULLs them as
-    history. Hunts (``case_id`` already null) are not touched.
+    history. Hunts (``case_id`` already null) are not touched. A restricted case
+    the caller may not read is kept, with every record of its own, and counted.
     """
-    count = session.query(Case).count()
-    killed = [inv.investigation_id for inv in kill_live_case_investigations(session)]
+    readable = case_read_clause()
+    # Every delete is scoped to these ids, so a case written after this read
+    # (restricted or not) is never swept up with them.
+    ids = [row[0] for row in session.execute(select(Case.case_id).where(readable))]
+    kept = session.query(Case).filter(~readable).count()
+    killed = [
+        inv.investigation_id for inv in kill_live_case_investigations(session, ids)
+    ]
 
     for model in _CASE_OWNED_MODELS:
-        session.query(model).delete(synchronize_session=False)
-
-    session.execute(case_findings.delete())
-    session.query(SketchMapping).filter(SketchMapping.case_id.isnot(None)).delete(
-        synchronize_session=False
-    )
-    session.query(AIDecisionLog).filter(AIDecisionLog.case_id.isnot(None)).delete(
-        synchronize_session=False
-    )
+        session.query(model).filter(model.case_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+    session.execute(case_findings.delete().where(case_findings.c.case_id.in_(ids)))
+    for model in (SketchMapping, AIDecisionLog):
+        session.query(model).filter(model.case_id.in_(ids)).delete(
+            synchronize_session=False
+        )
     from core.storage.connection import table_present
 
     if table_present(session, "case_audit_logs"):
-        session.query(CaseAuditLog).delete(synchronize_session=False)
-    session.query(Case).delete(synchronize_session=False)
+        # The legacy store names a case only as an entity id: wholesale, as
+        # before, unless a kept case's rows must stay.
+        legacy = session.query(CaseAuditLog)
+        if kept:
+            legacy = legacy.filter(CaseAuditLog.entity_id.in_(ids))
+        legacy.delete(synchronize_session=False)
+    session.query(Case).filter(Case.case_id.in_(ids)).delete(synchronize_session=False)
     # One entry for the purge, with the count; not one per case.
     case_trail.append_case(
         session,
         case_trail.PURGE,
         None,
-        count=count,
+        count=len(ids),
         killed_investigations=len(killed),
+        kept=kept or None,
     )
-    return PurgeResult(cases=count, killed_investigation_ids=killed)
+    return PurgeResult(cases=len(ids), killed_investigation_ids=killed, kept=kept)

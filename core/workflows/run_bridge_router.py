@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise
+from core.auth.permissions import builtin_reader_request
 from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
@@ -30,7 +31,9 @@ from core.time import utcnow
 from core.workflows.handoff_cases import handoff_case_id
 from core.workflows.workflow_run_service import WorkflowRunService
 
-router = APIRouter()
+# The agent layer writes a run's outputs onto its case, restricted or not: the
+# built-in reader class until #4345 scopes each call to its run's principal.
+router = APIRouter(dependencies=[Depends(builtin_reader_request)])
 
 ROUTER_META = RouterMeta(
     prefix="/internal/runs",

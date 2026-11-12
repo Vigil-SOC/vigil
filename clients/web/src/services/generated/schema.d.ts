@@ -1702,12 +1702,16 @@ export interface paths {
          *     the owning team's id, repeated for several; omitting it returns every
          *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
          *     adds cases with no owner (NULL or "").
+         *
+         *     Restricted cases the caller may not read are left out of the page, the
+         *     total and the strip; ``restricted_not_counted`` says how many there are,
+         *     whatever the filters, so a filter can't probe what they hold.
          */
         get: operations["get_api_cases"];
         put?: never;
         /**
          * Create Case
-         * @description Create a new case.
+         * @description Create a new case, open or restricted.
          *
          *     Args:
          *         case_data: Case creation data
@@ -1735,6 +1739,8 @@ export interface paths {
         /**
          * Clear All Cases
          * @description Delete all cases and case-derived generated data (requires cases.delete).
+         *
+         *     Restricted cases the caller may not read are kept and counted (#4354).
          */
         delete: operations["delete_api_cases_all"];
         options?: never;
@@ -2042,7 +2048,8 @@ export interface paths {
          * @description Get summary statistics for cases.
          *
          *     Counted and grouped in SQL over every case, so ``total`` is not capped by
-         *     a row limit (#1438).
+         *     a row limit (#1438). Restricted cases the caller may not read are not
+         *     counted; ``restricted_not_counted`` says how many.
          *
          *     Returns:
          *         Summary statistics
@@ -2623,6 +2630,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/readers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change Case Readers
+         * @description Add or remove readers on a restricted case. Beta.
+         *
+         *     Removing is open to any principal holding cases.write. Adding needs a person
+         *     acting directly (a person must do this). The list may not end empty.
+         */
+        patch: operations["patch_api_cases_case_id_readers"];
+        trace?: never;
+    };
     "/api/cases/{case_id}/record": {
         parameters: {
             query?: never;
@@ -2695,6 +2725,34 @@ export interface paths {
          */
         post: operations["post_api_cases_case_id_resolution-steps"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/{case_id}/restrict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restrict Case
+         * @description Restrict an open case to the named readers. Beta.
+         *
+         *     Any principal holding cases.write that can read the case may restrict it.
+         *     The list is taken whole; an empty one is refused. A service account is
+         *     named only by itself, when it is the one restricting.
+         */
+        post: operations["post_api_cases_case_id_restrict"];
+        /**
+         * Lift Case Restriction
+         * @description Open a restricted case to everyone again: a person's own act. Beta.
+         */
+        delete: operations["delete_api_cases_case_id_restrict"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7907,12 +7965,16 @@ export interface paths {
          *     the owning team's id, repeated for several; omitting it returns every
          *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
          *     adds cases with no owner (NULL or "").
+         *
+         *     Restricted cases the caller may not read are left out of the page, the
+         *     total and the strip; ``restricted_not_counted`` says how many there are,
+         *     whatever the filters, so a filter can't probe what they hold.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
         /**
          * Create Case
-         * @description Create a new case.
+         * @description Create a new case, open or restricted.
          *
          *     Args:
          *         case_data: Case creation data
@@ -8171,7 +8233,8 @@ export interface paths {
          * @description Get summary statistics for cases.
          *
          *     Counted and grouped in SQL over every case, so ``total`` is not capped by
-         *     a row limit (#1438).
+         *     a row limit (#1438). Restricted cases the caller may not read are not
+         *     counted; ``restricted_not_counted`` says how many.
          *
          *     Returns:
          *         Summary statistics
@@ -8445,6 +8508,57 @@ export interface paths {
          */
         post: operations["post_api_v1_cases_case_id_move"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/readers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change Case Readers
+         * @description Add or remove readers on a restricted case. Beta.
+         *
+         *     Removing is open to any principal holding cases.write. Adding needs a person
+         *     acting directly (a person must do this). The list may not end empty.
+         */
+        patch: operations["patch_api_v1_cases_case_id_readers"];
+        trace?: never;
+    };
+    "/api/v1/cases/{case_id}/restrict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restrict Case
+         * @description Restrict an open case to the named readers. Beta.
+         *
+         *     Any principal holding cases.write that can read the case may restrict it.
+         *     The list is taken whole; an empty one is refused. A service account is
+         *     named only by itself, when it is the one restricting.
+         */
+        post: operations["post_api_v1_cases_case_id_restrict"];
+        /**
+         * Lift Case Restriction
+         * @description Open a restricted case to everyone again: a person's own act. Beta.
+         */
+        delete: operations["delete_api_v1_cases_case_id_restrict"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9795,6 +9909,10 @@ export interface components {
         /**
          * CaseCreate
          * @description Case creation request.
+         *
+         *     ``restricted`` (or a ``readers`` list) creates the case restricted in the same
+         *     insert, so its content is never open. ``readers`` are principal ids; left
+         *     out, the list is the defaults (you, when you are a person or service account).
          */
         CaseCreate: {
             /**
@@ -9809,6 +9927,10 @@ export interface components {
              * @default medium
              */
             priority: string;
+            /** Readers */
+            readers?: string[] | null;
+            /** Restricted */
+            restricted?: boolean | null;
             /**
              * Status
              * @default open
@@ -9872,11 +9994,17 @@ export interface components {
             owner_state: ("current" | "not_current") | null;
             /** Priority */
             priority?: string | null;
+            /** Reader Teams */
+            reader_teams?: string[];
+            /** Readers */
+            readers?: string[];
             /**
              * Resolution Steps
              * @default []
              */
             resolution_steps: unknown[];
+            /** Restricted */
+            readonly restricted: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -10164,6 +10292,11 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             strip: components["schemas"]["CaseQueueStrip"];
             /** Total */
             total: number;
@@ -10247,6 +10380,11 @@ export interface components {
             killed_investigations: number;
             /** Message */
             message: string;
+            /**
+             * Restricted Kept
+             * @default 0
+             */
+            restricted_kept: number;
             /** Success */
             success: boolean;
         };
@@ -10302,6 +10440,16 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /**
+             * Readers
+             * @default []
+             */
+            readers: string[];
+            /**
+             * Restricted
+             * @default false
+             */
+            restricted: boolean;
+            /**
              * Sla Paused
              * @default false
              */
@@ -10333,6 +10481,23 @@ export interface components {
             sla_at_risk: number;
             /** Waiting */
             waiting: number;
+        };
+        /**
+         * CaseReadersChange
+         * @description Change a restricted case's readers. Removing narrows; adding widens and
+         *     needs a person acting directly.
+         */
+        CaseReadersChange: {
+            /**
+             * Add
+             * @default []
+             */
+            add: string[];
+            /**
+             * Remove
+             * @default []
+             */
+            remove: string[];
         };
         /**
          * CaseRecordResponse
@@ -10414,6 +10579,15 @@ export interface components {
         CaseRelationshipsResponse: {
             /** Relationships */
             relationships: components["schemas"]["CaseRelatedSchema"][];
+        };
+        /**
+         * CaseRestrict
+         * @description Restrict an open case. ``readers`` (principal ids) is the whole list in one
+         *     act; left out, it is the owner, the task assignees, and you.
+         */
+        CaseRestrict: {
+            /** Readers */
+            readers?: string[] | null;
         };
         /**
          * CaseRuleCard
@@ -10615,11 +10789,17 @@ export interface components {
             notes: unknown[];
             /** Priority */
             priority?: string | null;
+            /** Reader Teams */
+            reader_teams?: string[];
+            /** Readers */
+            readers?: string[];
             /**
              * Resolution Steps
              * @default []
              */
             resolution_steps: unknown[];
+            /** Restricted */
+            readonly restricted: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -10682,11 +10862,17 @@ export interface components {
             owner_state: ("current" | "not_current") | null;
             /** Priority */
             priority?: string | null;
+            /** Reader Teams */
+            reader_teams?: string[];
+            /** Readers */
+            readers?: string[];
             /**
              * Resolution Steps
              * @default []
              */
             resolution_steps: unknown[];
+            /** Restricted */
+            readonly restricted: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -10723,6 +10909,11 @@ export interface components {
             by_status: {
                 [key: string]: number;
             };
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Total */
             total: number;
         };
@@ -13671,6 +13862,11 @@ export interface components {
             cases_deleted: number;
             /** Findings Deleted */
             findings_deleted: number;
+            /**
+             * Restricted Cases Kept
+             * @default 0
+             */
+            restricted_cases_kept: number;
         };
         /**
          * SampleAlertsStatus
@@ -19589,6 +19785,43 @@ export interface operations {
             };
         };
     };
+    patch_api_cases_case_id_readers: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseReadersChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_cases_case_id_record: {
         parameters: {
             query?: never;
@@ -19708,6 +19941,76 @@ export interface operations {
                 "application/json": components["schemas"]["ResolutionStepAdd"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_cases_case_id_restrict: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseRestrict"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_cases_case_id_restrict: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -30150,6 +30453,113 @@ export interface operations {
                 "application/json": components["schemas"]["CaseMove"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_api_v1_cases_case_id_readers: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseReadersChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_cases_case_id_restrict: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseRestrict"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseSchema"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_v1_cases_case_id_restrict: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

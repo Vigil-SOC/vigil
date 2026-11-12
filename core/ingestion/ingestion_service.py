@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 import ijson
 
+from core.auth.permissions import builtin_reader
 from core.cases.assignee import AssigneeRefused, resolve_assignee
 from core.findings.source_evidence import (
     loglm_row_evidence,
@@ -567,8 +568,10 @@ class IngestionService:
 
         try:
             if self.use_database and self.db_service:
-                # Check if case already exists
-                existing = self.db_service.get_case(case_id)
+                # Check if case already exists, restricted or not: intake is
+                # a built-in reader (#4354).
+                with builtin_reader():
+                    existing = self.db_service.get_case(case_id)
                 if existing:
                     logger.debug(f"Case {case_id} already exists, skipping")
                     self.stats["cases_skipped"] += 1

@@ -1714,6 +1714,16 @@
   "nullable": false,
   "type": "character varying(20)"
  },
+ "column cases.reader_principal_ids": {
+  "default": null,
+  "nullable": true,
+  "type": "text[]"
+ },
+ "column cases.reader_team_ids": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)[]"
+ },
  "column cases.resolution_steps": {
   "default": null,
   "nullable": true,

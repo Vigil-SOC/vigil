@@ -80,6 +80,9 @@ class CaseQueueItem(BaseModel):
     # null when the case has no owner.
     owner_on_team: Optional[bool] = None
     team: Optional[CaseTeam] = None
+    # Restricted cases (#4354): shown only to readers, with the reader list.
+    restricted: bool = False
+    readers: list[str] = []
 
 
 class CaseQueueStrip(BaseModel):
@@ -102,6 +105,9 @@ class CaseListResponse(BaseModel):
     offset: int
     has_more: bool
     strip: CaseQueueStrip
+    # Restricted cases the caller may not read, left out. Never filtered, so it
+    # says nothing about what those cases hold.
+    restricted_not_counted: int = 0
 
 
 class CaseOwner(BaseModel):
@@ -232,6 +238,8 @@ class CasePurgeResponse(BaseModel):
     success: bool
     deleted: int
     killed_investigations: int = 0
+    # Restricted cases the caller may not read, left in place (#4354).
+    restricted_kept: int = 0
     message: str
 
 
@@ -239,6 +247,8 @@ class CaseSummaryResponse(BaseModel):
     total: int
     by_status: dict[str, int]
     by_priority: dict[str, int]
+    # Restricted cases the caller may not read, left out of every count above.
+    restricted_not_counted: int = 0
 
 
 class CaseCommentsResponse(BaseModel):
