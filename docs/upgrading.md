@@ -51,6 +51,8 @@ When the upgrade fails:
 
 A 0.7.0 or 0.8.0 Helm database is adopted by the command, as described below. A database with any other stamp refuses at the weight -10 check, and the previous release keeps serving.
 
+Rotating `AGENT_INTERNAL_TOKEN` is not an upgrade step. Finish that rotation, or undo it completely, before an upgrade or a rollback. A rollback of a chart-rendered Secret restores that revision's value. The procedure is [Rotating AGENT_INTERNAL_TOKEN](agent-internal-token.md).
+
 **Check only.** To see what an upgrade would do, run `--check` once as a Job of the new backend image, logged in as the owner. Do not use `helm upgrade` for this. Without the acknowledgement, a pending upgrade answers `needs_restore_point` and exits 1. With it, the answer is `apply`. For the in-chart Postgres, with release `vigil` in namespace `vigil`:
 
 ```bash

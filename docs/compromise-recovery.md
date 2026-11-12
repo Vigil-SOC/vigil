@@ -41,7 +41,7 @@ Every emergency rotation also stops every running agent run (reason "emergency k
 Choose by what leaked:
 
 - **A sign-in token or the `signin` key**: `emergency signin`.
-- **A run token, or the agent layer's host**: `emergency run`, then `emergency signin` if the host also held sessions.
+- **A run token, or the agent layer's host**: `emergency run`, then `emergency signin` if the host also held sessions. Rotating the agent layer's bearer, `AGENT_INTERNAL_TOKEN`, is a separate step: [Rotating AGENT_INTERNAL_TOKEN](agent-internal-token.md).
 - **The pepper, or a database copy together with the ring**: `emergency pepper` (see 4a). It makes everyone reset their password.
 - **Not sure, or the host was taken over**: `emergency all`, then 3. `all` includes `pepper`, so everyone resets their password.
 
