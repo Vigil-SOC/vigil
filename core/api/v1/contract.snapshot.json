@@ -930,6 +930,17 @@
             "title": "Notes",
             "type": "array"
           },
+          "owner_on_team": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner On Team"
+          },
           "owner_state": {
             "anyOf": [
               {
@@ -2000,6 +2011,17 @@
             "title": "Needs You",
             "type": "boolean"
           },
+          "owner_on_team": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner On Team"
+          },
           "owner_state": {
             "anyOf": [
               {
@@ -2103,6 +2125,10 @@
           "sla_at_risk": {
             "title": "Sla At Risk",
             "type": "integer"
+          },
+          "waiting": {
+            "title": "Waiting",
+            "type": "integer"
           }
         },
         "required": [
@@ -2110,7 +2136,8 @@
           "sla_at_risk",
           "closed_today",
           "agent_closure_share",
-          "needs_you"
+          "needs_you",
+          "waiting"
         ],
         "title": "CaseQueueStrip",
         "type": "object"
@@ -7070,6 +7097,25 @@
                 }
               ],
               "title": "Assignee"
+            }
+          },
+          {
+            "in": "query",
+            "name": "team",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Team"
             }
           },
           {

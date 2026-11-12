@@ -91,6 +91,10 @@ export interface CaseRow {
   ownerStale: boolean
   /** The stored owner's state from the read; null when unassigned. */
   ownerState?: 'current' | 'not_current' | null
+  /** False when the owner is not on the case's team. Null when unowned or unknown. */
+  ownerOnTeam?: boolean | null
+  teamId?: string
+  teamName?: string
   findings: number
   /** Read on the case page only; the queue reads 0. */
   alertsSinceLastRun: number

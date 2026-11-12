@@ -1698,8 +1698,10 @@ export interface paths {
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
          *     holding an alert created that UTC day (or any alert). The strip follows
-         *     ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
-         *     stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
+         *     ``alerts_from`` and ``team``, and ignores the other filters. ``team`` is
+         *     the owning team's id, repeated for several; omitting it returns every
+         *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
+         *     adds cases with no owner (NULL or "").
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -6910,10 +6912,11 @@ export interface paths {
         };
         /**
          * List People
-         * @description Every current person, for the owner and assignee pickers.
+         * @description Current people, for the owner picker and for My teams.
          *
          *     Current is ``owner_states``'s test: active, not a service account, not
-         *     deleted. A person's own sign-in holding cases.assign or cases.write only.
+         *     deleted. cases.assign or cases.write sees everyone. cases.read sees only
+         *     the signed-in person, which is enough to send that person's team ids.
          */
         get: operations["get_api_users_people"];
         put?: never;
@@ -7900,8 +7903,10 @@ export interface paths {
          *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
          *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
          *     holding an alert created that UTC day (or any alert). The strip follows
-         *     ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
-         *     stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
+         *     ``alerts_from`` and ``team``, and ignores the other filters. ``team`` is
+         *     the owning team's id, repeated for several; omitting it returns every
+         *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
+         *     adds cases with no owner (NULL or "").
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -9861,6 +9866,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Owner On Team */
+            owner_on_team?: boolean | null;
             /** Owner State */
             owner_state: ("current" | "not_current") | null;
             /** Priority */
@@ -10288,6 +10295,8 @@ export interface components {
              * @default false
              */
             needs_you: boolean;
+            /** Owner On Team */
+            owner_on_team?: boolean | null;
             /** Owner State */
             owner_state: ("current" | "not_current") | null;
             /** Priority */
@@ -10322,6 +10331,8 @@ export interface components {
             needs_you: number;
             /** Sla At Risk */
             sla_at_risk: number;
+            /** Waiting */
+            waiting: number;
         };
         /**
          * CaseRecordResponse
@@ -17953,6 +17964,7 @@ export interface operations {
                 data_source?: string | null;
                 sla_at_risk?: boolean;
                 assignee?: string | null;
+                team?: string[] | null;
                 unassigned?: boolean;
                 closed?: boolean | null;
                 query?: string | null;
@@ -29234,6 +29246,7 @@ export interface operations {
                 data_source?: string | null;
                 sla_at_risk?: boolean;
                 assignee?: string | null;
+                team?: string[] | null;
                 unassigned?: boolean;
                 closed?: boolean | null;
                 query?: string | null;

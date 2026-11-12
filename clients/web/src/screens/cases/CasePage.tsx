@@ -23,7 +23,7 @@ import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRecord } from '../../data/data'
-import { OwnerFix, PersonPicker, isOwnerNotCurrent } from '../../shared/people'
+import { OwnerFix, PersonPicker, isOwnerNotCurrent, usePeople, onTeam } from '../../shared/people'
 import type { ChatSeed } from '../../shared/types'
 import Chat from '../../shell/Chat'
 import { EvidenceTrail, MergedEvidenceTrail } from './EvidenceTrail'
@@ -1026,6 +1026,8 @@ export function CasePage({
   canWrite,
   onChanged,
   onRefresh,
+  onClaim,
+  onMove,
 }: {
   id: string
   /** The tab and run to land on; an unknown tab lands on Summary, a run not on the case on All runs. */
@@ -1061,6 +1063,10 @@ export function CasePage({
   onChanged: () => void
   /** Re-read the case in place, without blanking it. Used while the run is live. */
   onRefresh?: () => void
+  /** Assign to me, when the caller may take this case. */
+  onClaim?: () => void
+  /** Open the move dialog. A closed case does not. */
+  onMove?: () => void
 }) {
   const landingTab: Tab = TABS.find((name) => name === openTab) ?? 'Summary'
   const [tab, setTab] = useState<Tab>(landingTab)
@@ -1089,9 +1095,12 @@ export function CasePage({
   const [agreement, setAgreement] = useState<WorkflowAgreement[]>([])
   const [agreementKey, setAgreementKey] = useState(0)
   const [ceiling, setCeiling] = useState<Ceiling | null>(null)
-  const { hasPermission } = useAuth()
+  const { user, hasPermission } = useAuth()
   const canReadAudit = hasPermission('audit.read')
   const canAssign = hasPermission('cases.assign')
+  const me = user?.username ?? ''
+  const { people } = usePeople()
+  const member = !!(c?.teamId && people.some((person) => person.username === me && onTeam(person, c.teamId!)))
   // Reopen's owner: the stored one unless changed here; sent only when changed.
   const storedOwner = c?.stored.assignee ?? ''
   const [reopenOwner, setReopenOwner] = useState<string | null>(null)
@@ -1105,7 +1114,7 @@ export function CasePage({
   // checkpoint that has left the queue while the run still holds it open has been answered.
   const [seenCheckpoints, setSeenCheckpoints] = useState<ReadonlySet<string>>(() => new Set())
   const [answers, setAnswers] = useState<Record<string, 'approve' | 'reject'>>({})
-  const { pending, settled } = useToast()
+  const { pending, settled, notify } = useToast()
   const needsTicket = useRef(0)
   const seenCase = useRef(id)
   if (seenCase.current !== id) {
@@ -1509,6 +1518,22 @@ export function CasePage({
     }
   }
 
+  const handBack = async () => {
+    if (!storedOwner || busy) return
+    setBusy(true)
+    setNote('')
+    try {
+      await casesApi.update(id, { assignee: '', expected: { assignee: storedOwner } })
+      onChanged()
+    } catch (e) {
+      const message = errorDetail(e, 'Couldn’t hand the case back')
+      setNote(message)
+      notify('err', message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const reopen = async () => {
     setBusy(true)
     setNote('')
@@ -1676,7 +1701,18 @@ export function CasePage({
           <>
             <div className="case-title-row">
               <h2>{c.title}</h2>
-              {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
+              <div className="case-title-actions">
+                {onClaim && (!storedOwner || c.ownerState === 'not_current') && (
+                  <button type="button" className="btn" onClick={onClaim} disabled={busy}>Assign to me</button>
+                )}
+                {canWrite && storedOwner && (storedOwner === me || canAssign) && (
+                  <button type="button" className="btn" onClick={() => void handBack()} disabled={busy}>Hand back</button>
+                )}
+                {onMove && !closed && (member || hasPermission('cases.move')) && (
+                  <button type="button" className="btn" onClick={onMove} disabled={busy}>Move</button>
+                )}
+                {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
+              </div>
             </div>
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
@@ -1758,12 +1794,13 @@ export function CasePage({
                               state={reopenOwner === null || reopenOwner === storedOwner ? c?.ownerState : undefined}
                               onSelect={setReopenOwner}
                               disabled={!canAssign || busy}
+                              teamId={c?.teamId}
                             />
                           </span>
                           <button className="btn" onClick={reopen} disabled={busy}>Reopen</button>
                         </div>
                       )}
-                      {reopenStale && <OwnerFix owner={reopenStale} canChange={canAssign} />}
+                      {reopenStale && <OwnerFix owner={reopenStale} canChange={canAssign} onAssignToMe={member ? onClaim : undefined} />}
                     </div>
                   )}
                 </section>

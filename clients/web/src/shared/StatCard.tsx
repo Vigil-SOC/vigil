@@ -44,9 +44,9 @@ export function StatCard({
 }
 
 /** The row of status cards: four across, two by two at the reflow tier (kit.css). */
-export function StatCards({ label, children }: { label: string; children: ReactNode }) {
+export function StatCards({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <div className="stat-cards" role="group" aria-label={label}>
+    <div className={`stat-cards${className ? ` ${className}` : ''}`} role="group" aria-label={label}>
       {children}
     </div>
   )

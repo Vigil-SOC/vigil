@@ -53,6 +53,7 @@ from core.auth.permissions import (
     STEP_UP,
     builtin_diff,
     deny_unless,
+    missing_permission,
     require_person_permission,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
@@ -630,28 +631,36 @@ class Person(BaseModel):
 @router.get("/people", response_model=list[Person])
 def list_people(
     session: UnitOfWorkSession,
-    _: Annotated[
+    current_user: Annotated[
         User,
         Depends(
             require_person_permission(
-                "cases.assign", "cases.write", refuse_machine=True
+                "cases.read", "cases.assign", "cases.write", refuse_machine=True
             )
         ),
     ],
 ):
-    """Every current person, for the owner and assignee pickers.
+    """Current people, for the owner picker and for My teams.
 
     Current is ``owner_states``'s test: active, not a service account, not
-    deleted. A person's own sign-in holding cases.assign or cases.write only.
+    deleted. cases.assign or cases.write sees everyone. cases.read sees only
+    the signed-in person, which is enough to send that person's team ids.
     """
+    where = [
+        User.is_active.is_(True),
+        User.service_account.is_not(True),
+        Principal.deleted_at.is_(None),
+    ]
+    # The full directory is the picker. A reader who cannot assign still needs
+    # their own teams for the queue's My teams filter.
+    if missing_permission(
+        current_user.user_id, "cases.assign", session
+    ) and missing_permission(current_user.user_id, "cases.write", session):
+        where.append(User.user_id == current_user.user_id)
     rows = session.execute(
         select(User.username, User.full_name)
         .join(Principal, Principal.principal_id == User.principal_id)
-        .where(
-            User.is_active.is_(True),
-            User.service_account.is_not(True),
-            Principal.deleted_at.is_(None),
-        )
+        .where(*where)
         .order_by(
             func.lower(func.coalesce(func.nullif(User.full_name, ""), User.username))
         )

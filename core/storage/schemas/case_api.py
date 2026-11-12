@@ -76,6 +76,9 @@ class CaseQueueItem(BaseModel):
     description: Optional[str] = None
     sla_paused: bool = False
     owner_state: OwnerStateField
+    # True when the owner is on the case's team, false when they are not,
+    # null when the case has no owner.
+    owner_on_team: Optional[bool] = None
     team: Optional[CaseTeam] = None
 
 
@@ -87,6 +90,9 @@ class CaseQueueStrip(BaseModel):
     closed_today: int
     agent_closure_share: float
     needs_you: int
+    # Unowned cases with no assigned or executing run, plus cases whose live
+    # run is waiting on a person. Open cases only.
+    waiting: int
 
 
 class CaseListResponse(BaseModel):
@@ -163,6 +169,7 @@ class CaseDetailResponse(CaseSchema):
     # Merged after the case's newest run started, so that run did not read them.
     alerts_since_last_run: int = 0
     owner_state: OwnerStateField
+    owner_on_team: Optional[bool] = None
 
 
 class CaseRuleCard(BaseModel):

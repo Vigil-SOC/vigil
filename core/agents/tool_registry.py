@@ -17,9 +17,12 @@ from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.agent_closure import actor, service_session
 from core.cases.case_handoff import (
     OwnerCannotWrite,
+    OwnerOffTeam,
     assignee_needs_assign,
     newly_set_owner,
+    require_case_owner_on_team,
     require_owner_can_write,
+    require_owner_on_team,
 )
 from core.cases.case_sla_service import open_case
 from core.cases.case_status import (
@@ -40,6 +43,7 @@ from core.llm.tool_schemas import (
 )
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
+from core.teams import default_team
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -501,7 +505,10 @@ def create_case(
             try:
                 with service_session() as session:
                     require_owner_can_write(session, assignee)
-            except OwnerCannotWrite as exc:
+                    # Before the insert, against the team the insert will use.
+                    team = default_team(session)
+                    require_owner_on_team(session, assignee, team.team_id, "{case_id}")
+            except (OwnerCannotWrite, OwnerOffTeam) as exc:
                 return {"error": exc.message, "code": exc.code}
     data = _data()
     ids = finding_ids or []
@@ -576,7 +583,8 @@ def update_case(
             try:
                 with service_session() as session:
                     require_owner_can_write(session, named)
-            except OwnerCannotWrite as exc:
+                    require_case_owner_on_team(session, case, named, case_id)
+            except (OwnerCannotWrite, OwnerOffTeam) as exc:
                 return {"error": exc.message, "code": exc.code}
     if add_note:
         notes = list(case.get("notes") or [])

@@ -308,9 +308,15 @@ export const casesApi = {
     closed_by?: 'agent' | 'person'
     alerts_from?: 'today' | 'all'
     kind?: string
+    /** Owning-team ids. Repeated as `team=`. Omitted returns every readable case. */
+    team?: string[]
     limit?: number
     offset?: number
-  }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
+  }) =>
+    api.get<Schema<'CaseListResponse'>>('/cases', {
+      params,
+      paramsSerializer: { indexes: null },
+    }),
 
   getById: (id: string, signal?: AbortSignal) =>
     api.get<Schema<'CaseDetailResponse'>>(`/cases/${id}`, { signal }),
@@ -323,6 +329,13 @@ export const casesApi = {
 
   update: (id: string, data: Schema<'CaseUpdate'>) =>
     api.patch<Schema<'CaseSuccessResponse'>>(`/cases/${id}`, data),
+
+  /** Assign to me. The case is unowned, or its owner is not a current account. */
+  claim: (id: string) => api.post<Schema<'CaseSchema'>>(`/cases/${id}/claim`),
+
+  /** Move the case onto another team. A person sends a reason. */
+  move: (id: string, data: Schema<'CaseMove'>) =>
+    api.post<Schema<'CaseSchema'>>(`/cases/${id}/move`, data),
 
   delete: (id: string) =>
     api.delete<Schema<'CaseSuccessResponse'>>(`/cases/${id}`),

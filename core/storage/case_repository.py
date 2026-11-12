@@ -40,9 +40,13 @@ from core.storage.models import (
 from core.storage.models.workflow import (
     LIVE_CASE_STATES,
     LIVE_INVESTIGATION_STATUSES,
+    PARKED_INVESTIGATION_STATUSES,
     RUN_LIVE_STATE,
 )
 from core.time import utcnow
+
+# A live run an agent is working, as opposed to one parked on a person.
+_AGENT_WORKING = ("assigned", "executing")
 
 # CaseSchema reads only ``finding_ids``: load the links, not each finding's
 # MITRE prediction rows.
@@ -73,6 +77,22 @@ def _as_list(value: Filterable) -> List[str]:
     if isinstance(value, str):
         return [value]
     return list(value)
+
+
+def _waiting(live):
+    """Open cases waiting on a person.
+
+    Unowned, with no assigned or executing live run, plus any case whose live
+    run is ``waiting_approval`` or ``paused``. The caller excludes closed
+    cases. The live status is the newest live run.
+    """
+    unowned = or_(Case.assignee.is_(None), Case.assignee == "")
+    not_working = or_(
+        live.c.live_status.is_(None),
+        live.c.live_status.notin_(_AGENT_WORKING),
+    )
+    parked = live.c.live_status.in_(PARKED_INVESTIGATION_STATUSES)
+    return or_(and_(unowned, not_working), parked)
 
 
 def _assignee_clause(assignee: Filterable, unassigned: bool):
@@ -383,6 +403,7 @@ class CaseQueueStrip:
     closed_today: int
     agent_closure_share: float
     needs_you: int = 0
+    waiting: int = 0
 
 
 class CaseRepository:
@@ -669,6 +690,7 @@ class CaseRepository:
         closed_by: Optional[str] = None,
         person_channels: Sequence[str] = (),
         alerts_span: Optional[AlertSpan] = None,
+        team_ids: Optional[Sequence[str]] = None,
     ) -> Tuple[List[CaseQueueRow], int]:
         """One page of the queue.
 
@@ -764,6 +786,8 @@ class CaseRepository:
         owner = _assignee_clause(assignee, unassigned)
         if owner is not None:
             stmt = stmt.where(owner)
+        if team_ids:
+            stmt = stmt.where(Case.team_id.in_(list(team_ids)))
         stmt = self._restrict(
             stmt,
             workflow=workflow,
@@ -852,12 +876,15 @@ class CaseRepository:
         now: Optional[datetime] = None,
         needs_you_ids: Optional[set[str]] = None,
         alerts_span: Optional[AlertSpan] = None,
+        team_ids: Optional[Sequence[str]] = None,
     ) -> CaseQueueStrip:
         """Open cases by combined state, SLA at risk, closures today.
 
         ``needs_you`` counts the open (not closed) cases in ``needs_you_ids``.
-        ``alerts_span``, when set, narrows those three counts to cases holding
-        an alert in it, as the queue's filter does; ``None`` counts every case.
+        ``waiting`` counts unowned open cases with no assigned or executing
+        live run, plus open cases whose live run is waiting on a person.
+        ``alerts_span`` and ``team_ids``, when set, narrow every count here;
+        ``None`` counts every case. The other queue filters are ignored.
 
         At risk is the same SQL predicate as the queue filter, over cases
         that are not closed. Today's closures are ``case_closure_info`` rows
@@ -867,12 +894,14 @@ class CaseRepository:
         now = now or utcnow()
         live = _live_investigations()
         combined = _combined_sql(live)
-        in_span = [] if alerts_span is None else [_alerts_in_span_exists(alerts_span)]
+        narrowed = [] if alerts_span is None else [_alerts_in_span_exists(alerts_span)]
+        if team_ids:
+            narrowed.append(Case.team_id.in_(list(team_ids)))
         grouped = self.session.execute(
             select(combined.label("state"), func.count())
             .select_from(Case)
             .outerjoin(live, live.c.live_case_id == Case.case_id)
-            .where(Case.status != "closed", *in_span)
+            .where(Case.status != "closed", *narrowed)
             .group_by(combined)
         ).all()
         by_state = {state: int(count) for state, count in grouped if state}
@@ -882,29 +911,38 @@ class CaseRepository:
             select(func.count())
             .select_from(Case)
             .outerjoin(sla, sla.c.sla_case_id == Case.case_id)
-            .where(Case.status != "closed", _sla_at_risk(sla, now), *in_span)
+            .where(Case.status != "closed", _sla_at_risk(sla, now), *narrowed)
         ).scalar_one()
 
-        waiting = 0
+        needs = 0
         if needs_you_ids:
-            waiting = self.session.execute(
+            needs = self.session.execute(
                 select(func.count())
                 .select_from(Case)
                 .where(
                     Case.status != "closed",
                     Case.case_id.in_(sorted(needs_you_ids)),
-                    *in_span,
+                    *narrowed,
                 )
             ).scalar_one()
+
+        waiting = self.session.execute(
+            select(func.count())
+            .select_from(Case)
+            .outerjoin(live, live.c.live_case_id == Case.case_id)
+            .where(Case.status != "closed", _waiting(live), *narrowed)
+        ).scalar_one()
 
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         today = (
             select(func.count())
             .select_from(CaseClosureInfo)
+            .join(Case, Case.case_id == CaseClosureInfo.case_id)
             .where(
                 CaseClosureInfo.closed_at >= start,
                 CaseClosureInfo.closed_at < end,
+                *narrowed,
             )
         )
         closed_today = int(self.session.execute(today).scalar_one())
@@ -919,5 +957,6 @@ class CaseRepository:
             sla_at_risk=int(at_risk),
             closed_today=closed_today,
             agent_closure_share=share,
-            needs_you=int(waiting),
+            needs_you=int(needs),
+            waiting=int(waiting),
         )

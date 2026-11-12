@@ -40,7 +40,12 @@ from core.cases.case_handoff import (
     claim_case,
 )
 from core.cases.case_handoff import move_case as move_case_row
-from core.cases.case_handoff import newly_set_owner, note_owner, require_owner_can_write
+from core.cases.case_handoff import (
+    newly_set_owner,
+    note_owner,
+    require_case_owner_on_team,
+    require_owner_can_write,
+)
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
 from core.cases.case_state import detail_fields
@@ -277,6 +282,18 @@ class SearchRequest(BaseModel):
     offset: int = 0
 
 
+def _team_ids(values: Optional[List[str]]) -> Optional[List[str]]:
+    """Blank team ids are no filter. Duplicates are dropped, order kept."""
+    if not values:
+        return None
+    ids: List[str] = []
+    for value in values:
+        text = (value or "").strip()
+        if text and text not in ids:
+            ids.append(text)
+    return ids or None
+
+
 def _owner(value: Optional[str]) -> Optional[str]:
     """An owner filter is exact: blank is no filter, anything else is kept as sent."""
     return value if value and value.strip() else None
@@ -303,6 +320,7 @@ def _empty_queue(limit: int, offset: int) -> dict:
             "closed_today": 0,
             "agent_closure_share": 0.0,
             "needs_you": 0,
+            "waiting": 0,
         },
     }
 
@@ -315,6 +333,7 @@ def get_cases(
     data_source: Optional[str] = None,
     sla_at_risk: bool = False,
     assignee: Optional[str] = None,
+    team: Optional[List[str]] = Query(default=None),
     unassigned: bool = False,
     closed: Optional[bool] = None,
     query: Optional[str] = None,
@@ -339,9 +358,12 @@ def get_cases(
     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
     holding an alert created that UTC day (or any alert). The strip follows
-    ``alerts_from`` and ignores the other filters. ``assignee`` is an exact
-    stored owner; ``unassigned=true`` adds cases with no owner (NULL or "").
+    ``alerts_from`` and ``team``, and ignores the other filters. ``team`` is
+    the owning team's id, repeated for several; omitting it returns every
+    readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
+    adds cases with no owner (NULL or "").
     """
+    team_ids = _team_ids(team)
     # Demo cases live in memory. The database being down is a different empty.
     if data_service.is_demo_mode():
         from core.findings.demo_reads import case_queue, load_demo
@@ -366,6 +388,7 @@ def get_cases(
             alerts_from=alerts_from,
             workflow_constrained=bool(_blank(workflow) or _blank(kind)),
             data_source=_blank(data_source),
+            teams=team_ids,
         )
     if not data_service.is_using_database():
         return _empty_queue(limit, offset)
@@ -405,23 +428,28 @@ def get_cases(
             closed_by=closed_by,
             person_channels=PERSON_CHANNELS,
             alerts_span=alerts_span,
+            team_ids=team_ids,
         )
         strip = repo.strip(
-            now=now, needs_you_ids=needs_you_ids, alerts_span=alerts_span
+            now=now,
+            needs_you_ids=needs_you_ids,
+            alerts_span=alerts_span,
+            team_ids=team_ids,
         )
-        states = owner_states(session, (row.assignee for row in rows))
-    return {
-        "cases": [
+        cases = [
             asdict(
                 queue_item(
                     row,
                     now,
                     needs_you=row.case_id in needs_you_ids,
-                    owner_state=states.get(row.assignee or ""),
                 )
             )
             for row in rows
-        ],
+        ]
+        # owner_state and owner_on_team, from one membership lookup.
+        with_owner_state(session, cases)
+    return {
+        "cases": cases,
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -673,6 +701,7 @@ def update_case(
             deny_unless(current_user.user_id, "cases.assign", session)
         if named := newly_set_owner(stored_owner, updates["assignee"]):
             require_owner_can_write(session, named)
+            require_case_owner_on_team(session, case, named, case_id)
     if case_data.notes is not None:
         updates["notes"] = [
             *(case.get("notes") or []),

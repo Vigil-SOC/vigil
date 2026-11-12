@@ -106,6 +106,7 @@ interface CaseStrip {
   closed_today: number
   agent_closure_share: number
   needs_you: number
+  waiting: number
 }
 
 export const EMPTY_STRIP: CaseStrip = {
@@ -114,9 +115,10 @@ export const EMPTY_STRIP: CaseStrip = {
   closed_today: 0,
   agent_closure_share: 0,
   needs_you: 0,
+  waiting: 0,
 }
 
-function toParams(f: CaseFilters) {
+function toParams(f: CaseFilters, teamIds: string[]) {
   const params: NonNullable<Parameters<typeof casesApi.getAll>[0]> = {
     limit: f.limit,
     offset: f.offset,
@@ -136,6 +138,7 @@ function toParams(f: CaseFilters) {
   if (f.workflow.trim()) params.workflow = f.workflow.trim()
   if (f.dataSource.trim()) params.data_source = f.dataSource.trim()
   if (f.query.trim()) params.query = f.query.trim()
+  if (teamIds.length) params.team = teamIds
   return params
 }
 
@@ -144,7 +147,7 @@ export const CASES_CHANGED = 'vigil:cases-changed'
 /** Tells any mounted case list to reload, e.g. after an edit made in the drawer over it. */
 export const notifyCasesChanged = () => window.dispatchEvent(new Event(CASES_CHANGED))
 
-export function useCases(filters: CaseFilters) {
+export function useCases(filters: CaseFilters, teamIds: string[] | null) {
   const [rows, setRows] = useState<CaseRow[]>([])
   const [total, setTotal] = useState(0)
   const [strip, setStrip] = useState<CaseStrip>(EMPTY_STRIP)
@@ -159,11 +162,12 @@ export function useCases(filters: CaseFilters) {
   }, [reload])
 
   useEffect(() => {
+    if (teamIds === null) return
     let cancelled = false
     setPhase('loading')
     setError(null)
     casesApi
-      .getAll(toParams(filters))
+      .getAll(toParams(filters, teamIds))
       .then((res) => {
         if (cancelled) return
         const data = res.data as typeof res.data & {
@@ -184,7 +188,7 @@ export function useCases(filters: CaseFilters) {
     return () => {
       cancelled = true
     }
-  }, [filters, reloadKey])
+  }, [filters, teamIds, reloadKey])
 
   return { rows, total, strip, phase, error, reload }
 }
