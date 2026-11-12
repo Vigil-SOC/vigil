@@ -25,7 +25,11 @@ from pydantic import (
 
 from core.auth.permissions import permission_gate
 from core.detections.inventory.catalog import rule_for_finding
-from core.findings.alert_outcomes import TERMINAL_LABELS, stored_finding_states
+from core.findings.alert_outcomes import (
+    TERMINAL_LABELS,
+    stored_finding_states,
+    unreadable_cases,
+)
 from core.findings.exclusions import current_active_ips, excluded_ips_of
 from core.findings.source_evidence import (
     StoredSourceEvidence,
@@ -86,15 +90,18 @@ def _annotate_exclusions(finding: Dict[str, Any], active) -> Dict[str, Any]:
 
 
 def _annotate_states(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Each finding's terminal state, its board label and the case it reads, in one query."""
+    """Each finding's terminal state, its board label and the case it reads, in one
+    query; a case the reader may not read is no id, just ``case_restricted``."""
     states = stored_finding_states(data_service, [f["finding_id"] for f in findings])
+    hidden = unreadable_cases(case_id for _, case_id in states.values())
     for finding in findings:
         if finding["finding_id"] not in states:
             continue
         state, case_id = states[finding["finding_id"]]
         finding["terminal_state"] = state
         finding["terminal_label"] = TERMINAL_LABELS[state]
-        finding["case_id"] = case_id
+        finding["case_restricted"] = case_id in hidden
+        finding["case_id"] = None if case_id in hidden else case_id
     return findings
 
 
@@ -164,6 +171,8 @@ class FindingRecord(FindingSchema):
     terminal_state: Optional[str] = None
     terminal_label: Optional[str] = None
     case_id: Optional[str] = None
+    # In a restricted case the reader may not read: case_id is withheld.
+    case_restricted: bool = False
     # core.detections.inventory.catalog.rule_for_finding; single-finding reads only
     detection_rule: Optional[Dict[str, Any]] = None
 

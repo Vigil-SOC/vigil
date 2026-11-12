@@ -71,7 +71,7 @@ function Row({ item, onOpen, openCase }: { item: OverviewFeedItem; onOpen: (id: 
   }
   const text = item.title || item.description || item.finding_id
   const full = item.title && item.description ? item.description : text
-  const word = stateWord(item.terminal_state, item.case_id)
+  const word = stateWord(item.terminal_state, item.case_id, item.case_restricted)
   // Only a live case is a link; a closed one reads Resolved.
   const live = !!item.case_id && (item.terminal_state === 'working' || item.terminal_state === 'case_idle' || item.terminal_state === 'needs_you')
   return (

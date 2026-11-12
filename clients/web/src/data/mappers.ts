@@ -35,6 +35,8 @@ export interface ApiFinding {
   /** core.findings.alert_outcomes: the one state the finding is in, and its case */
   terminal_state?: string | null
   case_id?: string | null
+  /** in a restricted case the reader can't see: case_id is withheld */
+  case_restricted?: boolean
   /** open-ended on purpose: the key set varies by data source, so anything
    *  beyond the known names is carried through to `Finding.extra` */
   entity_context?: {
@@ -272,6 +274,7 @@ export function mapApiFinding(f: ApiFinding): Finding {
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
     status: (f.terminal_state as TerminalState | null | undefined) ?? null,
     caseId: f.case_id ?? null,
+    caseRestricted: f.case_restricted ?? false,
     extra: extraEntities(ec),
     excludedIps: f.excluded_ips ?? [],
   }

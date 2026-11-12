@@ -8,13 +8,14 @@ and dormancy all come here; each records its own trail entry for why.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Callable, Union
 from urllib.parse import quote
 
 from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session
 
 from core.auth import invites, mcp_credential_service, sign_ins, trail_events
+from core.auth.permissions import CaseReader, may_read_case
 from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
@@ -88,12 +89,14 @@ def deactivate_account(
 
 def _tell_managers_of_work(session: Session, user: User) -> None:
     """One notice if the account owns open cases or tasks: counts only, no titles,
-    the cases linked to the Cases list filtered to this owner. Sent on commit."""
+    the cases linked to the Cases list filtered to this owner. Sent on commit.
+
+    Each manager is told what they may read: a restricted case they are not a
+    reader of is counted apart, as hidden (#4356)."""
     cases = (
-        session.query(func.count())
-        .select_from(Case)
+        session.query(Case.reader_principal_ids, Case.reader_team_ids)
         .filter(Case.assignee == user.username, Case.status != "closed")
-        .scalar()
+        .all()
     )
     tasks = (
         session.query(func.count())
@@ -103,15 +106,12 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
     )
     if not (cases or tasks):
         return
-    parts = []
-    if cases:
-        parts.append(f"{cases} open case{'s' if cases != 1 else ''}")
-    if tasks:
-        parts.append(f"{tasks} open task{'s' if tasks != 1 else ''}")
-    message = (
-        f"{user.username} was deactivated and owns {' and '.join(parts)}. "
-        "Reassign the work."
-    )
+
+    def message(principal: str) -> str:
+        reader = CaseReader(principal)
+        shown = sum(1 for case in cases if may_read_case(case, reader))
+        return _work_message(user.username, shown, len(cases) - shown, tasks)
+
     link = f"/cases?owner={quote(user.username, safe='')}" if cases else None
     title = f"{user.username} was deactivated and owns open work"
     tell_managers(
@@ -125,10 +125,33 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
     )
 
 
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'s' if count != 1 else ''}"
+
+
+def _work_message(username: str, cases: int, hidden: int, tasks: int) -> str:
+    parts = []
+    if cases:
+        parts.append(_plural(cases, "open case"))
+    if tasks:
+        parts.append(_plural(tasks, "open task"))
+    owns = " and ".join(parts) if parts else "open work"
+    message = f"{username} was deactivated and owns {owns}."
+    if hidden:
+        message += f" {hidden} hidden: restricted open case{'s' if hidden != 1 else ''} you can't read."
+    return message + " Reassign the work."
+
+
 def tell_managers(
-    session: Session, user: User, kind: str, title: str, message: str, **notice
+    session: Session,
+    user: User,
+    kind: str,
+    title: str,
+    message: Union[str, Callable[[str], str]],
+    **notice,
 ) -> None:
-    """A notice about ``user`` to each manager, once ``session`` commits."""
+    """A notice about ``user`` to each manager, once ``session`` commits.
+    ``message`` may be worded per manager: a callable given their principal id."""
     # Read now: the row is expired once the commit has happened.
     about = user.principal_id
 
@@ -137,7 +160,8 @@ def tell_managers(
 
         for principal in managers(about):
             try:
-                notify(principal, kind, title, message, **notice)
+                text = message(principal) if callable(message) else message
+                notify(principal, kind, title, text, **notice)
             except Exception:  # noqa: BLE001 - the others are still told
                 logger.exception("could not send a %s notice to %s", kind, principal)
 

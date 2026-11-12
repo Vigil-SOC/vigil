@@ -60,7 +60,7 @@ export default function MetricsScreen() {
 
       {phase === 'loading' && <EmptyState loading icon="bars" title="Loading case metrics…" />}
       {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load case metrics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
-      {phase === 'ready' && data && (data.totalCases > 0 ? (
+      {phase === 'ready' && data && (data.totalCases > 0 || data.hidden > 0 ? (
         <MetricsBody data={data} />
       ) : (
         <EmptyState
@@ -74,7 +74,7 @@ export default function MetricsScreen() {
 }
 
 function MetricsBody({ data }: { data: CaseMetricsData }) {
-  const { totalCases, openCases, criticalCases, mttdHours, mttrHours, mttdByPriority, mttrByPriority, byPriority, byStatus, analysts } = data
+  const { totalCases, openCases, criticalCases, hidden, mttdHours, mttrHours, mttdByPriority, mttrByPriority, byPriority, byStatus, analysts } = data
 
   const priorityRows = byPriority.map((p) => ({
     label: (PRIORITY_LABELS.find(([k]) => k === p.priority)?.[1]) || p.priority,
@@ -96,7 +96,7 @@ function MetricsBody({ data }: { data: CaseMetricsData }) {
   return (
     <>
       <div className="grid grid-cols-4 border-b border-line">
-        <Kpi label="Total Cases" note="across all sources">
+        <Kpi label="Total Cases" note={`across all sources${hidden > 0 ? ` · ${hidden.toLocaleString()} restricted not counted` : ''}`}>
           <span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{totalCases}</span>
         </Kpi>
         <Kpi label="Open Cases" note={`${criticalCases} critical`}>
@@ -229,7 +229,7 @@ function Kpi({ label, note, children }: { label: string; note: string; children:
     <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
       <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">{label}</span>
       <div className="flex items-baseline gap-2.5">{children}</div>
-      <span className="text-xs text-tx-faint">{note}</span>
+      <span className="text-xs text-tx-faint [overflow-wrap:anywhere]">{note}</span>
     </div>
   )
 }

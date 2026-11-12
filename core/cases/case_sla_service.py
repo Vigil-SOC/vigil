@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from core.auth.permissions import may_read_case
 from core.cases import case_trail
 from core.storage.connection import get_db_manager
 from core.storage.database_data_service import DatabaseDataService
@@ -623,7 +624,8 @@ class CaseSLAService:
                     case = (
                         session.query(Case).filter(Case.case_id == sla.case_id).first()
                     )
-                    if case:
+                    # A restricted case the reader may not read is left out (#4356).
+                    if case and may_read_case(case):
                         breached_cases.append(
                             {
                                 "case_id": case.case_id,

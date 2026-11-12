@@ -58,6 +58,8 @@ interface DashKpis {
   casesTotal: number
   casesOpen: number
   casesInvestigating: number
+  /** restricted cases this reader can't see, not counted above */
+  casesHidden: number
 }
 
 interface FindingsSummary {
@@ -90,6 +92,7 @@ export function useDashboardKpis() {
             casesTotal: c.total ?? 0,
             casesOpen: c.by_status?.open ?? 0,
             casesInvestigating: c.by_status?.investigating ?? 0,
+            casesHidden: c.restricted_not_counted ?? 0,
           })
           setPhase('ready')
         })

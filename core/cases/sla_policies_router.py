@@ -7,9 +7,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
-from core.auth.permissions import permission_gate
+from core.auth.permissions import case_read_clause, permission_gate
 from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.case_repository import CaseRepository
 from core.storage.models import Case, CaseSLA, SLAPolicy
 from core.storage.schemas import CaseSchema, SLAPolicySchema
 from core.time import utcnow
@@ -437,14 +438,19 @@ def get_policy_cases(
         breached_only: Only return breached cases
 
     Returns:
-        List of cases
+        List of cases, leaving out restricted cases the caller may not read;
+        ``restricted_not_counted`` says how many there are (#4356)
     """
     policy = session.query(SLAPolicy).filter(SLAPolicy.policy_id == policy_id).first()
 
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    query = session.query(Case).join(CaseSLA).filter(CaseSLA.sla_policy_id == policy_id)
+    query = (
+        session.query(Case)
+        .join(CaseSLA)
+        .filter(CaseSLA.sla_policy_id == policy_id, case_read_clause())
+    )
 
     if status:
         query = query.filter(Case.status == status)
@@ -458,4 +464,5 @@ def get_policy_cases(
         "policy_id": policy_id,
         "cases": CaseSchema.dump_many(cases),
         "total": len(cases),
+        "restricted_not_counted": CaseRepository(session).hidden_count(),
     }

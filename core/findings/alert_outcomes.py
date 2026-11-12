@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, case, exists, literal
+from sqlalchemy import and_, case, exists, literal, select
 from sqlalchemy.orm import aliased
 
+from core.auth.permissions import case_read_clause
 from core.cases.case_records_service import run_liveness
 from core.cases.closure import closed_by_person
 from core.findings.arrival_counts import utc_day_bounds
@@ -184,6 +185,21 @@ def finding_states(finding_ids: Sequence[str]) -> dict[str, tuple[str, Optional[
         )
         for finding_id in ids
     }
+
+
+def unreadable_cases(case_ids) -> set[str]:
+    """Of these case ids, the restricted cases the reader may not read, in one
+    query. A finding linked to one shows "a restricted case": no id, its state
+    as computed (#4356)."""
+    ids = sorted({case_id for case_id in case_ids if case_id})
+    if not ids:
+        return set()
+    with get_db_manager().session_scope() as session:
+        return set(
+            session.scalars(
+                select(Case.case_id).where(Case.case_id.in_(ids), ~case_read_clause())
+            )
+        )
 
 
 def ttl_expired_alerts(finding_ids: Sequence[str]) -> set[str]:

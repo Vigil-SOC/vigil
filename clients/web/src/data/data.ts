@@ -52,6 +52,8 @@ export interface Finding {
   status: TerminalState | null
   /** the case the state reads, for "Case NNNN" */
   caseId?: string | null
+  /** in a restricted case the reader can't see, so there is no caseId */
+  caseRestricted?: boolean
   /** entity_context keys the fixed fields don't cover. Sources disagree about
    *  these (CrowdStrike sends device_id and no dest_ips, Splunk the reverse), so
    *  they are carried through and rendered as columns derived from the rows. */
