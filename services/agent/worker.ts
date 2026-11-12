@@ -13,6 +13,7 @@ import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { bindHost, healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted } from "./core/limiter.js";
+import { claimsOf, LIFE_MARGIN_MS, OUTLIVED, REFUSED, RunRefused } from "./core/principal.js";
 import { errorFields, logger } from "./core/log.js";
 import { stopCauseOf } from "./core/provider.js";
 import { initTracing, shutdownTracing, traced } from "./core/tracing.js";
@@ -32,7 +33,7 @@ import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, workflowIdOf, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
 import { LedgerRepository } from "./ledger/repository.js";
-import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
+import { httpMirror, nullMirror, type Mirror, type StatusUpdate, type TerminalResult } from "./plugins/compose/mirror.js";
 import { runCompose } from "./plugins/compose/workflow.js";
 import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
 import { runHunt } from "./plugins/hunt/workflow.js";
@@ -113,24 +114,36 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
 }
 
 // Off unless a deployment says where to mirror to: a run whose progress nobody
-// collects still runs, and the ledger is the record either way.
-function mirrorFor(): Mirror {
+// collects still runs, and the ledger is the record either way. Per run: every
+// call carries that run's principal beside the shared bearer.
+function mirrorFor(principal: string | undefined): Mirror {
   const url = process.env["VIGIL_RUNS_URL"];
-  return url === undefined || url === "" ? nullMirror : httpMirror({ url, token: internalToken() });
+  return url === undefined || url === "" ? nullMirror : httpMirror({ url, token: internalToken(), ...(principal === undefined ? {} : { principal }) });
 }
 
 // The same endpoint the compose mirror answers from, read-only. Off unless a
 // deployment says where, so a run nobody can answer parks rather than proceeds.
-function answersFor(): Answers {
+function answersFor(principal: string | undefined): Answers {
   const url = process.env["VIGIL_RUNS_URL"];
-  return url === undefined || url === "" ? noAnswers : httpAnswers({ url, token: internalToken() });
+  return url === undefined || url === "" ? noAnswers : httpAnswers({ url, token: internalToken(), ...(principal === undefined ? {} : { principal }) });
 }
 
 // Where a parked run's question goes. The same endpoint the answer comes back
 // from, so a deployment that can answer is one that can be told there is one.
-function announceFor(): Announce {
+function announceFor(principal: string | undefined): Announce {
   const url = process.env["VIGIL_RUNS_URL"];
-  return url === undefined || url === "" ? noAnnounce : httpAnnounce({ url, token: internalToken() });
+  return url === undefined || url === "" ? noAnnounce : httpAnnounce({ url, token: internalToken(), ...(principal === undefined ? {} : { principal }) });
+}
+
+// A run's end, told to the console. Never throws RunRefused: the end is already
+// on the ledger, and a refusal of the telling must not stop it being written.
+async function report(job: RunJob, principal: string | undefined, result: TerminalResult): Promise<void> {
+  try {
+    await mirrorFor(principal).terminal(job.run_id, result);
+  } catch (error) {
+    if (!(error instanceof RunRefused)) throw error;
+    log.warn("the run's end was refused by the bridge", { run_id: job.run_id });
+  }
 }
 
 // What the console was last told of each open run, so a sweep that finds a hunt
@@ -138,10 +151,10 @@ function announceFor(): Announce {
 // restart repeats one write, which the backend takes as the no-op it is.
 const told = new Map<string, string>();
 
-async function tell(runId: string, update: StatusUpdate): Promise<void> {
+async function tell(runId: string, principal: string | undefined, update: StatusUpdate): Promise<void> {
   const key = JSON.stringify(update);
   if (told.get(runId) === key) return;
-  if (await mirrorFor().status(runId, update)) told.set(runId, key);
+  if (await mirrorFor(principal).status(runId, update)) told.set(runId, key);
 }
 
 function defaultResolver(): PlaybookResolver {
@@ -173,14 +186,12 @@ function as<K extends Record<string, unknown>>(state: State): State<K> {
   return state as unknown as State<K>;
 }
 
-// The person the run acts for. A start job carries the token the API signed;
-// a resume does not, and the run event is where the start left it. Absent for
-// a system run, and for a ledger opened before this was recorded.
+// The person the run acts for. Once the ledger is open, the run event's copy is
+// the run's principal and a later job's is ignored; only a start with no run
+// event yet uses the token the job carries.
 export async function principalFor(state: State, job: RunJob): Promise<string | undefined> {
-  const carried = job.principal;
-  if (typeof carried === "string" && carried !== "") return carried;
   const opened = (await state.read(job.run_id)).find((event) => event.kind === "run");
-  const held = opened === undefined ? undefined : (opened.payload as RunPayload).principal;
+  const held = opened === undefined ? job.principal : (opened.payload as RunPayload).principal;
   return typeof held === "string" && held !== "" ? held : undefined;
 }
 
@@ -230,7 +241,7 @@ async function drive(
   const seed = seedFrom(await state.read(run_id));
 
   if (kind === "compose") {
-    const done = await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(), signal });
+    const done = await runCompose(build(spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, ...named, mirror: mirrorFor(principal), signal });
     // A phase parks itself on its approval. A denial has no phase row to say why.
     return done.status === "waiting_approval" && done.pending === null ? done.reason : null;
   }
@@ -246,22 +257,22 @@ async function drive(
     // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
     const done = await runAgent(harness, {
       run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
-      tools: toolsFrom(spec.tools), started_by, ...named, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
+      tools: toolsFrom(spec.tools), started_by, ...named, answers: answersFor(principal), announce: announceFor(principal), stop: stopFrom(directives, run_id), signal,
     });
     return done.status === "waiting_approval" ? done.reason : null;
   }
   if (entry.workflow === "hunt") {
     const harness = build(spec, as<HuntKinds>(state), undefined, seed);
-    const mirror = mirrorFor();
+    const mirror = mirrorFor(principal);
     // Only a forward hunt files its handoffs and findings early: it escalates and
     // keeps hunting, so its case must not wait on a terminal that may be far off
     // or never come.
     // Reaching an active iteration means the hunt is running, so the row clears its
     // reason as it takes the cost. The reason it parked goes back for settle.
-    const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
+    const onCost = (runId: string, cost_usd: number) => tell(runId, principal, { status: "running", reason: "", cost_usd });
     const done = await runHunt(harness, {
       run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, ...named,
-      announce: announceFor(),
+      announce: announceFor(principal),
       ...(kind === "hunt"
         ? {
             onHandoff: (runId: string, handoff) => mirror.handoff(runId, handoff),
@@ -320,31 +331,45 @@ export async function advance(
     );
   }, RENEW_EVERY_MS);
 
+  let principal: string | undefined = job.principal;
   try {
     const latest = await state.latestSeq(job.run_id);
     if (latest === null && job.reason !== "start") throw new Error(`cannot resume ${job.run_id}: it has no ledger`);
+    principal = await principalFor(state, job);
 
     const spec = latest === null ? await resolveSpec(job as StartJob) : await specOf(state, job.run_id);
     if (spec === null) throw new Error(`cannot advance ${job.run_id}: its ledger holds no run event`);
+
+    // Judged before any bridge call. A start with no ledger has nothing to end, so
+    // it throws into forget's no-ledger path, refused, instead.
+    const end = async (reason: string): Promise<void> => {
+      if (latest === null) throw new RunRefused();
+      await endFailed(state, leases, job, principal, reason);
+    };
+    const claims = claimsOf(principal);
+    if (claims === null || claims.run_id !== job.run_id) return await end(REFUSED);
+    // Already expired: decisions would be refused, so it is not read.
+    if (claims.exp_ms <= Date.now()) return await end(OUTLIVED);
 
     // Before the park check, not after it: abandoning is irreversible, and a run
     // whose answer is sitting at the endpoint unjournaled has been answered. The
     // workflow journals again on every iteration; this is idempotent against what
     // the ledger already holds, so the second call appends nothing.
-    const answered = await journalAnswers(state, job.run_id, job.run_kind, answersFor());
+    const answered = await journalAnswers(state, job.run_id, job.run_kind, answersFor(principal));
 
-    if (await abandonIfParkedOut(state, leases, job, spec)) return;
-    if (await abandonIfStalled(state, leases, job)) return;
+    if (await abandonIfParkedOut(state, leases, job, spec, principal)) return;
+    // The run-life cap: ended while its principal can still carry the end.
+    if (claims.exp_ms - Date.now() < LIFE_MARGIN_MS) return await end(OUTLIVED);
+    if (await abandonIfStalled(state, leases, job, principal)) return;
     if (latest !== null) await markResumed(state, job, owner, latest);
     // An answer was just taken, so the run is working again from here: the first
     // iteration can take minutes, and onCost only clears the row once it ends.
     // Compose reports its own state through its phases.
-    if (answered > 0 && job.run_kind !== "compose") await tell(job.run_id, { status: "running", reason: "", cost_usd: await spentOn(state, job.run_id) });
-    const principal = await principalFor(state, job);
+    if (answered > 0 && job.run_kind !== "compose") await tell(job.run_id, principal, { status: "running", reason: "", cost_usd: await spentOn(state, job.run_id) });
     const parked = await drive(state, job, spec, build, halt.signal, directives, principal);
-    await settle(state, leases, job, spec, owner, parked);
+    await settle(state, leases, job, spec, owner, parked, principal);
   } catch (error) {
-    await forget(state, leases, job, owner, error, final || unrecoverable(error));
+    await forget(state, leases, job, owner, error, final || unrecoverable(error), principal);
     throw error;
   } finally {
     clearInterval(renewing);
@@ -366,16 +391,16 @@ export async function advance(
 // workflow_runs row was created running, so it is told failed here, for every kind,
 // once. Not on an attempt that will be retried -- the row would flip to failed and
 // back. A resume that found no ledger was never started by this layer and says nothing.
-async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown, last: boolean): Promise<void> {
+async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown, last: boolean, principal: string | undefined): Promise<void> {
   if ((await state.latestSeq(job.run_id)) === null) {
     if (job.reason === "start" && last) {
-      await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
+      await report(job, principal, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
     }
     await leases.finish(job.run_id);
     return;
   }
-  await abandon(job, error);
-  if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
+  await abandon(job, error, principal);
+  if (await stopBecauseItCannotSucceed(state, leases, job, error, principal)) return;
   await leases.release(job.run_id, owner, 0);
 }
 
@@ -388,6 +413,7 @@ async function stopBecauseItCannotSucceed(
   leases: Leases,
   job: RunJob,
   error: unknown,
+  principal: string | undefined,
 ): Promise<boolean> {
   // Not exempted when a checkpoint is open: the gateway will refuse the next call
   // whether or not a person still owes this run an answer. The exemption below is
@@ -399,8 +425,15 @@ async function stopBecauseItCannotSucceed(
     ]);
     // abandon() does not report this error, so every kind, compose included, hears
     // budget_exhausted once. The spec-error path leaves compose to abandon().
-    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, stop_cause: error.kind, summary: "" });
+    await report(job, principal, { outcome: "budget_exhausted", reason, stop_cause: error.kind, summary: "" });
     await leases.finish(job.run_id);
+    return true;
+  }
+
+  // Before the parked exemption: a refused run never gets another chance, open
+  // checkpoint or not. abandon() already told compose.
+  if (error instanceof RunRefused) {
+    await endFailed(state, leases, job, principal, error.message, job.run_kind !== "compose");
     return true;
   }
 
@@ -416,10 +449,25 @@ async function stopBecauseItCannotSucceed(
   // abandon() already told the mirror for compose; every other kind is told off the
   // terminal in settle, which this path returns before reaching.
   if (job.run_kind !== "compose") {
-    await mirrorFor().terminal(job.run_id, { outcome: "failed", reason, summary: "" });
+    await report(job, principal, { outcome: "failed", reason, summary: "" });
   }
   await leases.finish(job.run_id);
   return true;
+}
+
+// A run that can no longer carry its principal: ended as failed on the ledger,
+// told to the console, and taken off the list, as abandonIfParkedOut ends one.
+async function endFailed(state: State, leases: Leases, job: RunJob, principal: string | undefined, reason: string, tellIt = true): Promise<void> {
+  log.warn("ending a run that cannot continue", { run_id: job.run_id, reason });
+  // A refusal can land after the workflow journaled its own end; that end stands.
+  if ((await state.terminal(job.run_id)) === null) {
+    await state.append(job.run_id, [
+      { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "failed", reason } },
+    ]);
+  }
+  if (tellIt) await report(job, principal, { outcome: "failed", reason, summary: "" });
+  told.delete(job.run_id);
+  await leases.finish(job.run_id);
 }
 
 // Where a run was picked back up, so a crash and its recovery are readable rather
@@ -445,7 +493,7 @@ function workerName(): string {
 // Whether this worker is still the run's business, once the workflow returns. A
 // run that reached terminal is nobody's; one that parked stays on the list and is
 // looked at again when its interval passes or the console pulls it forward.
-async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, owner: string, parked: string | null): Promise<void> {
+async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, owner: string, parked: string | null, principal: string | undefined): Promise<void> {
   const terminal = await state.terminal(job.run_id);
   if (terminal !== null) {
     // Only compose was ever handed a mirror, so every other kind reached its end
@@ -454,7 +502,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
     // this already read, so one place reports for every kind there is.
     if (job.run_kind !== "compose") {
       const spent = await spentOn(state, job.run_id);
-      await mirrorFor().terminal(job.run_id, {
+      await report(job, principal, {
         outcome: terminal.outcome,
         reason: terminal.reason,
         stop_cause: terminal.stop_cause,
@@ -476,7 +524,7 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
   // A hunt out of turns or budget has stopped, so its row says it is waiting and
   // why, rather than running with no end and no cost. Compose reports its own
   // pause through its phases.
-  if (parked !== null) await tell(job.run_id, { status: "paused", reason: parked, cost_usd: await spentOn(state, job.run_id) });
+  if (parked !== null) await tell(job.run_id, principal, { status: "paused", reason: parked, cost_usd: await spentOn(state, job.run_id) });
   await leases.release(job.run_id, owner, Math.min(PARK_EVERY_MS, spec.budgets.max_park_ms));
 }
 
@@ -487,9 +535,9 @@ export async function spentOn(state: State, runId: string): Promise<number> {
 
 // A compose run that dies after its ledger opened, before it journals a terminal,
 // leaves its record open. One that died before the ledger opened is forget()'s.
-async function abandon(job: RunJob, error: unknown): Promise<void> {
+async function abandon(job: RunJob, error: unknown, principal: string | undefined): Promise<void> {
   if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
-  await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
+  await report(job, principal, { outcome: "failed", reason: messageOf(error), stop_cause: stopCauseOf(error), summary: "" });
 }
 
 function messageOf(error: unknown): string {
@@ -497,14 +545,14 @@ function messageOf(error: unknown): string {
 }
 
 // What no retry can change; see handle().
-function unrecoverable(error: unknown): error is SpecError | GatewayExhausted {
-  return error instanceof SpecError || error instanceof GatewayExhausted;
+function unrecoverable(error: unknown): error is SpecError | GatewayExhausted | RunRefused {
+  return error instanceof SpecError || error instanceof GatewayExhausted || error instanceof RunRefused;
 }
 
 // A checkpoint nobody answered for max_park_ms. Saying so beats leaving the run
 // parked forever, and abandoned is not aborted: aborted means a human stopped the
 // run, and this is the case where nobody decided anything at all.
-async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spec: RunSpec): Promise<boolean> {
+async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spec: RunSpec, principal: string | undefined): Promise<boolean> {
   const events = await state.read(job.run_id);
   const waited = parkedFor(events);
   if (waited === null || waited < spec.budgets.max_park_ms) return false;
@@ -516,7 +564,7 @@ async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spe
   ]);
   // This path returns before settle, so nobody reported it: the console showed the
   // run paused forever and its question stayed in the approvals queue for good.
-  await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
+  await report(job, principal, { outcome: "abandoned", reason, summary: "" });
   await leases.finish(job.run_id);
   return true;
 }
@@ -530,7 +578,7 @@ export const MAX_STALLED_RESUMES = 6;
 // that somebody looked again.
 const NOT_PROGRESS: ReadonlySet<string> = new Set(["resumed", "spend"]);
 
-async function abandonIfStalled(state: State, leases: Leases, job: RunJob): Promise<boolean> {
+async function abandonIfStalled(state: State, leases: Leases, job: RunJob, principal: string | undefined): Promise<boolean> {
   const events = await state.read(job.run_id);
   // A parked hunt journals a resume on every sweep, so counting those would end every
   // run that asked a question. abandonIfParkedOut owns the case nobody answers.
@@ -547,7 +595,7 @@ async function abandonIfStalled(state: State, leases: Leases, job: RunJob): Prom
   await state.append(job.run_id, [
     { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "abandoned", reason } },
   ]);
-  await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
+  await report(job, principal, { outcome: "abandoned", reason, summary: "" });
   await leases.finish(job.run_id);
   return true;
 }

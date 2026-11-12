@@ -1,5 +1,6 @@
 import type { NewEvent, ResolutionPayload, RunKind } from "../contracts/events.js";
 import type { State } from "./seams.js";
+import { bridgeHeaders, RunRefused } from "./principal.js";
 
 // How a human's answer reaches a run. Reading only: the answer is recorded on
 // the other side and journaled here, so the ledger keeps its single writer.
@@ -8,6 +9,8 @@ export type Answers = (runId: string) => Promise<ResolutionPayload[]>;
 export interface AnswersOptions {
   url: string;
   token: string;
+  // The run's signed principal, sent beside the bearer.
+  principal?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -25,8 +28,9 @@ export function httpAnswers(options: AnswersOptions): Answers {
   // exists would run a call a human rejected.
   return async (runId) => {
     const response = await call(`${base}/${encodeURIComponent(runId)}/decisions`, {
-      headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+      headers: bridgeHeaders(options.token, options.principal),
     });
+    if (response.status === 403) throw new RunRefused();
     if (!response.ok) throw new Error(`could not read decisions for ${runId}: the endpoint answered ${response.status}`);
     return resolutionsOf(await response.json());
   };

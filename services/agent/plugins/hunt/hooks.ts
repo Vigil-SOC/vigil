@@ -27,6 +27,7 @@ import { operatorLine } from "./render.js";
 import { sensorAttested } from "./strength.js";
 import type { Handoff, HuntOutcome } from "./types.js";
 import { HuntBook } from "./book.js";
+import { RunRefused } from "../../core/principal.js";
 
 const log = logger("agent.hunt");
 
@@ -365,12 +366,15 @@ async function reportOut(ctx: PluginContext, ports: HuntPorts, projection: Proje
     }
     if (ports.onCost !== undefined && projection.hunt.status === "active") await ports.onCost(runId, projection.hunt.cost_usd);
   } catch (error) {
+    // A refused principal is the run's end, not a report that missed.
+    if (error instanceof RunRefused) throw error;
     log.warn("hunt could not report out", { run_id: runId, ...errorFields(error) });
   }
   if (ports.onProgress === undefined) return;
   try {
     await ports.onProgress(runId, projection.hunt.iteration, projection.hunt.budgets.max_cost_usd);
   } catch (error) {
+    if (error instanceof RunRefused) throw error;
     log.warn("hunt could not report its progress", { run_id: runId, ...errorFields(error) });
   }
 }

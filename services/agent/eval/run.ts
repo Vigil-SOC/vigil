@@ -232,6 +232,8 @@ async function runCase(engine: Engine, one: EvalCase, config: string, grader: Gr
     enqueued_by: "eval",
     reason: "start",
     request: { arch: "", playbook: join(HERE, "investigate.playbook.yaml"), config, prompt: one.alert },
+    // Unsigned: the worker only reads its claims, and an eval calls no bridge.
+    principal: `e30.${Buffer.from(JSON.stringify({ run_id: runId, exp: Math.floor(Date.now() / 1000) + 86_400 * 31 })).toString("base64url")}.`,
   };
 
   const started = Date.now();
