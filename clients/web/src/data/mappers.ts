@@ -104,6 +104,8 @@ interface QueueCase {
   priority?: string | null
   assignee?: string | null
   owner_state?: 'current' | 'not_current' | null
+  owner_on_team?: boolean | null
+  team?: { id?: string | null; name?: string | null } | null
   combined_state?: string | null
   finding_ids?: string[] | null
   findings_count?: number | null
@@ -170,6 +172,9 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     ownerName: c.assignee || '',
     ownerStale: c.owner_state === 'not_current',
     ownerState: c.owner_state,
+    ownerOnTeam: c.owner_on_team,
+    teamId: c.team?.id || undefined,
+    teamName: c.team?.name || undefined,
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,
     alertsSinceLastRun: c.alerts_since_last_run ?? 0,
     tactic: c.mitre_techniques?.[0] || DASH,

@@ -15,12 +15,12 @@ export function statePill(state: string, needs = false): { tone: PillTone; label
 }
 
 /** The state chip; the caller writes the reason after it. */
-export function StatePill({ state, needs, className }: { state: string; needs?: boolean; className?: string }) {
-  const { tone, label } = statePill(state, needs)
+export function StatePill({ state, needs, className, label }: { state: string; needs?: boolean; className?: string; label?: string }) {
+  const pill = statePill(state, needs)
   return (
-    <span className={`state-pill ${tone}${className ? ` ${className}` : ''}`}>
+    <span className={`state-pill ${pill.tone}${className ? ` ${className}` : ''}`}>
       <span className="state-dot" aria-hidden="true" />
-      {label}
+      {label ?? pill.label}
     </span>
   )
 }

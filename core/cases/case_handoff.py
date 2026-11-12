@@ -1,7 +1,8 @@
 """Move a case between teams, and claim one that nobody current holds.
 
-The team check lives here. A ``PATCH`` or ``update_case`` that sets an owner
-still only checks that the person can edit cases. Hand back is that ``PATCH``.
+Hand back is a ``PATCH`` with an empty assignee. A ``PATCH``, an agent or MCP
+``update_case``, or ``create_case`` that sets an owner also refuses a person
+who is not a current member of the case's team.
 """
 
 from __future__ import annotations
@@ -108,6 +109,42 @@ def require_owner_can_write(session: Session, username: str) -> None:
     user = session.scalar(select(User).where(User.username == username))
     if user is None or missing_permission(user.user_id, "cases.write", session):
         raise OwnerCannotWrite(username)
+
+
+def require_owner_on_team(
+    session: Session, username: str, team_id: str, case_id: str
+) -> None:
+    """The person being given the case is a current member of ``team_id``."""
+    if _current_member(session, username, team_id):
+        return
+    team = session.get(Team, team_id)
+    raise OwnerOffTeam(case_id, team.name if team is not None else team_id)
+
+
+def case_team_id(case: dict) -> Optional[str]:
+    """The owning team id on a dumped case, from ``team.id`` or ``team_id``."""
+    team = case.get("team")
+    if isinstance(team, dict) and isinstance(team.get("id"), str) and team["id"]:
+        return team["id"]
+    raw = case.get("team_id")
+    return raw if isinstance(raw, str) and raw else None
+
+
+def require_case_owner_on_team(
+    session: Session, case: dict, username: str, case_id: str
+) -> None:
+    """A newly set owner is a current member of the case's team.
+
+    The team is the one on the case. A row with no team id is read from the
+    locked case, which always has one after the teams upgrade.
+    """
+    team_id = case_team_id(case)
+    if team_id is None:
+        row = session.get(Case, case_id)
+        team_id = row.team_id if row is not None else None
+    if team_id is None:
+        return
+    require_owner_on_team(session, username, team_id, case_id)
 
 
 def _member(session: Session, username: Optional[str], team_id: str) -> bool:

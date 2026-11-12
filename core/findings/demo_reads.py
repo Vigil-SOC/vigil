@@ -289,6 +289,7 @@ def _matches(
     working: bool,
     closed_by: Optional[str],
     alerts_from_ids: Optional[set[str]],
+    team_ids: Optional[set[str]] = None,
 ) -> bool:
     # Demo cases have no workflow and no SLA, so those filters keep nothing.
     if workflow_constrained or sla_at_risk:
@@ -338,7 +339,23 @@ def _matches(
         ).lower()
         if query.lower() not in haystack:
             return False
+    if team_ids is not None and _case_team_id(case) not in team_ids:
+        return False
     return True
+
+
+def _case_team_id(case: dict) -> Optional[str]:
+    team = case.get("team")
+    if isinstance(team, dict) and isinstance(team.get("id"), str):
+        return team["id"]
+    team_id = case.get("team_id")
+    return team_id if isinstance(team_id, str) else None
+
+
+def _in_span(case: dict, alerts_from_ids: Optional[set[str]]) -> bool:
+    if alerts_from_ids is None:
+        return True
+    return bool(alerts_from_ids.intersection(_ids(case.get("finding_ids"))))
 
 
 def case_owners(cases: list[dict]) -> list[dict]:
@@ -370,10 +387,12 @@ def case_queue(
     working: bool = False,
     closed_by: Optional[str] = None,
     alerts_from: Optional[str] = None,
+    teams: Optional[list[str]] = None,
 ) -> dict:
     """One page of demo cases, in the queue's shape.
 
-    The strip follows ``alerts_from`` and ignores the other filters.
+    The strip follows ``alerts_from`` and ``teams``, and ignores the other
+    filters. ``waiting`` is open unowned cases: a demo case has no live run.
     """
     needs = open_case_ids(cases)
     findings_by_id = {
@@ -395,6 +414,7 @@ def case_queue(
             )
         }
     )
+    team_ids = set(teams) if teams else None
     matched = [
         case
         for case in cases
@@ -415,6 +435,7 @@ def case_queue(
             working=working,
             closed_by=closed_by,
             alerts_from_ids=alerts_from_ids,
+            team_ids=team_ids,
         )
     ]
     matched.sort(
@@ -463,19 +484,26 @@ def case_queue(
                     owner_state=owner_states(None, [assignee_value]).get(
                         assignee_value
                     ),
+                    team=(
+                        case.get("team") if isinstance(case.get("team"), dict) else None
+                    ),
                 )
             )
         )
     by_state: dict[str, int] = {}
+    waiting = 0
     for case in cases:
+        if team_ids is not None and _case_team_id(case) not in team_ids:
+            continue
+        if not _in_span(case, alerts_from_ids):
+            continue
         status = (case.get("status") or "").strip()
         if not status or status == _CLOSED:
             continue
-        if alerts_from_ids is not None and not alerts_from_ids.intersection(
-            _ids(case.get("finding_ids"))
-        ):
-            continue
         by_state[status] = by_state.get(status, 0) + 1
+        owner = case.get("assignee") or ""
+        if not (isinstance(owner, str) and owner.strip()):
+            waiting += 1
     return {
         "cases": items,
         "total": len(matched),
@@ -488,6 +516,7 @@ def case_queue(
             "closed_today": 0,
             "agent_closure_share": 0.0,
             "needs_you": sum(by_state.values()),
+            "waiting": waiting,
         },
     }
 
