@@ -97,10 +97,27 @@ function action(a: string, fix?: string): string {
   }
 }
 
-/** UX-15: the "would have" lines for L0, L1 and L2, always ending "Nothing was done." */
-export function wouldHave(opened: IncidentOpened, lane: number, updates: DecisionRecord[]): string[] {
+function closing(told: 'none' | 'opened' | 'summary' | undefined): string {
+  switch (told) {
+    case 'opened':
+      return 'Medic told the admins.'
+    case 'summary':
+      return 'Medic told the admins in its first-start summary.'
+    case 'none':
+    case undefined:
+      return 'Nothing was done. Medic is in observe-only mode.'
+    default: {
+      const unexpected: never = told
+      return unexpected
+    }
+  }
+}
+
+/** UX-15: the "would have" lines for L0, L1 and L2. The last line reads `told`. */
+export function wouldHave(opened: IncidentOpened, lane: number, updates: DecisionRecord[], told?: string): string[] {
+  const end = closing(told === 'opened' || told === 'summary' || told === 'none' ? told : undefined)
   const w = opened.would_have
-  if (!w) return ['Nothing was done. Medic is in observe-only mode.']
+  if (!w) return [end]
   const fix = opened.advice?.fix
   const lines = ['Observe only (L0): recorded this incident.', `Recommend (L1): ${action(w.L1, fix)}`]
   const { action: a2, not_eligible: why } = w.L2 ?? {}
@@ -113,7 +130,7 @@ export function wouldHave(opened: IncidentOpened, lane: number, updates: Decisio
   lines.push(`Autonomous (L2): ${l2}${l2.endsWith('.') ? '' : '.'}`)
   const esc = [...updates].reverse().find((r) => r.type === 'incident_updated' && r.body.change === 'escalation_simulated')
   if (esc) lines.push(`Still open after ${num(esc.body.simulated_failures)} fix attempts: would have escalated to support (lane unchanged).`)
-  lines.push('Nothing was done. Medic is in observe-only mode.')
+  lines.push(end)
   return lines
 }
 

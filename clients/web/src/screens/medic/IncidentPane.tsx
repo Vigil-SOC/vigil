@@ -49,7 +49,7 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
     const all = [...bySeq.values()]
     return {
       opened,
-      would: wouldHave(opened, detail.summary.lane.value, all),
+      would: wouldHave(opened, detail.summary.lane.value, all, detail.told),
       rows: timeline(detail.opened, all),
       evidence: evidenceOf(opened, all.filter((r) => r.seq !== detail.opened.seq)),
     }

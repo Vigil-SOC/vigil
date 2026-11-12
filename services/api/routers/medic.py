@@ -6,8 +6,9 @@ feedback POST and the three pack writes. Not a generic proxy: a path or query pa
 the contract does not declare never reaches Medic, and no client header is forwarded.
 Medic gets only ``X-Medic-Key``, plus ``X-Medic-Admin`` (the signed-in user) on writes.
 
-Records, incidents and decisions are hash-covered, so Medic's body bytes pass through
-untouched. Only the status snapshot is parsed and cached (15 s, per process).
+Records, the incident list and decisions are hash-covered, so those body bytes
+pass through untouched. The incident detail is parsed to add ``told``. Only the
+status snapshot is cached (15 s, per process).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from core.auth.permissions import (
     require_person_permission,
 )
 from core.config import get_settings
+from core.platform.medic_incidents import incident_told
 from core.platform.medic_last_seen import read_key
 from core.platform.medic_status import MedicStatus, medic_enabled
 from core.routing import Auth, RouterMeta
@@ -291,7 +293,23 @@ async def list_incidents(request: Request) -> Response:
 
 @router.get("/incidents/{incident_id}", dependencies=[_read])
 async def get_incident(incident_id: str = Path(pattern=_INCIDENT_ID)) -> Response:
-    return await _get(f"/v1/incidents/{incident_id}")
+    """Medic's incident, plus ``told`` for its current reopen (``none``, ``opened`` or ``summary``)."""
+    r, err = await _call("GET", f"/v1/incidents/{incident_id}")
+    if err is not None or r is None:
+        return err or _problem(503, "medic_unavailable")
+    try:
+        body = r.json()
+    except ValueError:
+        return _passthrough(r)
+    if not isinstance(body, dict):
+        return _passthrough(r)
+    summary = body.get("summary")
+    reopen = summary.get("reopen_count") if isinstance(summary, dict) else None
+    if type(reopen) is not int or isinstance(reopen, bool):
+        body["told"] = "none"
+    else:
+        body["told"] = await asyncio.to_thread(incident_told, incident_id, reopen)
+    return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/incidents/{incident_id}/feedback")

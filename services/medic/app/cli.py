@@ -707,6 +707,7 @@ class _Status:
                 trace=self.medic.capture.status(),
                 dev_mode=self.dev_mode,
                 pack=self.admin.facts if self.admin else None,
+                upgrade_hold_until=self.medic.engine.upgrade.end,
             )
             sensors = build_sensors(
                 self.medic.scheduler.sensor_states(),

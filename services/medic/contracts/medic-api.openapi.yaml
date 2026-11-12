@@ -479,6 +479,12 @@ components:
         heartbeat_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
         cycle: { type: integer, minimum: 0, x-medic-type: number }
         started_at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+        upgrade_hold_until:
+          description: When the upgrade hold ends. Null when no hold is open. Omitted by a 2.0 body.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - $ref: "./decision-record.schema.json#/$defs/ts"
         uptime_s: { type: integer, minimum: 0, x-medic-type: number }
         restarts_24h: { type: integer, minimum: 0, x-medic-type: number }
         last_exit:
@@ -941,13 +947,14 @@ paths:
               examples:
                 degraded:
                   value:
-                    api_version: "2.0"
+                    api_version: "2.1"
                     instance_id: mi_3f9a2c1b0d4e5f60
                     state: degraded
                     now: "2026-12-07T14:02:31Z"
                     heartbeat_at: "2026-12-07T14:02:30Z"
                     cycle: 20841
                     started_at: "2026-12-04T09:58:02Z"
+                    upgrade_hold_until: null
                     uptime_s: 273269
                     restarts_24h: 2
                     last_exit: { reason: oom, at: "2026-12-07T08:11:40Z" }

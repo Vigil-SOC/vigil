@@ -60,8 +60,8 @@ _WATCH_WORDS = (
 class MedicWatchState(Base):
     """The status word told to medic.admin, and the polls confirming the next one.
 
-    One row, written only by the watch in ``core/platform/medic_last_seen.py``.
-    ``0065_medic_watch.sql`` builds the same table.
+    One row, written only by the watch. ``0065_medic_watch.sql`` builds it;
+    ``0068_medic_incidents.sql`` adds the open count and the summary marker.
     """
 
     __tablename__ = "medic_watch_state"
@@ -76,6 +76,14 @@ class MedicWatchState(Base):
             name="medic_watch_state_confirming",
         ),
         CheckConstraint("confirming_polls >= 0", name="medic_watch_state_polls"),
+        CheckConstraint(
+            "open_count IS NULL OR open_count >= 0",
+            name="medic_watch_state_open_count",
+        ),
+        CheckConstraint(
+            "summary_started_at IS NULL OR char_length(summary_started_at) <= 128",
+            name="medic_watch_state_summary_start",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -94,3 +102,43 @@ class MedicWatchState(Base):
     )
     # When the current red word was first read. The bell's "since HH:MM".
     red_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # In-scope incidents that are firing or resolving. Null until a full read.
+    open_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    open_count_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # The Medic start the first-start summary covered. ``started_at``, or that
+    # plus ``|`` and a store-reset incident id.
+    summary_started_at: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class MedicIncidentNotice(Base):
+    """One sent incident event: opened, cleared or summary (#4366).
+
+    Unique on incident, reopen count and event. Written with the bell rows.
+    """
+
+    __tablename__ = "medic_incident_notice"
+    __table_args__ = (
+        CheckConstraint(
+            "incident_id ~ '^inc_[0-9A-Za-z]{8,32}$'",
+            name="medic_incident_notice_id",
+        ),
+        CheckConstraint("reopen_count >= 0", name="medic_incident_notice_reopen"),
+        CheckConstraint(
+            "event IN ('opened', 'cleared', 'summary')",
+            name="medic_incident_notice_event",
+        ),
+        CheckConstraint(
+            "summary IS NULL OR char_length(summary) <= 200",
+            name="medic_incident_notice_summary",
+        ),
+        CheckConstraint(
+            "fix IS NULL OR char_length(fix) <= 1000",
+            name="medic_incident_notice_fix",
+        ),
+    )
+
+    incident_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    reopen_count: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event: Mapped[str] = mapped_column(Text, primary_key=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

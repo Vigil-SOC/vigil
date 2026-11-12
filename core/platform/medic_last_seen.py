@@ -13,10 +13,10 @@ clock; Medic's own clock is never stored.
 
 Flag off: no task, no poll, no row (Off is not Down, C8).
 
-After a poll, this process starts one watch. The watch reads the row this
-poller wrote, and under its own lock tells holders of medic.admin when Medic
-has stopped watching or is watching again. It does not call Medic, and it
-sends the mail only after that lock commits.
+After a poll, this process starts one watch. It confirms the status word
+from the row this poller wrote, then reads Medic's incidents. Both writes
+use the watch lock, and the mail for each goes out only after that lock
+commits. The incident pass does not hold the lock across HTTP.
 """
 
 from __future__ import annotations
@@ -160,7 +160,8 @@ def typed_snapshot(body: Any) -> Optional[dict]:
     """Medic's status reduced to typed fields (K1 §6 G2), or None if it isn't one.
 
     Medic's ``now`` is dropped (the backend's clock only); the store, pack and
-    chain blocks are left to the console's live proxy (H3).
+    chain blocks are left to the console's live proxy (H3). ``upgrade_hold_until``
+    is kept; a body that omits it stores null and is still a good poll.
     """
     try:
         last_exit = body["last_exit"]
@@ -185,6 +186,8 @@ def typed_snapshot(body: Any) -> Optional[dict]:
             ),
             "sensors": {k: _int(sensors[k]) for k in ("reporting", "cant_see", "off")},
         }
+        hold = body["upgrade_hold_until"] if "upgrade_hold_until" in body else None
+        snap["upgrade_hold_until"] = None if hold is None else _match(_TS, hold)
     except (KeyError, TypeError, ValueError):
         return None
     if len(snapshot_bytes(snap)) > SNAPSHOT_MAX_BYTES:
@@ -491,6 +494,35 @@ def not_watching_line() -> Optional[dict[str, str]]:
     return {"message": f"Medic isn't watching since {when}", "link": _MEDIC_LINK}
 
 
+def problems_open_line() -> Optional[dict[str, str]]:
+    """The bell line while in-scope incidents are firing or resolving, or None.
+
+    Null or zero hides it. Hidden while Medic is off. It reads the state row
+    and does not call Medic. While the announced word is red the line says
+    when the count was taken.
+    """
+    if not medic_enabled():
+        return None
+    from core.storage.models import MedicWatchState
+    from core.storage.unit_of_work import unit_of_work
+
+    with unit_of_work() as session:
+        state = session.get(MedicWatchState, 1)
+        if state is None or not state.open_count:
+            return None
+        count = state.open_count
+        as_of = (
+            state.open_count_at.strftime("%H:%M")
+            if state.announced_word in _RED and state.open_count_at is not None
+            else None
+        )
+    noun = "problem" if count == 1 else "problems"
+    message = f"{count} Medic {noun} open"
+    if as_of:
+        message += f" as of {as_of}"
+    return {"message": message, "link": _MEDIC_LINK}
+
+
 def _kick_watch() -> None:
     """Start the watch. A watch already running in this process is left alone."""
     global _watch_task
@@ -500,18 +532,33 @@ def _kick_watch() -> None:
 
 
 async def _run_watch() -> None:
+    # Status commits first. A later failure of the incident pass must not
+    # roll that notice back. The import is local: the incident pass calls
+    # back into this module.
     try:
         notice_ids = await asyncio.to_thread(watch_once)
     except Exception as exc:  # noqa: BLE001 - the next kick tries again
         logger.warning("Medic watch failed: %s", type(exc).__name__)
-        return
-    if not notice_ids:
-        return
-    # After the watch's commit. The lock is already gone.
+        notice_ids = []
+    if notice_ids:
+        # After the watch's commit. The lock is already gone.
+        try:
+            await asyncio.to_thread(notices.send_notices, notice_ids)
+        except Exception as exc:  # noqa: BLE001 - the rows are committed
+            logger.warning("Medic watch send failed: %s", type(exc).__name__)
+    from core.platform.medic_incidents import watch_incidents
+
     try:
-        await asyncio.to_thread(notices.send_notices, notice_ids)
+        incident_ids = await asyncio.to_thread(watch_incidents)
+    except Exception as exc:  # noqa: BLE001 - the next kick tries again
+        logger.warning("Medic incident watch failed: %s", type(exc).__name__)
+        return
+    if not incident_ids:
+        return
+    try:
+        await asyncio.to_thread(notices.send_notices, incident_ids)
     except Exception as exc:  # noqa: BLE001 - the rows are committed
-        logger.warning("Medic watch send failed: %s", type(exc).__name__)
+        logger.warning("Medic incident watch send failed: %s", type(exc).__name__)
 
 
 def _cancel_watch() -> None:

@@ -24,7 +24,7 @@ from services.medic.contracts.pack_check import _ts
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import StoreUsage
 
-API_VERSION = "2.0"
+API_VERSION = "2.1"
 
 # The writer's usage().states are StoreHealth.states (medic-api.openapi.yaml).
 _NOT_RECORDING = {"recording_stopped", "migration_blocked"}
@@ -114,6 +114,7 @@ def build_status(
     trace: dict[str, Any],
     dev_mode: bool,
     pack: dict[str, Any] | None,
+    upgrade_hold_until: float | None = None,
 ) -> dict[str, Any]:
     """`scheduler` is `Scheduler.status()`; `usage` is the writer's `usage()`;
     `trace` is `TraceCapture.status()`; `pack` is the active pack's PackFacts,
@@ -147,6 +148,9 @@ def build_status(
         "heartbeat_at": iso(heartbeat_at),
         "cycle": cycle,
         "started_at": iso(started_at),
+        "upgrade_hold_until": (
+            None if upgrade_hold_until is None else iso(upgrade_hold_until)
+        ),
         "uptime_s": uptime_s,
         "restarts_24h": history.restarts_since(now - DAY_S),
         "last_exit": history.last_exit,
