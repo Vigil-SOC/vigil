@@ -150,7 +150,7 @@ def get(k):
 status, body = get(key)
 assert status == 200, status
 doc = json.loads(body)
-assert doc["instance_id"].startswith("mi_") and doc["api_version"] == "2.0", doc
+assert doc["instance_id"].startswith("mi_") and doc["api_version"] == "2.1", doc
 assert get("W" * 43)[0] == 401
 print(doc["state"])
 PY
