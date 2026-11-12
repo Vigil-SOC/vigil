@@ -18,6 +18,12 @@ export function internalToken(): string {
   return process.env["AGENT_INTERNAL_TOKEN"] ?? "";
 }
 
+// Accepted while a restart moves one process at a time. Outbound calls keep
+// sending internalToken(); an empty value is unset.
+export function previousInternalToken(): string {
+  return process.env["AGENT_INTERNAL_TOKEN_PREVIOUS"] ?? "";
+}
+
 // One per process, not one per run. A client per run opens its own connection pool
 // and reuses no keep-alive; a limiter per run means N runs get N times the rate.
 // /v1 is Bifrost's OpenAI-format surface and BIFROST_URL names the gateway, not

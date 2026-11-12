@@ -31,7 +31,7 @@ that credential.
 | `VIGIL_CONTEXT_PATH` | Vigil's own; the gateway adds it to every upstream path |
 
 Each bind name is resolved at start-up and the listener binds to that address
-only. It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `VIGIL_TOOLS_TOKEN`,
+only. It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `AGENT_INTERNAL_TOKEN_PREVIOUS`, `VIGIL_TOOLS_TOKEN`,
 `DAEMON_WEBHOOK_TOKEN`, `VIGIL_MEDIC_API_KEY` or a Viewer password is in its
 environment.
 

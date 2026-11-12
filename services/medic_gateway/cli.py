@@ -16,10 +16,11 @@ from services.medic_gateway import logs, server
 from services.medic_gateway.session import ViewerSession
 
 P = "VIGIL_MEDIC_GATEWAY_"
-# K1 §6 C6: none of the three agent or daemon tokens, no Medic API key, and no
+# K1 §6 C6: none of the agent or daemon tokens, no Medic API key, and no
 # Viewer password in this environment (it comes from a file).
 FORBIDDEN_ENV = (
     "AGENT_INTERNAL_TOKEN",
+    "AGENT_INTERNAL_TOKEN_PREVIOUS",
     "VIGIL_TOOLS_TOKEN",
     "DAEMON_WEBHOOK_TOKEN",
     "VIGIL_MEDIC_API_KEY",

@@ -20,6 +20,7 @@ P = "VIGIL_MEDIC_DOCKERPROXY_"
 # tokens, the Medic API key or the database password belongs in its environment.
 FORBIDDEN_ENV = (
     "AGENT_INTERNAL_TOKEN",
+    "AGENT_INTERNAL_TOKEN_PREVIOUS",
     "VIGIL_TOOLS_TOKEN",
     "DAEMON_WEBHOOK_TOKEN",
     "VIGIL_MEDIC_API_KEY",

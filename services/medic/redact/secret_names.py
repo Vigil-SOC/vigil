@@ -6,6 +6,7 @@ excludes `*.txt`); keep it in step with the original.
 
 NAMES = (
     "AGENT_INTERNAL_TOKEN",
+    "AGENT_INTERNAL_TOKEN_PREVIOUS",
     "ALIENVAULT_OTX_API_KEY",
     "ANYRUN_API_KEY",
     "AWS_ACCESS_KEY_ID",
