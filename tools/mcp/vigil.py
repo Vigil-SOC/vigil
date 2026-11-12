@@ -1360,10 +1360,14 @@ def list_approval_actions(
     ``status`` is one of pending, approved, rejected, executed, failed.
     """
     try:
+        from core.response.approval_service import screen_actions
+
         svc = ApprovalService()
-        actions = svc.list_actions(
-            status=ActionStatus(status) if status else None,
-            action_type=ActionType(action_type) if action_type else None,
+        actions = screen_actions(
+            svc.list_actions(
+                status=ActionStatus(status) if status else None,
+                action_type=ActionType(action_type) if action_type else None,
+            )
         )
         return jdump(
             {
@@ -1613,11 +1617,19 @@ def list_runs(
     from core.workflows.workflow_run_service import WorkflowRunService
 
     def runs() -> dict:
+        hidden: list[int] = []
         rows = WorkflowRunService().list_runs(
-            case_id=case_id, status=status, limit=max(1, min(limit, 100))
+            case_id=case_id,
+            status=status,
+            limit=max(1, min(limit, 100)),
+            readable=True,
+            # not counted under a case filter, so it can't probe a hidden case
+            hidden=None if case_id else hidden,
         )
         return {
             "count": len(rows),
+            # runs on a restricted case the caller can't read, left out
+            "hidden": hidden[0] if hidden else 0,
             "runs": [
                 {
                     "run_id": r.get("run_id"),
@@ -1649,7 +1661,7 @@ async def get_run(run_id: str) -> str:
     )
 
     async def read() -> dict:
-        row = WorkflowRunService().get_run(run_id)
+        row = WorkflowRunService().get_run(run_id, readable=True)
         if row is None:
             return {"error": f"Run not found: {run_id}"}
         out = {

@@ -12834,6 +12834,12 @@ export interface components {
             /** Reason */
             reason: string;
             /**
+             * Restricted
+             * @description An item on a restricted case the caller can't read: no case, run or content.
+             * @default false
+             */
+            restricted: boolean;
+            /**
              * Reversibility
              * @enum {string}
              */
@@ -12844,6 +12850,11 @@ export interface components {
             source_id: string;
             /** Title */
             title: string;
+            /**
+             * Waiting
+             * @description Why it waits: no reader of its restricted case can approve it.
+             */
+            waiting?: string | null;
         };
         /** NeedsYouResponse */
         NeedsYouResponse: {
@@ -13131,6 +13142,12 @@ export interface components {
             rejection_reason?: string | null;
             /** Requires Approval */
             requires_approval?: boolean | null;
+            /**
+             * Restricted
+             * @description An action on a restricted case the caller can't read: only its id, state and times are shown.
+             * @default false
+             */
+            restricted: boolean;
             /** Reversibility */
             reversibility?: string | null;
             /** Status */
@@ -13139,6 +13156,11 @@ export interface components {
             target?: unknown | null;
             /** Title */
             title?: string | null;
+            /**
+             * Waiting
+             * @description Why a pending action waits: no reader of its restricted case can approve it.
+             */
+            waiting?: string | null;
             /** Workflow Phase Id */
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
@@ -13713,6 +13735,12 @@ export interface components {
              * @description Number of runs in this page.
              */
             count: number;
+            /**
+             * Hidden
+             * @description Runs that matched but are on a restricted case the caller can't read, left out.
+             * @default 0
+             */
+            hidden: number;
             /** Runs */
             runs: components["schemas"]["RunListItem"][];
         };

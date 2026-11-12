@@ -4041,6 +4041,12 @@
             "title": "Reason",
             "type": "string"
           },
+          "restricted": {
+            "default": false,
+            "description": "An item on a restricted case the caller can't read: no case, run or content.",
+            "title": "Restricted",
+            "type": "boolean"
+          },
           "reversibility": {
             "enum": [
               "reversible",
@@ -4067,6 +4073,18 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it waits: no reader of its restricted case can approve it.",
+            "title": "Waiting"
           }
         },
         "required": [
@@ -4273,6 +4291,12 @@
             ],
             "title": "Requires Approval"
           },
+          "restricted": {
+            "default": false,
+            "description": "An action on a restricted case the caller can't read: only its id, state and times are shown.",
+            "title": "Restricted",
+            "type": "boolean"
+          },
           "reversibility": {
             "anyOf": [
               {
@@ -4314,6 +4338,18 @@
               }
             ],
             "title": "Title"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a pending action waits: no reader of its restricted case can approve it.",
+            "title": "Waiting"
           },
           "workflow_phase_id": {
             "anyOf": [
@@ -4468,6 +4504,12 @@
           "count": {
             "description": "Number of runs in this page.",
             "title": "Count",
+            "type": "integer"
+          },
+          "hidden": {
+            "default": 0,
+            "description": "Runs that matched but are on a restricted case the caller can't read, left out.",
+            "title": "Hidden",
             "type": "integer"
           },
           "runs": {

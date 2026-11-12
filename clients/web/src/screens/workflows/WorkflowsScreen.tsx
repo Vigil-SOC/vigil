@@ -1110,8 +1110,14 @@ function fmtStarted(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
+function hiddenRunsNote(n: number): string {
+  return `${n.toLocaleString()} hidden: ${n === 1 ? 'a run' : 'runs'} on a restricted case you can't read`
+}
+
 export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [runs, setRuns] = useState<WfRun[]>([])
+  // runs on a restricted case you can't read: left out, and counted
+  const [hidden, setHidden] = useState(0)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
 
@@ -1124,6 +1130,7 @@ export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => voi
       .then((res) => {
         if (cancelled) return
         setRuns((res.data?.runs || []) as WfRun[])
+        setHidden(Number(res.data?.hidden) || 0)
         setPhase('ready')
       })
       .catch((e) => {
@@ -1140,7 +1147,10 @@ export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => voi
     <Popup open onClose={onClose} title={`History · ${wf.name}`} width="min(1400px, 94vw)">
       {phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading run history…" />}
       {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load history" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />}
-      {phase === 'ready' && runs.length === 0 && <EmptyState compact icon="clock" title="No runs yet" body="Run this workflow to capture execution history, duration, trigger, and cost." />}
+      {phase === 'ready' && runs.length === 0 && hidden === 0 && <EmptyState compact icon="clock" title="No runs yet" body="Run this workflow to capture execution history, duration, trigger, and cost." />}
+      {phase === 'ready' && hidden > 0 && (
+        <div className="muted text-[12.5px] mb-2">{hiddenRunsNote(hidden)}</div>
+      )}
       {phase === 'ready' && runs.length > 0 && (
         <div className="table-wrap">
           <table className="tbl">
@@ -3009,6 +3019,8 @@ interface GateApproval {
   title?: string
   description?: string
   reason?: string
+  restricted?: boolean
+  waiting?: string | null
 }
 
 /** Approve / Reject for a phase the playbook marked approval_required. Same calls
@@ -3068,14 +3080,15 @@ function PhaseGate({ runId, onAnswered }: { runId: string; onAnswered: () => voi
             <div className="muted text-[12px] mt-1">{action.description}</div>
           )}
           {action.reason && <div className="text-[12.5px] mt-1">{action.reason}</div>}
-          <div className="flex gap-2 items-center flex-wrap mt-2">
+          {action.waiting && <div className="muted text-[12px] mt-1">{action.waiting}</div>}
+          {!action.restricted && <div className="flex gap-2 items-center flex-wrap mt-2">
             <button className="btn primary" disabled={busy} onClick={() => settle(action.action_id, approvalsApi.approve(action.action_id))}>
               <Icon name="check2" /> Approve
             </button>
             <button className="btn danger" disabled={busy} onClick={() => setRejectFor(action)}>
               <Icon name="x2" /> Reject
             </button>
-          </div>
+          </div>}
         </div>
       ))}
       {failed && <div className="text-[11.5px] mt-2" style={{ color: 'var(--crit)' }}>{failed}</div>}

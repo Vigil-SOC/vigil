@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 
+from core.auth.permissions import may_read_case
 from core.detections.engineering import proposals, siem_replay, sigma_text
 from core.detections.overlay import Refused
 from core.llm import oneshot
@@ -69,7 +70,8 @@ def _case_facts(case_id: str) -> Dict[str, Any]:
     """The Case's words and technique, or its open model draft; refuses an unknown Case."""
     with unit_of_work() as session:
         case = session.get(Case, case_id)
-        if case is None:
+        # One the caller can't read answers as no case at all (#4359).
+        if case is None or not may_read_case(case):
             raise Refused(f"No case {case_id}.")
         open_ones = session.scalars(
             select(DetectionProposal)

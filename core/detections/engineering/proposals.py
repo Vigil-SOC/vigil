@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
+from core.auth.permissions import case_read_clause, may_read_case
 from core.detections.engineering import lint as lint_mod
 from core.detections.engineering import siem_replay, sigma_text
 from core.detections.overlay import Refused
@@ -63,16 +64,27 @@ def _normal_technique(technique: Optional[str]) -> Optional[str]:
     return value
 
 
-def _locked(session: Session, proposal_id: str) -> DetectionProposal:
-    # Two people can race the same move.
-    proposal = session.scalar(
-        select(DetectionProposal)
-        .where(DetectionProposal.proposal_id == proposal_id)
-        .with_for_update()
+def _hidden():
+    """A proposal drawn from a restricted case the caller can't read (#4359): not
+    found, by id or in the list, as its case is."""
+    return exists().where(
+        Case.case_id == DetectionProposal.case_id, ~case_read_clause()
     )
+
+
+def _readable(session: Session, proposal_id: str, *, lock: bool = False):
+    statement = select(DetectionProposal).where(
+        DetectionProposal.proposal_id == proposal_id, ~_hidden()
+    )
+    proposal = session.scalar(statement.with_for_update() if lock else statement)
     if proposal is None:
         raise NotFound(f"No proposal {proposal_id}.")
     return proposal
+
+
+def _locked(session: Session, proposal_id: str) -> DetectionProposal:
+    # Two people can race the same move.
+    return _readable(session, proposal_id, lock=True)
 
 
 def _note(
@@ -184,17 +196,16 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
 
 def get(proposal_id: str) -> Dict[str, Any]:
     with unit_of_work() as session:
-        proposal = session.get(DetectionProposal, proposal_id)
-        if proposal is None:
-            raise NotFound(f"No proposal {proposal_id}.")
-        return _view(session, proposal)
+        return _view(session, _readable(session, proposal_id))
 
 
 def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
     """Newest first, each with its latest replay's counts, oldest detail left to ``get``."""
     with unit_of_work() as session:
-        statement = select(DetectionProposal).order_by(
-            DetectionProposal.created_at.desc()
+        statement = (
+            select(DetectionProposal)
+            .where(~_hidden())
+            .order_by(DetectionProposal.created_at.desc())
         )
         if state:
             statement = statement.where(DetectionProposal.state == ProposalState(state))
@@ -267,10 +278,7 @@ def shown_to(
 
 def case_of(proposal_id: str) -> Optional[str]:
     with unit_of_work() as session:
-        proposal = session.get(DetectionProposal, proposal_id)
-        if proposal is None:
-            raise NotFound(f"No proposal {proposal_id}.")
-        return proposal.case_id
+        return _readable(session, proposal_id).case_id
 
 
 def _latest_replays(session: Session, ids: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -304,7 +312,8 @@ def _case_or_refuse(session: Session, case_id: Optional[str]) -> Optional[Case]:
     if not case_id:
         return None
     case = session.get(Case, case_id)
-    if case is None:
+    # One the caller can't read answers as no case at all (#4359).
+    if case is None or not may_read_case(case):
         raise Refused(f"No case {case_id}.")
     return case
 
@@ -414,9 +423,7 @@ def lint(proposal_id: str, actor: str, kind: str = PERSON) -> Dict[str, Any]:
 def _replay_target(proposal_id: str) -> Dict[str, Any]:
     """What a replay reads: the text, its Case, and the events named last time."""
     with unit_of_work() as session:
-        proposal = session.get(DetectionProposal, proposal_id)
-        if proposal is None:
-            raise NotFound(f"No proposal {proposal_id}.")
+        proposal = _readable(session, proposal_id)
         if proposal.state not in (ProposalState.LINTED, ProposalState.REPLAYED):
             raise InvalidProposalMove(proposal.state, ProposalState.REPLAYED)
         previous = _latest_step(_events(session, proposal), "replay")
