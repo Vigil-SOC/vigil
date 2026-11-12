@@ -32,6 +32,7 @@ import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
 import { MoveCaseDialog, type MoveTeam } from './MoveCaseDialog'
+import { ReaderPicker, RestrictCaseDialog, RestrictHelp, RestrictedMark, useReaderNames } from './RestrictCase'
 import { caseConflicts, errorDetail, OWNER_CANNOT_READ_NOTE, STALE_OWNER_NOTE } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
@@ -295,6 +296,7 @@ function CasesTable({
   const owners = useCaseOwners()
   const me = useAuth().user?.username ?? ''
   const { people, failed: peopleFailed, loaded: peopleLoaded } = usePeople()
+  const { names: readerNames } = useReaderNames()
   const myTeams = people.find((person) => person.username === me)?.teams ?? []
   const mineKey = myTeams.map((team) => team.id).join('\n')
   const [everyone, setEveryone] = useState(false)
@@ -609,7 +611,10 @@ function CasesTable({
                     <span role="cell" className="cg-id" title={c.id}>{c.id}</span>
                     <span role="cell" className="cg-what" title={c.desc || c.title}>
                       <span className="cg-title">{c.title}</span>
-                      <span className="cg-sub">{metaLine(c)}</span>
+                      <span className="cg-sub">
+                        {c.restricted && <><RestrictedMark names={readerNames(c.readers, c.readerTeams)} limit={2} />{' · '}</>}
+                        {metaLine(c)}
+                      </span>
                     </span>
                     <span role="cell" className="cg-kind col-low" title={kindName(c)}>{kindName(c)}</span>
                     <span role="cell"><SeverityMark level={c.prio} /></span>
@@ -890,8 +895,20 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
   const [priority, setPriority] = useState('medium')
   const [status, setStatus] = useState<CaseStatus>('open')
   const [description, setDescription] = useState('')
+  // Restricted from the first insert; you are pre-ticked.
+  const [restricted, setRestricted] = useState(false)
+  const [readers, setReaders] = useState<string[]>([])
+  const [readerTeams, setReaderTeams] = useState<string[]>([])
+  const { me } = useReaderNames()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // You are ticked once, when the directory has you; unticking yourself stays unticked.
+  const [seeded, setSeeded] = useState(false)
+  useEffect(() => {
+    if (!restricted || seeded || !me) return
+    setSeeded(true)
+    setReaders((held) => (held.includes(me.principal_id) ? held : [...held, me.principal_id]))
+  }, [restricted, seeded, me])
 
   const submit = async () => {
     if (!title.trim()) {
@@ -907,8 +924,10 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
         finding_ids: [],
         priority,
         status,
+        ...(restricted ? { restricted: true, readers, reader_teams: readerTeams } : {}),
       })
       setTitle(''); setDescription(''); setPriority('medium'); setStatus('open')
+      setRestricted(false); setReaders([]); setReaderTeams([]); setSeeded(false)
       onCreated()
       onClose()
     } catch (e) {
@@ -951,7 +970,19 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
           <span>Description</span>
           <textarea className={inputCls} rows={4} placeholder="Optional description" value={description} onChange={(e) => setDescription(e.target.value)} style={{ resize: 'vertical' }} />
         </label>
-        {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
+        <label className="restrict-toggle">
+          <input type="checkbox" checked={restricted} onChange={(e) => setRestricted(e.target.checked)} />
+          <span>Restricted</span>
+        </label>
+        {restricted ? (
+          <>
+            <RestrictHelp />
+            <ReaderPicker readers={readers} readerTeams={readerTeams} onReaders={setReaders} onTeams={setReaderTeams} />
+          </>
+        ) : (
+          <p className="reader-pick-note">New cases start open; restrict a case to limit who can see it.</p>
+        )}
+        {err && <div role="alert" className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
         <div className="flex justify-end gap-2.5">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Creating…' : 'Create case'}</button>
@@ -1293,7 +1324,7 @@ export function CasesDetail({
   const { user, hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
   const canWrite = hasPermission('cases.write')
-  const [action, setAction] = useState<'edit' | 'merge' | 'delete' | null>(null)
+  const [action, setAction] = useState<'edit' | 'merge' | 'delete' | 'restrict' | null>(null)
   const [move, setMove] = useState<{ owner: string; teams: MoveTeam[] } | null>(null)
   const { people } = usePeople()
   const { notify } = useToast()
@@ -1357,7 +1388,11 @@ export function CasesDetail({
         onRefresh={refresh}
         onClaim={canWrite && member ? claim : undefined}
         onMove={c?.teamId && c.status !== 'closed' ? () => openMove('', otherTeams()) : undefined}
+        onRestrict={() => setAction('restrict')}
       />
+      {action === 'restrict' && c && (
+        <RestrictCaseDialog key={c.id} c={c} onClose={() => setAction(null)} onChanged={onChanged} />
+      )}
 
       <EditCaseDialog
         open={action === 'edit'}

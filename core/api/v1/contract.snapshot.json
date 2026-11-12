@@ -187,6 +187,17 @@
           "payload": {
             "$ref": "#/components/schemas/AuditPayload"
           },
+          "restricted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restricted"
+          },
           "seq": {
             "title": "Seq",
             "type": "integer"
@@ -2153,6 +2164,14 @@
               }
             ],
             "title": "Priority"
+          },
+          "reader_teams": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader Teams",
+            "type": "array"
           },
           "readers": {
             "default": [],

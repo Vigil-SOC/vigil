@@ -108,6 +108,9 @@ interface QueueCase {
   owner_state?: 'current' | 'not_current' | null
   owner_on_team?: boolean | null
   owner_cannot_read?: boolean | null
+  readers?: string[] | null
+  reader_teams?: string[] | null
+  restricted?: boolean | null
   team?: { id?: string | null; name?: string | null } | null
   combined_state?: string | null
   finding_ids?: string[] | null
@@ -177,6 +180,9 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     ownerState: c.owner_state,
     ownerOnTeam: c.owner_on_team,
     ownerCannotRead: c.owner_cannot_read,
+    readers: c.readers ?? [],
+    readerTeams: c.reader_teams ?? [],
+    restricted: Boolean(c.restricted || c.readers?.length || c.reader_teams?.length),
     teamId: c.team?.id || undefined,
     teamName: c.team?.name || undefined,
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,

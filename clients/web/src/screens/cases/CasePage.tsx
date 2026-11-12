@@ -23,6 +23,7 @@ import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRecord } from '../../data/data'
+import { RestrictedMark, useReaderNames } from './RestrictCase'
 import { OwnerFix, PersonPicker, isOwnerNotCurrent, usePeople, onTeam } from '../../shared/people'
 import type { ChatSeed } from '../../shared/types'
 import Chat from '../../shell/Chat'
@@ -1029,6 +1030,7 @@ export function CasePage({
   onRefresh,
   onClaim,
   onMove,
+  onRestrict,
 }: {
   id: string
   /** The tab and run to land on; an unknown tab lands on Summary, a run not on the case on All runs. */
@@ -1068,6 +1070,8 @@ export function CasePage({
   onClaim?: () => void
   /** Open the move dialog. A closed case does not. */
   onMove?: () => void
+  /** Open the restrict dialog: restrict, change readers or lift. */
+  onRestrict?: () => void
 }) {
   const landingTab: Tab = TABS.find((name) => name === openTab) ?? 'Summary'
   const [tab, setTab] = useState<Tab>(landingTab)
@@ -1101,6 +1105,7 @@ export function CasePage({
   const canAssign = hasPermission('cases.assign')
   const me = user?.username ?? ''
   const { people } = usePeople()
+  const { names: readerNames } = useReaderNames()
   const member = !!(c?.teamId && people.some((person) => person.username === me && onTeam(person, c.teamId!)))
   // Reopen's owner: the stored one unless changed here; sent only when changed.
   const storedOwner = c?.stored.assignee ?? ''
@@ -1712,6 +1717,9 @@ export function CasePage({
                 {onMove && !closed && (member || hasPermission('cases.move')) && (
                   <button type="button" className="btn" onClick={onMove} disabled={busy}>Move</button>
                 )}
+                {onRestrict && canWrite && (
+                  <button type="button" className="btn" onClick={onRestrict} disabled={busy}>{c.restricted ? 'Readers' : 'Restrict'}</button>
+                )}
                 {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
               </div>
             </div>
@@ -1720,6 +1728,7 @@ export function CasePage({
               <StatePill state={pillState} needs={needsShown > 0} />
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
               {c.ownerCannotRead && <span className="owner-note">{OWNER_CANNOT_READ_NOTE}</span>}
+              {c.restricted && <RestrictedMark names={readerNames(c.readers, c.readerTeams)} />}
             </div>
             <div className="dh-meta">
               {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id}</span>}
