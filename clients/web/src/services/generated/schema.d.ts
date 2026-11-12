@@ -10471,6 +10471,11 @@ export interface components {
             /** Priority */
             priority?: string | null;
             /**
+             * Reader Teams
+             * @default []
+             */
+            reader_teams: string[];
+            /**
              * Readers
              * @default []
              */
@@ -13250,6 +13255,8 @@ export interface components {
         Person: {
             /** Display Name */
             display_name?: string | null;
+            /** Principal Id */
+            principal_id: string;
             /**
              * Teams
              * @default []

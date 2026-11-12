@@ -32,6 +32,8 @@
 
 .case-page .case-title-row { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
 .case-page .case-title-row h2 { min-width: 0; }
+/* The title keeps a readable width; the actions wrap under it before it narrows past that. */
+.case-page .detail-head .case-title-row h2 { flex: 1 1 240px; }
 .case-page .case-title-actions {
   margin-left: auto;
   display: flex;
@@ -2125,3 +2127,44 @@
 .case-page .case-reopen { align-items: center; }
 .case-page .case-reopen-owner { display: flex; width: 220px; max-width: 100%; }
 .case-page .case-assess .owner-fix { flex: 1 1 100%; margin-top: 0; }
+
+/* Restricted cases (#4361): the marker, the reader picker and the help text. */
+.restricted-mark { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; vertical-align: middle; }
+
+.restricted-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--ln1);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--tx0);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+}
+.restricted-readers { font-size: 12px; color: var(--tx2); min-width: 0; overflow-wrap: anywhere; }
+.cg-sub .restricted-readers { overflow-wrap: normal; }
+.restrict-help { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 1.45; color: var(--tx2); }
+.restrict-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--tx0); cursor: pointer; }
+.reader-pick { display: flex; flex-direction: column; gap: 12px; }
+.reader-pick-group { display: flex; flex-direction: column; gap: 6px; }
+.reader-pick-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tx3); }
+.reader-pick-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--ln0);
+  border-radius: var(--radius-card-inner);
+  background: var(--bg2);
+}
+.reader-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 13px; color: var(--tx0); cursor: pointer; min-width: 0; }
+.reader-pick-row + .reader-pick-row { border-top: 1px solid var(--ln0); }
+.reader-pick-row:hover { background: var(--bg3); }
+.reader-pick-name { min-width: 0; overflow-wrap: anywhere; }
+.reader-pick-sub { font-size: 12px; color: var(--tx2); white-space: nowrap; }
+.reader-pick-note { margin: 0; padding: 6px 10px; font-size: 12px; color: var(--tx2); }
+p.reader-pick-note { padding: 0; }

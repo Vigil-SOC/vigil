@@ -337,6 +337,15 @@ export const casesApi = {
   move: (id: string, data: Schema<'CaseMove'>) =>
     api.post<Schema<'CaseSchema'>>(`/cases/${id}/move`, data),
 
+  /** Restrict an open case: the whole reader list in one act. */
+  restrict: (id: string, data: Schema<'CaseRestrict'>) =>
+    api.post<Schema<'CaseSchema'>>(`/cases/${id}/restrict`, data),
+  /** Add or remove readers and teams on a restricted case. */
+  changeReaders: (id: string, data: Schema<'CaseReadersChange'>) =>
+    api.patch<Schema<'CaseSchema'>>(`/cases/${id}/readers`, data),
+  /** Lift the restriction: the case is open to everyone again. */
+  liftRestriction: (id: string) => api.delete<Schema<'CaseSchema'>>(`/cases/${id}/restrict`),
+
   delete: (id: string) =>
     api.delete<Schema<'CaseSuccessResponse'>>(`/cases/${id}`),
 

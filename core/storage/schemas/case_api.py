@@ -86,6 +86,7 @@ class CaseQueueItem(BaseModel):
     # Restricted cases (#4354): shown only to readers, with the reader list.
     restricted: bool = False
     readers: list[str] = []
+    reader_teams: list[str] = []
 
 
 class CaseQueueStrip(BaseModel):

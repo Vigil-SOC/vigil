@@ -617,6 +617,8 @@ class Person(BaseModel):
 
     username: str
     display_name: Optional[str] = None
+    # The id a case's reader list names this person by.
+    principal_id: str
     teams: list[PersonTeam] = []
 
 
@@ -650,24 +652,25 @@ def list_people(
     ) and missing_permission(current_user.user_id, "cases.write", session):
         where.append(User.user_id == current_user.user_id)
     rows = session.execute(
-        select(User.username, User.full_name)
+        select(User.username, User.full_name, User.principal_id)
         .join(Principal, Principal.principal_id == User.principal_id)
         .where(*where)
         .order_by(
             func.lower(func.coalesce(func.nullif(User.full_name, ""), User.username))
         )
     ).all()
-    held = teams.teams_for(session, {username for username, _name in rows})
+    held = teams.teams_for(session, {username for username, _name, _id in rows})
     return [
         Person(
             username=username,
             display_name=(name or "").strip() or None,
+            principal_id=principal_id,
             teams=[
                 PersonTeam(id=team.team_id, name=team.name, is_default=team.is_default)
                 for team in held.get(username, [])
             ],
         )
-        for username, name in rows
+        for username, name, principal_id in rows
     ]
 
 

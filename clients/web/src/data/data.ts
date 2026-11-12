@@ -97,6 +97,10 @@ export interface CaseRow {
   ownerOnTeam?: boolean | null
   /** True when the case is restricted and its owner isn't a reader. */
   ownerCannotRead?: boolean | null
+  /** Restricted: only ``readers`` (principal ids) and members of ``readerTeams`` (team ids) open it. */
+  restricted: boolean
+  readers: string[]
+  readerTeams: string[]
   teamId?: string
   teamName?: string
   findings: number
