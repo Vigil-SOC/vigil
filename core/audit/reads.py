@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from core.audit import feed, trail
+from core.audit import feed, narrow, trail
 from core.auth import principals
 
 KINDS = frozenset(
@@ -79,9 +79,12 @@ def feed_health(session) -> dict:
 
 
 def page(session, q: trail.TrailQuery, limit: int) -> dict:
-    """Entries oldest first under ``q``, the tip, and the feed's health."""
+    """Entries oldest first under ``q``, the tip, and the feed's health.
+
+    An entry about a case the caller may not read comes narrowed (#4362).
+    """
     return {
-        "entries": trail.read(session, q, limit),
+        "entries": narrow.entries(session, trail.read(session, q, limit)),
         "tip": trail.current_tip(session).public(),
         "feed": feed_health(session),
     }
