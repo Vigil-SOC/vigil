@@ -75,21 +75,20 @@ def _run_token(
     origin: str,
     sid: Optional[str] = None,
 ) -> str:
-    """The token the run carries. A token we signed is re-signed with this run.
+    """The token the run carries. Always re-signed for this run.
 
-    A value this process did not sign is kept as it arrived: the caller already
-    decided what the agent layer will carry.
+    A token this process signed lends its person and sign-in. One that does
+    not verify is not carried forward.
     """
     if principal:
         try:
             claims = tool_principal.read(principal)
         except tool_principal.InvalidPrincipal:
-            return principal
-        if claims.run_id and claims.agent_id:
-            return principal
-        username = username or claims.username
-        person_id = person_id or claims.person_id
-        sid = sid or claims.sid
+            claims = None
+        if claims is not None:
+            username = username or claims.username
+            person_id = person_id or claims.person_id
+            sid = sid or claims.sid
     return tool_principal.mint(
         username,
         person_id=person_id,

@@ -31219,6 +31219,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31254,6 +31255,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31289,6 +31291,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31322,6 +31325,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31357,6 +31361,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31392,6 +31397,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31427,6 +31433,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31462,6 +31469,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
@@ -31497,6 +31505,7 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "X-Vigil-Run-Principal"?: string | null;
             };
             path: {
                 run_id: string;
