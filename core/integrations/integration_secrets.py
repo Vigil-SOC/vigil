@@ -186,6 +186,7 @@ SETTINGS_SECRET_NAMES: frozenset[str] = frozenset({"BIFROST_ADMIN_PASSWORD"})
 ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
     {
         "AGENT_INTERNAL_TOKEN",
+        "AGENT_INTERNAL_TOKEN_PREVIOUS",
         "ALIENVAULT_OTX_API_KEY",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",

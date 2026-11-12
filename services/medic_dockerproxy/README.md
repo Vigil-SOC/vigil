@@ -37,7 +37,7 @@ Rules:
 | `VIGIL_MEDIC_DOCKERPROXY_BIND` | `medic-dockerproxy:8472` (an alias on `medic-private`; not a wildcard) |
 | `VIGIL_MEDIC_DOCKERPROXY_SOCKET` | default `/var/run/docker.sock` |
 
-It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `VIGIL_TOOLS_TOKEN`,
+It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `AGENT_INTERNAL_TOKEN_PREVIOUS`, `VIGIL_TOOLS_TOKEN`,
 `DAEMON_WEBHOOK_TOKEN`, `VIGIL_MEDIC_API_KEY` or `POSTGRES_PASSWORD` is in its
 environment: it needs no credential.
 

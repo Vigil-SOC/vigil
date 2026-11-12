@@ -16,7 +16,7 @@ import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
-import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { harnessFor, internalToken, previousInternalToken, type HarnessFactory } from "./harness.js";
 import { operatorPlugin } from "./plugins/registry.js";
 import type { ProjectionOptions } from "./plugins/hunt/projection.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
@@ -202,11 +202,63 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
 // Over a digest rather than ===, which returns on the first differing byte.
 // Hashed because timingSafeEqual throws on a length mismatch, and the throw would
 // leak the length.
+type RefusalKind = "unset" | "missing" | "wrong";
+
+// None until the first call. One warning when a refusal kind starts, debug while
+// it repeats, one info when a call succeeds and this process was not already
+// succeeding. Checked before routing, so the sentences name no route.
+let authKind: RefusalKind | "ok" | "none" = "none";
+
+function noteRefusal(kind: RefusalKind): void {
+  const repeat = authKind === kind;
+  authKind = kind;
+  const write = repeat ? log.debug.bind(log) : log.warn.bind(log);
+  switch (kind) {
+    case "unset":
+      write("AGENT_INTERNAL_TOKEN is not configured");
+      return;
+    case "missing":
+      write("no credential sent");
+      return;
+    case "wrong":
+      write("wrong credential");
+      return;
+    default: {
+      const unreachable: never = kind;
+      return unreachable;
+    }
+  }
+}
+
+function noteAccepted(): void {
+  if (authKind !== "ok") log.info("internal token accepted");
+  authKind = "ok";
+}
+
 function authorised(req: IncomingMessage): boolean {
   const expected = internalToken();
-  if (expected === "") return false;
+  // Previous is ignored until current is set: an empty current stays not configured.
+  if (expected === "") {
+    noteRefusal("unset");
+    return false;
+  }
+  let previous = previousInternalToken();
+  // Empty, or the same value current already has, is unset. No trimming.
+  if (previous === "" || previous === expected) previous = "";
+  const presented = req.headers.authorization ?? "";
   const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
-  return timingSafeEqual(digest(req.headers.authorization ?? ""), digest(`Bearer ${expected}`));
+  const presentedDigest = digest(presented);
+  // Both comparisons run when previous is set, including after the first matches,
+  // so the time taken does not say which value was presented.
+  const currentOk = timingSafeEqual(presentedDigest, digest(`Bearer ${expected}`));
+  const previousOk = previous === "" ? false : timingSafeEqual(presentedDigest, digest(`Bearer ${previous}`));
+  if (currentOk || previousOk) {
+    noteAccepted();
+    return true;
+  }
+  if (presented === "") noteRefusal("missing");
+  else noteRefusal("wrong");
+  return false;
 }
 
 async function body(req: IncomingMessage): Promise<string> {
@@ -410,7 +462,12 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       // Before the route, not per route: an unauthorised caller learns nothing
       // about which routes exist.
-      if (!authorised(req)) return refuse(res, 401, "a valid internal token");
+      // Not refuse(): that also logs a debug line, and these three already latched one.
+      if (!authorised(req)) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "a valid internal token" }));
+        return;
+      }
 
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);

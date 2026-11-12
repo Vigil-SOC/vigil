@@ -211,13 +211,16 @@ jobs:
         run: |
           set +e
           out=$(docker run --rm --read-only -e AGENT_INTERNAL_TOKEN=leak-me \
+            -e AGENT_INTERNAL_TOKEN_PREVIOUS=leak-prev \
             vigil-medic-gateway:ci 2>&1)
           code=$?
           set -e
           echo "$out"
           test "$code" -eq 2
-          grep -q AGENT_INTERNAL_TOKEN <<<"$out"
+          grep -q 'AGENT_INTERNAL_TOKEN,' <<<"$out"
+          grep -q AGENT_INTERNAL_TOKEN_PREVIOUS <<<"$out"
           if grep -q leak-me <<<"$out"; then exit 1; fi
+          if grep -q leak-prev <<<"$out"; then exit 1; fi
 
       # As it will run: read-only root, no capabilities, password as a file. No
       # backend: the image's own HEALTHCHECK command must still go green.
@@ -293,13 +296,16 @@ jobs:
         run: |
           set +e
           out=$(docker run --rm --read-only -e DAEMON_WEBHOOK_TOKEN=leak-me \
+            -e AGENT_INTERNAL_TOKEN_PREVIOUS=leak-prev \
             -e VIGIL_MEDIC_DOCKERPROXY_BIND=127.0.0.1:8472 vigil-medic-dockerproxy:ci 2>&1)
           code=$?
           set -e
           echo "$out"
           test "$code" -eq 2
           grep -q DAEMON_WEBHOOK_TOKEN <<<"$out"
+          grep -q AGENT_INTERNAL_TOKEN_PREVIOUS <<<"$out"
           if grep -q leak-me <<<"$out"; then exit 1; fi
+          if grep -q leak-prev <<<"$out"; then exit 1; fi
 
       # As it will run: read-only root, no capabilities, the socket read-only and
       # only its group added. The image's HEALTHCHECK command must go green
