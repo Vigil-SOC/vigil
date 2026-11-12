@@ -36,6 +36,8 @@ interface SlaUsage {
   total_cases: number
   breached_cases: number
   compliance_rate: number
+  /** Restricted cases the caller can't read, across all policies and time (#4377) */
+  restricted_not_counted?: number
 }
 
 /** Start of the current calendar month, UTC. */

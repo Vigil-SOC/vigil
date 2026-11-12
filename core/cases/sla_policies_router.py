@@ -386,23 +386,18 @@ def get_policy_usage(
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    # Every count shares one window: all-time, or from `since` on.
-    window = [CaseSLA.sla_policy_id == policy_id]
+    # Every count shares one window: all-time, or from `since` on, over only
+    # the cases the caller may read (#4377).
+    window = [CaseSLA.sla_policy_id == policy_id, case_read_clause()]
     if since is not None:
         if since.tzinfo is not None:  # created_at is naive UTC
             since = since.astimezone(timezone.utc).replace(tzinfo=None)
         window.append(CaseSLA.created_at >= since)
 
-    total_cases = session.query(CaseSLA).filter(*window).count()
-
-    active_cases = (
-        session.query(CaseSLA).join(Case).filter(*window, Case.status != CLOSED).count()
-    )
-
-    # Breached cases
-    breached_cases = (
-        session.query(CaseSLA).filter(*window, CaseSLA.breached.is_(True)).count()
-    )
+    readable = session.query(CaseSLA).join(Case).filter(*window)
+    total_cases = readable.count()
+    active_cases = readable.filter(Case.status != CLOSED).count()
+    breached_cases = readable.filter(CaseSLA.breached.is_(True)).count()
 
     # Compliance rate
     compliance_rate = 0.0
@@ -419,6 +414,9 @@ def get_policy_usage(
         "compliance_rate": round(compliance_rate, 2),
         "is_active": policy.is_active,
         "is_default": policy.is_default,
+        # Global like /cases below: never narrowed by policy or window, so it
+        # can't be used to probe one restricted case.
+        "restricted_not_counted": CaseRepository(session).hidden_count(),
     }
 
 

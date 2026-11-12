@@ -189,6 +189,8 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
   }
 
   const isNew = editing === 'new'
+  // the same global count on every policy's usage, so it is said once for the table
+  const hidden = Object.values(usage).find((u) => u?.restricted_not_counted !== undefined)?.restricted_not_counted ?? 0
 
   return (
     <>
@@ -260,6 +262,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
               })}
             </tbody>
           </table>
+          {hidden > 0 && <div className="sla-cases sla-hidden">{hidden.toLocaleString()} restricted not counted</div>}
         </div>
       </section>
 
