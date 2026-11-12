@@ -7,7 +7,7 @@ elapsed cuts as ``CaseSLAService.get_sla_status``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -132,6 +132,9 @@ class QueueItem:
     owner_state: Optional[str] = None
     # {id, name, is_default} of the owning team.
     team: Optional[dict] = None
+    # Restricted cases (#4354): the reader list, which only its readers see.
+    restricted: bool = False
+    readers: list = field(default_factory=list)
 
 
 def queue_item(
@@ -178,4 +181,6 @@ def queue_item(
             if row.team_id
             else None
         ),
+        restricted=row.restricted,
+        readers=list(row.readers),
     )

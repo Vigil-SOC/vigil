@@ -486,6 +486,8 @@ class SampleAlertsStatus(BaseModel):
 class SampleAlertsCleared(BaseModel):
     findings_deleted: int
     cases_deleted: int
+    # Restricted cases the caller may not read, kept whole with their alerts.
+    restricted_cases_kept: int = 0
 
 
 # Clearing deletes the cases that held only sample alerts.
@@ -573,5 +575,7 @@ async def clear_sample_alerts(
         change_reason="Sample alerts cleared via API",
     )
     return SampleAlertsCleared(
-        findings_deleted=result["findings"], cases_deleted=result["cases"]
+        findings_deleted=result["findings"],
+        cases_deleted=result["cases"],
+        restricted_cases_kept=result["kept"],
     )

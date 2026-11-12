@@ -26,8 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.auth.current_user import get_current_user
-from core.auth.permissions import deny_unless, permission_gate
-from core.cases import case_journal_service, case_records_service
+from core.auth.permissions import deny_unless, may_read_case, permission_gate
+from core.cases import case_journal_service, case_readers, case_records_service
 from core.cases.assignee import (
     owner_states,
     require_current_owner,
@@ -155,13 +155,39 @@ async def _sync_upstream_status(case_id: str, new_status: str) -> None:
 
 
 class CaseCreate(BaseModel):
-    """Case creation request."""
+    """Case creation request.
+
+    ``restricted`` (or a ``readers`` list) creates the case restricted in the same
+    insert, so its content is never open. ``readers`` are principal ids; left
+    out, the list is the defaults (you, when you are a person or service account).
+    """
 
     title: str
     description: str = ""
     finding_ids: List[str]
     priority: str = "medium"
     status: CaseStatus = "open"
+    restricted: Optional[bool] = None
+    readers: Optional[List[str]] = None
+
+
+class CaseRestrict(BaseModel):
+    """Restrict an open case. ``readers`` (principal ids) is the whole list in one
+    act; left out, it is the owner, the task assignees, and you."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    readers: Optional[List[str]] = None
+
+
+class CaseReadersChange(BaseModel):
+    """Change a restricted case's readers. Removing narrows; adding widens and
+    needs a person acting directly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    add: List[str] = []
+    remove: List[str] = []
 
 
 class CaseExpected(BaseModel):
@@ -345,6 +371,8 @@ def get_cases(
     limit: int = Query(default=PAGE_LIMIT, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     workflows: WorkflowsService = Depends(provide_workflows),
+    # The caller the restricted-case rule reads as (#4354).
+    current_user: User = Depends(get_current_user),
 ):
     """One page of the case queue, plus the strip.
 
@@ -362,6 +390,10 @@ def get_cases(
     the owning team's id, repeated for several; omitting it returns every
     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
     adds cases with no owner (NULL or "").
+
+    Restricted cases the caller may not read are left out of the page, the
+    total and the strip; ``restricted_not_counted`` says how many there are,
+    whatever the filters, so a filter can't probe what they hold.
     """
     team_ids = _team_ids(team)
     # Demo cases live in memory. The database being down is a different empty.
@@ -408,7 +440,7 @@ def get_cases(
     )
     with unit_of_work() as session:
         repo = CaseRepository(session)
-        rows, total = repo.queue(
+        rows, total, hidden = repo.queue(
             limit=limit,
             offset=offset,
             query_text=_blank(query),
@@ -455,6 +487,7 @@ def get_cases(
         "offset": offset,
         "has_more": offset + len(rows) < total,
         "strip": asdict(strip),
+        "restricted_not_counted": hidden,
     }
 
 
@@ -578,9 +611,12 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
 
 
 @router.post("", dependencies=_CASES_WRITE, response_model=CaseSchema)
-def create_case(case_data: CaseCreate):
+def create_case(
+    case_data: CaseCreate,
+    current_user: User = Depends(get_current_user),
+):
     """
-    Create a new case.
+    Create a new case, open or restricted.
 
     Args:
         case_data: Case creation data
@@ -588,6 +624,19 @@ def create_case(case_data: CaseCreate):
     Returns:
         Created case
     """
+    readers = None
+    # ``restricted`` decides when sent; a reader list alone also restricts.
+    restricted = case_data.restricted
+    if restricted is None:
+        restricted = case_data.readers is not None
+    if restricted:
+        _refuse_demo_restrict()
+        with unit_of_work() as session:
+            readers = case_readers.readers_for_new_case(
+                session,
+                case_data.readers,
+                case_readers.http_restricter(session, current_user),
+            )
     case = open_case(
         data_service,
         title=case_data.title,
@@ -595,6 +644,7 @@ def create_case(case_data: CaseCreate):
         priority=case_data.priority,
         description=case_data.description,
         status=case_data.status,
+        readers=readers,
     )
 
     if not case:
@@ -612,7 +662,95 @@ def _case_to_edit(session: Session, case_id: str) -> Optional[dict]:
     if data_service.is_demo_mode():
         return data_service.get_case(case_id)
     case = session.get(Case, case_id, with_for_update=True)
-    return CaseSchema.dump(case) if case else None
+    # A restricted case the caller may not read is not there (#4354).
+    return CaseSchema.dump(case) if case and may_read_case(case) else None
+
+
+def _refuse_demo_restrict() -> None:
+    """Demo mode holds no restricted cases."""
+    if data_service.is_demo_mode():
+        raise HTTPException(status_code=409, detail="Demo cases can't be restricted")
+
+
+def _case_for_readers(session: Session, case_id: str) -> Case:
+    """The case row, locked, if the caller may read it; else 404."""
+    _refuse_demo_restrict()
+    case = session.get(Case, case_id, with_for_update=True)
+    if case is None or not may_read_case(case):
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.post(
+    "/{case_id}/restrict",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+    openapi_extra=_BETA["openapi_extra"],
+)
+def restrict_case(
+    case_id: str,
+    body: CaseRestrict,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Restrict an open case to the named readers. Beta.
+
+    Any principal holding cases.write that can read the case may restrict it.
+    The list is taken whole; an empty one is refused. A service account is
+    named only by itself, when it is the one restricting.
+    """
+    case = _case_for_readers(session, case_id)
+    case_readers.restrict(
+        session, case, body.readers, case_readers.http_restricter(session, current_user)
+    )
+    return CaseSchema.dump(case)
+
+
+@router.patch(
+    "/{case_id}/readers",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+    openapi_extra=_BETA["openapi_extra"],
+)
+def change_case_readers(
+    case_id: str,
+    body: CaseReadersChange,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Add or remove readers on a restricted case. Beta.
+
+    Removing is open to any principal holding cases.write. Adding needs a person
+    acting directly (a person must do this). The list may not end empty.
+    """
+    case = _case_for_readers(session, case_id)
+    case_readers.change_readers(
+        session,
+        case,
+        case_readers.http_restricter(session, current_user),
+        add=body.add,
+        remove=body.remove,
+    )
+    return CaseSchema.dump(case)
+
+
+@router.delete(
+    "/{case_id}/restrict",
+    dependencies=_CASES_WRITE,
+    response_model=CaseSchema,
+    openapi_extra=_BETA["openapi_extra"],
+)
+def lift_case_restriction(
+    case_id: str,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Open a restricted case to everyone again: a person's own act. Beta."""
+    case = _case_for_readers(session, case_id)
+    case_readers.lift(
+        session, case, case_readers.http_restricter(session, current_user)
+    )
+    return CaseSchema.dump(case)
 
 
 def _stale_fields(case: dict, expected: CaseExpected) -> List[CaseFieldConflict]:
@@ -855,7 +993,8 @@ def get_cases_summary():
     Get summary statistics for cases.
 
     Counted and grouped in SQL over every case, so ``total`` is not capped by
-    a row limit (#1438).
+    a row limit (#1438). Restricted cases the caller may not read are not
+    counted; ``restricted_not_counted`` says how many.
 
     Returns:
         Summary statistics

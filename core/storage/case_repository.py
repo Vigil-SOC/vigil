@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, selectinload
 
+from core.storage.case_read_hook import read_clause as case_read_clause
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -394,6 +395,8 @@ class CaseQueueRow:
     team_id: Optional[str] = None
     team_name: Optional[str] = None
     team_is_default: bool = False
+    readers: Tuple[str, ...] = ()
+    restricted: bool = False
 
 
 @dataclass(frozen=True)
@@ -558,22 +561,40 @@ class CaseRepository:
         cases = self.find(limit=limit, offset=offset, order_by=order_by, **filters)
         return cases, int(total)
 
-    def summary_counts(self) -> Tuple[int, Dict[str, int], Dict[str, int]]:
-        """``(total, by_status, by_priority)`` over every case, in SQL.
+    def summary_counts(self) -> Tuple[int, Dict[str, int], Dict[str, int], int]:
+        """``(total, by_status, by_priority, hidden)`` over every case the
+        reader may read, in SQL; ``hidden`` is the restricted cases left out.
 
         Counts and groups in the database, so the numbers cover the whole
         table rather than a loaded page of rows (#1438).
         """
-        total = self.session.execute(select(func.count()).select_from(Case)).scalar()
+        readable = case_read_clause()
+        total = self.session.execute(
+            select(func.count()).select_from(Case).where(readable)
+        ).scalar()
         return (
             int(total or 0),
-            self._grouped_counts(Case.status),
-            self._grouped_counts(Case.priority),
+            self._grouped_counts(Case.status, readable),
+            self._grouped_counts(Case.priority, readable),
+            self.hidden_count(),
         )
 
-    def _grouped_counts(self, column) -> Dict[str, int]:
+    def hidden_count(self) -> int:
+        """Restricted cases the reader may not read: "N restricted not counted".
+
+        Never filtered: a count that followed a text or owner filter would let a
+        non-reader probe what a restricted case holds.
+        """
+        return int(
+            self.session.execute(
+                select(func.count()).select_from(Case).where(~case_read_clause())
+            ).scalar()
+            or 0
+        )
+
+    def _grouped_counts(self, column, readable) -> Dict[str, int]:
         counts: Dict[str, int] = {}
-        stmt = select(column, func.count()).group_by(column)
+        stmt = select(column, func.count()).where(readable).group_by(column)
         for value, count in self.session.execute(stmt).all():
             key = "unknown" if value is None else value
             counts[key] = counts.get(key, 0) + int(count)
@@ -632,10 +653,13 @@ class CaseRepository:
         workflow_ids: Optional[set[str]] = None,
         only_ids: Optional[set[str]] = None,
     ) -> Select:
-        """Queue filters. Joins are added only when the caller has not already.
+        """Queue filters, and the restricted-case read rule. Joins are added only
+        when the caller has not already.
 
         ``workflow_ids`` and ``only_ids`` restrict to those workflows / case ids.
         ``None`` leaves the filter off, and an empty set matches no rows.
+        Every case list reads through here, so the read rule is applied here,
+        always.
         """
         if (workflow or workflow_ids is not None) and latest is None:
             latest = _latest_investigations()
@@ -647,7 +671,7 @@ class CaseRepository:
             sla = _latest_slas()
             stmt = stmt.outerjoin(sla, sla.c.sla_case_id == Case.case_id)
 
-        clauses = []
+        clauses = [case_read_clause()]
         if workflow:
             clauses.append(latest.c.workflow_id == workflow)
         if workflow_ids is not None:
@@ -664,9 +688,7 @@ class CaseRepository:
             clauses.append(_combined_sql(live) == state)
         elif open_only:
             clauses.append(Case.status != "closed")
-        if clauses:
-            stmt = stmt.where(and_(*clauses))
-        return stmt
+        return stmt.where(and_(*clauses))
 
     def queue(
         self,
@@ -691,8 +713,9 @@ class CaseRepository:
         person_channels: Sequence[str] = (),
         alerts_span: Optional[AlertSpan] = None,
         team_ids: Optional[Sequence[str]] = None,
-    ) -> Tuple[List[CaseQueueRow], int]:
-        """One page of the queue.
+    ) -> Tuple[List[CaseQueueRow], int, int]:
+        """One page of the queue, its total, and how many restricted cases the
+        reader may not read were left out (``hidden_count``, never filtered).
 
         Ids in ``needs_you_ids`` sort first, then soonest resolution, no SLA
         last. The tie-break is last activity descending: the later of
@@ -760,6 +783,8 @@ class CaseRepository:
                 sla.c.is_paused,
                 sla.c.sla_created_at,
                 last_activity.label("last_activity"),
+                Case.reader_principal_ids,
+                Case.reader_team_ids,
             )
             .select_from(Case)
             .outerjoin(Team, Team.team_id == Case.team_id)
@@ -866,9 +891,13 @@ class CaseRepository:
                     team_id=record["team_id"],
                     team_name=record["team_name"],
                     team_is_default=bool(record["team_is_default"]),
+                    readers=tuple(record["reader_principal_ids"] or ()),
+                    restricted=bool(
+                        record["reader_principal_ids"] or record["reader_team_ids"]
+                    ),
                 )
             )
-        return rows, int(total)
+        return rows, int(total), self.hidden_count()
 
     def strip(
         self,
@@ -894,7 +923,10 @@ class CaseRepository:
         now = now or utcnow()
         live = _live_investigations()
         combined = _combined_sql(live)
-        narrowed = [] if alerts_span is None else [_alerts_in_span_exists(alerts_span)]
+        # Restricted cases the reader may not read are not counted here either.
+        narrowed = [case_read_clause()]
+        if alerts_span is not None:
+            narrowed.append(_alerts_in_span_exists(alerts_span))
         if team_ids:
             narrowed.append(Case.team_id.in_(list(team_ids)))
         grouped = self.session.execute(

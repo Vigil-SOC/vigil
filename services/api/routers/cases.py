@@ -122,7 +122,10 @@ async def clear_all_cases(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
-    """Delete all cases and case-derived generated data (requires cases.delete)."""
+    """Delete all cases and case-derived generated data (requires cases.delete).
+
+    Restricted cases the caller may not read are kept and counted (#4354).
+    """
     deny_unless(current_user.user_id, "cases.delete", session)
 
     # The purge's one trail entry commits with it (case_trail.PURGE).
@@ -134,13 +137,19 @@ async def clear_all_cases(
         case_records_service.RESET_KILL_REASON,
     )
 
+    kept = (
+        f"; {result.kept} restricted case{'' if result.kept == 1 else 's'} kept"
+        if result.kept
+        else ""
+    )
     return {
         "success": True,
         "deleted": result.cases,
         "killed_investigations": killed,
+        "restricted_kept": result.kept,
         "message": (
             f"Deleted {result.cases} cases and case-derived records; "
-            f"killed {killed} live investigations"
+            f"killed {killed} live investigations{kept}"
         ),
     }
 

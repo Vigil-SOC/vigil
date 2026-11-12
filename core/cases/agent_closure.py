@@ -60,6 +60,11 @@ def clear_http_actor() -> None:
     _http.set(None)
 
 
+def current_http_actor() -> Optional[HttpActor]:
+    """Who ``get_current_user`` accepted for this request, if anyone."""
+    return _http.get()
+
+
 @contextmanager
 def bound_credential(credential_id: Optional[str]) -> Iterator[None]:
     """The MCP credential this call authenticated with, beside the username."""
