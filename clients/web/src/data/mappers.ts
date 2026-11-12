@@ -105,6 +105,7 @@ interface QueueCase {
   assignee?: string | null
   owner_state?: 'current' | 'not_current' | null
   owner_on_team?: boolean | null
+  owner_cannot_read?: boolean | null
   team?: { id?: string | null; name?: string | null } | null
   combined_state?: string | null
   finding_ids?: string[] | null
@@ -173,6 +174,7 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     ownerStale: c.owner_state === 'not_current',
     ownerState: c.owner_state,
     ownerOnTeam: c.owner_on_team,
+    ownerCannotRead: c.owner_cannot_read,
     teamId: c.team?.id || undefined,
     teamName: c.team?.name || undefined,
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,

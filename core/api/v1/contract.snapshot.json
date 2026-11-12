@@ -955,6 +955,17 @@
             "title": "Notes",
             "type": "array"
           },
+          "owner_cannot_read": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Cannot Read"
+          },
           "owner_on_team": {
             "anyOf": [
               {
@@ -2060,6 +2071,17 @@
             "default": false,
             "title": "Needs You",
             "type": "boolean"
+          },
+          "owner_cannot_read": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Cannot Read"
           },
           "owner_on_team": {
             "anyOf": [

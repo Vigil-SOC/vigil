@@ -40,3 +40,6 @@ export function caseConflicts(error: unknown): Schema<'CaseFieldConflict'>[] | n
 
 /** The one label for a stored owner that is not a current account (#4266). */
 export const STALE_OWNER_NOTE = NOT_CURRENT
+
+/** A restricted case whose owner isn't a reader: worked out at read (#4357). */
+export const OWNER_CANNOT_READ_NOTE = "owner can't see this case"

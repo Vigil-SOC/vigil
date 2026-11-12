@@ -15,7 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.auth.deactivation import when_committed
-from core.auth.permissions import deny_unless, missing_permission, permission_refusal
+from core.auth.permissions import (
+    case_restricted,
+    deny_unless,
+    may_read_case,
+    missing_permission,
+    permission_refusal,
+)
 from core.cases import case_trail
 from core.cases.agent_closure import (
     actor_identity,
@@ -23,13 +29,19 @@ from core.cases.agent_closure import (
     current_credential_id,
     run_agent,
 )
-from core.cases.assignee import CURRENT, owner_states, resolve_assignee
+from core.cases.assignee import (
+    CURRENT,
+    owner_states,
+    principal_reads_case,
+    require_owner_reads,
+    resolve_assignee,
+)
 from core.cases.case_status import CLOSED
 from core.cases.closure import CHANNEL_COOKIE
 from core.exceptions import NotFoundError, SOCError, TeamRefused
 from core.integrations.mcp.surface import current_caller
 from core.platform.notices import notify
-from core.storage.models import Case, Team, TeamMembership, User
+from core.storage.models import Case, Principal, Team, TeamMembership, User
 from core.teams import clean_name, default_team
 from core.time import utcnow
 
@@ -165,6 +177,24 @@ def _current_member(session: Session, username: Optional[str], team_id: str) -> 
     return _member(session, name, team_id)
 
 
+def _team_has_reader(session: Session, case: Case, team_id: str) -> bool:
+    """A restricted case may go only to a team with an active member who reads it.
+    Until team readers land (#4360), a reader is a named principal."""
+    if not case_restricted(case):
+        return True
+    members = session.scalars(
+        select(TeamMembership.principal_id)
+        .join(Principal, Principal.principal_id == TeamMembership.principal_id)
+        .join(User, User.principal_id == TeamMembership.principal_id)
+        .where(
+            TeamMembership.team_id == team_id,
+            Principal.deleted_at.is_(None),
+            User.is_active.is_(True),
+        )
+    )
+    return any(principal_reads_case(case, member) for member in members)
+
+
 def _may(
     session: Session, permission: str, *, user_id: Optional[str], http: bool
 ) -> None:
@@ -273,7 +303,14 @@ def note_owner(
     link = f"/cases?case={quote(case_id, safe='')}"
 
     def send() -> None:
-        notify(principal_id, "case_handoff", title, message, link=link)
+        notify(
+            principal_id,
+            "case_handoff",
+            title,
+            message,
+            link=link,
+            about_case=case_id,
+        )
 
     when_committed(session, send)
 
@@ -298,7 +335,8 @@ def move_case(
     destination and holds ``cases.write``. A closed case is refused.
     """
     case = session.get(Case, case_id, with_for_update=True)
-    if case is None:
+    # A restricted case the caller can't read is not there (#4354).
+    if case is None or not may_read_case(case):
         raise NotFoundError(f"Case {case_id} not found")
     if case.team_id != source_team_id:
         current = case.team.name if case.team is not None else case.team_id
@@ -315,6 +353,13 @@ def move_case(
     else:
         raise TeamRefused("Team not found.", 404)
     _refuse_archived(destination)
+    if not _team_has_reader(session, case, destination.team_id):
+        raise MoveRefused(
+            f"No one on {destination.name} can read this restricted case: add a "
+            "member of that team as a reader first.",
+            409,
+            "TEAM_NOT_READER",
+        )
 
     stated = _reason(reason)
     stored = _blank(case.assignee)
@@ -325,6 +370,7 @@ def move_case(
         if newly_set_owner(stored, named):
             _may(session, "cases.assign", user_id=user_id, http=http)
             require_owner_can_write(session, named or "")
+            require_owner_reads(session, case, named)
         new_owner = named
     elif _current_member(session, stored, destination.team_id):
         new_owner = stored
@@ -371,7 +417,8 @@ def claim_case(session: Session, case_id: str, user: User):
     ):
         raise MoveRefused("Assign to me is for a current person.", 400, "NOT_A_PERSON")
     case = session.get(Case, case_id, with_for_update=True)
-    if case is None:
+    # A restricted case the caller can't read is not there (#4354).
+    if case is None or not may_read_case(case):
         raise NotFoundError(f"Case {case_id} not found")
     team_name = case.team.name if case.team is not None else case.team_id
     if not _member(session, user.username, case.team_id):
@@ -380,6 +427,7 @@ def claim_case(session: Session, case_id: str, user: User):
     if stored and owner_states(session, [stored]).get(stored) == CURRENT:
         raise MoveRefused(f"Already claimed by {stored}.", 409, "ALREADY_CLAIMED")
     require_owner_can_write(session, user.username)
+    require_owner_reads(session, case, user.username)
     case.assignee = user.username
     case.updated_at = utcnow()
     session.flush()
