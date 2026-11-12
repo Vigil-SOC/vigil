@@ -111,12 +111,15 @@ def get_email_backend() -> EmailBackend:
     return _backend
 
 
-def send_email(*, to: str, subject: str, body: str) -> None:
+def send_email(*, to: str, subject: str, body: str) -> Optional[str]:
     """Logs and swallows exceptions so an email outage does not turn into a
-    user-facing 500."""
+    user-facing 500. Returns None when the message was accepted, otherwise
+    the exception's class name. Callers that only needed the swallow ignore it."""
     try:
         get_email_backend().send(to=to, subject=subject, body=body)
     except Exception as exc:
         logger.error(
             "Email send failed: to=%s subject=%r error=%s", mask_email(to), subject, exc
         )
+        return type(exc).__name__
+    return None

@@ -2938,6 +2938,8 @@ select.vg-side-input {
   font-size: 12px;
   line-height: 1.4;
   color: var(--tx1);
+  /* Notices append a mail outcome on its own line. */
+  white-space: pre-line;
 }
 
 .rh-count {
