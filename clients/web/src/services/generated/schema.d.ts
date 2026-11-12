@@ -5370,7 +5370,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Incident */
+        /**
+         * Get Incident
+         * @description Medic's incident, plus ``told`` for its current reopen (``none``, ``opened`` or ``summary``).
+         */
         get: operations["get_api_medic_incidents_incident_id"];
         put?: never;
         post?: never;

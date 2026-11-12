@@ -65,6 +65,8 @@ export interface IncidentOpened {
 export interface IncidentDetail {
   summary: Incident
   opened: DecisionRecord
+  /** Vigil's record of the notice for this reopen. Medic does not send it. */
+  told?: 'none' | 'opened' | 'summary'
 }
 
 export interface StatusRead {
