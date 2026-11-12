@@ -61,7 +61,7 @@ class MedicWatchState(Base):
     """The status word told to medic.admin, and the polls confirming the next one.
 
     One row, written only by the watch. ``0065_medic_watch.sql`` builds it;
-    ``0066_medic_incidents.sql`` adds the open count and the summary marker.
+    ``0068_medic_incidents.sql`` adds the open count and the summary marker.
     """
 
     __tablename__ = "medic_watch_state"
