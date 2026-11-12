@@ -6,8 +6,8 @@ case stays open and nothing is backfilled.
 
 from core.upgrade.revision import run_sql
 
-revision = "0066_case_readers"
-down_revision = "0065_end_unscoped_runs"
+revision = "0067_case_readers"
+down_revision = "0066_merge_0065_heads"
 
 
 def upgrade() -> None:
