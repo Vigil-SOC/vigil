@@ -1047,7 +1047,8 @@ def get_case_rules(case_id: str, session: UnitOfWorkSession):
     worst problem and (overlay) stage, worst first. Alerts traced to no rule are
     counted in ``unresolved``, each with why.
     """
-    if session.get(Case, case_id) is None:
+    case = session.get(Case, case_id)
+    if case is None or not may_read_case(case):
         raise HTTPException(status_code=404, detail="Case not found")
     rows = session.execute(
         select(

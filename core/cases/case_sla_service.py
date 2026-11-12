@@ -14,7 +14,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from core.auth.permissions import may_read_case
 from core.cases import case_trail
+from core.cases.case_records_service import readable_case
 from core.storage.connection import get_db_manager
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, CaseSLA, SLAPolicy, case_findings
@@ -199,7 +201,8 @@ class CaseSLAService:
         with unit_of_work(session) as session:
             # Get case
             case = session.query(Case).filter(Case.case_id == case_id).first()
-            if not case:
+            # A restricted case the caller may not read is not there.
+            if not case or not may_read_case(case):
                 logger.info(f"Case {case_id} not found")
                 return SlaAssignment(SlaOutcome.NO_SUCH_CASE)
 
@@ -382,8 +385,11 @@ class CaseSLAService:
 
         Returns:
             Dictionary with SLA status details
+
+        Raises ``NotFoundError`` for a case the caller may not read.
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             case_sla = session.query(CaseSLA).filter(CaseSLA.case_id == case_id).first()
 
             if not case_sla:
@@ -481,6 +487,7 @@ class CaseSLAService:
             True if successful
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             case_sla = session.query(CaseSLA).filter(CaseSLA.case_id == case_id).first()
 
             if not case_sla:
@@ -524,6 +531,7 @@ class CaseSLAService:
             True if successful
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             case_sla = session.query(CaseSLA).filter(CaseSLA.case_id == case_id).first()
 
             if not case_sla:

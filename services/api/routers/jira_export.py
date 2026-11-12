@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from core.auth.permissions import deny_unless
+from core.auth.permissions import deny_unless, may_read_case
 from core.integrations._base.config import resolve
 from core.integrations.jira.descriptor import JIRA
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -88,6 +88,15 @@ def export_case_to_jira(
     # Check permission
     deny_unless(current_user.user_id, "cases.read")
 
+    # Before the Jira config, so a case the caller may not read answers 404
+    # whatever is configured, as one that isn't there.
+    case = session.get(Case, case_id)
+    if case is None or not may_read_case(case):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Case {case_id} not found",
+        )
+
     # get_integration_config strips secrets, so the token is never in that dict.
     jira = resolve(JIRA)
     url = jira.get("url")
@@ -101,14 +110,6 @@ def export_case_to_jira(
         )
 
     try:
-        # Get case
-        case = session.query(Case).filter(Case.case_id == case_id).first()
-        if not case:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Case {case_id} not found",
-            )
-
         # Build description
         description = f"*Case Report: {case.title}*\n\n"
         description += f"*Priority:* {case.priority}\n"

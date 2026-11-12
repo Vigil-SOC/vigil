@@ -13,6 +13,8 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from core.cases import case_trail
+from core.cases.case_records_service import readable_case
+from core.exceptions import NotFoundError
 from core.storage.models import CaseIOC
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -69,6 +71,7 @@ class CaseIOCService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                readable_case(session, case_id)
                 ioc, created = self._add(
                     session,
                     case_id,
@@ -94,7 +97,7 @@ class CaseIOCService:
                     )
                 return ioc
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, NotFoundError) or case_trail.propagates(exc, joined):
                 raise
             logger.error("Error adding IOC: %s", exc)
             return None
@@ -108,6 +111,7 @@ class CaseIOCService:
     ) -> List[CaseIOC]:
         """Add a batch in the caller's transaction: one ``case.ioc.bulk``
         entry with the count of new IOCs, not one per IOC. Raises on failure."""
+        readable_case(session, case_id)
         added: List[CaseIOC] = []
         created: List[CaseIOC] = []
         for ioc_data in iocs:
@@ -166,7 +170,7 @@ class CaseIOCService:
             with unit_of_work(session) as session:
                 return len(self.add_iocs(case_id, iocs, session, added_by))
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, NotFoundError) or case_trail.propagates(exc, joined):
                 raise
             logger.error("Error adding IOCs: %s", exc)
             return None
@@ -246,6 +250,7 @@ class CaseIOCService:
             List of CaseIOC objects
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             query = session.query(CaseIOC).filter(CaseIOC.case_id == case_id)
 
             if ioc_type:

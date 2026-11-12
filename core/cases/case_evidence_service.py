@@ -13,7 +13,9 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from core.cases import case_trail
+from core.cases.case_records_service import readable_case
 from core.config import vigil_path
+from core.exceptions import NotFoundError
 from core.storage.models import CaseAuditLog, CaseEvidence
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -121,6 +123,7 @@ class CaseEvidenceService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                readable_case(session, case_id)
                 # Calculate file hashes if file exists
                 file_hash_md5 = None
                 file_hash_sha256 = None
@@ -179,13 +182,14 @@ class CaseEvidenceService:
                 return evidence
 
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, NotFoundError) or case_trail.propagates(exc, joined):
                 raise
             logger.error("Error adding evidence: %s", exc)
             return None
 
     def add_chain_of_custody_entry(
         self,
+        case_id: str,
         evidence_id: int,
         action: str,
         user: str,
@@ -196,6 +200,7 @@ class CaseEvidenceService:
         Add an entry to evidence chain of custody.
 
         Args:
+            case_id: Case the evidence must belong to
             evidence_id: Evidence ID
             action: Action taken (accessed, transferred, analyzed, etc.)
             user: User who performed the action
@@ -211,9 +216,13 @@ class CaseEvidenceService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                readable_case(session, case_id)
                 evidence = (
                     session.query(CaseEvidence)
-                    .filter(CaseEvidence.evidence_id == evidence_id)
+                    .filter(
+                        CaseEvidence.evidence_id == evidence_id,
+                        CaseEvidence.case_id == case_id,
+                    )
                     .first()
                 )
 
@@ -246,7 +255,7 @@ class CaseEvidenceService:
                 return True
 
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, NotFoundError) or case_trail.propagates(exc, joined):
                 raise
             logger.error("Error adding chain of custody entry: %s", exc)
             return False
@@ -269,6 +278,7 @@ class CaseEvidenceService:
             List of CaseEvidence objects
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             query = session.query(CaseEvidence).filter(CaseEvidence.case_id == case_id)
 
             if evidence_type:

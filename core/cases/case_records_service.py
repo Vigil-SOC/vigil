@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
 from core.cases import case_trail
+from core.exceptions import NotFoundError
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
     RUN_LIVE_STATE,
@@ -69,6 +70,15 @@ _CASE_OWNED_MODELS = (
     CaseWatcher,
     CaseComment,
 )
+
+
+def readable_case(session: Session, case_id: str, what: str = "Case") -> Case:
+    """The case row if the caller may read it. A restricted case they may not
+    read answers as one that isn't there: the same 404, on reads and writes."""
+    case = session.get(Case, case_id)
+    if case is None or not may_read_case(case):
+        raise NotFoundError(f"{what} not found")
+    return case
 
 
 def list_case_investigations(session: Session, case_id: str) -> List[Investigation]:
@@ -191,12 +201,39 @@ def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:
 
 
 def list_case_trail(session: Optional[Session], case_id: str) -> List[dict]:
-    """This case's audit trail entries, oldest first; none when it is not in use."""
+    """This case's audit trail entries, oldest first; none when it is not in use.
+
+    A link to a case the caller may not read keeps its entry but not the other
+    case's id, so it reads "Linked the case to another".
+    """
     from core.audit import trail
 
     if session is None or not trail.in_use(session):
         return []
-    return trail.read_all(session, trail.make_query(object_ref=case_id))
+    entries = trail.read_all(session, trail.make_query(object_ref=case_id))
+    linked = {
+        (e.get("payload") or {}).get("related_case_id")
+        for e in entries
+        if (e.get("payload") or {}).get("action") == case_trail.LINK
+    } - {None}
+    if not linked:
+        return entries
+    hidden = set(
+        session.scalars(
+            select(Case.case_id).where(Case.case_id.in_(linked), ~case_read_clause())
+        )
+    )
+    from core.audit.words import sentence
+
+    # Only the sentence: the payload keeps the id, so the record still pairs
+    # the entry with the activity noting the same link and shows neither.
+    def unnamed(e: dict) -> dict:
+        return {**e, "sentence": sentence({**e["payload"], "related_case_id": None})}
+
+    return [
+        unnamed(e) if (e.get("payload") or {}).get("related_case_id") in hidden else e
+        for e in entries
+    ]
 
 
 def add_task(
@@ -212,6 +249,7 @@ def add_task(
     signed_in: Optional[str],
 ) -> CaseTask:
     """Add a task and its trail entry. ``signed_in`` is who added it."""
+    readable_case(session, case_id)
     task = CaseTask(
         case_id=case_id,
         title=title,
@@ -271,7 +309,10 @@ def list_tasks(case_id: str) -> List[CaseTask]:
 
     try:
         with unit_of_work() as session:
+            readable_case(session, case_id)
             return tasks_on_case(session, case_id)
+    except NotFoundError:
+        raise
     except Exception:
         logger.exception("Listing tasks for case %s failed; reporting none", case_id)
         return []
@@ -283,8 +324,11 @@ def update_task(
     updates: Dict[str, Any],
     *,
     signed_in: Optional[str],
+    case_id: Optional[str] = None,
 ) -> Optional[CaseTask]:
-    """Apply non-None ``updates`` to a task. Returns None if it doesn't exist.
+    """Apply non-None ``updates`` to a task, on ``case_id`` when given. Returns
+    None if it isn't there; a case the caller may not read raises
+    ``NotFoundError``, checked before the task so a task id probes nothing.
 
     Driven off the payload rather than a field list held here: TaskUpdate is
     already the definition of what a caller may change, and a second copy of
@@ -294,9 +338,15 @@ def update_task(
     """
     from core.cases.assignee import resolve_assignee
 
-    task = session.query(CaseTask).filter(CaseTask.task_id == task_id).first()
+    query = session.query(CaseTask).filter(CaseTask.task_id == task_id)
+    if case_id is not None:
+        readable_case(session, case_id)
+        query = query.filter(CaseTask.case_id == case_id)
+    task = query.first()
     if task is None:
         return None
+    if case_id is None:
+        readable_case(session, task.case_id)
     updates = dict(updates)
     owner = None
     raw = updates.pop("assignee", None)
@@ -329,7 +379,13 @@ def add_relationship(
     created_by: str,
     notes: Optional[str] = None,
 ) -> CaseRelationship:
-    """One link and its entry on this case's trail; ``created_by`` is the actor."""
+    """One link and its entry on this case's trail; ``created_by`` is the actor.
+
+    Both cases must be ones the caller may read: a target they may not read is
+    not there, as one that doesn't exist.
+    """
+    readable_case(session, case_id)
+    readable_case(session, related_case_id, "Related case")
     rel = CaseRelationship(
         case_id=case_id,
         related_case_id=related_case_id,
@@ -391,22 +447,29 @@ def link_cases(
 
 def list_relationships(
     session: Session, case_id: str
-) -> List[Tuple[CaseRelationship, Optional[str], Optional[str]]]:
-    """Each link with its related Case's title and status, in one query.
+) -> Tuple[List[Tuple[CaseRelationship, Optional[str], Optional[str]]], int]:
+    """Each link the caller may read, with its related Case's title and status,
+    and how many links to cases they may not read were left out.
 
     The inner join drops a row whose related Case is gone; both FKs cascade,
-    so in Postgres there is none to drop.
+    so in Postgres there is none to drop. A hidden link gives only the count:
+    never its id, title or status.
     """
-    return (
-        session.query(CaseRelationship, Case.title, Case.status)
+    readable_case(session, case_id)
+    readable = case_read_clause()
+    rows = (
+        session.query(CaseRelationship, Case.title, Case.status, readable)
         .join(Case, Case.case_id == CaseRelationship.related_case_id)
         .filter(CaseRelationship.case_id == case_id)
         .order_by(CaseRelationship.relationship_id)
         .all()
     )
+    shown = [(rel, title, status) for rel, title, status, ok in rows if ok]
+    return shown, len(rows) - len(shown)
 
 
 def list_escalations(session: Session, case_id: str) -> List[CaseEscalation]:
+    readable_case(session, case_id)
     return session.query(CaseEscalation).filter(CaseEscalation.case_id == case_id).all()
 
 

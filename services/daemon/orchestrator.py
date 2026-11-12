@@ -185,10 +185,12 @@ MAX_CLOSED_LINKS = 5
 
 # related_to: the type the case screen labels and an analyst's link defaults to.
 def _link_cases(case_a: str, case_b: str, notes: str) -> None:
+    from core.auth.permissions import builtin_reader
     from core.cases.case_records_service import link_cases
     from core.storage.connection import get_db_manager
 
-    with get_db_manager().session_scope() as session:
+    # Intake's own work: the built-in reader, which links restricted cases too.
+    with builtin_reader(), get_db_manager().session_scope() as session:
         link_cases(
             session,
             case_a,

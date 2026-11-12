@@ -11,9 +11,12 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from core.audit import trail
+from core.auth.permissions import CaseReader, may_read_case
 from core.cases import case_trail
 from core.cases.agent_closure import principal_for_username
 from core.cases.case_notification_service import CaseNotificationService
+from core.cases.case_records_service import readable_case
+from core.exceptions import NotFoundError, SOCError
 from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher, User
 from core.storage.unit_of_work import unit_of_work
 
@@ -91,6 +94,15 @@ def _principal_of(session: Session, user_id: str) -> Optional[str]:
     return principal
 
 
+class WatcherRefused(SOCError):
+    """The named watcher may not read the case."""
+
+    status_code = 409
+
+    def __init__(self, message: str):
+        super().__init__(message, "WATCHER_REFUSED")
+
+
 class CaseCollaborationService:
     """Service for managing case collaboration."""
 
@@ -127,6 +139,7 @@ class CaseCollaborationService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                readable_case(session, case_id)
                 # Extract mentions from content
                 mentions = self.notification_service.extract_mentions(content)
 
@@ -175,7 +188,7 @@ class CaseCollaborationService:
                 logger.info(f"Added comment to case {case_id} by {author}")
                 return comment
         except Exception as exc:
-            if isinstance(exc, trail.Paused) or (
+            if isinstance(exc, (trail.Paused, NotFoundError)) or (
                 joined and isinstance(exc, case_trail.TrailWriteError)
             ):
                 raise
@@ -271,6 +284,7 @@ class CaseCollaborationService:
     def _comment_on_case(
         self, session: Session, case_id: str, comment_id: int
     ) -> Optional[CaseComment]:
+        readable_case(session, case_id)
         return (
             session.query(CaseComment)
             .filter(
@@ -298,6 +312,7 @@ class CaseCollaborationService:
             List of CaseComment objects
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             query = session.query(CaseComment).filter(CaseComment.case_id == case_id)
 
             if not include_deleted:
@@ -332,6 +347,13 @@ class CaseCollaborationService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                case = readable_case(session, case_id)
+                # Someone who may not read the case can't watch it.
+                principal = _principal_of(session, user_id)
+                if not may_read_case(case, CaseReader(principal)):
+                    raise WatcherRefused(
+                        f"{user_id} can't read this case, so can't watch it"
+                    )
                 # Check if already watching
                 existing = (
                     session.query(CaseWatcher)
@@ -362,7 +384,7 @@ class CaseCollaborationService:
                 logger.info(f"Added watcher {user_id} to case {case_id}")
                 return watcher
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, SOCError) or case_trail.propagates(exc, joined):
                 raise
             logger.exception("CaseCollaborationService.add_watcher failed")
             return None
@@ -392,6 +414,7 @@ class CaseCollaborationService:
         joined = session is not None
         try:
             with unit_of_work(session) as session:
+                readable_case(session, case_id)
                 watcher = (
                     session.query(CaseWatcher)
                     .filter(
@@ -414,7 +437,7 @@ class CaseCollaborationService:
                 logger.info(f"Removed watcher {user_id} from case {case_id}")
                 return True
         except Exception as exc:
-            if case_trail.propagates(exc, joined):
+            if isinstance(exc, NotFoundError) or case_trail.propagates(exc, joined):
                 raise
             logger.exception("CaseCollaborationService.remove_watcher failed")
             return False
@@ -433,6 +456,7 @@ class CaseCollaborationService:
             List of CaseWatcher objects
         """
         with unit_of_work(session) as session:
+            readable_case(session, case_id)
             return (
                 session.query(CaseWatcher).filter(CaseWatcher.case_id == case_id).all()
             )

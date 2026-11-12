@@ -530,7 +530,7 @@ async def add_custody_entry(
     """Add chain of custody entry."""
     evidence_service = CaseEvidenceService()
     success = evidence_service.add_chain_of_custody_entry(
-        evidence_id, data.action, current_user.username, data.notes
+        case_id, evidence_id, data.action, current_user.username, data.notes
     )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to add custody entry")
@@ -613,7 +613,11 @@ def update_task(
 
     # A blank assignee unassigns; a refusal raises before anything is written.
     task = case_records_service.update_task(
-        session, task_id, data.model_dump(), signed_in=current_user.username
+        session,
+        task_id,
+        data.model_dump(),
+        signed_in=current_user.username,
+        case_id=case_id,
     )
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -663,8 +667,9 @@ async def add_relationship(
 async def get_relationships(case_id: str, session: UnitOfWorkSession):
     """Get related cases."""
 
-    rows = case_records_service.list_relationships(session, case_id)
+    rows, hidden = case_records_service.list_relationships(session, case_id)
     return {
+        "hidden": hidden,
         "relationships": [
             {
                 **CaseRelationshipSchema.dump(rel),
@@ -672,7 +677,7 @@ async def get_relationships(case_id: str, session: UnitOfWorkSession):
                 "related_status": status,
             }
             for rel, title, status in rows
-        ]
+        ],
     }
 
 
