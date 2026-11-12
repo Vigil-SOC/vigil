@@ -262,6 +262,14 @@ def list_conversations(
         return [ConversationSummarySchema.dump(c) for c in rows]
 
 
+def attached_case(conversation_id: str, user_id: Optional[str]) -> Optional[str]:
+    """The case id an owned conversation is attached to, if any."""
+    db_manager = get_db_manager()
+    with db_manager.session_scope() as session:
+        conv = _owned(session, conversation_id, user_id)
+        return conv.case_id if conv is not None else None
+
+
 def get_conversation(conversation_id: str, user_id: Optional[str]) -> Optional[dict]:
     """Conversation + ordered messages, or None if not found / not owned."""
     db_manager = get_db_manager()

@@ -226,7 +226,7 @@ def _records(case_id: str) -> Tuple[Optional[Args], Args, List[Args], List[Any]]
     return case, records, findings, evidence
 
 
-def _history(findings: List[Args]) -> Tuple[List[str], Optional[Args]]:
+def _history(case_id: str, findings: List[Args]) -> Tuple[List[str], Optional[Args]]:
     from core.cases.linked_entities import linked_entity_keys
     from core.memory.recall import recall_entity
 
@@ -235,7 +235,10 @@ def _history(findings: List[Args]) -> Tuple[List[str], Optional[Args]]:
         keys = keys[:HISTORY_KEYS_MAX]
         if not keys:
             return keys, None
-        return keys, recall_entity({"entity_keys": keys, "caller_kind": "case_shell"})
+        # This case's own memory is offered here even when it is restricted.
+        return keys, recall_entity(
+            {"entity_keys": keys, "caller_kind": "case_shell"}, own_case=case_id
+        )
     except Exception as exc:  # noqa: BLE001 - the rest of the view still serves
         return [], {"unavailable": f"entity history could not be read: {exc}"}
 
@@ -294,15 +297,22 @@ def _caller() -> Tuple[str, str]:
 
 async def render_case_view(case_id: str) -> Optional[bytes]:
     """The case as a tar, or None when there is no such case."""
+    from core.cases.case_access import readable
+
     key = (case_id, *_caller())
     held = _renders.get(key)
     if held and held[0] > time.monotonic():
-        return held[1]
+        # Asked again on every hit, so a reader removed inside the TTL is not
+        # served what they could read a moment ago (#4358).
+        if await asyncio.to_thread(readable, case_id):
+            return held[1]
+        _renders.pop(key, None)
+        return None
 
     case, records, findings, evidence = await asyncio.to_thread(_records, case_id)
     if case is None:
         return None
-    keys, history = await asyncio.to_thread(_history, findings)
+    keys, history = await asyncio.to_thread(_history, case_id, findings)
     index, texts = await _evidence_files(evidence)
 
     files: Dict[str, str] = {"README.txt": README, "case.json": _json(case)}

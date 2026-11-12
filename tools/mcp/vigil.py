@@ -323,6 +323,33 @@ def update_case(
 
 @mcp.tool()
 @requires("cases.write")
+def restrict_case(case_id: str, readers: Optional[list] = None) -> str:
+    """Restrict an open case to its readers: usernames or principal ids, the whole
+    list. Left out, the owner, task assignees and the person you act for. Not frozen."""
+    return _call(tool_registry.restrict_case, case_id=case_id, readers=readers)
+
+
+@mcp.tool()
+@requires("cases.write")
+def change_case_readers(
+    case_id: str, remove: Optional[list] = None, add: Optional[list] = None
+) -> str:
+    """Remove readers from a restricted case; the list may not end empty. Adding is
+    a person's act in the console and is refused here. Not frozen."""
+    return _call(
+        tool_registry.change_case_readers, case_id=case_id, remove=remove, add=add
+    )
+
+
+def _not_found(case_id: str) -> Optional[str]:
+    """A case the caller can't read is not found, as one it can't find (#4358)."""
+    from core.cases.case_access import readable
+
+    return None if readable(case_id) else jdump({"error": f"Case {case_id} not found"})
+
+
+@mcp.tool()
+@requires("cases.write")
 def add_finding_to_case(case_id: str, finding_id: str) -> str:
     """Attach a finding to a case."""
     return _call(
@@ -667,6 +694,8 @@ def add_case_comment(
         - add_case_comment("case-123", "Confirmed lateral movement pattern")
         - add_case_comment("case-123", "I see the same pattern", parent_comment_id=5)
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
 
@@ -701,6 +730,8 @@ def add_case_comment(
 @requires("cases.read")
 def get_case_comments(case_id: str) -> str:
     """Get all comments for a case."""
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
 
@@ -750,6 +781,8 @@ def add_case_evidence(
         - add_case_evidence("case-123", "log", "firewall-logs.txt",
                            source="Palo Alto FW", tags=["c2", "exfiltration"])
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_evidence_service import CaseEvidenceService
 
@@ -815,6 +848,8 @@ def add_case_ioc(
         - add_case_ioc("case-123", "hash", "a1b2c3...", ioc_type="md5",
                       tags=["malware", "ransomware"])
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
@@ -866,6 +901,8 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
             {"ioc_type": "domain", "value": "evil.com", "threat_level": "critical"}
         ])
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
@@ -911,6 +948,8 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
 @requires("cases.read")
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
@@ -957,6 +996,8 @@ def add_case_task(
         - add_case_task("case-123", "Interview affected users", assignee="analyst2",
                        due_date="2026-01-25T17:00:00Z")
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from datetime import datetime
 
@@ -1023,6 +1064,13 @@ def update_case_task(
             updates["completed_at"] = utcnow()
 
         with service_session() as session:
+            from core.cases.case_access import readable
+            from core.storage.models import CaseTask
+
+            # A task on a case the caller can't read is not found (#4358).
+            held = session.get(CaseTask, task_id)
+            if held is None or not readable(held.case_id):
+                return jdump({"error": f"Task {task_id} not found"})
             task = case_records_service.update_task(
                 session, task_id, updates, signed_in=actor()
             )
@@ -1071,6 +1119,8 @@ def update_case_task(
 @requires("cases.read")
 def get_case_tasks(case_id: str) -> str:
     """Get all tasks for a case."""
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases import case_records_service
 
@@ -1116,6 +1166,8 @@ def link_related_cases(
         - link_related_cases("case-123", "case-125", "parent",
                             notes="case-123 is the parent campaign")
     """
+    if (refused := _not_found(case_id) or _not_found(related_case_id)) is not None:
+        return refused
     try:
         from core.cases import case_records_service
 
@@ -1169,6 +1221,8 @@ def move_case(
     """
     from core.exceptions import SOCError
 
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         with service_session() as session:
             moved = move_case_row(
@@ -1238,6 +1292,8 @@ def close_case(
                   recommendations="Deploy MFA to all users, additional phishing training",
                   executive_summary="Lateral movement attack contained and remediated")
     """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
     try:
         from core.cases.case_workflow_service import CaseWorkflowService
         from core.cases.closure import ClosureCategory
@@ -1565,6 +1621,8 @@ async def start_run(
 
     if tool_principal.current_claims() is not None:
         return jdump(_OUTSIDE_ONLY)
+    if (refused := _not_found(case_id)) is not None:
+        return refused
 
     async def start() -> dict:
         principal, username = _person()

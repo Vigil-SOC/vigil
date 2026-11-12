@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth.permissions import permission_gate
+from core.cases.case_access import readable
 from core.chat import conversation_service
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -100,6 +101,11 @@ async def update_conversation(
             conversation_id, current_user.user_id, body.archived
         )
     if "case_id" in body.model_fields_set:
+        # Only a case the person can read is attached: absent and restricted are
+        # one answer, so a conversation can't probe for a case (#4358).
+        wanted = (body.case_id or "").strip()
+        if wanted and not readable(wanted):
+            raise HTTPException(status_code=404, detail="Case not found")
         result = conversation_service.set_case_id(
             conversation_id, current_user.user_id, body.case_id or ""
         )

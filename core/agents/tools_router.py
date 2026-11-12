@@ -33,6 +33,7 @@ from core.auth import sign_ins, tool_principal
 from core.auth.permissions import permission_refusal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.auth.tool_principal import Claims
+from core.cases.case_access import lost_reader
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
@@ -371,6 +372,10 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
 
     claims = current_claims()
     denial = None if claims is None else _denial(claims, tool, raw)
+    # A run whose person can no longer read its own case parks on the reason
+    # (#4358): it reads that case at every step, so its next call is refused.
+    if denial is None and claims is not None:
+        denial = await asyncio.to_thread(lost_reader)
     if denial is not None:
         if attributed(claims):
             _outcome(claims, tool, raw, "denied")
