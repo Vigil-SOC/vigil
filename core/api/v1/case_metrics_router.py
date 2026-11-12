@@ -20,10 +20,11 @@ from sqlalchemy import case as sql_case
 from sqlalchemy import cast, func, literal_column, select, true
 from sqlalchemy.sql.elements import ColumnElement
 
-from core.auth.permissions import permission_gate
+from core.auth.permissions import case_read_clause, permission_gate
 from core.cases.case_sla_service import CaseSLAService
 from core.cases.case_status import CLOSED
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.case_repository import CaseRepository
 from core.storage.models import Case, CaseClosureInfo
 
 router = APIRouter()
@@ -95,12 +96,19 @@ def _seconds_since_created(moment: ColumnElement) -> ColumnElement:
 def _created_window(
     start_date: Optional[datetime], end_date: Optional[datetime]
 ) -> List[ColumnElement]:
-    filters: List[ColumnElement] = [true()]
+    """The window, over the cases the reader may read (#4356): every metric here
+    filters through this, and says how many restricted cases it left out."""
+    filters: List[ColumnElement] = [true(), case_read_clause()]
     if start_date:
         filters.append(Case.created_at >= start_date)
     if end_date:
         filters.append(Case.created_at <= end_date)
     return filters
+
+
+def _hidden(session) -> int:
+    # Never windowed or filtered, as the Cases queue's count is not.
+    return CaseRepository(session).hidden_count()
 
 
 def _mean(sums: Dict[Any, List[float]], key: Any) -> Optional[float]:
@@ -126,6 +134,8 @@ class MttrResponse(BaseModel):
     mttr_by_priority: Dict[str, Optional[float]] = Field(default_factory=dict)
     trend_data: List[Dict[str, Any]] = Field(default_factory=list)
     total_cases: int
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 class MttdResponse(BaseModel):
@@ -133,6 +143,8 @@ class MttdResponse(BaseModel):
     average_mttd_hours: Optional[float] = None
     mttd_by_priority: Dict[str, Optional[float]] = Field(default_factory=dict)
     total_cases: int
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 class CaseMetricsSummaryResponse(BaseModel):
@@ -142,10 +154,14 @@ class CaseMetricsSummaryResponse(BaseModel):
     critical_cases: int
     status_breakdown: Dict[str, int] = Field(default_factory=dict)
     priority_breakdown: Dict[str, int] = Field(default_factory=dict)
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 class BreachedCasesResponse(BaseModel):
     breached_cases: List[Dict[str, Any]] = Field(default_factory=list)
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 class PriorityBreakdownRow(BaseModel):
@@ -161,10 +177,14 @@ class StatusBreakdownRow(BaseModel):
 
 class ByPriorityResponse(BaseModel):
     priority_breakdown: List[PriorityBreakdownRow] = Field(default_factory=list)
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 class ByStatusResponse(BaseModel):
     status_breakdown: List[StatusBreakdownRow] = Field(default_factory=list)
+    # Restricted cases the caller may not read, not counted above (#4356).
+    restricted_not_counted: int = 0
 
 
 @router.get("/mttr", response_model=MttrResponse)
@@ -249,11 +269,12 @@ def get_mttr(
         },
         "trend_data": trend_data,
         "total_cases": total_cases,
+        "restricted_not_counted": _hidden(session),
     }
 
 
 @router.get("/breached", response_model=BreachedCasesResponse)
-def get_breached_cases():
+def get_breached_cases(session: UnitOfWorkSession):
     """
     Get all cases with SLA breaches.
 
@@ -261,8 +282,8 @@ def get_breached_cases():
         List of breached cases
     """
     sla_service = CaseSLAService()
-    breached = sla_service.get_breached_cases()
-    return {"breached_cases": breached}
+    breached = sla_service.get_breached_cases(session)
+    return {"breached_cases": breached, "restricted_not_counted": _hidden(session)}
 
 
 @router.get("/summary", response_model=CaseMetricsSummaryResponse)
@@ -308,6 +329,7 @@ def get_summary(
         "critical_cases": critical_cases,
         "status_breakdown": status_breakdown,
         "priority_breakdown": priority_breakdown,
+        "restricted_not_counted": _hidden(session),
     }
 
 
@@ -361,6 +383,7 @@ def get_mttd(
             pri: total / count / 3600 for pri, (total, count) in by_priority.items()
         },
         "total_cases": total_cases,
+        "restricted_not_counted": _hidden(session),
     }
 
 
@@ -406,7 +429,10 @@ def get_by_priority(
         key=lambda x: priority_order.get(x["priority"], 99),
     )
 
-    return {"priority_breakdown": priority_breakdown}
+    return {
+        "priority_breakdown": priority_breakdown,
+        "restricted_not_counted": _hidden(session),
+    }
 
 
 @router.get("/by-status", response_model=ByStatusResponse)
@@ -437,7 +463,10 @@ def get_by_status(
 
     status_breakdown = [{"status": name, "count": count} for name, count in rows]
 
-    return {"status_breakdown": status_breakdown}
+    return {
+        "status_breakdown": status_breakdown,
+        "restricted_not_counted": _hidden(session),
+    }
 
 
 @router.get("/analyst-performance", **_BETA)
@@ -488,4 +517,7 @@ def get_all_analyst_performance(
         for name, assigned, resolved, avg in rows
     ]
 
-    return {"analyst_performance": analyst_performance}
+    return {
+        "analyst_performance": analyst_performance,
+        "restricted_not_counted": _hidden(session),
+    }

@@ -262,6 +262,8 @@ export interface User {
   status: AccountStatus
   /** open cases the account owns, shown before a deactivate or delete */
   open_cases: number
+  /** of those, restricted cases the viewer can't read: counted, not linked */
+  open_cases_hidden?: number
   username: string
   email: string
   full_name: string

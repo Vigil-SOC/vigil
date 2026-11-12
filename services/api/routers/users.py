@@ -13,7 +13,9 @@ from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_
+from sqlalchemy import case as sql_case
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core import teams
@@ -54,6 +56,7 @@ from core.auth.permissions import (
     PRESETS,
     STEP_UP,
     builtin_diff,
+    case_read_clause,
     deny_unless,
     missing_permission,
     require_person_permission,
@@ -428,12 +431,18 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         )
     }
     # Shown before a deactivate or delete, as deactivation tells managers.
-    open_cases = dict(
-        session.query(Case.assignee, func.count())
+    # Restricted cases the caller may not read are counted apart: "N hidden".
+    # A CASE, not the bare clause: for a built-in reader the clause is a constant,
+    # which Postgres won't GROUP BY.
+    readable = sql_case((case_read_clause(), 1), else_=0)
+    open_cases: dict = {}
+    hidden_cases: dict = {}
+    for assignee, can_read, count in (
+        session.query(Case.assignee, readable, func.count())
         .filter(Case.assignee.in_([u.username for u in users]), Case.status != "closed")
-        .group_by(Case.assignee)
-        .all()
-    )
+        .group_by(Case.assignee, readable)
+    ):
+        (open_cases if can_read else hidden_cases)[assignee] = count
     linked = sso.linked_principals(session)
     # Who each service account answers to: worked out here, never stored.
     answerable = {
@@ -459,6 +468,7 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         entry["has_sso"] = user.principal_id in linked
         entry["status"] = _account_status(user, user.principal_id in deleted)
         entry["open_cases"] = open_cases.get(user.username, 0)
+        entry["open_cases_hidden"] = hidden_cases.get(user.username, 0)
         machine = _is_service_account(user)
         entry["principal_kind"] = (
             principals.SERVICE_ACCOUNT if machine else principals.PERSON

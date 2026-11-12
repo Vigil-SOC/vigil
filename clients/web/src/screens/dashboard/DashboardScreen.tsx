@@ -190,7 +190,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Active Cases</span>
           <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{kpi(kpis?.casesTotal)}</span></div>
-          <span className="text-xs text-tx-faint">{kpis ? `${kpis.casesOpen} open · ${kpis.casesInvestigating} investigating` : ' '}</span>
+          <span className="text-xs text-tx-faint [overflow-wrap:anywhere]">{kpis ? `${kpis.casesOpen} open · ${kpis.casesInvestigating} investigating${kpis.casesHidden > 0 ? ` · ${kpis.casesHidden} restricted not counted` : ''}` : ' '}</span>
         </div>
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Critical Alerts</span>

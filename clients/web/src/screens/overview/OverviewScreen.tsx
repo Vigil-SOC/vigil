@@ -346,7 +346,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
           <>
             <dl className="ov-facts">
               <div><dt>Source</dt><dd>{sourceLabel}</dd></div>
-              <div><dt>Status</dt><dd>{stateWord(marked ? 'dismissed' : open.terminal_state, open.case_id)}</dd></div>
+              <div><dt>Status</dt><dd>{stateWord(marked ? 'dismissed' : open.terminal_state, open.case_id, open.case_restricted)}</dd></div>
               <div>
                 <dt>Case</dt>
                 <dd>

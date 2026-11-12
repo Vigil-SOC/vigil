@@ -104,6 +104,8 @@ class CaseListResponse(BaseModel):
     limit: int
     offset: int
     has_more: bool
+    # Restricted cases the caller may not read, never filtered (#4356).
+    restricted_not_counted: int = 0
     strip: CaseQueueStrip
     # Restricted cases the caller may not read, left out. Never filtered, so it
     # says nothing about what those cases hold.
@@ -322,3 +324,5 @@ class CaseSearchResponse(BaseModel):
     limit: int
     offset: int
     has_more: bool
+    # Restricted cases the caller may not read, never filtered (#4356).
+    restricted_not_counted: int = 0

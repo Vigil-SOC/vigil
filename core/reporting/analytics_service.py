@@ -8,9 +8,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List
 
-from sqlalchemy import and_, func, text
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session, noload
 
+from core.auth.permissions import CaseReader, case_read_clause
 from core.cases.closure import closed_by_person, closure_says_real
 from core.llm.providers.registry import get_registry, infer_provider_type
 from core.storage.models import (
@@ -38,8 +39,15 @@ async def collect_insights_inputs(
     start_time, end_time = get_time_range(time_range)
     period_duration = end_time - start_time
     prev_start = start_time - period_duration
-    metrics = await calculate_metrics(db, start_time, end_time, prev_start, start_time)
-    time_series = await get_time_series_data(db, start_time, end_time, time_range)
+    # The insights are cached for every caller, so they count open cases only:
+    # the read rule for a reader named on no restricted case (#4356).
+    readable = case_read_clause(CaseReader())
+    metrics = await calculate_metrics(
+        db, start_time, end_time, prev_start, start_time, readable
+    )
+    time_series = await get_time_series_data(
+        db, start_time, end_time, time_range, readable
+    )
     return metrics, time_series
 
 
@@ -49,8 +57,14 @@ async def calculate_metrics(
     end_time: datetime,
     prev_start: datetime,
     prev_end: datetime,
+    readable=None,
 ) -> Dict[str, Any]:
-    """Calculate key SOC metrics and their period-over-period changes."""
+    """Calculate key SOC metrics and their period-over-period changes.
+
+    Cases are those ``readable`` (the caller's read rule by default) admits;
+    ``restrictedNotCounted`` is how many it left out, over every case (#4356).
+    """
+    readable = case_read_clause() if readable is None else readable
 
     # Current period metrics
     total_findings = (
@@ -62,7 +76,7 @@ async def calculate_metrics(
 
     total_cases = (
         db.query(func.count(Case.case_id))
-        .filter(Case.created_at.between(start_time, end_time))
+        .filter(Case.created_at.between(start_time, end_time), readable)
         .scalar()
         or 0
     )
@@ -73,7 +87,11 @@ async def calculate_metrics(
             func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
         )
         .filter(
-            and_(Case.created_at.between(start_time, end_time), Case.status != "new")
+            and_(
+                Case.created_at.between(start_time, end_time),
+                Case.status != "new",
+                readable,
+            )
         )
         .scalar()
     )
@@ -84,7 +102,11 @@ async def calculate_metrics(
     total_closed = (
         db.query(func.count(Case.case_id))
         .filter(
-            and_(Case.created_at.between(start_time, end_time), Case.status == "closed")
+            and_(
+                Case.created_at.between(start_time, end_time),
+                Case.status == "closed",
+                readable,
+            )
         )
         .scalar()
         or 0
@@ -97,6 +119,7 @@ async def calculate_metrics(
             and_(
                 Case.created_at.between(start_time, end_time),
                 CaseClosureInfo.closure_category == "false_positive",
+                readable,
             )
         )
         .scalar()
@@ -117,7 +140,7 @@ async def calculate_metrics(
 
     prev_total_cases = (
         db.query(func.count(Case.case_id))
-        .filter(Case.created_at.between(prev_start, prev_end))
+        .filter(Case.created_at.between(prev_start, prev_end), readable)
         .scalar()
         or 0
     )
@@ -127,7 +150,11 @@ async def calculate_metrics(
             func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
         )
         .filter(
-            and_(Case.created_at.between(prev_start, prev_end), Case.status != "new")
+            and_(
+                Case.created_at.between(prev_start, prev_end),
+                Case.status != "new",
+                readable,
+            )
         )
         .scalar()
     )
@@ -141,7 +168,11 @@ async def calculate_metrics(
     prev_total_closed = (
         db.query(func.count(Case.case_id))
         .filter(
-            and_(Case.created_at.between(prev_start, prev_end), Case.status == "closed")
+            and_(
+                Case.created_at.between(prev_start, prev_end),
+                Case.status == "closed",
+                readable,
+            )
         )
         .scalar()
         or 0
@@ -154,6 +185,7 @@ async def calculate_metrics(
             and_(
                 Case.created_at.between(prev_start, prev_end),
                 CaseClosureInfo.closure_category == "false_positive",
+                readable,
             )
         )
         .scalar()
@@ -212,6 +244,10 @@ async def calculate_metrics(
         "casesChange": cases_change,
         "responseTimeChange": response_time_change,
         "falsePositiveChange": false_positive_change,
+        "restrictedNotCounted": db.query(func.count(Case.case_id))
+        .filter(~readable)
+        .scalar()
+        or 0,
     }
 
 
@@ -219,9 +255,15 @@ _BUCKET_COUNTS = {"24h": 24, "7d": 28}
 
 
 async def get_time_series_data(
-    db: Session, start_time: datetime, end_time: datetime, time_range: str
+    db: Session,
+    start_time: datetime,
+    end_time: datetime,
+    time_range: str,
+    readable=None,
 ) -> List[Dict[str, Any]]:
-    """Get time series data for findings, cases, and alerts."""
+    """Get time series data for findings, cases (those ``readable`` admits, the
+    caller's read rule by default), and alerts."""
+    readable = case_read_clause() if readable is None else readable
     bucket_count = _BUCKET_COUNTS.get(time_range, 30)
     window = end_time - start_time
 
@@ -240,7 +282,7 @@ async def get_time_series_data(
 
         cases_count = (
             db.query(func.count(Case.case_id))
-            .filter(Case.created_at.between(current_time, bucket_end))
+            .filter(Case.created_at.between(current_time, bucket_end), readable)
             .scalar()
             or 0
         )
@@ -702,11 +744,12 @@ def _agreement_tally() -> Dict[str, Any]:
 async def get_agent_agreement(
     db: Session, start_time: datetime, end_time: datetime
 ) -> Dict[str, Any]:
-    return agent_agreement(db, start_time, end_time)
+    # Shown to a person: closures of cases they may not read are not scored.
+    return agent_agreement(db, start_time, end_time, readable=case_read_clause())
 
 
 def agent_agreement(
-    db: Session, start_time: datetime, end_time: datetime
+    db: Session, start_time: datetime, end_time: datetime, readable=None
 ) -> Dict[str, Any]:
     """How often the investigation's verdict matched the closure, overall and per workflow.
 
@@ -715,8 +758,18 @@ def agent_agreement(
     when the agent said inconclusive or needs_review, closed without a
     determination when the closure was neither resolved nor false_positive.
     A closure by the agent's own channel is counted apart and never scored.
+    ``readable``, a read clause on cases, leaves out the closures it does not admit.
     """
-    rows = db.execute(_CLOSURE_VERDICTS, {"start": start_time, "end": end_time})
+    rows = list(db.execute(_CLOSURE_VERDICTS, {"start": start_time, "end": end_time}))
+    if readable is not None and rows:
+        kept = set(
+            db.scalars(
+                select(Case.case_id).where(
+                    Case.case_id.in_({row.case_id for row in rows}), readable
+                )
+            )
+        )
+        rows = [row for row in rows if row.case_id in kept]
     overall = _agreement_tally()
     by_workflow: Dict[str, Dict[str, Any]] = {}
     for row in rows:

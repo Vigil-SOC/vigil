@@ -1738,6 +1738,8 @@ export interface OverviewFeedItem {
   source_evidence: Record<string, unknown> | null
   source_link: string | null
   case_id: string | null
+  /** in a restricted case the reader can't see: case_id is withheld */
+  case_restricted?: boolean
   noise_marked: boolean
 }
 

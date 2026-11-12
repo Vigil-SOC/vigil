@@ -7,6 +7,8 @@ from fastapi import APIRouter
 from core.auth.permissions import permission_gate
 from core.cases.case_search_service import CaseSearchService
 from core.routing import Auth, RouterMeta
+from core.storage.case_repository import CaseRepository
+from core.storage.unit_of_work import unit_of_work
 
 router = APIRouter()
 router.dependencies.append(permission_gate("cases.read"))
@@ -54,7 +56,11 @@ def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
         ioc_type: Optional IOC type filter
 
     Returns:
-        Cases containing the IOC
+        Cases containing the IOC, and how many restricted cases were hidden
     """
-    cases = search_service.search_by_ioc(ioc_value, ioc_type)
-    return {"cases": cases}
+    with unit_of_work() as session:
+        cases = search_service.search_by_ioc(ioc_value, ioc_type, session=session)
+        return {
+            "cases": cases,
+            "restricted_not_counted": CaseRepository(session).hidden_count(),
+        }

@@ -15,6 +15,8 @@ export interface CaseMetricsData {
   totalCases: number
   openCases: number
   criticalCases: number
+  /** restricted cases this reader can't see, left out of every number here */
+  hidden: number
   mttdHours: number | null
   mttrHours: number | null
   mttdByPriority: Record<string, number | null>
@@ -57,6 +59,7 @@ export function useCaseMetrics(days: number) {
           totalCases: s.total_cases,
           openCases: s.open_cases,
           criticalCases: s.critical_cases,
+          hidden: s.restricted_not_counted ?? 0,
           mttdHours: mttd.average_mttd_hours ?? null,
           mttrHours: mttr.average_mttr_hours ?? null,
           mttdByPriority: mttd.mttd_by_priority ?? {},
