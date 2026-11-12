@@ -21,6 +21,7 @@ from core.cases.agent_closure import (
     principal_for_username,
     run_agent,
 )
+from core.exceptions import NotFoundError
 from core.storage import case_trail_hook
 from core.storage.case_trail_hook import TrailWriteError  # noqa: F401 - its home
 
@@ -92,7 +93,8 @@ def on_error(default: Any):
     """``default_on_error`` that lets the trail's own failures through.
 
     A ``TrailWriteError`` answers 500 with nothing committed, and
-    ``trail.Paused`` a 503 with Retry-After; anything else is ``default``.
+    ``trail.Paused`` a 503 with Retry-After, and ``NotFoundError`` (a case the
+    caller may not read) a 404; anything else is ``default``.
     """
 
     def decorate(fn):
@@ -100,7 +102,7 @@ def on_error(default: Any):
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except (TrailWriteError, trail.Paused):
+            except (TrailWriteError, trail.Paused, NotFoundError):
                 raise
             except Exception:
                 logging.getLogger(fn.__module__).exception("%s failed", fn.__qualname__)

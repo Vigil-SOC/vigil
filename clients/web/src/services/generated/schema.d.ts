@@ -10602,6 +10602,11 @@ export interface components {
         };
         /** CaseRelationshipsResponse */
         CaseRelationshipsResponse: {
+            /**
+             * Hidden
+             * @default 0
+             */
+            hidden: number;
             /** Relationships */
             relationships: components["schemas"]["CaseRelatedSchema"][];
         };

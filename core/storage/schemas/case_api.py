@@ -299,6 +299,8 @@ class CaseRelatedSchema(CaseRelationshipSchema):
 
 class CaseRelationshipsResponse(BaseModel):
     relationships: list[CaseRelatedSchema]
+    # Links to restricted cases the caller may not read, left out: a count only.
+    hidden: int = 0
 
 
 class CaseCloseResponse(BaseModel):

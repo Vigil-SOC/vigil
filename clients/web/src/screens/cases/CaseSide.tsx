@@ -173,34 +173,41 @@ function Alerts({ caseId, items }: { caseId: string; items: CaseLinkedFinding[] 
 
 type Related = { id: number; caseId: string; title: string; status: string; notes: string }
 
-/** Other Cases linked to this one, of any link type; hidden while loading, on a failed read, or when there are none. */
+/** Other Cases linked to this one, of any link type; hidden while loading, on a failed read, or when there are none.
+ *  Links to restricted cases the reader can't see are a count only: never which ones. */
 function RelatedCases({ caseId }: { caseId: string }) {
-  const { data, phase } = useResource<Related[]>(caseId, () =>
-    casesApi.getRelationships(caseId).then((res) =>
-      (res.data.relationships || []).map((row) => ({
+  const { data, phase } = useResource<{ rows: Related[]; hidden: number }>(caseId, () =>
+    casesApi.getRelationships(caseId).then((res) => ({
+      hidden: res.data.hidden ?? 0,
+      rows: (res.data.relationships || []).map((row) => ({
         id: row.relationship_id ?? 0,
         caseId: row.related_case_id ?? '',
         title: row.related_title || '',
         status: row.related_status || '',
         notes: row.notes || '',
       })),
-    ),
+    })),
   )
-  if (phase !== 'ready' || !data?.length) return null
+  if (phase !== 'ready' || !data || (!data.rows.length && !data.hidden)) return null
   return (
     <Block title="Related cases">
-      <ul className="case-linked case-related">
-        {data.map((row) => (
-          <li key={row.id}>
-            <span className="case-related-head">
-              {row.title && <span className="side-clamp" title={row.title}>{row.title}</span>}
-              {row.status && <StatePill state={row.status} />}
-            </span>
-            <Link className="mono case-related-id" to={`/cases?case=${encodeURIComponent(row.caseId)}`}>{row.caseId}</Link>
-            {row.notes && <span className="side-meta side-clamp" title={row.notes}>{row.notes}</span>}
-          </li>
-        ))}
-      </ul>
+      {data.rows.length > 0 && (
+        <ul className="case-linked case-related">
+          {data.rows.map((row) => (
+            <li key={row.id}>
+              <span className="case-related-head">
+                {row.title && <span className="side-clamp" title={row.title}>{row.title}</span>}
+                {row.status && <StatePill state={row.status} />}
+              </span>
+              <Link className="mono case-related-id" to={`/cases?case=${encodeURIComponent(row.caseId)}`}>{row.caseId}</Link>
+              {row.notes && <span className="side-meta side-clamp" title={row.notes}>{row.notes}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.hidden > 0 && (
+        <span className="side-meta" title="Restricted cases you can't read">{data.hidden} hidden</span>
+      )}
     </Block>
   )
 }
