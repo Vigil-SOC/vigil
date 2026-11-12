@@ -309,3 +309,33 @@ def merge_readers(
             readers=readers,
             merged_from=source.case_id,
         )
+
+
+def no_active_reader():
+    """SQL clause on ``cases``: restricted, with no one left who can read it (#4363).
+
+    A reader is active when a person or service account on the list is live
+    (principal undeleted, account active), or a live person is on a team the
+    list names. Erasure deactivates the account, so an erased reader counts
+    for nothing. Callers count or list with it outside the read rule.
+    """
+    from sqlalchemy import and_, exists, func, not_, or_
+
+    from core.storage.models import TeamMembership
+
+    live = and_(
+        Principal.deleted_at.is_(None),
+        User.principal_id == Principal.principal_id,
+        User.is_active.is_(True),
+    )
+    named = exists().where(Case.reader_principal_ids.any(Principal.principal_id), live)
+    on_team = exists().where(
+        Case.reader_team_ids.any(TeamMembership.team_id),
+        TeamMembership.principal_id == Principal.principal_id,
+        live,
+    )
+    restricted = or_(
+        func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
+        func.coalesce(func.cardinality(Case.reader_team_ids), 0) > 0,
+    )
+    return and_(restricted, not_(named.correlate(Case)), not_(on_team.correlate(Case)))
