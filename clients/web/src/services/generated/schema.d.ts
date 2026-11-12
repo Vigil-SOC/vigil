@@ -9988,6 +9988,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Owner Cannot Read */
+            owner_cannot_read?: boolean | null;
             /** Owner On Team */
             owner_on_team?: boolean | null;
             /** Owner State */
@@ -10433,6 +10435,8 @@ export interface components {
              * @default false
              */
             needs_you: boolean;
+            /** Owner Cannot Read */
+            owner_cannot_read?: boolean | null;
             /** Owner On Team */
             owner_on_team?: boolean | null;
             /** Owner State */

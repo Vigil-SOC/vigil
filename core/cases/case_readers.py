@@ -32,6 +32,7 @@ from core.storage.models import Case, CaseTask, Principal, User
 from core.time import utcnow
 
 PERSON_MUST = "A person must do this: adding readers or lifting a restriction widens who can read the case"
+PERSON_MUST_MERGE = "A person must do this: merging two restricted cases with different readers widens who can read each"
 NAME_ONE = "Name at least one reader"
 
 
@@ -151,6 +152,13 @@ def _stamp(case: Case, readers: Optional[List[str]]) -> None:
     case.updated_at = utcnow()
 
 
+def _drop_watchers(session: Session, case: Case) -> None:
+    """Watchers the new list leaves unable to read the case go, each on the trail."""
+    from core.cases.case_collaboration_service import remove_watchers_who_cannot_read
+
+    remove_watchers_who_cannot_read(session, case)
+
+
 def readers_for_new_case(
     session: Session, readers: Optional[Sequence[str]], actor: Restricter
 ) -> List[str]:
@@ -173,6 +181,7 @@ def restrict(
     _stamp(case, names)
     session.flush()
     case_trail.append_case(session, case_trail.RESTRICT, case.case_id, readers=names)
+    _drop_watchers(session, case)
     return names
 
 
@@ -208,6 +217,7 @@ def change_readers(
         case_trail.append_case(
             session, case_trail.READERS_REMOVE, case.case_id, removed=removed
         )
+        _drop_watchers(session, case)
     return result
 
 
@@ -222,3 +232,80 @@ def lift(session: Session, case: Case, actor: Restricter) -> None:
     case.reader_team_ids = None
     session.flush()
     case_trail.append_case(session, case_trail.UNRESTRICT, case.case_id, readers=before)
+
+
+def _owners(session: Session, case: Case) -> List[str]:
+    """The case owner and every task assignee on it, as stored."""
+    return _unique(
+        [case.assignee]
+        + list(
+            session.scalars(
+                select(CaseTask.assignee).where(
+                    CaseTask.case_id == case.case_id, CaseTask.assignee.isnot(None)
+                )
+            )
+        )
+    )
+
+
+def merge_readers(
+    session: Session, target: Case, source: Case, actor: Optional[Restricter]
+) -> None:
+    """The readers a merge of ``source`` into ``target`` leaves on the target.
+
+    - Both open: nothing changes.
+    - Restricted with open: the result keeps the restricted side's readers,
+      refused while the open side's owner or task assignees aren't on that list.
+    - Both restricted, different lists: the union, and only a person's own act.
+
+    Runs before anything moves, so a refusal leaves both cases as they were.
+    """
+    from core.auth.permissions import case_restricted
+    from core.cases.assignee import owner_reads_case
+
+    held, giving = case_restricted(target), case_restricted(source)
+    if not (held or giving):
+        return
+    if held and giving:
+        mine = list(target.reader_principal_ids or [])
+        added = [n for n in source.reader_principal_ids or [] if n not in mine]
+        teams = list(target.reader_team_ids or [])
+        added_teams = [t for t in source.reader_team_ids or [] if t not in teams]
+        if not added and not added_teams:
+            return
+        if actor is None or not actor.person_direct:
+            raise ReadersRefused(PERSON_MUST_MERGE, 403)
+        _stamp(target, mine + added)
+        target.reader_team_ids = (teams + added_teams) or None
+        session.flush()
+        case_trail.append_case(
+            session,
+            case_trail.READERS_ADD,
+            target.case_id,
+            added=added,
+            merged_from=source.case_id,
+        )
+        return
+    restricted, open_side = (target, source) if held else (source, target)
+    stranded = [
+        name
+        for name in _owners(session, open_side)
+        if not owner_reads_case(session, restricted, name)
+    ]
+    if stranded:
+        raise ReadersRefused(
+            f"{', '.join(stranded)} can't read restricted case {restricted.case_id}: "
+            f"set Unassigned on {open_side.case_id} or add them as readers first"
+        )
+    if not held:
+        readers = list(source.reader_principal_ids or [])
+        _stamp(target, readers)
+        target.reader_team_ids = list(source.reader_team_ids or []) or None
+        session.flush()
+        case_trail.append_case(
+            session,
+            case_trail.RESTRICT,
+            target.case_id,
+            readers=readers,
+            merged_from=source.case_id,
+        )

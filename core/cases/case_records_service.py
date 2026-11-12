@@ -292,7 +292,7 @@ def update_task(
     through ``resolve_assignee``; blank unassigns, None leaves it. A refusal
     raises ``AssigneeRefused`` before anything is written.
     """
-    from core.cases.assignee import resolve_assignee
+    from core.cases.assignee import require_owner_reads, resolve_assignee
 
     task = session.query(CaseTask).filter(CaseTask.task_id == task_id).first()
     if task is None:
@@ -305,6 +305,8 @@ def update_task(
         task.assignee = resolve_assignee(session, raw, current=previous)
         if task.assignee != previous:
             owner = (previous, task.assignee)
+            # A newly named assignee must read a restricted case; an echo saves.
+            require_owner_reads(session, session.get(Case, task.case_id), task.assignee)
     for field, value in updates.items():
         if value is not None and hasattr(task, field):
             setattr(task, field, value)

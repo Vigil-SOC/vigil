@@ -30,6 +30,12 @@ def may_read(case: Any) -> bool:
     return _installed().may_read_case(case)
 
 
+def may_read_as(case: Any, principal_id: Any) -> bool:
+    """The same test, asked for ``principal_id`` rather than the caller (#4357)."""
+    rule = _installed()
+    return rule.may_read_case(case, rule.CaseReader(principal_id))
+
+
 def read_clause() -> Any:
     """The same test as a SQL clause on ``cases``."""
     return _installed().case_read_clause()

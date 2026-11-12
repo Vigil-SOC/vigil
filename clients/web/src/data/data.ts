@@ -93,6 +93,8 @@ export interface CaseRow {
   ownerState?: 'current' | 'not_current' | null
   /** False when the owner is not on the case's team. Null when unowned or unknown. */
   ownerOnTeam?: boolean | null
+  /** True when the case is restricted and its owner isn't a reader. */
+  ownerCannotRead?: boolean | null
   teamId?: string
   teamName?: string
   findings: number

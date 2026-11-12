@@ -79,6 +79,9 @@ class CaseQueueItem(BaseModel):
     # True when the owner is on the case's team, false when they are not,
     # null when the case has no owner.
     owner_on_team: Optional[bool] = None
+    # Restricted and owned: true when the owner can't read the case ("owner
+    # can't see this case"), worked out at read. Null otherwise.
+    owner_cannot_read: Optional[bool] = None
     team: Optional[CaseTeam] = None
     # Restricted cases (#4354): shown only to readers, with the reader list.
     restricted: bool = False
@@ -176,6 +179,7 @@ class CaseDetailResponse(CaseSchema):
     alerts_since_last_run: int = 0
     owner_state: OwnerStateField
     owner_on_team: Optional[bool] = None
+    owner_cannot_read: Optional[bool] = None
 
 
 class CaseRuleCard(BaseModel):

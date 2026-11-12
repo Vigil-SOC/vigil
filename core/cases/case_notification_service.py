@@ -10,10 +10,31 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from core.storage.models import Case, CaseNotification, CaseWatcher
+from core.storage.models import Case, CaseNotification, CaseWatcher, User
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
+
+
+def principal_of(session: Session, name: str) -> Optional[str]:
+    """A watcher or a mention is named by username or by account id."""
+    from core.cases.agent_closure import principal_for_username
+
+    principal = principal_for_username(session, name)
+    if principal is None:
+        row = session.get(User, name)
+        principal = row.principal_id if row is not None else None
+    return principal
+
+
+def may_receive(session: Session, case: Optional[Case], name: str) -> bool:
+    """Notices about a restricted case go only to its readers (#4357)."""
+    from core.cases.assignee import principal_reads_case
+
+    if case is None:
+        return True
+    return principal_reads_case(case, principal_of(session, name))
+
 
 # The notification types a watcher can switch off via
 # ``case_watchers.notification_preferences``. This is the whole vocabulary:
@@ -117,7 +138,7 @@ class CaseNotificationService:
         """
         with unit_of_work(session) as session:
             case = session.query(Case).filter(Case.case_id == case_id).first()
-            if not case:
+            if not case or not may_receive(session, case, mentioned_user):
                 return False
 
             # Truncate comment for notification
@@ -183,9 +204,12 @@ class CaseNotificationService:
             watchers = (
                 session.query(CaseWatcher).filter(CaseWatcher.case_id == case_id).all()
             )
+            case = session.get(Case, case_id)
 
             count = 0
             for watcher in watchers:
+                if not may_receive(session, case, watcher.user_id):
+                    continue
                 # Check if user wants this type of notification
                 prefs = watcher.notification_preferences or {}
                 if prefs.get(notification_type, True):  # Default to True
