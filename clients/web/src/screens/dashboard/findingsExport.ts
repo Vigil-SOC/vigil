@@ -49,7 +49,7 @@ export function buildFindingsCsv(findings: Finding[]): string {
       finding.user,
       timestamp(finding),
       finding.score,
-      finding.status ? stateWord(finding.status, finding.caseId) : '',
+      finding.status ? stateWord(finding.status, finding.caseId, finding.caseRestricted) : '',
       ...extraKeys.map((key) => finding.extra?.[key] ?? ''),
     ]),
   ]

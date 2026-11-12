@@ -32,7 +32,7 @@ import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
 import { MoveCaseDialog, type MoveTeam } from './MoveCaseDialog'
-import { caseConflicts, errorDetail, STALE_OWNER_NOTE } from './caseFormat'
+import { caseConflicts, errorDetail, OWNER_CANNOT_READ_NOTE, STALE_OWNER_NOTE } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
 import { holdCase } from '../../shell/heldCase'
@@ -630,6 +630,7 @@ function CasesTable({
                         </span>
                         {c.ownerStale && <span className="owner-note">{STALE_OWNER_NOTE}</span>}
                         {c.ownerOnTeam === false && <span className="owner-note">owner no longer on team</span>}
+                        {c.ownerCannotRead && <span className="owner-note">{OWNER_CANNOT_READ_NOTE}</span>}
                       </span>
                     </span>
                     <span role="cell" className="cg-time col-low">

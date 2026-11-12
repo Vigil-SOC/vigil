@@ -10,7 +10,8 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from core.cases import case_trail
+from core.auth.permissions import may_read_case
+from core.cases import case_readers, case_trail
 from core.cases.agent_closure import (
     activity_actor,
     actor_identity,
@@ -18,6 +19,7 @@ from core.cases.agent_closure import (
     current_credential_id,
     record_close,
 )
+from core.cases.case_collaboration_service import remove_watchers_who_cannot_read
 from core.cases.case_handoff import (
     move_reopened_archived_team,
     note_owner,
@@ -32,7 +34,7 @@ from core.cases.closure import (
 )
 from core.exceptions import NotFoundError, default_on_error
 from core.storage.case_insert import insert_case
-from core.storage.models import Case, CaseTask, CaseTemplate
+from core.storage.models import Case, CaseTask, CaseTemplate, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -538,14 +540,21 @@ class CaseWorkflowService:
         move_reopened_archived_team(session, case_id)
 
     def merge_cases(
-        self, target_case_id: str, source_case_id: str, merged_by: str = "system"
+        self,
+        target_case_id: str,
+        source_case_id: str,
+        merged_by: str = "system",
+        merger: Optional[User] = None,
     ) -> Optional[int]:
         """Absorb ``source_case_id`` into ``target_case_id``.
 
         Moves findings, timeline, activities, IOCs, evidence, tasks, and
         comments across; closes the source and links it with a 'merged_into'
         relationship. Returns the number of findings moved, and raises
-        ``NotFoundError`` naming whichever case is missing.
+        ``NotFoundError`` naming whichever case is missing, or that the merger
+        can't read. ``merger`` is the signed-in user, for the reader rules
+        (``case_readers.merge_readers``); without one, a merge that widens a
+        restricted case's readers is refused.
 
         Runs in its own transaction — the whole merge must land or none of it,
         its trail entry included.
@@ -566,12 +575,20 @@ class CaseWorkflowService:
                 .with_for_update()
                 .first()
             )
-            if not target:
+            # A case the merger can't read is not there (#4354).
+            if not target or not may_read_case(target):
                 raise NotFoundError(f"Target case {target_case_id} not found")
-            if not source:
+            if not source or not may_read_case(source):
                 raise NotFoundError(f"Source case {source_case_id} not found")
             if source.team_id != target.team_id:
                 require_merge_source(session, merged_by, source.team_id)
+            case_readers.merge_readers(
+                session,
+                target,
+                source,
+                case_readers.http_restricter(session, merger) if merger else None,
+            )
+            remove_watchers_who_cannot_read(session, target)
 
             target_finding_ids = {f.finding_id for f in target.findings}
             moved_findings = 0

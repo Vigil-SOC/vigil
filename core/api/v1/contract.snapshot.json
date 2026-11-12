@@ -533,6 +533,11 @@
             },
             "title": "Breached Cases",
             "type": "array"
+          },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
           }
         },
         "title": "BreachedCasesResponse",
@@ -546,6 +551,11 @@
             },
             "title": "Priority Breakdown",
             "type": "array"
+          },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
           }
         },
         "title": "ByPriorityResponse",
@@ -553,6 +563,11 @@
       },
       "ByStatusResponse": {
         "properties": {
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
+          },
           "status_breakdown": {
             "items": {
               "$ref": "#/components/schemas/StatusBreakdownRow"
@@ -954,6 +969,17 @@
             "items": {},
             "title": "Notes",
             "type": "array"
+          },
+          "owner_cannot_read": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Cannot Read"
           },
           "owner_on_team": {
             "anyOf": [
@@ -1881,6 +1907,11 @@
             "title": "Resolved Cases",
             "type": "integer"
           },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
+          },
           "status_breakdown": {
             "additionalProperties": {
               "type": "integer"
@@ -2060,6 +2091,17 @@
             "default": false,
             "title": "Needs You",
             "type": "boolean"
+          },
+          "owner_cannot_read": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Cannot Read"
           },
           "owner_on_team": {
             "anyOf": [
@@ -2530,6 +2572,11 @@
           },
           "offset": {
             "title": "Offset",
+            "type": "integer"
+          },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
             "type": "integer"
           },
           "results": {
@@ -3354,6 +3401,11 @@
             ],
             "title": "Case Id"
           },
+          "case_restricted": {
+            "default": false,
+            "title": "Case Restricted",
+            "type": "boolean"
+          },
           "cluster_id": {
             "anyOf": [
               {
@@ -3864,6 +3916,11 @@
             "title": "Mttd By Priority",
             "type": "object"
           },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
+          },
           "total_cases": {
             "title": "Total Cases",
             "type": "integer"
@@ -3912,6 +3969,11 @@
             },
             "title": "Mttr By Priority",
             "type": "object"
+          },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
           },
           "total_cases": {
             "title": "Total Cases",

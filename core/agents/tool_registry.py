@@ -15,6 +15,7 @@ from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.agent_closure import actor, service_session
+from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
     OwnerOffTeam,
@@ -584,7 +585,8 @@ def update_case(
                 with service_session() as session:
                     require_owner_can_write(session, named)
                     require_case_owner_on_team(session, case, named, case_id)
-            except (OwnerCannotWrite, OwnerOffTeam) as exc:
+                    require_owner_reads(session, case, named)
+            except (OwnerCannotWrite, OwnerOffTeam, OwnerNotReader) as exc:
                 return {"error": exc.message, "code": exc.code}
     if add_note:
         notes = list(case.get("notes") or [])
