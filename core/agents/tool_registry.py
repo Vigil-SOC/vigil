@@ -15,6 +15,7 @@ from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
 from core.cases.agent_closure import actor, service_session
+from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
     OwnerOffTeam,
@@ -84,6 +85,8 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "create_case": "cases.write",
     "add_finding_to_case": "cases.write",
     "update_case": "cases.write",
+    "restrict_case": "cases.write",
+    "change_case_readers": "cases.write",
     "add_resolution_step": "cases.write",
     "list_completed_hunts": "automation.read",
     "replay_hunt": "automation.read",
@@ -584,7 +587,8 @@ def update_case(
                 with service_session() as session:
                     require_owner_can_write(session, named)
                     require_case_owner_on_team(session, case, named, case_id)
-            except (OwnerCannotWrite, OwnerOffTeam) as exc:
+                    require_owner_reads(session, case, named)
+            except (OwnerCannotWrite, OwnerOffTeam, OwnerNotReader) as exc:
                 return {"error": exc.message, "code": exc.code}
     if add_note:
         notes = list(case.get("notes") or [])
@@ -621,6 +625,110 @@ def update_case(
                 closed_by=actor(),
             )
     return {"success": True, "case_id": case_id}
+
+
+# Restricting a case and removing readers (#4358). Both narrow, so any caller
+# holding cases.write may; widening (adding a reader, lifting) is a person's own
+# act in the console and is refused here by case_readers itself. A case the
+# caller can't read is not found.
+PERSON_IN_CONSOLE = "A person must do this in the console"
+
+
+def _restricter(session: Any) -> Any:
+    """Never a person acting directly. A chat turn or run acts for its bound person
+    (none when unattended); an MCP caller for its credential's person, or as
+    itself when that is a service account."""
+    from core.auth import principals
+    from core.cases.agent_closure import principal_for_username
+    from core.cases.case_readers import Restricter
+    from core.integrations.mcp.surface import current_caller
+    from core.storage.models import Principal
+
+    claims = current_claims()
+    if claims is not None:
+        return Restricter(principal_id=None, for_person=claims.person_id)
+    caller = current_caller()
+    principal = principal_for_username(session, caller) if caller else None
+    row = session.get(Principal, principal) if principal else None
+    if row is not None and row.kind == principals.SERVICE_ACCOUNT:
+        return Restricter(principal_id=principal, service_account=True)
+    return Restricter(principal_id=None, for_person=principal)
+
+
+def _named(session: Any, names: Optional[list]) -> Optional[list]:
+    """Principal ids for usernames or ids; one that names nobody is passed on as
+    sent, for case_readers to refuse."""
+    from core.cases.agent_closure import principal_for_username
+    from core.storage.models import Principal
+
+    if names is None:
+        return None
+    ids = []
+    for name in names:
+        text = str(name or "").strip()
+        if text and session.get(Principal, text) is None:
+            text = principal_for_username(session, text) or text
+        ids.append(text)
+    return ids
+
+
+def _change_readers(case_id: str, change: Callable[[Any, Any, Any], Any]) -> Args:
+    from core.auth.permissions import may_read_case
+    from core.cases.case_readers import PERSON_MUST, ReadersRefused
+    from core.storage.models import Case
+
+    if not _data().is_using_database():
+        return {"error": "Demo cases can't be restricted"}
+    try:
+        with service_session() as session:
+            case = session.get(Case, case_id, with_for_update=True)
+            if case is None or not may_read_case(case):
+                return {"error": f"Case {case_id} not found"}
+            readers = change(session, case, _restricter(session))
+    except ReadersRefused as exc:
+        # Chat and MCP have no direct person: say where it can be done.
+        message = exc.message.replace(
+            PERSON_MUST,
+            PERSON_MUST.replace("A person must do this", PERSON_IN_CONSOLE, 1),
+        )
+        return {"error": message, "code": exc.code}
+    return {"success": True, "case_id": case_id, "readers": readers}
+
+
+def restrict_case(*, case_id: str, readers: Optional[list] = None) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
+    from core.cases import case_readers
+
+    def change(session: Any, case: Any, actor: Any) -> Any:
+        # An unattended run names nobody of its own: only the defaults, then removals.
+        if readers is not None and actor.principal_id is None and not actor.for_person:
+            raise case_readers.ReadersRefused(
+                "A run no person started names no reader: restrict without a "
+                "list (the owner and task assignees), then remove names"
+            )
+        return case_readers.restrict(session, case, _named(session, readers), actor)
+
+    return _change_readers(case_id, change)
+
+
+def change_case_readers(
+    *, case_id: str, remove: Optional[list] = None, add: Optional[list] = None
+) -> Args:
+    if refusal := permission_refusal("cases.write"):
+        return refusal
+    from core.cases import case_readers
+
+    return _change_readers(
+        case_id,
+        lambda session, case, actor: case_readers.change_readers(
+            session,
+            case,
+            actor,
+            add=_named(session, add) or (),
+            remove=_named(session, remove) or (),
+        ),
+    )
 
 
 # One read-only bash command over a case's view, run in the agent-shell sidecar
@@ -971,12 +1079,17 @@ _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
 
 
 def list_pending_approvals(**args: Any) -> Any:
+    from core.response.approval_service import screen_actions
+
     limit = args.get("limit", 50)
-    return [asdict(action) for action in _approvals().list_pending_approvals()[:limit]]
+    actions = _approvals().list_pending_approvals()[:limit]
+    return [asdict(action) for action in screen_actions(actions)]
 
 
 def get_approval_action(*, action_id: str) -> Args:
-    return _decided(_approvals().get_action(action_id), "read")
+    from core.response.approval_service import screen_action
+
+    return _decided(screen_action(_approvals().get_action(action_id)), "read")
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it
@@ -985,8 +1098,11 @@ def get_approval_action(*, action_id: str) -> Args:
 def approve_action(*, action_id: str) -> Args:
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
+    from core.response.approval_service import may_decide
+
     action = _approvals().get_action(action_id)
-    if action is None:
+    # One on a case the caller can't read is not found, as on the route (#4359).
+    if action is None or not may_decide(action):
         return {"error": f"Action {action_id} was not found"}
     return {
         "action_id": action.action_id,
@@ -1043,6 +1159,8 @@ _OWNED = frozenset(
         "add_finding_to_case",
         "update_case",
         "add_resolution_step",
+        "restrict_case",
+        "change_case_readers",
         "get_technique_rollup",
         "list_completed_hunts",
         "replay_hunt",

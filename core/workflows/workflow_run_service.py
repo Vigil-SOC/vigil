@@ -5,11 +5,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.storage.connection import get_db_manager
-from core.storage.models import WorkflowRun, WorkflowRunPhase
+from core.storage.models import Case, WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
 from core.telemetry import get_meter
 from core.time import utcnow
@@ -48,6 +48,26 @@ def _as_naive_utc(value: datetime) -> datetime:
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _unreadable():
+    """A run on a restricted case the caller can't read (#4359). A run's case is
+    ``trigger_context.case_id``; the read rule is the case's own."""
+    from core.auth.permissions import case_read_clause
+
+    return exists().where(
+        Case.case_id == WorkflowRun.trigger_context["case_id"].astext,
+        ~case_read_clause(),
+    )
+
+
+def run_hidden(session, run_id: str) -> bool:
+    """Whether ``run_id`` is a run on a case the caller can't read."""
+    return bool(
+        session.execute(
+            select(exists().where(WorkflowRun.run_id == run_id, _unreadable()))
+        ).scalar()
+    )
 
 
 class WorkflowRunService:
@@ -260,9 +280,14 @@ class WorkflowRunService:
         finished_after: Optional[datetime] = None,
         limit: int = 50,
         offset: int = 0,
+        readable: bool = False,
+        hidden: Optional[List[int]] = None,
     ) -> List[Dict[str, Any]]:
         """List runs, newest first. Does not include the (potentially
         large) ``result_summary`` field — use ``get_run`` for detail.
+
+        ``readable`` leaves out runs on a case the caller can't read; pass a
+        list as ``hidden`` and how many matched but were left out is appended.
 
         ``workflow_source`` filters by how the run was started (e.g. "agent"
         for runs enqueued through the agent-runs API). ``run_kind`` matches
@@ -303,6 +328,15 @@ class WorkflowRunService:
                     stmt = stmt.where(
                         WorkflowRun.finished_at <= _as_naive_utc(finished_at)
                     )
+                if readable:
+                    if hidden is not None:
+                        left_out = stmt.where(_unreadable())
+                        hidden.append(
+                            session.execute(
+                                select(func.count()).select_from(left_out.subquery())
+                            ).scalar_one()
+                        )
+                    stmt = stmt.where(~_unreadable())
                 stmt = (
                     stmt.order_by(WorkflowRun.started_at.desc())
                     .limit(limit)
@@ -340,12 +374,16 @@ class WorkflowRunService:
             row = session.execute(stmt).scalars().first()
             return WorkflowRunSchema.dump_summary(row) if row else None
 
-    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get one run with the full ``result_summary`` attached."""
+    def get_run(self, run_id: str, readable: bool = False) -> Optional[Dict[str, Any]]:
+        """Get one run with the full ``result_summary`` attached. With
+        ``readable``, a run on a case the caller can't read is None."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
-                row = session.get(WorkflowRun, run_id)
+                stmt = select(WorkflowRun).where(WorkflowRun.run_id == run_id)
+                if readable:
+                    stmt = stmt.where(~_unreadable())
+                row = session.execute(stmt).scalars().first()
                 return WorkflowRunSchema.dump(row) if row else None
         except SQLAlchemyError as e:
             logger.warning("Error fetching workflow run %s: %s", run_id, e)

@@ -51,6 +51,8 @@ class SearchResults(BaseModel):
     case_exact: Optional[SearchHit] = None
     finding_exact: Optional[SearchHit] = None
     cases: List[SearchHit] = Field(default_factory=list)
+    # Restricted cases the caller may not read; never filtered by ``q`` (#4356).
+    cases_hidden: int = 0
     alerts: List[SearchHit] = Field(default_factory=list)
     workflows: List[SearchHit] = Field(default_factory=list)
     agents: List[SearchHit] = Field(default_factory=list)
@@ -74,8 +76,9 @@ def _alert(row: Optional[dict]) -> Optional[SearchHit]:
     )
 
 
-def _cases(q: str) -> List[SearchHit]:
-    """Title, description, comment and evidence matches, then IOC matches; each case once."""
+def _cases(q: str) -> tuple[List[SearchHit], int]:
+    """Title, description, comment and evidence matches, then IOC matches; each case
+    once. With how many restricted cases the caller may not read were left out."""
     case_search = CaseSearchService()
     text = case_search.search_full_text(q, limit=LIMIT)
     rows = text["cases"] + text["comments"] + text["evidence"]
@@ -94,7 +97,7 @@ def _cases(q: str) -> List[SearchHit]:
                 match_type=row.get("match_type"),
             )
         )
-    return hits
+    return hits, text["restricted_not_counted"]
 
 
 @router.get("", response_model=SearchResults)
@@ -114,6 +117,7 @@ def search(
     results = SearchResults()
     data_service = get_database_data_service()
     if "cases.read" in allowed:
+        # get_case reads through the rule: a restricted case it may not read is None.
         case = data_service.get_case(q)
         if case:
             results.case_exact = SearchHit(
@@ -127,7 +131,7 @@ def search(
     if len(q) < MIN_SEARCH_CHARS:
         return results
     if "cases.read" in allowed:
-        results.cases = _cases(q)
+        results.cases, results.cases_hidden = _cases(q)
     if "findings.read" in allowed:
         # Matches entity_context too, so a host, user or IP finds its alerts.
         found = data_service.get_findings(search_query=q, limit=LIMIT)

@@ -128,14 +128,18 @@ function DecisionCard({
   const [reason, setReason] = useState('')
   const caseId = item.case_id
   const asking = item.case_ids?.length ?? 0
-  const meta = [caseId && `Case ${caseId}`, asking > 1 && `requested by ${asking} cases`, item.reason]
-    .filter(Boolean)
-    .join(' · ')
+  // On a restricted case you can't read: only its readers see it or decide it.
+  const restricted = Boolean(item.restricted)
+  const meta = restricted
+    ? 'Only the readers of its case can see or decide it'
+    : [caseId && `Case ${caseId}`, asking > 1 && `requested by ${asking} cases`, item.waiting || item.reason]
+        .filter(Boolean)
+        .join(' · ')
   const ask = cardAsk(item)
   const advice = item.kind === 'recommendation'
   // Nothing executes a recommendation: no Approve, and Reject only clears one with no case to close.
-  const approvable = !answersOnCase(item) && !advice
-  const rejectable = approvable || (advice && !caseId)
+  const approvable = !restricted && !answersOnCase(item) && !advice
+  const rejectable = !restricted && (approvable || (advice && !caseId))
   const linkClass = answersOnCase(item) || advice ? 'home-btn primary' : 'home-btn ghost'
 
   return (

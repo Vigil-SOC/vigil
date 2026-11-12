@@ -34,7 +34,7 @@ import { CloseCaseDialog, type ClosureCategory } from './ClosureFields'
 import { CaseSide } from './CaseSide'
 import { caseCitations, evidenceInNote } from './caseCitations'
 import type { Citation } from '../../shell/citations'
-import { errorDetail, runLabel, timeLeft, when } from './caseFormat'
+import { errorDetail, OWNER_CANNOT_READ_NOTE, runLabel, timeLeft, when } from './caseFormat'
 import {
   addedBy,
   agentRows,
@@ -270,6 +270,7 @@ function fromRun(cp: OpenCheckpointRow, caseId: string, runId: string | null): N
     checkpoint_id: cp.checkpoint_id,
     checkpoint_class: cp.checkpoint_class,
     hypotheses: cp.hypotheses,
+    restricted: false,
   }
 }
 
@@ -1718,6 +1719,7 @@ export function CasePage({
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsShown > 0} />
               {reason && <span className="case-reason clamp2" title={reason}>{reason}</span>}
+              {c.ownerCannotRead && <span className="owner-note">{OWNER_CANNOT_READ_NOTE}</span>}
             </div>
             <div className="dh-meta">
               {latest && <span>{workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id}</span>}

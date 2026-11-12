@@ -388,6 +388,9 @@ export default function CommandBar({
     if (last?.section === row.section) last.items.push({ row, index })
     else groups.push({ section: row.section, items: [{ row, index }] })
   })
+  // Restricted cases the person may not read: counted, never listed, whatever matched.
+  const casesHidden = !line && query.trim() ? hits?.cases_hidden ?? 0 : 0
+  const hiddenNote = casesHidden > 0 ? ` · ${casesHidden.toLocaleString()} hidden` : ''
 
   return (
     <div
@@ -520,9 +523,15 @@ export default function CommandBar({
           )}
           <div className="vg-command-scroll" id="vg-command-results" role="listbox">
             {rows.length === 0 && <div className="vg-command-empty">{line?.kind === 'unknown' ? `No command ${line.token}. Tab asks Vigil.` : 'No matches'}</div>}
+            {hiddenNote && !groups.some((group) => group.section === 'Cases') && (
+              <div className="vg-command-section">Cases{hiddenNote}</div>
+            )}
             {groups.map((group) => (
               <div key={group.section} role="group" aria-label={group.section}>
-                <div className="vg-command-section" aria-hidden="true">{group.section}</div>
+                <div className="vg-command-section" aria-hidden="true">
+                  {group.section}
+                  {group.section === 'Cases' && hiddenNote}
+                </div>
                 {group.items.map(({ row, index }) => {
                   const on = index === highlighted
                   return (

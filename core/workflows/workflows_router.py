@@ -678,7 +678,7 @@ async def get_workflow_run(
     (#128). For one-shot runs with no phase rows, ``phases`` is just
     an empty list.
     """
-    row = run_service.get_run(run_id)
+    row = run_service.get_run(run_id, readable=True)
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
@@ -708,11 +708,11 @@ async def cancel_workflow_run(
     Rejects any pending approval action on the run and finalises it
     as ``cancelled`` with the supplied reason.
     """
-    from core.response.approval_service import ActionStatus
+    from core.response.approval_service import ActionNotFound, ActionStatus
     from core.workflows.run_cancel import stop_run
     from core.workflows.run_resume import resume_run
 
-    run = run_service.get_run(run_id)
+    run = run_service.get_run(run_id, readable=True)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     if run.get("status") not in IN_FLIGHT_STATUSES:
@@ -726,7 +726,8 @@ async def cancel_workflow_run(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
     for action in pending:
-        with suppress(AlreadyDecided):
+        # One also on a case the caller can't read stays for its readers.
+        with suppress(AlreadyDecided, ActionNotFound):
             approval_service.reject_action(
                 action.action_id,
                 reason=request.reason,
@@ -771,7 +772,7 @@ async def narrate_workflow_run(
     """
     from core.agents.projections import write_narrative
 
-    if not run_service.get_run(run_id):
+    if not run_service.get_run(run_id, readable=True):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     if run_id in _narrating:
         raise HTTPException(
@@ -803,7 +804,7 @@ async def replay_workflow_run(
     side, so it is answered only when an operator asks. Serve decides what is
     hunt-like; a run with nothing to replay is a 404 here too.
     """
-    if not run_service.get_run(run_id):
+    if not run_service.get_run(run_id, readable=True):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     try:
         report = await read_replay(run_id, decision_id)
@@ -828,7 +829,7 @@ async def read_workflow_run_call(
     What a reader opens from the Checked tab, or from an evidence row's source,
     to check a record against the query it came from.
     """
-    if not run_service.get_run(run_id):
+    if not run_service.get_run(run_id, readable=True):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     try:
         call = await read_call(run_id, ref)
@@ -851,7 +852,7 @@ async def verify_workflow_run(
 
     Python forwards the result and does not re-check the chain.
     """
-    if not run_service.get_run(run_id):
+    if not run_service.get_run(run_id, readable=True):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     try:
         result = await read_verify(run_id)
@@ -894,7 +895,7 @@ async def delete_workflow_run(
     the agents did. A run still in flight is refused — cancel it first,
     so nothing is hidden while a worker is still writing to it.
     """
-    run = run_service.get_run(run_id)
+    run = run_service.get_run(run_id, readable=True)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     if run.get("status") in IN_FLIGHT_STATUSES:
@@ -924,11 +925,19 @@ async def list_workflow_runs(
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
 
+    hidden: List[int] = []
     runs = run_service.list_runs(
         workflow_id=workflow_id,
         status=status,
         limit=limit,
         offset=offset,
+        readable=True,
+        hidden=hidden,
     )
     _stamp_rated_status(run_service, runs)
-    return {"workflow_id": workflow_id, "runs": runs}
+    # Runs on a restricted case the caller can't read: left out, and counted.
+    return {
+        "workflow_id": workflow_id,
+        "runs": runs,
+        "hidden": hidden[0] if hidden else 0,
+    }

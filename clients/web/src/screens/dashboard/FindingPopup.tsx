@@ -365,7 +365,7 @@ export default function FindingPopup({
             <span className="k">Time</span><span className="v">{f.time}</span>
             <span className="k" style={{ alignSelf: 'center' }}>Status</span>
             <span className="v flex items-center gap-2 flex-wrap">
-              <span>{stateWord(raw.terminal_state, raw.case_id)}</span>
+              <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
               <button type="button" className="btn ghost" onClick={toggleDismiss} disabled={acting}>
                 {dismissed ? 'Undo' : 'Dismiss'}
               </button>

@@ -651,6 +651,52 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "restrict_case",
+        "description": (
+            "Restrict an open case so only its readers can open it. Readers are "
+            "usernames or principal ids, taken as the whole list; leave readers out "
+            "for the default list (the owner, the task assignees, and the person "
+            "you act for). An empty list is refused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "The case ID"},
+                "readers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Usernames or principal ids allowed to read the case",
+                },
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
+        "name": "change_case_readers",
+        "description": (
+            "Remove readers from a restricted case. The list may not end empty. "
+            "Adding readers or lifting a restriction widens who can read the case: "
+            "only a person can do that, in the console, and it is refused here."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "The case ID"},
+                "remove": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Usernames or principal ids to remove",
+                },
+                "add": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Refused: a person adds readers in the console",
+                },
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
         "name": "add_resolution_step",
         "description": "Add a resolution step to a case documenting a containment, eradication, or recovery action taken or recommended.",
         "input_schema": {

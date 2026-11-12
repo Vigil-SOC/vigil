@@ -820,7 +820,14 @@ const live = (u: User) => u.status === 'active' || u.status === 'locked'
 
 /** What the account owns that someone has to pick up, linked to Cases filtered to it. */
 function OpenCases({ user }: { user: User }) {
-  if (!user.open_cases) return <span className="text-tx-3">They own no open cases.</span>
+  const hidden = user.open_cases_hidden ?? 0
+  // restricted cases the viewer can't read: counted, never linked
+  const hiddenNote = hidden > 0 && ` ${hidden} more restricted ${hidden === 1 ? 'case is' : 'cases are'} hidden.`
+  if (!user.open_cases) {
+    return hidden > 0
+      ? <span>They own no open cases you can see.{hiddenNote}</span>
+      : <span className="text-tx-3">They own no open cases.</span>
+  }
   const n = user.open_cases
   return (
     <span>
@@ -828,7 +835,7 @@ function OpenCases({ user }: { user: User }) {
       <Link className="underline" to={`/cases?owner=${encodeURIComponent(user.username)}`}>
         {n} open case{n === 1 ? '' : 's'}
       </Link>
-      . Reassign {n === 1 ? 'it' : 'them'}.
+      . Reassign {n === 1 ? 'it' : 'them'}.{hiddenNote}
     </span>
   )
 }

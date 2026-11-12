@@ -52,6 +52,8 @@ export interface Finding {
   status: TerminalState | null
   /** the case the state reads, for "Case NNNN" */
   caseId?: string | null
+  /** in a restricted case the reader can't see, so there is no caseId */
+  caseRestricted?: boolean
   /** entity_context keys the fixed fields don't cover. Sources disagree about
    *  these (CrowdStrike sends device_id and no dest_ips, Splunk the reverse), so
    *  they are carried through and rendered as columns derived from the rows. */
@@ -93,6 +95,8 @@ export interface CaseRow {
   ownerState?: 'current' | 'not_current' | null
   /** False when the owner is not on the case's team. Null when unowned or unknown. */
   ownerOnTeam?: boolean | null
+  /** True when the case is restricted and its owner isn't a reader. */
+  ownerCannotRead?: boolean | null
   teamId?: string
   teamName?: string
   findings: number

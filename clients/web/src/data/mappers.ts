@@ -35,6 +35,8 @@ export interface ApiFinding {
   /** core.findings.alert_outcomes: the one state the finding is in, and its case */
   terminal_state?: string | null
   case_id?: string | null
+  /** in a restricted case the reader can't see: case_id is withheld */
+  case_restricted?: boolean
   /** open-ended on purpose: the key set varies by data source, so anything
    *  beyond the known names is carried through to `Finding.extra` */
   entity_context?: {
@@ -105,6 +107,7 @@ interface QueueCase {
   assignee?: string | null
   owner_state?: 'current' | 'not_current' | null
   owner_on_team?: boolean | null
+  owner_cannot_read?: boolean | null
   team?: { id?: string | null; name?: string | null } | null
   combined_state?: string | null
   finding_ids?: string[] | null
@@ -173,6 +176,7 @@ export function mapQueueCase(c: QueueCase): CaseRow {
     ownerStale: c.owner_state === 'not_current',
     ownerState: c.owner_state,
     ownerOnTeam: c.owner_on_team,
+    ownerCannotRead: c.owner_cannot_read,
     teamId: c.team?.id || undefined,
     teamName: c.team?.name || undefined,
     findings: c.findings_count ?? c.finding_ids?.length ?? 0,
@@ -270,6 +274,7 @@ export function mapApiFinding(f: ApiFinding): Finding {
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
     status: (f.terminal_state as TerminalState | null | undefined) ?? null,
     caseId: f.case_id ?? null,
+    caseRestricted: f.case_restricted ?? false,
     extra: extraEntities(ec),
     excludedIps: f.excluded_ips ?? [],
   }

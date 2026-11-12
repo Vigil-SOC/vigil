@@ -31,6 +31,7 @@ from core.cases import case_journal_service, case_readers, case_records_service
 from core.cases.assignee import (
     owner_states,
     require_current_owner,
+    require_owner_reads,
     resolve_assignee,
     with_owner_state,
 )
@@ -840,6 +841,7 @@ def update_case(
         if named := newly_set_owner(stored_owner, updates["assignee"]):
             require_owner_can_write(session, named)
             require_case_owner_on_team(session, case, named, case_id)
+            require_owner_reads(session, case, named)
     if case_data.notes is not None:
         updates["notes"] = [
             *(case.get("notes") or []),
@@ -1229,7 +1231,7 @@ def merge_cases(
     # A missing case surfaces as NotFoundError, which the shared handler
     # renders as a 404 naming which of the two it was.
     moved_findings = CaseWorkflowService().merge_cases(
-        case_id, data.source_case_id, current_user.username
+        case_id, data.source_case_id, current_user.username, current_user
     )
 
     result_case = data_service.get_case(case_id)

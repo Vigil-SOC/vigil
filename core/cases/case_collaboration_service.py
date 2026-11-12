@@ -13,11 +13,14 @@ from sqlalchemy.orm import Session
 from core.audit import trail
 from core.auth.permissions import CaseReader, may_read_case
 from core.cases import case_trail
-from core.cases.agent_closure import principal_for_username
-from core.cases.case_notification_service import CaseNotificationService
+from core.cases.case_notification_service import (
+    CaseNotificationService,
+    may_receive,
+    principal_of,
+)
 from core.cases.case_records_service import readable_case
 from core.exceptions import NotFoundError, SOCError
-from core.storage.models import CaseAuditLog, CaseComment, CaseWatcher, User
+from core.storage.models import Case, CaseAuditLog, CaseComment, CaseWatcher
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -85,13 +88,29 @@ def _watcher_audit(
     )
 
 
-def _principal_of(session: Session, user_id: str) -> Optional[str]:
-    """A watcher is named by username or by account id."""
-    principal = principal_for_username(session, user_id)
-    if principal is None:
-        row = session.get(User, user_id)
-        principal = row.principal_id if row is not None else None
-    return principal
+_principal_of = principal_of
+
+
+def remove_watchers_who_cannot_read(session: Session, case: Case) -> List[str]:
+    """Remove every watcher who can't read ``case``, one ``case.watcher.remove``
+    entry each, by whoever is bound. For a restrict, a narrowing, or a merge."""
+    from core.auth.permissions import case_restricted
+
+    if not case_restricted(case):
+        return []
+    removed: List[str] = []
+    watchers = (
+        session.query(CaseWatcher).filter(CaseWatcher.case_id == case.case_id).all()
+    )
+    for watcher in watchers:
+        if may_receive(session, case, watcher.user_id):
+            continue
+        session.delete(watcher)
+        _watcher_audit(
+            session, case_trail.WATCHER_REMOVE, case.case_id, watcher.user_id, None
+        )
+        removed.append(watcher.user_id)
+    return removed
 
 
 class WatcherRefused(SOCError):

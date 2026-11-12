@@ -1996,7 +1996,7 @@ export interface paths {
          *         ioc_type: Optional IOC type filter
          *
          *     Returns:
-         *         Cases containing the IOC
+         *         Cases containing the IOC, and how many restricted cases were hidden
          */
         get: operations["get_api_cases_search_by-ioc"];
         put?: never;
@@ -6583,7 +6583,8 @@ export interface paths {
          *         breached_only: Only return breached cases
          *
          *     Returns:
-         *         List of cases
+         *         List of cases, leaving out restricted cases the caller may not read;
+         *         ``restricted_not_counted`` says how many there are (#4356)
          */
         get: operations["get_api_sla-policies_policy_id_cases"];
         put?: never;
@@ -9776,6 +9777,11 @@ export interface components {
             breached_cases?: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
         };
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
@@ -9802,9 +9808,19 @@ export interface components {
         ByPriorityResponse: {
             /** Priority Breakdown */
             priority_breakdown?: components["schemas"]["PriorityBreakdownRow"][];
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
         };
         /** ByStatusResponse */
         ByStatusResponse: {
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
@@ -9988,6 +10004,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Owner Cannot Read */
+            owner_cannot_read?: boolean | null;
             /** Owner On Team */
             owner_on_team?: boolean | null;
             /** Owner State */
@@ -10325,6 +10343,11 @@ export interface components {
             };
             /** Resolved Cases */
             resolved_cases: number;
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Status Breakdown */
             status_breakdown?: {
                 [key: string]: number;
@@ -10433,6 +10456,8 @@ export interface components {
              * @default false
              */
             needs_you: boolean;
+            /** Owner Cannot Read */
+            owner_cannot_read?: boolean | null;
             /** Owner On Team */
             owner_on_team?: boolean | null;
             /** Owner State */
@@ -10831,6 +10856,11 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Results */
             results: components["schemas"]["CaseSearchResult"][];
             /** Total */
@@ -11834,6 +11864,11 @@ export interface components {
             anomaly_score?: number | null;
             /** Case Id */
             case_id?: string | null;
+            /**
+             * Case Restricted
+             * @default false
+             */
+            case_restricted: boolean;
             /** Cluster Id */
             cluster_id?: string | null;
             /** Created At */
@@ -12761,6 +12796,11 @@ export interface components {
             mttd_by_priority?: {
                 [key: string]: number | null;
             };
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Total Cases */
             total_cases: number;
         };
@@ -12774,6 +12814,11 @@ export interface components {
             mttr_by_priority?: {
                 [key: string]: number | null;
             };
+            /**
+             * Restricted Not Counted
+             * @default 0
+             */
+            restricted_not_counted: number;
             /** Total Cases */
             total_cases: number;
             /** Trend Data */
@@ -12839,6 +12884,12 @@ export interface components {
             /** Reason */
             reason: string;
             /**
+             * Restricted
+             * @description An item on a restricted case the caller can't read: no case, run or content.
+             * @default false
+             */
+            restricted: boolean;
+            /**
              * Reversibility
              * @enum {string}
              */
@@ -12849,6 +12900,11 @@ export interface components {
             source_id: string;
             /** Title */
             title: string;
+            /**
+             * Waiting
+             * @description Why it waits: no reader of its restricted case can approve it.
+             */
+            waiting?: string | null;
         };
         /** NeedsYouResponse */
         NeedsYouResponse: {
@@ -13136,6 +13192,12 @@ export interface components {
             rejection_reason?: string | null;
             /** Requires Approval */
             requires_approval?: boolean | null;
+            /**
+             * Restricted
+             * @description An action on a restricted case the caller can't read: only its id, state and times are shown.
+             * @default false
+             */
+            restricted: boolean;
             /** Reversibility */
             reversibility?: string | null;
             /** Status */
@@ -13144,6 +13206,11 @@ export interface components {
             target?: unknown | null;
             /** Title */
             title?: string | null;
+            /**
+             * Waiting
+             * @description Why a pending action waits: no reader of its restricted case can approve it.
+             */
+            waiting?: string | null;
             /** Workflow Phase Id */
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
@@ -13718,6 +13785,12 @@ export interface components {
              * @description Number of runs in this page.
              */
             count: number;
+            /**
+             * Hidden
+             * @description Runs that matched but are on a restricted case the caller can't read, left out.
+             * @default 0
+             */
+            hidden: number;
             /** Runs */
             runs: components["schemas"]["RunListItem"][];
         };
@@ -13977,6 +14050,11 @@ export interface components {
             case_exact?: components["schemas"]["SearchHit"] | null;
             /** Cases */
             cases?: components["schemas"]["SearchHit"][];
+            /**
+             * Cases Hidden
+             * @default 0
+             */
+            cases_hidden: number;
             finding_exact?: components["schemas"]["SearchHit"] | null;
             /** Skills */
             skills?: components["schemas"]["SearchHit"][];

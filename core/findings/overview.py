@@ -14,6 +14,7 @@ from core.findings.alert_outcomes import (
     finding_states,
     terminal_states_today,
     ttl_expired_alerts,
+    unreadable_cases,
 )
 from core.findings.arrival_counts import arrivals_today_by_source
 from core.findings.source_evidence import project_finding_source_evidence_for_list
@@ -114,11 +115,16 @@ def _expired_among(states: list[dict]) -> int:
 
 def _outcome_nodes(states: list[dict], expired: int = 0) -> list[dict]:
     counts = Counter(row["terminal_state"] for row in states)
+    # Restricted cases the reader may not read are not counted as cases (#4356);
+    # their alerts still are, as alerts are shared.
+    hidden = unreadable_cases(row.get("case_id") for row in states)
     cases = {
         state: {
             row["case_id"]
             for row in states
-            if row["terminal_state"] == state and row.get("case_id")
+            if row["terminal_state"] == state
+            and row.get("case_id")
+            and row["case_id"] not in hidden
         }
         for state in _CASE_STATES
     }
@@ -272,6 +278,7 @@ def _feed_items(load) -> list[dict]:
                 }
             )
     states = finding_states([row["finding_id"] for row in staged])
+    hidden = unreadable_cases(case_id for _, case_id in states.values())
     link_configs: dict[str, dict[str, str]] = {}
     items = []
     for row in staged:
@@ -289,7 +296,8 @@ def _feed_items(load) -> list[dict]:
                     },
                     configs=link_configs,
                 ),
-                "case_id": case_id,
+                "case_id": None if case_id in hidden else case_id,
+                "case_restricted": case_id in hidden,
                 "terminal_state": state,
             }
         )

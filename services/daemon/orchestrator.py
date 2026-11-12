@@ -2175,6 +2175,14 @@ class Orchestrator:
                     .first()
                 )
                 case_id = inv.case_id if inv else None
+                from core.cases.case_notification_service import may_receive
+                from core.storage.models import Case
+
+                # A restricted case's notices go only to its readers.
+                if case_id and not may_receive(
+                    session, session.get(Case, case_id), "admin"
+                ):
+                    return
 
                 notif = CaseNotification(
                     case_id=case_id,

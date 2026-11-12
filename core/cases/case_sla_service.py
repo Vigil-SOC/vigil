@@ -631,7 +631,8 @@ class CaseSLAService:
                     case = (
                         session.query(Case).filter(Case.case_id == sla.case_id).first()
                     )
-                    if case:
+                    # A restricted case the reader may not read is left out (#4356).
+                    if case and may_read_case(case):
                         breached_cases.append(
                             {
                                 "case_id": case.case_id,

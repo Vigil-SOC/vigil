@@ -6785,14 +6785,14 @@
    .tq-table {
       table-layout: fixed;
       /* the fixed tracks plus Alert's floor: below it the table scrolls in its card */
-      --tq-tracks: 952px;
+      --tq-tracks: 1016px;
       min-width: calc(var(--tq-tracks) + var(--col-main-min));
    }
 
    /* Source, Arrived, Picked up in and Intake score (360px) step aside while Ask Vigil is docked */
    @container main (max-width: 1399px) {
       .main.chat-open .tq-table {
-         --tq-tracks: 592px;
+         --tq-tracks: 656px;
       }
    }
 
@@ -6841,12 +6841,13 @@
    .tq-table thead th:nth-child(5) { width: 84px; }
    .tq-table thead th:nth-child(6) { width: 104px; }
    .tq-table thead th:nth-child(7) { width: 84px; }
-   .tq-table thead th:nth-child(8) { width: 140px; }
+   /* room for the longest pill, "Added to a restricted case" */
+   .tq-table thead th:nth-child(8) { width: 204px; }
    .tq-table thead th:nth-child(9) { width: 200px; }
 
    /* at full tier, room for what the compact widths cut: "26 Oct 12:40", "561 h 32 min", "case-… (new)" */
    @container main (min-width: 1400px) {
-      .tq-table { --tq-tracks: 1020px; }
+      .tq-table { --tq-tracks: 1084px; }
       .tq-table thead th:nth-child(6) { width: 116px; }
       .tq-table thead th:nth-child(7) { width: 108px; }
       .tq-table thead th:nth-child(9) { width: 232px; }

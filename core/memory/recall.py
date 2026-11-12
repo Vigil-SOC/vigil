@@ -118,25 +118,40 @@ def _order_by(alias: str) -> str:
 # The outer ORDER BY is not decoration. Without it the join order is Postgres's
 # to choose, and the dedup in _page -- that same Verdict, arriving twice -- would
 # keep whichever copy came first.
-def _statement(table: str, predicate: str, matches_any: str, columns: str) -> Any:
+def _statement(
+    table: str, predicate: str, matches_any: str, columns: str, scoped: bool = True
+) -> Any:
+    shown = f" AND {_OFFERED}" if scoped else ""
     return text(f"""
         SELECT m.total AS matched_total, {columns}
         FROM unnest(CAST(:keys AS text[])) AS k(key)
         CROSS JOIN LATERAL (
             SELECT count(*) AS total
             FROM {table} AS c
-            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of
+            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of{shown.format(alias="c")}
         ) AS m
         CROSS JOIN LATERAL (
             SELECT *
             FROM {table} AS p
-            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of
+            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}
             ORDER BY {_order_by("p")}
             LIMIT :per_key_cap
         ) AS r
         ORDER BY {_order_by("r")}, k.key ASC
         """).bindparams(bindparam("keys", type_=PGArray(SAText)))
 
+
+# Restricted cases (#4358): an entry keyed to a case that names any reader is
+# offered only to a read on that same case (``:own_case``). Not the read rule:
+# a built-in reader is no exception, and memory not keyed to a case is unaffected.
+# Applied to the total too, so the dropped count says nothing about such entries.
+_OFFERED = """NOT ({alias}.investigation_kind = 'case'
+    AND {alias}.investigation_id IS DISTINCT FROM CAST(:own_case AS text)
+    AND EXISTS (
+        SELECT 1 FROM cases AS rc
+        WHERE rc.case_id = {alias}.investigation_id
+          AND (coalesce(cardinality(rc.reader_principal_ids), 0) > 0
+               OR coalesce(cardinality(rc.reader_team_ids), 0) > 0)))"""
 
 # Sightings carry the key on a column. Verdicts and Gaps name their subjects in
 # an array -- typically one to three entities, not the 38 to 76 their evidence
@@ -175,7 +190,10 @@ _QUERIES = {
         "episodic_verdicts", _BY_SUBJECT, _ANY_SUBJECT, _VERDICT_COLUMNS
     ),
     "gaps": _statement("episodic_gaps", _BY_SUBJECT, _ANY_SUBJECT, _GAP_COLUMNS),
-    "notes": _statement("episodic_notes", _BY_KEY, _ANY_KEY, _NOTE_COLUMNS),
+    # Notes are an analyst's, keyed to no case: install-wide (a stated limit).
+    "notes": _statement(
+        "episodic_notes", _BY_KEY, _ANY_KEY, _NOTE_COLUMNS, scoped=False
+    ),
 }
 
 # Fetched for the Verdicts that survived both caps rather than joined into the
@@ -473,9 +491,13 @@ def recall(
     caller_kind: str = UNKNOWN_CALLER,
     caller_id: str = UNKNOWN_CALLER,
     caller_principal_id: Optional[str] = None,
+    own_case: Optional[str] = None,
     session: Optional[Session] = None,
 ) -> Dict[str, Any]:
     """What is remembered about these entities, and a log row saying it was asked.
+
+    ``own_case`` is the case this read is for: its memory is offered even when it
+    is restricted, and no other restricted case's is (#4358).
 
     Unknown keys are empty lists and zeros rather than an error: an entity nobody
     has investigated and an entity that does not exist are the same answer, and
@@ -505,6 +527,7 @@ def recall(
                 "keys": normalised,
                 "as_of": moment,
                 "per_key_cap": RECALL_PER_KEY_CAP,
+                "own_case": own_case,
             }
             pages: Dict[str, List[_Selected]] = {}
             for kind in KINDS:
@@ -523,13 +546,26 @@ def recall(
     return result
 
 
-def recall_entity(args: Args) -> Dict[str, Any]:
+def _run_case(claims: Any) -> Optional[str]:
+    """The case the calling run was started on, if any."""
+    if claims is None or not claims.run_id:
+        return None
+    from core.cases.case_access import run_case_id
+
+    with unit_of_work() as db:
+        return run_case_id(db, claims.run_id)
+
+
+def recall_entity(args: Args, own_case: Optional[str] = None) -> Dict[str, Any]:
     """The backend tool, taking an args mapping rather than keyword parameters.
 
     ``tools_router._bounded`` injects ``limit`` into every backend call, so an
     explicit signature would answer ``invalid_args`` to every recall. That bound
     is ignored here on purpose -- the caps are memory's own, and a row budget
     meant for a page of findings is not one for an entity's history.
+
+    ``own_case`` is never read from ``args``: a model could name any case. The
+    case shell passes its case; a run's is the case it was started on.
     """
     supplied = dict(args or {})
     for ignored in RECALL_IGNORED_ARGS:
@@ -561,6 +597,7 @@ def recall_entity(args: Args) -> Dict[str, Any]:
         caller_kind=str(supplied.get("caller_kind") or UNKNOWN_CALLER),
         caller_id=str(supplied.get("caller_id") or UNKNOWN_CALLER),
         caller_principal_id=principal,
+        own_case=own_case or _run_case(claims),
     )
 
 

@@ -64,7 +64,8 @@ def notify(
     mail_body: Optional[str] = None,
     *,
     session: Optional[Session] = None,
-) -> int:
+    about_case: Optional[str] = None,
+) -> Optional[int]:
     """Writes a notice for ``principal_id`` and returns its id.
 
     With no ``session`` the row is committed, then emailed on this thread.
@@ -74,8 +75,12 @@ def notify(
     or token in ``message``: it is emailed and logged by the console mail
     backend in dev mode. Keep the ``link`` in the metadata. ``mail_body``
     is what the email says when it should say more than the stored
-    ``message`` (which erasure can later need to blank)."""
+    ``message`` (which erasure can later need to blank). A notice
+    ``about_case`` goes only to a reader of that case: anyone else gets nothing
+    and None comes back (#4357)."""
     if session is not None:
+        if not _reads(session, principal_id, about_case):
+            return None
         return _insert(
             session,
             principal_id,
@@ -88,6 +93,8 @@ def notify(
             mail_body,
         )
     with get_db_manager().session_scope() as owned:
+        if not _reads(owned, principal_id, about_case):
+            return None
         notice_id = _insert(
             owned,
             principal_id,
@@ -101,6 +108,16 @@ def notify(
         )
     send_notices([notice_id])
     return notice_id
+
+
+def _reads(session: Session, principal_id: str, case_id: Optional[str]) -> bool:
+    if case_id is None:
+        return True
+    from core.storage import case_read_hook
+    from core.storage.models import Case
+
+    case = session.get(Case, case_id)
+    return case is None or case_read_hook.may_read_as(case, principal_id)
 
 
 def _active_email(session: Session, principal_id: str) -> Optional[str]:

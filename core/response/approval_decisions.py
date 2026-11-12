@@ -4,7 +4,12 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from core.response.approval_service import ApprovalService, PendingAction, case_ids_for
+from core.response.approval_service import (  # noqa: F401 (ActionNotFound re-exported)
+    ActionNotFound,
+    ApprovalService,
+    PendingAction,
+    case_ids_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +66,9 @@ async def rollout_decided(
         logger.exception("rollout answer on %s not carried out", action.action_id)
 
 
-class ActionNotFound(LookupError):
-    pass
-
-
 # The whole of a rejection, for the route and the chat/MCP tool alike: the row,
 # the case trail, a rollout's answer, and the paused run it was holding.
-# ActionNotFound for no such action; AlreadyDecided passes through; None when the
+# ActionNotFound for no such action, or one on a case the caller can't read; AlreadyDecided passes through; None when the
 # row would not update. Returns (action, resume_result).
 async def decide_reject(
     service: ApprovalService,
