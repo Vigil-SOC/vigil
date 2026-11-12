@@ -11,8 +11,12 @@ from __future__ import annotations
 import functools
 import importlib.util
 import logging
+import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
@@ -24,7 +28,8 @@ from core.auth.current_user import get_current_user
 from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.auth.tool_principal import current_claims
 from core.integrations.mcp.surface import current_caller
-from core.storage.models import User
+from core.storage import case_read_hook
+from core.storage.models import Case, User
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -490,3 +495,108 @@ def permission_refusal(permission: str) -> Optional[dict[str, str]]:
         return None
     logger.warning("%s refused: %s required", caller, permission)
     return {"error": f"{caller} may not do this: {permission} required"}
+
+
+# ---- Restricted cases (#4352, #4354) --------------------------------------
+# The one read rule. A caller may read a case when it is open (no reader named),
+# or its bound principal is on the reader list, or it is an unattended run with
+# no person bound: the one built-in reader class (decision A). A person's token
+# and an agent acting for a person read as that person. Nothing bound reads no
+# restricted case. No Admin bypass: DEV_MODE takes the same test as its dev user.
+
+
+@dataclass(frozen=True)
+class CaseReader:
+    principal_id: Optional[str] = None
+    builtin: bool = False
+
+
+_builtin_reader: ContextVar[bool] = ContextVar("vigil_builtin_reader", default=False)
+
+
+@contextmanager
+def builtin_reader() -> Iterator[None]:
+    """Vigil's own unattended work with no run claims (intake, the agent layer's
+    run bridge): the built-in reader class, as a run with no person is."""
+    token = _builtin_reader.set(True)
+    try:
+        yield
+    finally:
+        _builtin_reader.reset(token)
+
+
+async def builtin_reader_request() -> None:
+    """Router dependency: this whole request is Vigil's own unattended work.
+
+    Async, so the flag is set in the request's own task and its endpoint (or the
+    threadpool copy of that context) sees it; the task ends with the request.
+    """
+    _builtin_reader.set(True)
+
+
+def current_case_reader() -> CaseReader:
+    """Who is reading, from the context the permission check already reads."""
+    from core.cases.agent_closure import current_http_actor, principal_for_username
+
+    claims = current_claims()
+    if claims is not None:
+        return CaseReader(claims.person_id, builtin=not claims.person_id)
+    if _builtin_reader.get():
+        return CaseReader(builtin=True)
+    caller = current_caller()
+    if caller:
+        with unit_of_work() as session:
+            return CaseReader(principal_for_username(session, caller))
+    actor = current_http_actor()
+    if actor is not None:
+        return CaseReader(actor.principal_id)
+    return CaseReader(current_user_module.dev_principal.get())
+
+
+def _read_terms(reader: CaseReader, is_open: Any, named: Callable[[str], Any]):
+    """The definition, once. ``None`` reads every case; else any one term."""
+    if reader.builtin:
+        return None
+    if reader.principal_id is None:
+        return [is_open]
+    return [is_open, named(reader.principal_id)]
+
+
+def case_restricted(case: Any) -> bool:
+    """Whether a case row names any reader."""
+    return bool(
+        getattr(case, "reader_principal_ids", None)
+        or getattr(case, "reader_team_ids", None)
+    )
+
+
+def may_read_case(case: Any, reader: Optional[CaseReader] = None) -> bool:
+    """The single-record test, on a ``Case`` row."""
+    terms = _read_terms(
+        reader or current_case_reader(),
+        not case_restricted(case),
+        lambda principal: principal in (case.reader_principal_ids or []),
+    )
+    return terms is None or any(terms)
+
+
+def case_read_clause(reader: Optional[CaseReader] = None):
+    """The same test as a SQL clause on ``cases``."""
+    from sqlalchemy import and_, false, func, or_, true
+
+    is_open = and_(
+        func.coalesce(func.cardinality(Case.reader_principal_ids), 0) == 0,
+        func.coalesce(func.cardinality(Case.reader_team_ids), 0) == 0,
+    )
+    terms = _read_terms(
+        reader or current_case_reader(),
+        is_open,
+        # Never NULL, so the negation (cases left out) is exact too.
+        lambda principal: func.coalesce(
+            Case.reader_principal_ids.any(principal), false()
+        ),
+    )
+    return true() if terms is None else or_(*terms)
+
+
+case_read_hook.install(sys.modules[__name__])

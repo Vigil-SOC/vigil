@@ -779,7 +779,7 @@
         "type": "object"
       },
       "CaseCreate": {
-        "description": "Case creation request.",
+        "description": "Case creation request.\n\n``restricted`` (or a ``readers`` list) creates the case restricted in the same\ninsert, so its content is never open. ``readers`` are principal ids; left\nout, the list is the defaults (you, when you are a person or service account).",
         "properties": {
           "description": {
             "default": "",
@@ -797,6 +797,31 @@
             "default": "medium",
             "title": "Priority",
             "type": "string"
+          },
+          "readers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readers"
+          },
+          "restricted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restricted"
           },
           "status": {
             "default": "open",
@@ -967,11 +992,30 @@
             ],
             "title": "Priority"
           },
+          "reader_teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader Teams",
+            "type": "array"
+          },
+          "readers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
           "resolution_steps": {
             "default": [],
             "items": {},
             "title": "Resolution Steps",
             "type": "array"
+          },
+          "restricted": {
+            "readOnly": true,
+            "title": "Restricted",
+            "type": "boolean"
           },
           "status": {
             "anyOf": [
@@ -1033,7 +1077,8 @@
         },
         "required": [
           "combined_state",
-          "owner_state"
+          "owner_state",
+          "restricted"
         ],
         "title": "CaseDetailResponse",
         "type": "object"
@@ -1747,6 +1792,11 @@
             "title": "Offset",
             "type": "integer"
           },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
+          },
           "strip": {
             "$ref": "#/components/schemas/CaseQueueStrip"
           },
@@ -2047,6 +2097,19 @@
               }
             ],
             "title": "Priority"
+          },
+          "readers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
+          "restricted": {
+            "default": false,
+            "title": "Restricted",
+            "type": "boolean"
           },
           "sla_paused": {
             "default": false,
@@ -2366,11 +2429,30 @@
             ],
             "title": "Priority"
           },
+          "reader_teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader Teams",
+            "type": "array"
+          },
+          "readers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
           "resolution_steps": {
             "default": [],
             "items": {},
             "title": "Resolution Steps",
             "type": "array"
+          },
+          "restricted": {
+            "readOnly": true,
+            "title": "Restricted",
+            "type": "boolean"
           },
           "status": {
             "anyOf": [
@@ -2430,6 +2512,9 @@
             "title": "Updated At"
           }
         },
+        "required": [
+          "restricted"
+        ],
         "title": "CaseSchema",
         "type": "object"
       },
@@ -2568,11 +2653,30 @@
             ],
             "title": "Priority"
           },
+          "reader_teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reader Teams",
+            "type": "array"
+          },
+          "readers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Readers",
+            "type": "array"
+          },
           "resolution_steps": {
             "default": [],
             "items": {},
             "title": "Resolution Steps",
             "type": "array"
+          },
+          "restricted": {
+            "readOnly": true,
+            "title": "Restricted",
+            "type": "boolean"
           },
           "status": {
             "anyOf": [
@@ -2633,7 +2737,8 @@
           }
         },
         "required": [
-          "owner_state"
+          "owner_state",
+          "restricted"
         ],
         "title": "CaseSearchResult",
         "type": "object"
@@ -2667,6 +2772,11 @@
             },
             "title": "By Status",
             "type": "object"
+          },
+          "restricted_not_counted": {
+            "default": 0,
+            "title": "Restricted Not Counted",
+            "type": "integer"
           },
           "total": {
             "title": "Total",

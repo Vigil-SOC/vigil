@@ -150,6 +150,8 @@ export const notifyCasesChanged = () => window.dispatchEvent(new Event(CASES_CHA
 export function useCases(filters: CaseFilters, teamIds: string[] | null) {
   const [rows, setRows] = useState<CaseRow[]>([])
   const [total, setTotal] = useState(0)
+  // restricted cases matching the filters that this reader can't see
+  const [hidden, setHidden] = useState(0)
   const [strip, setStrip] = useState<CaseStrip>(EMPTY_STRIP)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -173,10 +175,12 @@ export function useCases(filters: CaseFilters, teamIds: string[] | null) {
         const data = res.data as typeof res.data & {
           strip?: CaseStrip
           total?: number
+          restricted_not_counted?: number
         }
         const cases = data.cases ?? []
         setRows(cases.map((c) => mapQueueCase(c)))
         setTotal(data.total ?? cases.length)
+        setHidden(data.restricted_not_counted ?? 0)
         setStrip(data.strip ?? EMPTY_STRIP)
         setPhase('ready')
       })
@@ -190,7 +194,7 @@ export function useCases(filters: CaseFilters, teamIds: string[] | null) {
     }
   }, [filters, teamIds, reloadKey])
 
-  return { rows, total, strip, phase, error, reload }
+  return { rows, total, hidden, strip, phase, error, reload }
 }
 
 function asInvestigations(raw: unknown): CaseInvestigationRef[] {

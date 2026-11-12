@@ -21,7 +21,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
 
 from core.exceptions import TeamRefused, default_on_error
-from core.storage import case_trail_hook
+from core.storage import case_read_hook, case_trail_hook
 from core.storage.case_insert import insert_case
 from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
 from core.storage.connection import get_db_manager
@@ -1028,10 +1028,11 @@ class DatabaseService:
     def delete_findings_from_source(self, data_source: str) -> Dict[str, int]:
         """Delete every finding with this ``data_source``, and the cases that
         held only such findings. A case that also holds another finding keeps
-        it and only loses the link. Returns ``{findings, cases, live}``: when
-        one of those cases has a live Investigation nothing is deleted and
+        it and only loses the link. Returns ``{findings, cases, live, kept}``:
+        when one of those cases has a live Investigation nothing is deleted and
         ``live`` names the blocking runs, as a single case delete refuses
-        (#1001)."""
+        (#1001). A restricted case the caller may not read is kept whole, its
+        findings too, and counted in ``kept``, not in ``cases``."""
         with self.db_manager.session_scope() as session:
             from_source = select(Finding.finding_id).where(
                 Finding.data_source == data_source
@@ -1044,13 +1045,12 @@ class DatabaseService:
                 .join(Finding, Finding.finding_id == case_findings.c.finding_id)
                 .where(Finding.data_source != data_source)
             )
-            case_ids = list(
-                session.scalars(
-                    select(Case.case_id).where(
-                        Case.case_id.in_(touched), Case.case_id.not_in(mixed)
-                    )
-                )
+            only_these = select(Case.case_id).where(
+                Case.case_id.in_(touched), Case.case_id.not_in(mixed)
             )
+            readable = case_read_hook.read_clause()
+            case_ids = list(session.scalars(only_these.where(readable)))
+            kept_ids = list(session.scalars(only_these.where(~readable)))
             if case_ids:
                 live = list(
                     session.scalars(
@@ -1061,14 +1061,21 @@ class DatabaseService:
                     )
                 )
                 if live:
-                    return {"findings": 0, "cases": 0, "live": live}
+                    return {"findings": 0, "cases": 0, "live": live, "kept": 0}
+            # A kept case keeps what it holds.
+            held = select(case_findings.c.finding_id).where(
+                case_findings.c.case_id.in_(kept_ids)
+            )
             cases = 0
             if case_ids:
                 cases = session.execute(
                     delete(Case).where(Case.case_id.in_(case_ids))
                 ).rowcount
             findings = session.execute(
-                delete(Finding).where(Finding.data_source == data_source)
+                delete(Finding).where(
+                    Finding.data_source == data_source,
+                    Finding.finding_id.not_in(held),
+                )
             ).rowcount
             logger.info(
                 "Deleted %d finding(s) and %d case(s) from %s",
@@ -1076,7 +1083,12 @@ class DatabaseService:
                 cases,
                 data_source,
             )
-            return {"findings": findings, "cases": cases, "live": []}
+            return {
+                "findings": findings,
+                "cases": cases,
+                "live": [],
+                "kept": len(kept_ids),
+            }
 
     @default_on_error(list)
     def get_findings_by_technique(
@@ -1170,6 +1182,7 @@ class DatabaseService:
                 activities=kwargs.get("activities", []),
                 resolution_steps=kwargs.get("resolution_steps", []),
                 mitre_techniques=kwargs.get("mitre_techniques"),
+                readers=kwargs.get("readers"),
             )
             session.refresh(case)
             # Touch it while the session is open: the dump runs after it closes.
@@ -1193,6 +1206,9 @@ class DatabaseService:
         with self.db_manager.session_scope() as session:
             options = () if include_findings else (CASE_FINDING_IDS_ONLY,)
             case = session.get(Case, case_id, options=options)
+            # A restricted case the caller may not read is not there (#4354).
+            if case and not case_read_hook.may_read(case):
+                return None
             if case:
                 if case.team is None:
                     logger.warning("case %s has no team row", case_id)
@@ -1244,16 +1260,20 @@ class DatabaseService:
 
     @default_on_error(None)
     def summarize_cases(self) -> Optional[Dict[str, Any]]:
-        """``{total, by_status, by_priority}`` over every case, counted in SQL.
+        """``{total, by_status, by_priority, restricted_not_counted}`` over every
+        case the caller may read, counted in SQL.
 
         ``None`` means the query failed.
         """
         with self.db_manager.session_scope() as session:
-            total, by_status, by_priority = CaseRepository(session).summary_counts()
+            total, by_status, by_priority, hidden = CaseRepository(
+                session
+            ).summary_counts()
             return {
                 "total": total,
                 "by_status": by_status,
                 "by_priority": by_priority,
+                "restricted_not_counted": hidden,
             }
 
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
@@ -1277,7 +1297,7 @@ class DatabaseService:
         )
         with scope as session:
             case = session.get(Case, case_id)
-            if not case:
+            if not case or not case_read_hook.may_read(case):
                 logger.warning(f"Case not found: {case_id}")
                 return False
 
@@ -1319,7 +1339,7 @@ class DatabaseService:
         """
         with self.db_manager.session_scope() as session:
             case = session.get(Case, case_id)
-            if not case:
+            if not case or not case_read_hook.may_read(case):
                 logger.warning(f"Case not found: {case_id}")
                 return False
 
@@ -1347,7 +1367,7 @@ class DatabaseService:
             case = session.get(Case, case_id)
             finding = session.get(Finding, finding_id)
 
-            if not case or not finding:
+            if not case or not finding or not case_read_hook.may_read(case):
                 logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
                 return False
 
@@ -1379,7 +1399,7 @@ class DatabaseService:
             case = session.get(Case, case_id)
             finding = session.get(Finding, finding_id)
 
-            if not case or not finding:
+            if not case or not finding or not case_read_hook.may_read(case):
                 logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
                 return False
 

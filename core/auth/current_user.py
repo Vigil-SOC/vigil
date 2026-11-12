@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 current_request: ContextVar[Optional[Request]] = ContextVar(
     "vigil_current_request", default=None
 )
+# The principal the DEV_MODE bypass runs as. Dev mode notes no HTTP actor, and the
+# restricted-case rule must still read as someone (#4354).
+dev_principal: ContextVar[Optional[str]] = ContextVar(
+    "vigil_dev_principal", default=None
+)
 
 ACCESS_TOKEN_TYPE = "access"
 
@@ -296,12 +301,15 @@ async def get_current_user(
     clear_http_actor()
     # For deny_unless, which has no request: a privileged write asks to confirm.
     current_request.set(request)
+    dev_principal.set(None)
     request.state.vigil_http_actor = None
 
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
-        return await run_in_threadpool(_detached, _get_dev_user)
+        user = await run_in_threadpool(_detached, _get_dev_user)
+        dev_principal.set(getattr(user, "principal_id", None))
+        return user
 
     presented = _bearer(authorization)
     if presented and looks_like_api_token(presented):

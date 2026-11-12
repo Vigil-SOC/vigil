@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 from core import teams
 from core.audit import retention
-from core.auth import current_user as current_user_module
 from core.auth import (
     dormancy,
     invites,
@@ -33,6 +32,9 @@ from core.auth import (
     step_up,
     trail_events,
 )
+from core.auth.acting import acts_as_person as _acts_as_person
+from core.auth.acting import is_service_account as _is_service_account
+from core.auth.acting import principal_kind as _principal_kind
 from core.auth.auth_cookies import clear_auth_cookies
 from core.auth.auth_service import (
     PERSON_ONLY,
@@ -142,14 +144,6 @@ BUILTIN_ROLE_REFUSED = (
 )
 
 
-def _is_service_account(user: User) -> bool:
-    # Only an explicit True is one; a user object without the field is not.
-    try:
-        return user.service_account is True
-    except AttributeError:
-        return False
-
-
 def _is_medic(user: User) -> bool:
     return _is_service_account(user) and bool(
         re.fullmatch(MEDIC_USERNAME_PATTERN, user.username or "")
@@ -165,27 +159,10 @@ def _refuse_medic_reassignment(user: User) -> None:
         )
 
 
-def _principal_kind(user: User, session: Session) -> Optional[str]:
-    return (
-        session.query(Principal.kind)
-        .filter(Principal.principal_id == user.principal_id)
-        .scalar()
-    )
-
-
 def _is_person_account(user: User, session: Session) -> bool:
     return not _is_service_account(user) and (
         _principal_kind(user, session) == principals.PERSON
     )
-
-
-def _acts_as_person(user: User, session: Session) -> bool:
-    """A person's own session. A service account's is not, nor is any API token's;
-    DEV_MODE's dev user is."""
-    if _is_service_account(user) or current_user_module.is_token_request():
-        return False
-    kind = _principal_kind(user, session)
-    return kind == principals.PERSON if kind else current_user_module.DEV_MODE
 
 
 def _granted(permissions: Optional[dict]) -> set[str]:

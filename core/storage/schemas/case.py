@@ -8,7 +8,14 @@ the only link that exists; there is no ``finding_ids`` column.
 
 from typing import Annotated, Any, Optional
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    computed_field,
+)
 
 from core.storage.schemas.base import JsonList, OptDateTime, ORMSchema, StrList
 from core.storage.schemas.finding import FindingSchema
@@ -67,6 +74,21 @@ class CaseBaseSchema(ORMSchema):
     mitre_techniques: StrList = []
     created_at: OptDateTime = None
     updated_at: OptDateTime = None
+    # Restricted cases (#4354). Only a reader is served a restricted case, so
+    # only readers see who else is on the list. Empty lists are open.
+    readers: StrList = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("readers", "reader_principal_ids"),
+    )
+    reader_teams: StrList = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("reader_teams", "reader_team_ids"),
+    )
+
+    @computed_field
+    @property
+    def restricted(self) -> bool:
+        return bool(self.readers or self.reader_teams)
 
 
 class CaseSchema(CaseBaseSchema):

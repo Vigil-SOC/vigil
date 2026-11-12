@@ -191,10 +191,12 @@ export function SampleAlertsCard({ notify }: SectionProps) {
       const res = await ingestionApi.clearSampleAlerts()
       setLoaded(0)
       const cases = res.data.cases_deleted
+      const kept = res.data.restricted_cases_kept ?? 0
       notify(
         'ok',
         `Removed ${res.data.findings_deleted} sample alerts` +
-          (cases ? ` and ${cases} case${cases === 1 ? '' : 's'} made from them.` : '.'),
+          (cases ? ` and ${cases} case${cases === 1 ? '' : 's'} made from them.` : '.') +
+          (kept ? ` ${kept} restricted case${kept === 1 ? '' : 's'} kept.` : ''),
       )
     } catch (e) {
       notify('err', errorDetail(e, 'Could not clear sample alerts.'))

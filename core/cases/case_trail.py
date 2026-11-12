@@ -58,6 +58,11 @@ JOURNAL = "case.journal"
 STEP = "case.resolution_step"
 DELETE = "case.delete"
 PURGE = "case.purge"
+# Restricted cases (#4354): who may read the case, and each change to it.
+RESTRICT = "case.restrict"
+READERS_ADD = "case.readers.add"
+READERS_REMOVE = "case.readers.remove"
+UNRESTRICT = "case.unrestrict"
 
 # What a write of one field alone is. More than one field is an EDIT.
 _ALONE = {

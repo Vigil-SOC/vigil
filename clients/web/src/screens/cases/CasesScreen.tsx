@@ -305,7 +305,7 @@ function CasesTable({
     if (everyone || peopleFailed || !mineKey) return []
     return mineKey.split('\n')
   }, [peopleLoaded, everyone, peopleFailed, mineKey])
-  const { rows, total, strip, phase, error, reload } = useCases(filters, teamIds)
+  const { rows, total, hidden, strip, phase, error, reload } = useCases(filters, teamIds)
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
@@ -547,6 +547,7 @@ function CasesTable({
               {activeFilters || filters.query
                 ? `Showing ${total.toLocaleString()} ${filters.state === 'closed' ? `closed case${total === 1 ? '' : 's'}` : `of ${openCount.toLocaleString()}`}`
                 : `${openCount.toLocaleString()} open case${openCount === 1 ? '' : 's'}`}
+              {hidden > 0 && ` · ${hidden.toLocaleString()} restricted not counted`}
               {activeFilters > 0 && <> · <button type="button" onClick={clearAll}>Clear</button></>}
             </span>
           )}

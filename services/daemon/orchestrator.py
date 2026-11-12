@@ -677,10 +677,13 @@ def _raise_case_priority(case_id: str, severity: Optional[str]) -> None:
 
 def _attach_finding(case_id: str, finding_id: str) -> bool:
     """Link the finding to the case. False on any failure, never raises."""
+    from core.auth.permissions import builtin_reader
     from core.storage.service import DatabaseService
 
     try:
-        return bool(DatabaseService().add_finding_to_case(case_id, finding_id))
+        # Intake attaches to a restricted case too: a built-in reader (#4354).
+        with builtin_reader():
+            return bool(DatabaseService().add_finding_to_case(case_id, finding_id))
     except Exception as e:
         logger.error(
             "Failed to attach finding %s to case %s: %s", finding_id, case_id, e

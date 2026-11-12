@@ -42,8 +42,13 @@ def insert_case(
     resolution_steps: Optional[list] = None,
     mitre_techniques: Optional[list] = None,
     finding_ids: Optional[Sequence[str]] = None,
+    readers: Optional[Sequence[str]] = None,
 ) -> Case:
-    """Insert one case on the caller's session. Does not commit."""
+    """Insert one case on the caller's session. Does not commit.
+
+    ``readers`` creates it restricted in the same insert, so its content is never
+    open; the caller has already judged the list (core.cases.case_readers).
+    """
     team = _default_team(session)
     if team.archived_at is not None:
         raise TeamRefused(f"{team.name} is archived.", 409)
@@ -66,6 +71,7 @@ def insert_case(
         activities=activities if activities is not None else [],
         resolution_steps=resolution_steps if resolution_steps is not None else [],
         mitre_techniques=mitre_techniques,
+        reader_principal_ids=list(readers) if readers else None,
     )
     case.team = team
     session.add(case)
@@ -90,4 +96,6 @@ def insert_case(
             priority=case.priority,
             assignee=writer.assignee_principal(session, case.assignee),
         )
+        if readers:
+            writer.append_case(session, writer.RESTRICT, case_id, readers=list(readers))
     return case
