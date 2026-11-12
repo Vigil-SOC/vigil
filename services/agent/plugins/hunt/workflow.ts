@@ -114,7 +114,12 @@ export async function narrateRun(
   // made on.
 
   // The narrator is a judge of the run, so it runs as a child of it, on its own ledger.
-  const parent = { harness: harness as unknown as Harness<AgentKinds>, options: { run_id: runId, run_kind: runKind } };
+  // The parent's principal off its run event, so the children post goes out under it.
+  const principal = (events.find((event) => event.kind === "run")?.payload as RunPayload | undefined)?.principal;
+  const parent = {
+    harness: harness as unknown as Harness<AgentKinds>,
+    options: { run_id: runId, run_kind: runKind, ...(principal === undefined ? {} : { principal }) },
+  };
   const turn = async <T>(cfg: TurnConfig) => runChild<T>(parent, `${cfg.role}:${await childOrdinal(parent, cfg.role)}`, cfg);
   const narrative = await narrativeWriter({ harness, spec, run_id: runId, run_kind: runKind, actions: [], recall_keys: [], turn }).narrate(
     narrativeInput(projection, buildReport(projection)),

@@ -1,6 +1,7 @@
 import type { AgentEvent, CheckpointPayload, RunKind } from "../contracts/events.js";
 import { errorFields, logger } from "./log.js";
 import type { State } from "./seams.js";
+import { bridgeHeaders } from "./principal.js";
 
 const log = logger("agent.checkpoints");
 
@@ -15,6 +16,7 @@ export const noAnnounce: Announce = async () => {};
 export interface AnnounceOptions {
   url: string;
   token: string;
+  principal?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -28,7 +30,7 @@ export function httpAnnounce(options: AnnounceOptions): Announce {
     try {
       const response = await call(`${base}/${encodeURIComponent(runId)}/checkpoints`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+        headers: bridgeHeaders(options.token, options.principal),
         body: JSON.stringify({ ...payload, run_kind: runKind }),
       });
       if (!response.ok) log.warn("announcing a checkpoint was refused", { run_id: runId, checkpoint_id: payload.checkpoint_id, status: response.status });

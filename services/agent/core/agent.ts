@@ -33,6 +33,7 @@ import type { ToolDispatch } from "./seams.js";
 import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
+import { bridgeHeaders } from "./principal.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { CONFIDENCES, SEVERITIES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
@@ -920,7 +921,7 @@ export const CHILD_KIND: RunKind = "subagent";
 // What a child needs of its parent: the harness and the run. A hook passes its context.
 export interface ParentRun {
   harness: Harness<Kinds>;
-  options: Pick<AgentOptions, "run_id" | "run_kind" | "started_by" | "origin">;
+  options: Pick<AgentOptions, "run_id" | "run_kind" | "started_by" | "origin" | "principal">;
 }
 
 export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig): Promise<Outcome<T> & { child_run_id: string }> {
@@ -950,7 +951,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
   }
   // Retried until the backend has the row. A resume otherwise never reports a
   // child whose first post failed, and the backend ignores a second one.
-  await reportChild(options.run_id, child, turn.role, spec);
+  await reportChild(options.run_id, options.principal, child, turn.role, spec);
 
   const framer = await Framer.open(harness.state, child, CHILD_KIND, [], []);
   const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: { run_id: options.run_id, run_kind: options.run_kind } };
@@ -1323,15 +1324,16 @@ function actorOf(startedBy: string | undefined): { actor: string } | Record<stri
 }
 
 // The backend writes the trail. This process does not. A deployment with no
-// mirror keeps today's path: the child still runs on the parent's token.
-async function reportChild(parentRunId: string, childRunId: string, role: string, spec: unknown): Promise<void> {
+// mirror keeps today's path: the child still runs on the parent's token. Posted
+// on the parent's route, so under the parent's principal; the child has none.
+async function reportChild(parentRunId: string, principal: string | undefined, childRunId: string, role: string, spec: unknown): Promise<void> {
   const url = process.env["VIGIL_RUNS_URL"];
   if (url === undefined || url === "") return;
   const token = process.env["AGENT_INTERNAL_TOKEN"] ?? "";
   try {
     const response = await fetch(`${url.replace(/\/+$/, "")}/${encodeURIComponent(parentRunId)}/children`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: bridgeHeaders(token, principal),
       body: JSON.stringify({ child_run_id: childRunId, role, spec }),
     });
     if (!response.ok) log.warn("child run was not recorded", { parent: parentRunId, child: childRunId, status: response.status });
