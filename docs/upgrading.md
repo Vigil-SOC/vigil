@@ -149,3 +149,26 @@ FROM system_config WHERE key = 'auth.password_scheme_upgraded_at';
 ```
 
 Each bcrypt password hash is replaced at that person's first good sign-in. The old hashing ends 12 months after the date in that row. A person who has not signed in by then sets a new password with a reset link. To find accounts that have not signed in, open Settings > Users: the Last Login column shows each account's last sign-in, and "Never" for an account that has none.
+
+## What run scoping does to unfinished runs on upgrade day
+
+Run scoping refuses an agent run's calls unless the run's own principal (the credential Vigil signs for it when it starts) names that run and has not expired. Revision `0065_end_unscoped_runs` ends, at the upgrade, every started run that could not make its next call under that rule.
+
+**Which runs it ends.** Each run whose console row is still `running` or `paused` and which has started (its ledger in `agent_events` holds its `run` event) is judged by the principal stored on that event. The run is ended when that principal is missing, can't be read, names another run, or has expired. The claims are read without checking the signature: the Helm upgrade Jobs have no app Secret, and reading only ever ends a run. Each ended run:
+
+- shows as failed in the console, with the reason `started before run scoping; run it again`;
+- gets a ledger end with outcome `failed` and the same reason, unless it already has one;
+- has its pending approvals rejected by `system` with that reason, each recorded on the case trail.
+
+A run whose principal names it and is still live is left alone and resumes after the upgrade. So does a run queued but not yet started (it has no ledger yet), and a child run, which has no console row and follows its parent. The upgrade's history record counts the runs it ended under `reports`, as `{"revision": "0065_end_unscoped_runs", "report": {"ended_runs": N}}`. Running the upgrade again ends nothing more.
+
+**A run outlives its credential at 30 days.** A run's principal lasts 31 days from its start, and a run may park for up to 30 days at a time, so a run still unfinished after about 30 days is near or past its credential's end. In practice the parked runs this ends are those started more than 31 days ago, plus runs from older releases on installs that skip releases.
+
+**Before you upgrade.** To keep this from ending a run, let it finish or cancel it in the console, and let the job queue drain: stop starting runs, and wait until the workers have picked up everything queued.
+
+**Installs that skip releases** need no extra step: the revision runs on whichever upgrade first includes it. A job still in the queue without a valid principal ends at its first pickup by the worker, but its console row stays `running` until a person cancels it.
+
+**Rolling back.**
+
+- Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272).
+- Helm rolls back by restoring the operator's own database backup and running `helm rollback` (see [Helm](#helm)). Vigil's run-stopping restore doesn't run, and the restored runs carry on under the older release, which doesn't check principals.
