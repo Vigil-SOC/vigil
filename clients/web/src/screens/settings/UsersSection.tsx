@@ -89,6 +89,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const {
     users,
     total,
+    restrictedNoReader,
     roles,
     rolesMeta,
     phase,
@@ -309,6 +310,15 @@ function PeopleAndRoles({ notify }: SectionProps) {
           </>
         }
       >
+        {restrictedNoReader > 0 && (
+          <div className="settings-banner warn mb-3" role="status">
+            <Icon name="alert" size={14} />
+            <span className="min-w-0">
+              {restrictedNoReader} restricted case{restrictedNoReader === 1 ? ' has' : 's have'} no active reader. An operator on the
+              host can list them and name a reader with <code>python -m core.auth.recover_admin --unread-cases</code>.
+            </span>
+          </div>
+        )}
         <div className="flex items-center gap-2.5 flex-wrap mb-3">
           <div className="search">
             <Icon name="search" />

@@ -353,6 +353,8 @@ export interface UsersQuery {
 export function useUsers({ search, status, skip, limit }: UsersQuery) {
   const [users, setUsers] = useState<User[]>([])
   const [total, setTotal] = useState(0)
+  // restricted cases with no active reader, install-wide: a count only
+  const [restrictedNoReader, setRestrictedNoReader] = useState(0)
   const [roles, setRoles] = useState<Role[]>([])
   const [rolesMeta, setRolesMeta] = useState<RolesMeta>(EMPTY_ROLES_META)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -374,6 +376,7 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
         if (!Array.isArray(u) || !Array.isArray(r)) throw new Error('Invalid users/roles data')
         setUsers(u)
         setTotal(usersRes.data?.total ?? u.length)
+        setRestrictedNoReader(usersRes.data?.restricted_no_reader ?? 0)
         setRoles(r)
         const d = rolesRes.data
         setRolesMeta({
@@ -429,6 +432,7 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
   return {
     users,
     total,
+    restrictedNoReader,
     roles,
     rolesMeta,
     phase,

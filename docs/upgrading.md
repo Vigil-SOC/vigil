@@ -174,3 +174,7 @@ A run whose principal names it and is still live is left alone and resumes after
 
 - Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272).
 - Helm rolls back by restoring the operator's own database backup and running `helm rollback` (see [Helm](#helm)). Vigil's run-stopping restore doesn't run, and the restored runs carry on under the older release, which doesn't check principals.
+
+## Restricted cases and restores
+
+A restricted case's reader list is part of the case row, so a restore brings back the list as it was when the backup was taken. **Restoring a backup taken before a case was restricted reopens that case** to everyone who can read cases. Revisions run forward only (`core/upgrade/__init__.py`), so this holds for Vigil's restore and for a Helm rollback from your own backup alike. After a restore, restrict again any case that must stay restricted; the audit trail's `case.restrict` entries name them.

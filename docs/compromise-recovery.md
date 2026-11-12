@@ -80,6 +80,18 @@ What people see, and what you do:
 - **A restore** whose ring cannot be opened (4, 5) replaces the pepper too. The restore notice counts the people who must reset their password, and the restore's trail entry records it as `passwords_to_reset`. A pepper version retired before the restore stays retired after it.
 - **`recover_admin`** gives a role, never touches a password. If the person it names must also reset their password, issue the link as above.
 
+## 4b. Restricted cases nobody can read
+
+A restricted case is read only by the people, service accounts and team members on its reader list, and there is no Admin bypass. When every reader is deactivated, deleted or erased, nobody can open it: Settings > Team & access then says "N restricted cases have no active reader", a count only. An erased reader stays on the list as their principal id and grants nothing.
+
+The same host command as `recover_admin` gets them back. It reads cases straight from the database, outside the read rule, and is not reachable over the network:
+
+- `python -m core.auth.recover_admin --unread-cases` lists each such case: id, created time, title and reader principal ids. It changes nothing and asks for no reason.
+- `python -m core.auth.recover_admin --name-reader <case_id> <person>` adds one person (username or principal id) to one restricted case. The person must exist, be active and not erased. The trail records `case.readers.add` by `system` with your reason.
+- `python -m core.auth.recover_admin --lift-by <principal> [--since <time>]` opens every case whose latest restriction that principal made, directly or through an agent acting for them, from `--since` (ISO time, UTC unless it says) when given. Use it when an account that restricted cases was compromised. A case someone else restricted again later is left alone. Restrictions are found from the trail's `case.restrict` entries, so one whose entry trail retention has already removed is not found. Each lift is a `case.unrestrict` entry by `system` with your reason.
+
+Each use that changes something asks for a reason and refuses an empty one. Exit codes are those of `recover_admin`: 0 done, 64 bad input, 70 database error, 75 database not ready, 77 refused.
+
 ## 5. Backups and the wrapping key
 
 Each backup writes two snapshots to the same restic repository: the backup, and a small second one tagged `wrapping-key` that holds only `JWT_SECRET_KEY`. The backup's own copy of `.env` has the `JWT_SECRET_KEY` line removed, so the key and the ring it wraps are not in the same snapshot.

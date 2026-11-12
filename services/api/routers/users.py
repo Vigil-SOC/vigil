@@ -62,6 +62,7 @@ from core.auth.permissions import (
     require_person_permission,
 )
 from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
+from core.cases.case_readers import no_active_reader
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import notify
@@ -589,6 +590,10 @@ def list_users(
             "skip": skip,
             "limit": limit,
             "users": _dump_accounts(session, users),
+            # Install-wide, outside the read rule: a count only, never which cases.
+            "restricted_no_reader": session.query(func.count(Case.case_id))
+            .filter(no_active_reader())
+            .scalar(),
         }
 
     except Exception as e:
