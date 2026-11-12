@@ -34,7 +34,6 @@ from typing import Any, Callable, Optional
 import httpx
 from sqlalchemy import text
 
-from core.auth.permissions import MEDIC_ADMIN_PERMISSION, holders, missing_permission
 from core.config import Settings, get_settings
 from core.platform import notices
 from core.platform.medic_status import (
@@ -85,6 +84,14 @@ _STOPPED = {
 _WATCHING_AGAIN = "Medic is watching again."
 # One watch task in this process. A second start while it runs does nothing.
 _watch_task: Optional[asyncio.Task] = None
+
+
+def _no_holders() -> list[str]:
+    return []
+
+
+# Who a status notice is for. core.auth binds this: this tier cannot import it.
+_medic_admin_holders: Callable[[], list[str]] = _no_holders
 _EXIT_REASONS = frozenset(
     {"clean", "signal", "oom", "watchdog_stall", "crash", "unknown"}
 )
@@ -453,32 +460,35 @@ def watch_once(settings: Optional[Settings] = None) -> list[int]:
                 link=_MEDIC_LINK,
                 session=session,
             )
-            for principal in holders(MEDIC_ADMIN_PERMISSION)
+            for principal in _medic_admin_holders()
         ]
         logger.info("Medic status notice to %s holder(s): %s", len(ids), sentence)
         return ids
 
 
-def not_watching(user) -> list[dict[str, str]]:
-    """The bell line while the announced word is red. Hidden with Medic off.
-    It reads the state row and does not call Medic."""
+def bind_medic_admin_holders(holders: Callable[[], list[str]]) -> None:
+    """The principal ids a status notice goes to, read at send time."""
+    global _medic_admin_holders
+    _medic_admin_holders = holders
+
+
+def not_watching_line() -> Optional[dict[str, str]]:
+    """The bell line while the announced word is red, or None.
+
+    Hidden while Medic is off. It reads the state row and does not call Medic.
+    The permission check is the caller's: this tier cannot import it.
+    """
     if not medic_enabled():
-        return []
-    if missing_permission(user.user_id, MEDIC_ADMIN_PERMISSION) is not None:
-        return []
+        return None
     from core.storage.models import MedicWatchState
     from core.storage.unit_of_work import unit_of_work
 
     with unit_of_work() as session:
         state = session.get(MedicWatchState, 1)
         if state is None or state.announced_word not in _RED or state.red_since is None:
-            return []
+            return None
         when = state.red_since.strftime("%H:%M")
-    return [{"message": f"Medic isn't watching since {when}", "link": _MEDIC_LINK}]
-
-
-def register() -> None:
-    notices.CONDITIONS.append(not_watching)
+    return {"message": f"Medic isn't watching since {when}", "link": _MEDIC_LINK}
 
 
 def _kick_watch() -> None:

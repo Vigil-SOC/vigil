@@ -42,7 +42,7 @@ from core.auth import key_age, mfa_coverage, password_validator, token_expiry
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
-from core.platform import medic_last_seen
+from core.auth.medic_notices import register as register_medic_notices
 from core.platform.monitoring import (
     get_metrics_response,
     init_sentry,
@@ -230,7 +230,7 @@ mfa_coverage.register()
 password_validator.register()
 token_expiry.register()
 key_age.register()
-medic_last_seen.register()
+register_medic_notices()
 app.add_middleware(CSRFMiddleware)
 
 # Security headers added AFTER CORS so it is the outermost middleware on the
