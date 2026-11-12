@@ -3581,6 +3581,36 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column medic_watch_state.announced_word": {
+  "type": "text",
+  "nullable": true,
+  "default": null
+ },
+ "column medic_watch_state.confirming_polls": {
+  "type": "integer",
+  "nullable": false,
+  "default": "0"
+ },
+ "column medic_watch_state.confirming_word": {
+  "type": "text",
+  "nullable": true,
+  "default": null
+ },
+ "column medic_watch_state.counted_updated_at": {
+  "type": "timestamp without time zone",
+  "nullable": true,
+  "default": null
+ },
+ "column medic_watch_state.id": {
+  "type": "smallint",
+  "nullable": false,
+  "default": "1"
+ },
+ "column medic_watch_state.red_since": {
+  "type": "timestamp without time zone",
+  "nullable": true,
+  "default": null
+ },
  "column principals.created_at": {
   "default": "now()",
   "nullable": false,
@@ -4670,6 +4700,11 @@
  "constraint medic_last_seen.medic_last_seen_one_row": "CHECK ((id = 1))",
  "constraint medic_last_seen.medic_last_seen_pkey": "PRIMARY KEY (id)",
  "constraint medic_last_seen.medic_last_seen_snapshot_typed": "CHECK (((jsonb_typeof(status_snapshot) = 'object'::text) AND (octet_length((status_snapshot)::text) <= 4096)))",
+ "constraint medic_watch_state.medic_watch_state_announced": "CHECK (((announced_word IS NULL) OR (announced_word = ANY (ARRAY['down'::text, 'blind'::text, 'not_recording'::text, 'crash_looping'::text, 'running'::text, 'degraded'::text]))))",
+ "constraint medic_watch_state.medic_watch_state_confirming": "CHECK (((confirming_word IS NULL) OR (confirming_word = ANY (ARRAY['down'::text, 'blind'::text, 'not_recording'::text, 'crash_looping'::text, 'running'::text, 'degraded'::text]))))",
+ "constraint medic_watch_state.medic_watch_state_one_row": "CHECK ((id = 1))",
+ "constraint medic_watch_state.medic_watch_state_pkey": "PRIMARY KEY (id)",
+ "constraint medic_watch_state.medic_watch_state_polls": "CHECK ((confirming_polls >= 0))",
  "constraint principals.principals_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['person'::character varying, 'service_account'::character varying, 'agent'::character varying, 'system'::character varying])::text[])))",
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
@@ -5097,6 +5132,7 @@
  "index mcp_credentials_pkey": "CREATE UNIQUE INDEX mcp_credentials_pkey ON public.mcp_credentials USING btree (credential_id)",
  "index mcp_credentials_token_hash_key": "CREATE UNIQUE INDEX mcp_credentials_token_hash_key ON public.mcp_credentials USING btree (token_hash)",
  "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
+ "index medic_watch_state_pkey": "CREATE UNIQUE INDEX medic_watch_state_pkey ON public.medic_watch_state USING btree (id)",
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
@@ -6975,6 +7011,28 @@
    false
   ],
   "sequence": null
+ },
+ "relation medic_watch_state": {
+  "kind": "r",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null,
+  "owner": "owner",
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ]
  },
  "relation principals": {
   "acl": [

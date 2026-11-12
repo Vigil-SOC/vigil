@@ -12,6 +12,11 @@ replica holds it or polled within the interval. All times are the backend's
 clock; Medic's own clock is never stored.
 
 Flag off: no task, no poll, no row (Off is not Down, C8).
+
+After a poll, this process starts one watch. The watch reads the row this
+poller wrote, and under its own lock tells holders of medic.admin when Medic
+has stopped watching or is watching again. It does not call Medic, and it
+sends the mail only after that lock commits.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import httpx
 from sqlalchemy import text
 
 from core.config import Settings, get_settings
+from core.platform import notices
 from core.platform.medic_status import (
     POLL_INTERVAL_S,
     POLL_TIMEOUT_S,
@@ -43,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Arbitrary constant identifying the poller's advisory lock.
 _POLL_LOCK = 8_274_120
+# The watch's own lock. It never waits, and it is not held across the send.
+_WATCH_LOCK = 8_274_121
 # A replica whose own timer fires within this much of the last poll skips it.
 _FRESH = timedelta(seconds=POLL_INTERVAL_S - 5)
 # Unwritten this long, the row's failure is history (as medic_status reads it).
@@ -61,6 +69,29 @@ _API_VERSION = re.compile(r"2\.[0-9]{1,3}")
 _STATES = frozenset(
     {"running", "degraded", "not_recording", "blind", "starting", "crash_looping"}
 )
+# Red is told after two polls of that same word. Watching polls mix.
+_RED = frozenset({"down", "blind", "not_recording", "crash_looping"})
+_WATCHING = frozenset({"running", "degraded"})
+_CONFIRM = 2
+_MEDIC_LINK = "/medic"
+_NOTICE_KIND = "medic_status"
+_STOPPED = {
+    "down": "Medic stopped watching (Down).",
+    "blind": "Medic stopped watching (Blind).",
+    "not_recording": "Medic stopped watching (Not recording).",
+    "crash_looping": "Medic stopped watching (Crash-looping).",
+}
+_WATCHING_AGAIN = "Medic is watching again."
+# One watch task in this process. A second start while it runs does nothing.
+_watch_task: Optional[asyncio.Task] = None
+
+
+def _no_holders() -> list[str]:
+    return []
+
+
+# Who a status notice is for. core.auth binds this: this tier cannot import it.
+_medic_admin_holders: Callable[[], list[str]] = _no_holders
 _EXIT_REASONS = frozenset(
     {"clean", "signal", "oom", "watchdog_stall", "crash", "unknown"}
 )
@@ -320,6 +351,17 @@ def current_status(
     return medic_status(settings, seen, now or db_now)
 
 
+def _state_word(settings: Settings, seen: Optional[LastSeen], now: datetime) -> str:
+    """The status-line word. off, down and unknown win over the snapshot."""
+    if not medic_enabled(settings):
+        return MedicStatus.OFF.value
+    status = medic_status(settings, seen, now)
+    if status is not MedicStatus.RUNNING:
+        return status.value
+    state = (seen.status_snapshot or {}).get("state") if seen else None
+    return state if state in _STATES else MedicStatus.UNKNOWN.value
+
+
 def current_state_word(settings: Optional[Settings] = None) -> str:
     """The one word for the status line: off, down or unknown win; otherwise
     Medic's stored snapshot state. One row read, so the two can't disagree. A
@@ -331,11 +373,150 @@ def current_state_word(settings: Optional[Settings] = None) -> str:
         seen, db_now = read_last_seen()
     except Exception:  # noqa: BLE001 - Postgres down: the console can't tell
         return MedicStatus.UNKNOWN.value
-    status = medic_status(settings, seen, db_now)
-    if status is not MedicStatus.RUNNING:
-        return status.value
-    state = (seen.status_snapshot or {}).get("state") if seen else None
-    return state if state in _STATES else MedicStatus.UNKNOWN.value
+    return _state_word(settings, seen, db_now)
+
+
+def _seen_of(row) -> LastSeen:
+    return LastSeen(
+        last_seen_at=row.last_seen_at,
+        first_failed_at=row.first_failed_at,
+        failure_kind=row.failure_kind,
+        updated_at=row.updated_at,
+        status_snapshot=row.status_snapshot,
+    )
+
+
+def _count(state, word: str, updated_at: datetime) -> Optional[str]:
+    """Count this poll once. The sentence to send, or None.
+
+    starting, unknown and off leave the count. Two polls of one red word
+    send "stopped watching"; a different red word starts again. Two watching
+    polls, running and degraded in either mix, send "watching again" only
+    when the announced word is red. The first watching state sends nothing.
+    """
+    state.counted_updated_at = updated_at
+    if word not in _RED and word not in _WATCHING:
+        return None
+    same = state.confirming_word == word or (
+        state.confirming_word in _WATCHING and word in _WATCHING
+    )
+    if same:
+        state.confirming_word = word
+        if state.confirming_polls < _CONFIRM:
+            state.confirming_polls += 1
+    else:
+        state.confirming_word = word
+        state.confirming_polls = 1
+        if word in _RED:
+            state.red_since = updated_at
+    if state.confirming_polls < _CONFIRM:
+        return None
+    if word in _RED and state.announced_word != word:
+        state.announced_word = word
+        return _STOPPED[word]
+    if word in _WATCHING and state.announced_word in _RED:
+        state.announced_word = word
+        state.red_since = None
+        return _WATCHING_AGAIN
+    return None
+
+
+def watch_once(settings: Optional[Settings] = None) -> list[int]:
+    """Confirm the polled word and write any notice. Does not send it.
+
+    The lock is the transaction, so it drops at commit, before the caller
+    sends. No connection to Medic: the word comes from the last-seen row.
+    A poll already counted, or a lock another replica holds, writes nothing.
+    """
+    from core.storage.connection import get_db_session
+    from core.storage.models import MedicLastSeen, MedicWatchState
+
+    settings = settings or get_settings()
+    with get_db_session() as session, session.begin():
+        locked = session.execute(
+            text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _WATCH_LOCK}
+        ).scalar()
+        if not locked:
+            return []
+        now = _db_now(session)
+        row = session.get(MedicLastSeen, 1)
+        state = session.get(MedicWatchState, 1)
+        if state is None:
+            state = MedicWatchState(id=1, confirming_polls=0)
+            session.add(state)
+        if row is None or state.counted_updated_at == row.updated_at:
+            return []
+        sentence = _count(
+            state, _state_word(settings, _seen_of(row), now), row.updated_at
+        )
+        if sentence is None:
+            return []
+        ids = [
+            notices.notify(
+                principal,
+                _NOTICE_KIND,
+                sentence,
+                sentence,
+                link=_MEDIC_LINK,
+                session=session,
+            )
+            for principal in _medic_admin_holders()
+        ]
+        logger.info("Medic status notice to %s holder(s): %s", len(ids), sentence)
+        return ids
+
+
+def bind_medic_admin_holders(holders: Callable[[], list[str]]) -> None:
+    """The principal ids a status notice goes to, read at send time."""
+    global _medic_admin_holders
+    _medic_admin_holders = holders
+
+
+def not_watching_line() -> Optional[dict[str, str]]:
+    """The bell line while the announced word is red, or None.
+
+    Hidden while Medic is off. It reads the state row and does not call Medic.
+    The permission check is the caller's: this tier cannot import it.
+    """
+    if not medic_enabled():
+        return None
+    from core.storage.models import MedicWatchState
+    from core.storage.unit_of_work import unit_of_work
+
+    with unit_of_work() as session:
+        state = session.get(MedicWatchState, 1)
+        if state is None or state.announced_word not in _RED or state.red_since is None:
+            return None
+        when = state.red_since.strftime("%H:%M")
+    return {"message": f"Medic isn't watching since {when}", "link": _MEDIC_LINK}
+
+
+def _kick_watch() -> None:
+    """Start the watch. A watch already running in this process is left alone."""
+    global _watch_task
+    if _watch_task is not None and not _watch_task.done():
+        return
+    _watch_task = asyncio.get_running_loop().create_task(_run_watch())
+
+
+async def _run_watch() -> None:
+    try:
+        notice_ids = await asyncio.to_thread(watch_once)
+    except Exception as exc:  # noqa: BLE001 - the next kick tries again
+        logger.warning("Medic watch failed: %s", type(exc).__name__)
+        return
+    if not notice_ids:
+        return
+    # After the watch's commit. The lock is already gone.
+    try:
+        await asyncio.to_thread(notices.send_notices, notice_ids)
+    except Exception as exc:  # noqa: BLE001 - the rows are committed
+        logger.warning("Medic watch send failed: %s", type(exc).__name__)
+
+
+def _cancel_watch() -> None:
+    if _watch_task is not None and not _watch_task.done():
+        _watch_task.cancel()
 
 
 async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> None:
@@ -346,15 +527,22 @@ async def run_poller(settings: Settings, interval: float = POLL_INTERVAL_S) -> N
     """
     loop = asyncio.get_running_loop()
     due = loop.time()
-    while True:
-        try:
-            await asyncio.to_thread(poll_once, settings)
-        except Exception as exc:  # noqa: BLE001 - the next tick tries again
-            logger.warning("Medic status poll skipped: %s", type(exc).__name__)
-        # After a stall (a hung connect, a suspended host) skip the missed ticks
-        # rather than run them back to back.
-        due = max(due + interval, loop.time())
-        await asyncio.sleep(max(0.0, due - loop.time()))
+    try:
+        while True:
+            polled = False
+            try:
+                polled = await asyncio.to_thread(poll_once, settings)
+            except Exception as exc:  # noqa: BLE001 - the next tick tries again
+                logger.warning("Medic status poll skipped: %s", type(exc).__name__)
+            # Not awaited: a watch must not hold up the next poll.
+            if polled:
+                _kick_watch()
+            # After a stall (a hung connect, a suspended host) skip the missed ticks
+            # rather than run them back to back.
+            due = max(due + interval, loop.time())
+            await asyncio.sleep(max(0.0, due - loop.time()))
+    finally:
+        _cancel_watch()
 
 
 def start_poller(settings: Optional[Settings] = None) -> Optional[asyncio.Task]:
