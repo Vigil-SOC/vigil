@@ -1079,12 +1079,17 @@ _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
 
 
 def list_pending_approvals(**args: Any) -> Any:
+    from core.response.approval_service import screen_actions
+
     limit = args.get("limit", 50)
-    return [asdict(action) for action in _approvals().list_pending_approvals()[:limit]]
+    actions = _approvals().list_pending_approvals()[:limit]
+    return [asdict(action) for action in screen_actions(actions)]
 
 
 def get_approval_action(*, action_id: str) -> Args:
-    return _decided(_approvals().get_action(action_id), "read")
+    from core.response.approval_service import screen_action
+
+    return _decided(screen_action(_approvals().get_action(action_id)), "read")
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it
@@ -1093,8 +1098,11 @@ def get_approval_action(*, action_id: str) -> Args:
 def approve_action(*, action_id: str) -> Args:
     if refusal := permission_refusal(APPROVE_PERMISSION):
         return refusal
+    from core.response.approval_service import may_decide
+
     action = _approvals().get_action(action_id)
-    if action is None:
+    # One on a case the caller can't read is not found, as on the route (#4359).
+    if action is None or not may_decide(action):
         return {"error": f"Action {action_id} was not found"}
     return {
         "action_id": action.action_id,

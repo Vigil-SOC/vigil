@@ -27,6 +27,8 @@ from core.response.approval_service import (
     ApprovalService,
     FourEyesRefused,
     needs_you,
+    screen_action,
+    screen_actions,
 )
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -98,6 +100,14 @@ class PendingActionResponse(BaseModel):
     workflow_phase_id: Optional[str] = None
     reversibility: Optional[str] = None
     idempotency_key: Optional[str] = None
+    restricted: bool = Field(
+        default=False,
+        description="An action on a restricted case the caller can't read: only its id, state and times are shown.",
+    )
+    waiting: Optional[str] = Field(
+        default=None,
+        description="Why a pending action waits: no reader of its restricted case can approve it.",
+    )
 
 
 class ApprovalListResponse(BaseModel):
@@ -157,6 +167,14 @@ class NeedsYouItem(BaseModel):
         default_factory=list,
         description="A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
     )
+    restricted: bool = Field(
+        default=False,
+        description="An item on a restricted case the caller can't read: no case, run or content.",
+    )
+    waiting: Optional[str] = Field(
+        default=None,
+        description="Why it waits: no reader of its restricted case can approve it.",
+    )
 
 
 class NeedsYouResponse(BaseModel):
@@ -194,10 +212,12 @@ async def list_approvals(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    actions = service.list_actions(
-        status=status_enum,
-        workflow_run_id=workflow_run_id,
-        limit=limit,
+    actions = screen_actions(
+        service.list_actions(
+            status=status_enum,
+            workflow_run_id=workflow_run_id,
+            limit=limit,
+        )
     )
     return {
         "count": len(actions),
@@ -211,7 +231,7 @@ async def list_pending_approvals(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Shortcut: only actions with ``status=pending`` and
     ``requires_approval=True``. Used by the AI Decisions approvals tab."""
-    actions = service.list_pending_approvals()
+    actions = screen_actions(service.list_pending_approvals())
     return {"actions": [asdict(a) for a in actions]}
 
 
@@ -236,7 +256,7 @@ async def get_approval(
     service: ApprovalService = Depends(provide_approvals),
 ):
     """Fetch a single approval action."""
-    action = service.get_action(action_id)
+    action = screen_action(service.get_action(action_id))
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
     return asdict(action)
@@ -275,6 +295,8 @@ async def approve_action(
         )
     except AlreadyDecided as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ActionNotFound:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
     except FourEyesRefused as e:
         raise HTTPException(status_code=403, detail=str(e))
     if updated is None:

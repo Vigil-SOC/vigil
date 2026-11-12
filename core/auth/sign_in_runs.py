@@ -68,6 +68,7 @@ def _tree(seed: str, params: dict) -> dict[str, str]:
 
 def _reject_pending(run_id: str) -> None:
     """A stopped run's open approvals are rejected, as a cancel does."""
+    from core.auth.permissions import builtin_reader
     from core.response.approval_service import (
         ActionStatus,
         AlreadyDecided,
@@ -75,15 +76,17 @@ def _reject_pending(run_id: str) -> None:
     )
 
     approvals = ApprovalService()
-    for action in approvals.list_actions(
-        status=ActionStatus.PENDING, workflow_run_id=run_id
-    ):
-        try:
-            approvals.reject_action(
-                action.action_id, reason=STOP_REASON, rejected_by=_ACTOR
-            )
-        except AlreadyDecided:
-            pass
+    # The system's own stop, on any case (#4359).
+    with builtin_reader():
+        for action in approvals.list_actions(
+            status=ActionStatus.PENDING, workflow_run_id=run_id
+        ):
+            try:
+                approvals.reject_action(
+                    action.action_id, reason=STOP_REASON, rejected_by=_ACTOR
+                )
+            except AlreadyDecided:
+                pass
 
 
 def _stop(runs: dict[str, str]) -> dict[str, str]:

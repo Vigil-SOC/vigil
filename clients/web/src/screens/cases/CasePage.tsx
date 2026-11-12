@@ -270,6 +270,7 @@ function fromRun(cp: OpenCheckpointRow, caseId: string, runId: string | null): N
     checkpoint_id: cp.checkpoint_id,
     checkpoint_class: cp.checkpoint_class,
     hypotheses: cp.hypotheses,
+    restricted: false,
   }
 }
 

@@ -67,6 +67,10 @@ FOUR_EYES_REFUSAL = (
 )
 
 
+class ActionNotFound(LookupError):
+    """No such action, or one on a restricted case the caller can't read (#4359)."""
+
+
 class FourEyesRefused(Exception):
     """The approver proposed the action, or its run acted for them (#2932).
 
@@ -172,6 +176,9 @@ class PendingAction:
     # "reversible" or "irreversible": the console's undo fuse reads it.
     reversibility: str = REVERSIBLE
     idempotency_key: Optional[str] = None
+    # Set at read (#4359): a placeholder for a non-reader, or why it waits.
+    restricted: bool = False
+    waiting: Optional[str] = None
 
 
 def _proposers(session, row: ApprovalActionRow) -> set[str]:
@@ -583,6 +590,7 @@ class ApprovalService:
                 if row is None:
                     logger.warning("Action %s not found", action_id)
                     return None
+                _refuse_unreadable(row)
                 if row.status != ActionStatus.PENDING.value:
                     decided = row.status
                 elif (
@@ -645,6 +653,7 @@ class ApprovalService:
                 if row is None:
                     logger.warning("Action %s not found", action_id)
                     return None
+                _refuse_unreadable(row)
                 if row.status != ActionStatus.PENDING.value:
                     decided = row.status
                 else:
@@ -1008,6 +1017,140 @@ def _case_lookups(
     return runs, investigations, evidence_cases, stored, statuses
 
 
+# ---- Restricted cases (#4359) ----------------------------------------------
+# An action is on the cases case_ids_for resolves. One the caller can't read is
+# a placeholder on every read and not found on a decision. A reader is told
+# when no reader of its case can decide it: it waits for one.
+
+RESTRICTED_TITLE = "An action on a restricted case"
+WAITING_FOR_READER = (
+    "Waiting: no one who can read its case can approve it. "
+    "Add a reader who holds approval rights."
+)
+DECIDE_PERMISSION = "ai_decisions.approve"
+
+
+def _restricted_cases(case_ids: set[str]) -> tuple[set[str], Dict[str, List[str]]]:
+    """Of ``case_ids``: the ones the caller can't read, and each restricted
+    case's named readers."""
+    if not case_ids:
+        return set(), {}
+    from core.auth.permissions import case_read_clause
+
+    with get_db_manager().session_scope() as session:
+        hidden = {
+            cid
+            for (cid,) in session.query(Case.case_id).filter(
+                Case.case_id.in_(case_ids), ~case_read_clause()
+            )
+        }
+        readers = {
+            cid: list(named or [])
+            for cid, named in session.query(
+                Case.case_id, Case.reader_principal_ids
+            ).filter(
+                Case.case_id.in_(case_ids - hidden),
+                func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
+            )
+        }
+    return hidden, readers
+
+
+def _deciders(principal_ids: set[str]) -> set[str]:
+    """Those principals that are active accounts holding the decide permission."""
+    if not principal_ids:
+        return set()
+    from core.auth.permissions import missing_permission
+    from core.storage.models import User
+
+    with get_db_manager().session_scope() as session:
+        return {
+            principal
+            for user_id, principal in session.query(
+                User.user_id, User.principal_id
+            ).filter(User.principal_id.in_(principal_ids), User.is_active.is_(True))
+            if missing_permission(user_id, DECIDE_PERMISSION, session) is None
+        }
+
+
+def _placeholder(action: PendingAction) -> PendingAction:
+    """What a non-reader sees: that an action exists, and its state."""
+    return PendingAction(
+        action_id=action.action_id,
+        action_type="",
+        title=RESTRICTED_TITLE,
+        description="",
+        target="",
+        confidence=0.0,
+        reason="",
+        evidence=[],
+        created_at=action.created_at,
+        created_by="",
+        requires_approval=action.requires_approval,
+        status=action.status,
+        approved_at=action.approved_at,
+        parameters={},
+        reversibility=action.reversibility,
+        restricted=True,
+    )
+
+
+def screen_actions(
+    actions: List[PendingAction],
+    resolved: Optional[Dict[str, List[str]]] = None,
+) -> List[PendingAction]:
+    """``actions`` as the caller may see them; ``resolved`` is each action's
+    cases when already worked out."""
+    if resolved is None:
+        lookups = _case_lookups(actions)
+        resolved = {a.action_id: _case_ids_for_action(a, *lookups[:3]) for a in actions}
+    hidden, readers = _restricted_cases(
+        {cid for ids in resolved.values() for cid in ids}
+    )
+    pending = {
+        a.action_id: a
+        for a in actions
+        if a.status == ActionStatus.PENDING.value
+        and not hidden.intersection(resolved.get(a.action_id, []))
+    }
+    able = _deciders(
+        {
+            p
+            for a in pending.values()
+            for cid in resolved.get(a.action_id, [])
+            for p in readers.get(cid, [])
+        }
+    )
+    shown = []
+    for action in actions:
+        cases = resolved.get(action.action_id, [])
+        if hidden.intersection(cases):
+            shown.append(_placeholder(action))
+            continue
+        if action.action_id in pending and any(
+            cid in readers and not able.intersection(readers[cid]) for cid in cases
+        ):
+            action.waiting = WAITING_FOR_READER
+        shown.append(action)
+    return shown
+
+
+def screen_action(action: Optional[PendingAction]) -> Optional[PendingAction]:
+    return None if action is None else screen_actions([action])[0]
+
+
+def may_decide(action: PendingAction) -> bool:
+    """Whether the caller may read every case the action is on."""
+    hidden, _readers = _restricted_cases(set(case_ids_for(action)))
+    return not hidden
+
+
+def _refuse_unreadable(row: ApprovalActionRow) -> None:
+    if not may_decide(_row_to_pending(row)):
+        logger.warning("Action %s is on a restricted case: refused", row.action_id)
+        raise ActionNotFound(row.action_id)
+
+
 def _kind_for_action(action: PendingAction) -> str:
     params = action.parameters if isinstance(action.parameters, dict) else {}
     checkpoint = params.get("checkpoint_id")
@@ -1111,6 +1254,25 @@ def _parked_runs(pending_runs: set[str]) -> List[Dict[str, Any]]:
         return found
 
 
+def _restricted_item(action: PendingAction, kind: str) -> Dict[str, Any]:
+    return {
+        "kind": kind,
+        "source_id": action.action_id,
+        "title": RESTRICTED_TITLE,
+        "reason": "",
+        "created_at": action.created_at,
+        "reversibility": action.reversibility,
+        "case_id": None,
+        "case_ids": [],
+        "finding_id": None,
+        "run_id": None,
+        "checkpoint_id": None,
+        "checkpoint_class": None,
+        "hypotheses": [],
+        "restricted": True,
+    }
+
+
 def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
     """Pending rows that need a person, oldest first, with no cap, then the hunts
     stopped at a limit.
@@ -1141,18 +1303,27 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
         ]
     runs, investigations, evidence_cases, stored, statuses = _case_lookups(actions)
     wanted = _text_id(case_id)
+    by_action = {
+        a.action_id: _case_ids_for_action(a, runs, investigations, evidence_cases)
+        for a in actions
+    }
     items: List[Dict[str, Any]] = []
-    for action in actions:
-        resolved = _case_ids_for_action(action, runs, investigations, evidence_cases)
+    for original, action in zip(actions, screen_actions(list(actions), by_action)):
+        resolved = by_action[action.action_id]
         if wanted is not None and wanted not in resolved:
             continue
-        kind = _kind_for_action(action)
+        kind = _kind_for_action(original)
         # Closing its cases answers a recommendation; reopening one asks again.
         if (
             kind == "recommendation"
             and resolved
             and all(statuses.get(one) == CLOSED for one in resolved)
         ):
+            continue
+        if action.restricted:
+            # Asked by case, a case the caller can't read has nothing to show.
+            if wanted is None:
+                items.append(_restricted_item(action, kind))
             continue
         items.append(
             {
@@ -1169,12 +1340,20 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                     (one for one in _evidence_ids(action) if one in stored), None
                 ),
                 "run_id": action.workflow_run_id,
+                "waiting": action.waiting,
                 **_checkpoint_fields(action),
             }
         )
     pending_runs = {action.workflow_run_id for action in actions}
-    for parked in _parked_runs({run for run in pending_runs if run}):
+    parked_runs = _parked_runs({run for run in pending_runs if run})
+    hidden, _readers = _restricted_cases(
+        {p["case_id"] for p in parked_runs if p["case_id"]}
+    )
+    for parked in parked_runs:
         if wanted is not None and parked["case_id"] != wanted:
+            continue
+        # A run on a case the caller can't read is not theirs to keep going.
+        if parked["case_id"] in hidden:
             continue
         items.append(parked)
     return {"count": len(items), "items": items}

@@ -30,6 +30,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import aliased, noload
 
 from core.agents.projections import run_id_for
+from core.auth.permissions import case_read_clause
 from core.federation.lag import source_collection_lag
 from core.findings.alert_outcomes import _cases_for, alert_group
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
@@ -60,6 +61,9 @@ EXCLUDED_STATE = "excluded"
 # An alert whose finding has no data_source counts and filters under this name.
 UNKNOWN_SOURCE = "Unknown"
 NOISE_LABEL = "Dismissed as noise"
+RESTRICTED_LABEL = "Added to a restricted case"
+# What a non-reader of a row's restricted case is not shown (#4359).
+_CASE_FIELDS = ("case_id", "merged_into", "linked_case", "merge_note", "run_id")
 
 ARRIVAL_INFO_ALL = "Arrivals count every finding stored. The list is one row per alert."
 _TRUST_FLOOR_INFO = {
@@ -504,6 +508,18 @@ def _load(
             .all()
         }
     case_ids = set(activities)
+    # Restricted cases the caller can't read, among every case a row names.
+    named = {
+        cid for row in triggers for cid in (row.case_id, row.merged_into) if cid
+    } | set(linked.values())
+    hidden: set[str] = set()
+    if named:
+        hidden = {
+            cid
+            for (cid,) in session.query(Case.case_id).filter(
+                Case.case_id.in_(named), ~case_read_clause()
+            )
+        }
     rows = []
     for row_id, finding_id, state in keys:
         row = by_id.get(row_id) if row_id is not None else None
@@ -512,7 +528,10 @@ def _load(
             # an alert with no intake row
             if finding is not None:
                 rows.append(
-                    _no_intake_row(finding, state, linked.get(finding_id or ""))
+                    _hide_restricted(
+                        _no_intake_row(finding, state, linked.get(finding_id or "")),
+                        hidden,
+                    )
                 )
             continue
         raw = row.payload if isinstance(row.payload, dict) else {}
@@ -520,40 +539,50 @@ def _load(
         # this row is not a holder of the internal token, and does not need it.
         payload = {key: value for key, value in raw.items() if key != "principal"}
         rows.append(
-            {
-                "id": row.id,
-                "kind": row.kind,
-                "state": state,
-                "source": (
-                    _finding_name(finding)
-                    if row.kind == "detection"
-                    else _OTHER_SOURCES.get(row.kind, UNKNOWN_SOURCE)
-                ),
-                "priority": row.priority,
-                "finding_id": row.finding_id,
-                "payload": payload,
-                "investigation_id": row.investigation_id,
-                "run_id": (
-                    derived[row.investigation_id]
-                    if derived.get(row.investigation_id) in recorded
-                    else None
-                ),
-                "case_id": row.case_id,
-                "merged_into": row.merged_into,
-                "linked_case": linked.get(row.finding_id or ""),
-                "merge_note": (
-                    _merge_note(row, activities.get(row.merged_into or "", []))
-                    if state == "merged"
-                    else None
-                ),
-                "reason": (
-                    _not_picked_up_reason(row) if state == NOT_PICKED_UP else None
-                ),
-                "created_at": _naive(row.created_at),
-                "decided_at": _naive(row.decided_at),
-            }
+            _hide_restricted(
+                {
+                    "id": row.id,
+                    "kind": row.kind,
+                    "state": state,
+                    "source": (
+                        _finding_name(finding)
+                        if row.kind == "detection"
+                        else _OTHER_SOURCES.get(row.kind, UNKNOWN_SOURCE)
+                    ),
+                    "priority": row.priority,
+                    "finding_id": row.finding_id,
+                    "payload": payload,
+                    "investigation_id": row.investigation_id,
+                    "run_id": (
+                        derived[row.investigation_id]
+                        if derived.get(row.investigation_id) in recorded
+                        else None
+                    ),
+                    "case_id": row.case_id,
+                    "merged_into": row.merged_into,
+                    "linked_case": linked.get(row.finding_id or ""),
+                    "merge_note": (
+                        _merge_note(row, activities.get(row.merged_into or "", []))
+                        if state == "merged"
+                        else None
+                    ),
+                    "reason": (
+                        _not_picked_up_reason(row) if state == NOT_PICKED_UP else None
+                    ),
+                    "created_at": _naive(row.created_at),
+                    "decided_at": _naive(row.decided_at),
+                },
+                hidden,
+            )
         )
     return rows, findings, workflows, case_ids
+
+
+def _hide_restricted(row: dict, hidden: set[str]) -> dict:
+    """A row on a case the caller can't read names no case, run or note."""
+    if hidden and any(row.get(f) in hidden for f in _CASE_FIELDS[:3]):
+        row.update(dict.fromkeys(_CASE_FIELDS), restricted=True)
+    return row
 
 
 _OTHER_SOURCES = {"schedule": "Schedule", "human_ask": "Ask"}
@@ -681,8 +710,10 @@ def _present(
     label, door = _state_label(
         row["state"], row.get("case_id"), row.get("merged_into"), case_ids
     )
+    if row.get("restricted") and row["state"] in _PICKUP_STATES:
+        label = RESTRICTED_LABEL
     # On a case but no door of its own (a queued or expired row, or none): Overview's case.
-    if door is None and row["state"] in _PICKUP_STATES:
+    elif door is None and row["state"] in _PICKUP_STATES:
         door = row.get("linked_case")
     dismissed = row["state"] == NOISE_STATE
     ranking = _ranking(row, now, config)

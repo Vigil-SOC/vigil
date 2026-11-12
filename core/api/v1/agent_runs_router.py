@@ -40,7 +40,7 @@ from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import WorkflowRunService, run_hidden
 
 router = APIRouter()
 
@@ -111,6 +111,10 @@ class RunListItem(BaseModel):
 class RunListResponse(BaseModel):
     runs: list[RunListItem]
     count: int = Field(..., description="Number of runs in this page.")
+    hidden: int = Field(
+        default=0,
+        description="Runs that matched but are on a restricted case the caller can't read, left out.",
+    )
 
 
 # List agent runs newest-first from workflow_runs (filtered to source=agent);
@@ -125,11 +129,14 @@ def list_runs(
 
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
+    hidden: list[int] = []
     rows = WorkflowRunService().list_runs(
         workflow_source="agent",
         status=status,
         limit=limit,
         offset=offset,
+        readable=True,
+        hidden=hidden,
     )
     items = [
         RunListItem(
@@ -142,7 +149,9 @@ def list_runs(
         )
         for r in rows
     ]
-    return RunListResponse(runs=items, count=len(items))
+    return RunListResponse(
+        runs=items, count=len(items), hidden=hidden[0] if hidden else 0
+    )
 
 
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.
@@ -297,6 +306,8 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
         run_id = str(uuid.UUID(run_id))
     except ValueError:
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}") from None
+    if run_hidden(session, run_id):
+        raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
 
     counted = session.execute(
         text(
@@ -387,6 +398,8 @@ def queue_directive(
         run_id = str(uuid.UUID(run_id))
     except ValueError:
         raise HTTPException(status_code=400, detail=f"not a run id: {run_id}") from None
+    if run_hidden(session, run_id):
+        raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
     principal = getattr(current_user, "principal_id", None) or getattr(
         current_user, "user_id", None
     )

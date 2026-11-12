@@ -127,9 +127,13 @@ def withdraw_for_run(run_id: str, reason: str, approvals=None) -> int:
     open_ones = service.list_actions(
         status=ActionStatus.PENDING, workflow_run_id=run_id
     )
-    for action in open_ones:
-        with suppress(AlreadyDecided):
-            service.reject_action(action.action_id, reason, rejected_by="agent")
+    from core.auth.permissions import builtin_reader
+
+    # Vigil's own withdrawal, on any case (#4359).
+    with builtin_reader():
+        for action in open_ones:
+            with suppress(AlreadyDecided):
+                service.reject_action(action.action_id, reason, rejected_by="agent")
     if open_ones:
         logger.info("withdrew %d unanswered approvals for %s", len(open_ones), run_id)
     return len(open_ones)
@@ -160,9 +164,12 @@ def expire_stale(older_than_days: int, approvals=None) -> int:
     cutoff = utcnow() - timedelta(days=older_than_days)
     reason = f"expired: unanswered for more than {older_than_days} days"
     stale = service.list_stale_pending(cutoff)
-    for action_id in stale:
-        with suppress(AlreadyDecided):
-            service.reject_action(action_id, reason, rejected_by="system")
+    from core.auth.permissions import builtin_reader
+
+    with builtin_reader():
+        for action_id in stale:
+            with suppress(AlreadyDecided):
+                service.reject_action(action_id, reason, rejected_by="system")
     if stale:
         logger.info(
             "expired %d approvals unanswered since before %s",
