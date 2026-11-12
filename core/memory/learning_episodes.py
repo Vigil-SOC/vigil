@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, exists, func, not_, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from core.agents.mcp_tools import MCPFailure
@@ -46,6 +46,7 @@ from core.detections.reconstruction import (
 )
 from core.detections.tools import get_security_detection_tools
 from core.memory.recall import attach_sources, gap_row, iso, verdict_row
+from core.storage.models import Case
 from core.storage.models.episodic import (
     EpisodicDistilMarker,
     EpisodicGap,
@@ -68,6 +69,21 @@ _EXPORT_KINDS: Tuple[str, ...] = EPISODE_KINDS + ("emulation",)
 # Cancelled compose runs are not episodes. Failed ones are: the trace still ran.
 _COMPOSE_STATUSES: Tuple[str, ...] = ("completed", "failed")
 DEFAULT_LIMIT = 200
+
+# A restricted case's conclusions are offered only to runs on that case (#4358);
+# a window of what Vigil learned is no such run, so they are left out of it.
+_OPEN_CASE_ONLY = not_(
+    and_(
+        EpisodicDistilMarker.investigation_kind == "case",
+        exists().where(
+            Case.case_id == EpisodicDistilMarker.investigation_id,
+            or_(
+                func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
+                func.coalesce(func.cardinality(Case.reader_team_ids), 0) > 0,
+            ),
+        ),
+    )
+)
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -176,6 +192,7 @@ def _distil_page(
         marker.investigation_kind.in_(EPISODE_KINDS),
         marker.concluded_at >= start,
         marker.concluded_at <= end,
+        _OPEN_CASE_ONLY,
     )
     with unit_of_work(session) as db:
         total = db.scalar(select(func.count()).select_from(marker).where(*window)) or 0
@@ -341,7 +358,8 @@ def _marker_episodes(
     with unit_of_work(session) as db:
         markers = db.scalars(
             select(marker).where(
-                tuple_(marker.investigation_kind, marker.investigation_id).in_(pairs)
+                tuple_(marker.investigation_kind, marker.investigation_id).in_(pairs),
+                _OPEN_CASE_ONLY,
             )
         ).all()
         by_pair = {(m.investigation_kind, m.investigation_id): m for m in markers}
