@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.attribution import note_child, note_terminal
-from core.agents.internal_auth import authorise
+from core.agents.internal_auth import authorise_run
 from core.auth.permissions import builtin_reader_request
 from core.cases.agent_closure import activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
@@ -161,10 +161,15 @@ def record_phase(
     run_id: str,
     update: PhaseUpdate,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approvals: ApprovalService = Depends(provide_approvals),
 ) -> None:
-    authorise(authorization, "run progress")
+    authorise_run(
+        "run progress", run_id, x_vigil_run_principal, authorization=authorization
+    )
 
     now = utcnow()
     run_service.upsert_phase(
@@ -196,9 +201,14 @@ def record_status(
     run_id: str,
     update: StatusUpdate,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
 ) -> None:
-    authorise(authorization, "run status")
+    authorise_run(
+        "run status", run_id, x_vigil_run_principal, authorization=authorization
+    )
     run_service.set_status(
         run_id, update.status, reason=update.reason, cost_usd=update.cost_usd
     )
@@ -211,9 +221,14 @@ def record_progress(
     run_id: str,
     update: ProgressUpdate,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
 ) -> None:
-    authorise(authorization, "run progress")
+    authorise_run(
+        "run progress", run_id, x_vigil_run_principal, authorization=authorization
+    )
     run_service.set_progress(
         run_id, iteration=update.iteration, max_cost_usd=update.max_cost_usd
     )
@@ -238,11 +253,16 @@ def record_terminal(
     run_id: str,
     update: TerminalUpdate,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     approvals: ApprovalService = Depends(provide_approvals),
     registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
-    authorise(authorization, "run outcome")
+    authorise_run(
+        "run outcome", run_id, x_vigil_run_principal, authorization=authorization
+    )
 
     withdraw_for_run(
         run_id,
@@ -307,9 +327,14 @@ def record_child(
     run_id: str,
     body: ChildStart,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
 ) -> None:
     """A child run's start. The actor is the parent's agent; the origin is this run."""
-    authorise(authorization, "child run")
+    authorise_run(
+        "child run", run_id, x_vigil_run_principal, authorization=authorization
+    )
     session = get_db_session()
     try:
         # unlinked is not success: the agent retries, and a second post is a no-op
@@ -343,10 +368,15 @@ def record_handoff(
     run_id: str,
     handoff: TerminalHandoff,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
     registry: Optional[MCPRegistry] = Depends(provide_mcp_registry),
 ) -> None:
-    authorise(authorization, "run handoff")
+    authorise_run(
+        "run handoff", run_id, x_vigil_run_principal, authorization=authorization
+    )
     origin = _origin_case(run_id, run_service)
     _process_handoff(
         run_id, handoff, origin, _source_is_hunt(run_id), run_service, registry
@@ -361,9 +391,14 @@ def record_findings(
     run_id: str,
     cited: CitedFindings,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
 ) -> None:
-    authorise(authorization, "run findings")
+    authorise_run(
+        "run findings", run_id, x_vigil_run_principal, authorization=authorization
+    )
     case_id = _origin_case(run_id, run_service)
     if case_id:
         _link_findings(case_id, run_id, cited.finding_ids)
@@ -1053,9 +1088,14 @@ def record_checkpoint(
     run_id: str,
     raised: CheckpointRaised,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     approvals: ApprovalService = Depends(provide_approvals),
 ) -> None:
-    authorise(authorization, "run checkpoint")
+    authorise_run(
+        "run checkpoint", run_id, x_vigil_run_principal, authorization=authorization
+    )
 
     # Idempotent per checkpoint inside raise_for_checkpoint, because a parked run
     # is announced on every sweep and would otherwise queue the question each time.
@@ -1082,11 +1122,16 @@ def record_checkpoint(
 def list_decisions(
     run_id: str,
     authorization: Optional[str] = Header(default=None),
+    x_vigil_run_principal: Optional[str] = Header(
+        default=None, alias="X-Vigil-Run-Principal"
+    ),
     approvals: ApprovalService = Depends(provide_approvals),
 ) -> Decisions:
     from core.response.approval_service import ActionStatus
 
-    authorise(authorization, "run decisions")
+    authorise_run(
+        "run decisions", run_id, x_vigil_run_principal, authorization=authorization
+    )
 
     decided: List[Decision] = []
     for status, answer in (

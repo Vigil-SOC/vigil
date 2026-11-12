@@ -22,7 +22,7 @@ from core.agents.attribution import (
     note_tool,
 )
 from core.agents.integration_tools import resolve_integration_call
-from core.agents.internal_auth import authorise
+from core.agents.internal_auth import accepted, authorise, authorise_run
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
 from core.agents.tool_registry import (
     MANIFEST,
@@ -422,10 +422,14 @@ async def invoke(
     authorization: Optional[str] = Header(default=None),
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> Dict[str, Any]:
-    authorise(authorization, "tool invocation")
+    what = "tool invocation"
+    # Settled after the run check, so a run-principal refusal keeps its latch
+    # instead of being reset by the bearer succeeding on every call.
+    authorise(authorization, what, note_ok=False)
     # A call that names nobody is refused, not parked: a run parked before
     # tokens existed comes back with none, and parking it again would loop.
     if body.principal is None:
+        accepted(what)
         _note_unbound(body.tool)
         return _failure("refused", detail="no principal: the call names nobody")
     # A token that does not verify is refused, never read as "no person": that
@@ -433,7 +437,13 @@ async def invoke(
     try:
         claims = tool_principal.read(body.principal)
     except tool_principal.InvalidPrincipal:
+        accepted(what)
         raise HTTPException(status_code=401, detail="bad or expired principal")
+    # An approved action names its run. The principal has to name that same run.
+    refusal = authorise_run(what, body.run_id, claims=claims)
+    if refusal:
+        return _failure("refused", detail=refusal)
+    accepted(what)
     # A run whose sign-in ended for a stopping reason calls nothing more, whether
     # or not its worker has been told to stop yet. Other endings keep it working.
     if claims.sid and await asyncio.to_thread(
