@@ -289,6 +289,9 @@ class ClosureInfo(BaseModel):
     executive_summary: Optional[str] = None
     false_positive_reason: Optional[str] = None
     closure_notes: Optional[str] = None
+    # Whether this person opened the evidence. Absent stores null. An agent
+    # close stores null even when the field is sent.
+    evidence_opened: Optional[bool] = None
     expected: Optional[CaseExpected] = None
 
 
@@ -1212,6 +1215,7 @@ def close_case(
         executive_summary=data.executive_summary,
         false_positive_reason=data.false_positive_reason,
         closure_notes=data.closure_notes,
+        evidence_opened=data.evidence_opened,
     )
     if not closure:
         raise HTTPException(status_code=404, detail="Case not found")

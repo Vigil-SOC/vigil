@@ -6,6 +6,7 @@ and task automation.
 """
 
 import logging
+import secrets
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -400,6 +401,7 @@ class CaseWorkflowService:
         executive_summary: Optional[str] = None,
         false_positive_reason: Optional[str] = None,
         closure_notes: Optional[str] = None,
+        evidence_opened: Optional[bool] = None,
         on_trail: bool = True,
     ):
         """Mark a case closed and record its closure metadata.
@@ -438,6 +440,13 @@ class CaseWorkflowService:
         *previous* closer: an agent's status edit after an analyst's reopened
         close would inherit Trust ``analyst``, and memory would carry a
         determination no person made.
+
+        An agent ``false_positive`` close with no ``sampled_at`` is drawn one
+        in twenty (``secrets.randbelow(20) == 0``). A hit sets ``sampled_at``.
+        A later close does not draw again. ``evidence_opened`` is stored only
+        on a person's close that writes the determination; an agent close and
+        an absent field store null. A status edit that leaves a standing
+        determination draws nothing and changes neither column.
         """
         from core.cases.case_sla_service import CaseSLAService
         from core.storage.models import CaseClosureInfo
@@ -463,6 +472,12 @@ class CaseWorkflowService:
         # every field this call did not state, so a re-close would erase the
         # root cause and lessons learned of the close before it.
         closure = session.get(CaseClosureInfo, case_id)
+        # The branch that writes the category and the channel. An unspecified
+        # status edit over a standing determination is not it.
+        determining = closure is None or (
+            category is not ClosureCategory.UNSPECIFIED
+            or closure.closure_category == ClosureCategory.UNSPECIFIED.value
+        )
         if closure is None:
             closure = CaseClosureInfo(
                 case_id=case_id,
@@ -472,10 +487,7 @@ class CaseWorkflowService:
                 close_channel=channel,
             )
             session.add(closure)
-        elif (
-            category is not ClosureCategory.UNSPECIFIED
-            or closure.closure_category == ClosureCategory.UNSPECIFIED.value
-        ):
+        elif determining:
             if (
                 trust_word(closure.close_channel) == "analyst"
                 and channel == CHANNEL_AGENT
@@ -490,6 +502,18 @@ class CaseWorkflowService:
             closure.closed_by = stored_by
             closure.closed_by_text = actor_text
             closure.close_channel = channel
+
+        if determining:
+            if (
+                channel == CHANNEL_AGENT
+                and category is ClosureCategory.FALSE_POSITIVE
+                and closure.sampled_at is None
+            ):
+                if secrets.randbelow(20) == 0:
+                    closure.sampled_at = utcnow()
+            closure.evidence_opened = (
+                evidence_opened if closed_by_person(channel) else None
+            )
 
         closure.closed_at = utcnow()
         # Stated fields only. None means this call had nothing to say about the
@@ -516,6 +540,8 @@ class CaseWorkflowService:
                 case_id=case_id,
                 actor_text=actor_text,
                 credential_id=current_credential_id(),
+                sampled=closure.sampled_at is not None,
+                evidence_opened=closure.evidence_opened,
             )
         return closure
 
@@ -527,16 +553,20 @@ class CaseWorkflowService:
         lessons learned and the executive summary are work, not a verdict, and
         deleting them is a data loss nobody asked for.
 
-        What must not survive is the category. Left standing, the next status
-        edit -- which states no category of its own -- would close the Case back
-        into the determination the reopen retracted, and episodic memory would
-        re-derive the Verdict the analyst reopened the Case to overturn.
+        What must not survive is the category, or the sample drawn from it.
+        Left standing, the next status edit -- which states no category of its
+        own -- would close the Case back into the determination the reopen
+        retracted, and episodic memory would re-derive the Verdict the analyst
+        reopened the Case to overturn. ``sampled_at`` is cleared so a later
+        agent dismissal can be drawn again. ``evidence_opened`` stays.
         """
         from core.storage.models import CaseClosureInfo
 
         closure = session.get(CaseClosureInfo, case_id)
         if closure is not None:
             closure.closure_category = ClosureCategory.UNSPECIFIED.value
+            # The draw does not outlive the determination it was taken from.
+            closure.sampled_at = None
         move_reopened_archived_team(session, case_id)
 
     def merge_cases(
