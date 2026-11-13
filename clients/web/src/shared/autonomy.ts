@@ -36,3 +36,26 @@ export function agreementText(row: Pick<WorkflowAgreement, 'agreed' | 'disagreed
   const pct = Math.round(row.agreement_rate * 100)
   return { text: `${scored} ${scored === 1 ? 'review' : 'reviews'} · ${pct}% agree`, pct }
 }
+
+const asPct = (rate: number) => Math.round(rate * 100)
+
+/** "30 days · 4% false close · 25 answered · 1–9%". Null when the rate is absent. */
+export function falseCloseText(
+  row: Pick<WorkflowAgreement, 'false_close_rate' | 'answered' | 'wilson_low' | 'wilson_high'> | null | undefined,
+): string | null {
+  if (!row || row.false_close_rate == null) return null
+  const range =
+    row.wilson_low != null && row.wilson_high != null
+      ? ` · ${asPct(row.wilson_low)}–${asPct(row.wilson_high)}%`
+      : ''
+  return `30 days · ${asPct(row.false_close_rate)}% false close · ${row.answered} answered${range}`
+}
+
+/** Agreements given without opening the evidence, over those plus the ones that did. Null when neither was counted. */
+export function uncheckedText(row: Pick<WorkflowAgreement, 'agreed' | 'agreed_unchecked'> | null | undefined): string | null {
+  const agreed = row?.agreed ?? 0
+  const unchecked = row?.agreed_unchecked ?? 0
+  const total = agreed + unchecked
+  if (!row || total === 0) return null
+  return `${asPct(unchecked / total)}% agreed without the evidence`
+}

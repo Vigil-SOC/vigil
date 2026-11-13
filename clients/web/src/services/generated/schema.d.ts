@@ -1695,9 +1695,10 @@ export interface paths {
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
          *     workflow has it); both compose with the other filters. ``working=true``
-         *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
-         *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
-         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     keeps open cases that do not need you, ``closed_by=agent|person|draw`` keeps
+         *     closed cases by who closed them (``draw`` is a sampled dismissal still on
+         *     the agent channel), and ``alerts_from=today|all`` keeps cases holding an
+         *     alert created that UTC day (or any alert). The strip follows
          *     ``alerts_from`` and ``team``, and ignores the other filters. ``team`` is
          *     the owning team's id, repeated for several; omitting it returns every
          *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
@@ -7962,9 +7963,10 @@ export interface paths {
          *     ``needs_you=true`` keeps just those cases, and ``kind`` keeps cases whose
          *     latest investigation ran a workflow of that ``run_kind`` (none when no
          *     workflow has it); both compose with the other filters. ``working=true``
-         *     keeps open cases that do not need you, ``closed_by=agent|person`` keeps
-         *     closed cases by who closed them, and ``alerts_from=today|all`` keeps cases
-         *     holding an alert created that UTC day (or any alert). The strip follows
+         *     keeps open cases that do not need you, ``closed_by=agent|person|draw`` keeps
+         *     closed cases by who closed them (``draw`` is a sampled dismissal still on
+         *     the agent channel), and ``alerts_from=today|all`` keeps cases holding an
+         *     alert created that UTC day (or any alert). The strip follows
          *     ``alerts_from`` and ``team``, and ignores the other filters. ``team`` is
          *     the owning team's id, repeated for several; omitting it returns every
          *     readable case. ``assignee`` is an exact stored owner; ``unassigned=true``
@@ -18284,7 +18286,7 @@ export interface operations {
                 query?: string | null;
                 needs_you?: boolean;
                 working?: boolean;
-                closed_by?: ("agent" | "person") | null;
+                closed_by?: ("agent" | "person" | "draw") | null;
                 alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
@@ -29673,7 +29675,7 @@ export interface operations {
                 query?: string | null;
                 needs_you?: boolean;
                 working?: boolean;
-                closed_by?: ("agent" | "person") | null;
+                closed_by?: ("agent" | "person" | "draw") | null;
                 alerts_from?: ("today" | "all") | null;
                 kind?: string | null;
                 limit?: number;
