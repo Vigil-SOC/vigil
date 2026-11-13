@@ -18,6 +18,9 @@ from typing import Optional
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from arq.connections import RedisSettings
+from redis import exceptions as redis_errors
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 
@@ -32,8 +35,25 @@ class _RedisSettings(RedisSettings):
         for key, value in self.__dict__.items():
             if key == "password":
                 value = "***" if value else None
+            elif key == "retry" and value is not None:
+                # redis-py's Retry has no repr of its own
+                value = _RetryRepr(value)
             parts.append(f"{key}={value!r}")
         return "RedisSettings({})".format(", ".join(parts))
+
+
+class _RetryRepr:
+    def __init__(self, retry):
+        self._retry = retry
+
+    def __repr__(self) -> str:
+        backoff = self._retry._backoff
+        return "Retry({}(cap={}, base={}), retries={})".format(
+            type(backoff).__name__,
+            getattr(backoff, "_cap", None),
+            getattr(backoff, "_base", None),
+            self._retry._retries,
+        )
 
 
 _client = None
@@ -141,17 +161,36 @@ def arq_redis_settings() -> RedisSettings:
     it through, so a key containing ``@`` or ``/`` would authenticate with the
     escapes still in it. redis-py unquotes in ``from_url``; this matches it.
 
-    ``create_pool`` retries on connect errors. The defaults (1s timeout, 5
-    retries) give up about 10s into a cold Redis. These allow ~45s for a
-    refused connection, ~90s if every try times out.
+    ``retry`` covers every connect the pool makes, not just the first: a
+    reconnect while the worker runs gets 5 retries with exponential backoff
+    (1, 2, 4, 4, 4s), ~15s for a refused connection and ~33s if every 3s try
+    times out, before the error ends the worker. Commands themselves are not
+    retried (``retry_on_error`` stays empty), so nothing is sent twice; arq
+    sets no socket_timeout, so read timeouts are not in play. A Redis that
+    stays gone still ends the process, which Compose's restart relies on.
+
+    ``create_pool`` wraps its first ping in ``conn_retries`` on top of that:
+    ~51s for a refused Redis at startup, ~105s if every try times out, inside
+    start.sh's ``WORKER_READY_TIMEOUT``.
     """
     parsed = RedisSettings.from_dsn(effective_redis_url())
     settings = _RedisSettings(**parsed.__dict__)
     if settings.password:
         settings.password = unquote(settings.password)
     settings.conn_timeout = 3
-    settings.conn_retries = 15
+    settings.conn_retries = 2
     settings.conn_retry_delay = 3
+    # _connect raises the raw socket errors (asyncio.TimeoutError is an
+    # OSError), not redis-py's own, so the default list alone retries nothing.
+    settings.retry = Retry(
+        ExponentialBackoff(cap=4, base=0.5),
+        5,
+        supported_errors=(
+            redis_errors.ConnectionError,
+            redis_errors.TimeoutError,
+            OSError,
+        ),
+    )
     return settings
 
 
