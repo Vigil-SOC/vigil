@@ -256,6 +256,8 @@ class CaseClosureInfoSchema(ORMSchema):
     closed_by: Optional[str] = None
     closure_notes: Optional[str] = None
     closed_at: OptDateTime = None
+    sampled_at: OptDateTime = None
+    evidence_opened: Optional[bool] = None
 
 
 class CaseEscalationSchema(ORMSchema):

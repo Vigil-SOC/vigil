@@ -743,6 +743,12 @@ class CaseClosureInfo(Base):
     closed_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
+    # Set when an agent false-positive close is drawn into the sample (one in
+    # twenty). A later close does not draw again; a reopen clears it.
+    sampled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Whether the person who closed it opened the evidence. Null on an agent
+    # close and when the person left the field out.
+    evidence_opened: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class CaseEscalation(Base):

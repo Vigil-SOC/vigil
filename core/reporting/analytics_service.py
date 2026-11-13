@@ -5,8 +5,9 @@ request-scoped ``Session``; nothing here commits — the unit of work owns that.
 """
 
 import logging
+import math
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session, noload
@@ -697,6 +698,7 @@ async def get_cost_breakdown(db: Session, time_range: str) -> Dict[str, Any]:
 # a uuid has no ledger rows, and is cast to NULL rather than failing the query.
 _CLOSURE_VERDICTS = text("""
     SELECT ci.case_id, ci.closure_category, ci.close_channel,
+           ci.closed_at, ci.sampled_at, ci.evidence_opened,
            t.workflow_id, t.disposition, t.confidence
     FROM case_closure_info ci
     JOIN cases c ON c.case_id = ci.case_id AND c.status = 'closed'
@@ -718,8 +720,12 @@ _CLOSURE_VERDICTS = text("""
         ORDER BY e.ts DESC, e.seq DESC
         LIMIT 1
     ) t ON true
-    WHERE ci.closed_at >= :start AND ci.closed_at <= :end
+    WHERE (ci.closed_at >= :start AND ci.closed_at <= :end)
+       OR (ci.sampled_at >= :start AND ci.sampled_at <= :end)
     """)
+
+# 95% two-sided Wilson interval. z is the standard normal 0.975 quantile.
+_WILSON_Z = 1.959963984540054
 
 _REAL = {"malicious", "suspicious"}
 _NOT_REAL = {"benign", "false_positive"}
@@ -734,11 +740,36 @@ def _agreement_tally() -> Dict[str, Any]:
         "abstained": 0,
         "closed_without_determination": 0,
         "closed_by_agent_alone": 0,
+        "agreed_unchecked": 0,
+        "draws": 0,
+        "answered": 0,
+        "false_closes": 0,
+        "false_close_rate": None,
+        "wilson_low": None,
+        "wilson_high": None,
         "by_confidence": {
             level: {"agreed": 0, "disagreed": 0}
             for level in (*_CONFIDENCES, "unstated")
         },
     }
+
+
+def _wilson(successes: int, n: int) -> Optional[Tuple[float, float]]:
+    """95% Wilson low and high for ``successes`` out of ``n``, or None when ``n`` is 0."""
+    if n <= 0:
+        return None
+    z2 = _WILSON_Z * _WILSON_Z
+    p = successes / n
+    denom = 1 + z2 / n
+    center = (p + z2 / (2 * n)) / denom
+    margin = _WILSON_Z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom
+    low = min(1.0, max(0.0, center - margin))
+    high = min(1.0, max(0.0, center + margin))
+    return round(low, 4), round(high, 4)
+
+
+def _in_window(moment: Optional[datetime], start: datetime, end: datetime) -> bool:
+    return moment is not None and start <= moment <= end
 
 
 async def get_agent_agreement(
@@ -757,7 +788,14 @@ def agent_agreement(
     closure is scored: agreed or disagreed when both sides took a side, abstained
     when the agent said inconclusive or needs_review, closed without a
     determination when the closure was neither resolved nor false_positive.
-    A closure by the agent's own channel is counted apart and never scored.
+    An agreement with ``evidence_opened`` false is ``agreed_unchecked`` and stays
+    out of ``agreed`` and out of the rate. A closure by the agent's own channel
+    is counted apart and never scored.
+
+    The sample is the same rows whose ``sampled_at`` falls in the window: draws,
+    how many a person answered, and false closes (an answered draw whose
+    disposition is not-real and whose closure says real). The rate and the Wilson
+    bounds are null when none are answered.
     ``readable``, a read clause on cases, leaves out the closures it does not admit.
     """
     rows = list(db.execute(_CLOSURE_VERDICTS, {"start": start_time, "end": end_time}))
@@ -774,25 +812,51 @@ def agent_agreement(
     by_workflow: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         tallies = (overall, by_workflow.setdefault(row.workflow_id, _agreement_tally()))
-        if not closed_by_person(row.close_channel):
-            key = "closed_by_agent_alone"
-        else:
-            disposition = (row.disposition or "").strip().lower()
-            closure = closure_says_real(row.closure_category)
-            if closure is None:
-                key = "closed_without_determination"
-            elif disposition in _REAL or disposition in _NOT_REAL:
-                key = "agreed" if (disposition in _REAL) == closure else "disagreed"
+        if _in_window(row.closed_at, start_time, end_time):
+            if not closed_by_person(row.close_channel):
+                key = "closed_by_agent_alone"
             else:
-                key = "abstained"
-        level = row.confidence if row.confidence in _CONFIDENCES else "unstated"
+                disposition = (row.disposition or "").strip().lower()
+                closure = closure_says_real(row.closure_category)
+                if closure is None:
+                    key = "closed_without_determination"
+                elif disposition in _REAL or disposition in _NOT_REAL:
+                    agreed = (disposition in _REAL) == closure
+                    # An agreement the person did not open stays out of the rate.
+                    if agreed and row.evidence_opened is False:
+                        key = "agreed_unchecked"
+                    else:
+                        key = "agreed" if agreed else "disagreed"
+                else:
+                    key = "abstained"
+            level = row.confidence if row.confidence in _CONFIDENCES else "unstated"
+            for tally in tallies:
+                tally[key] += 1
+                if key in ("agreed", "disagreed"):
+                    tally["by_confidence"][level][key] += 1
+        if not _in_window(row.sampled_at, start_time, end_time):
+            continue
+        disposition = (row.disposition or "").strip().lower()
+        false_close = (
+            closed_by_person(row.close_channel)
+            and disposition in _NOT_REAL
+            and closure_says_real(row.closure_category) is True
+        )
         for tally in tallies:
-            tally[key] += 1
-            if key in ("agreed", "disagreed"):
-                tally["by_confidence"][level][key] += 1
+            tally["draws"] += 1
+            if closed_by_person(row.close_channel):
+                tally["answered"] += 1
+                if false_close:
+                    tally["false_closes"] += 1
     for tally in (overall, *by_workflow.values()):
         scored = tally["agreed"] + tally["disagreed"]
         tally["agreement_rate"] = round(tally["agreed"] / scored, 4) if scored else None
+        answered = tally["answered"]
+        if answered:
+            tally["false_close_rate"] = round(tally["false_closes"] / answered, 4)
+            bounds = _wilson(tally["false_closes"], answered)
+            if bounds is not None:
+                tally["wilson_low"], tally["wilson_high"] = bounds
     return {
         "overall": overall,
         "by_workflow": [

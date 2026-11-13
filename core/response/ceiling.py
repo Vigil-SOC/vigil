@@ -15,7 +15,8 @@ caller that decides whether a tool call needs an approval.
 Each investigate-kind workflow may carry its own tier in the same row (#3624):
 ``act`` or ``assist`` replaces the fleet's ``act_reversible`` for its runs. A
 person raises it with an agreement floor; Vigil drops it to ``assist`` when a
-person's closure takes its agreement below that floor.
+person's closure takes its agreement below that floor, or when the Wilson lower
+bound on its sampled false closes sits above the complement of that floor.
 """
 
 from __future__ import annotations
@@ -368,7 +369,30 @@ def _evidence(tally: Optional[dict], window_end: str) -> dict[str, Any]:
         "disagreed": tally.get("disagreed", 0),
         "agreement_rate": tally.get("agreement_rate"),
         "window_end": window_end,
+        "false_close_rate": tally.get("false_close_rate"),
+        "answered": tally.get("answered", 0),
+        "wilson_low": tally.get("wilson_low"),
+        "wilson_high": tally.get("wilson_high"),
     }
+
+
+def _false_close_above(tally: dict, floor: int) -> bool:
+    """Act drops when the sample is large enough and its Wilson low is too high.
+
+    At least 20 draws answered, at least half the draws answered, and the
+    Wilson lower bound strictly above the complement of the floor.
+    """
+    answered = tally.get("answered") or 0
+    draws = tally.get("draws") or 0
+    low = tally.get("wilson_low")
+    if answered < 20 or draws < 1 or answered * 2 < draws:
+        return False
+    if not isinstance(low, (int, float)):
+        return False
+    # Same 4 decimals as the stored bound. ``1 - floor / 100`` is a hair under
+    # the complement for many floors, which would treat a bound that landed on
+    # the complement as strictly above it.
+    return low > round((100 - floor) / 100, 4)
 
 
 def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
@@ -477,15 +501,16 @@ def set_workflow_tier(
 
 
 def drop_below_floor() -> None:
-    """Every workflow on Act whose agreement fell below its floor goes to Assist.
+    """Drop Act workflows that missed a floor or whose false-close interval is too high.
 
     Written as the system, under the row lock, so a concurrent edit is not
-    lost. Never raises.
+    lost. Never raises. A person's raise is still ``put_workflow_autonomy``.
     """
     try:
         with unit_of_work() as session:
             tallies, window_end = agreement_by_workflow(session)
-        dropped: list[str] = []
+        below: list[str] = []
+        false_close: list[str] = []
 
         def change(current: Ceiling) -> tuple[Ceiling, str]:
             workflows = dict(current.workflows)
@@ -493,17 +518,35 @@ def drop_below_floor() -> None:
                 floor = entry.get("floor")
                 if entry.get("tier") != ACT or not isinstance(floor, int):
                     continue
-                evidence = _evidence(tallies.get(wid), window_end)
+                tally = tallies.get(wid) or {}
+                evidence = _evidence(tally, window_end)
                 rate = evidence["agreement_rate"]
-                if rate is not None and rate < floor / 100:
-                    workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM)
-                    dropped.append(wid)
-            reason = "Agreement fell below the floor: " + ", ".join(sorted(dropped))
+                missed = rate is not None and rate < floor / 100
+                sampled = _false_close_above(tally, floor)
+                if not missed and not sampled:
+                    continue
+                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM)
+                if missed:
+                    below.append(wid)
+                if sampled:
+                    false_close.append(wid)
+            parts: list[str] = []
+            if below:
+                parts.append(
+                    "Agreement fell below the floor: " + ", ".join(sorted(below))
+                )
+            if false_close:
+                parts.append(
+                    "False-close interval above the complement of the floor: "
+                    + ", ".join(sorted(false_close))
+                )
+            reason = "; ".join(parts) if parts else "Agreement fell below the floor"
             return replace(current, workflows=MappingProxyType(workflows)), reason
 
         _locked_update(change, _SYSTEM)
-        if dropped:
-            logger.warning("workflows dropped to Assist: %s", ", ".join(dropped))
+        moved = sorted(set(below) | set(false_close))
+        if moved:
+            logger.warning("workflows dropped to Assist: %s", ", ".join(moved))
     except Exception:  # noqa: BLE001 - a close never fails on this
         logger.exception("agreement floors not checked after a close")
 

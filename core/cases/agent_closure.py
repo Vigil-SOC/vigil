@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from sqlalchemy.orm import Session
 
@@ -212,14 +212,23 @@ def record_close(
     case_id: str,
     actor_text: str,
     credential_id: Optional[str] = None,
+    sampled: bool = False,
+    evidence_opened: Optional[bool] = None,
 ) -> None:
     """Append the close to the trail in the caller's transaction.
 
     No ``case_audit_logs`` row: a close does not write one today.
+    ``sampled`` is whether the row is in the dismissal sample.
+    ``evidence_opened`` is the flag stored on this close, null included.
     """
     if not _trail_ready(session):
         return
-    payload: dict[str, str] = {"action": CLOSE_ACTION, "case_id": case_id}
+    payload: dict[str, Any] = {
+        "action": CLOSE_ACTION,
+        "case_id": case_id,
+        "sampled": sampled,
+        "evidence_opened": evidence_opened,
+    }
     if principal_id:
         payload["actor"] = principal_id
     if credential_id:

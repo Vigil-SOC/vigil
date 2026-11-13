@@ -9852,6 +9852,8 @@ export interface components {
             closure_notes?: string | null;
             /** Contributing Factors */
             contributing_factors?: string[];
+            /** Evidence Opened */
+            evidence_opened?: boolean | null;
             /** Executive Summary */
             executive_summary?: string | null;
             /** False Positive Reason */
@@ -9864,6 +9866,8 @@ export interface components {
             recurrence_prevention?: string | null;
             /** Root Cause */
             root_cause?: string | null;
+            /** Sampled At */
+            sampled_at?: string | null;
         };
         /**
          * CaseClosureView
@@ -11305,6 +11309,8 @@ export interface components {
             closure_category: components["schemas"]["ClosureCategory"];
             /** Closure Notes */
             closure_notes?: string | null;
+            /** Evidence Opened */
+            evidence_opened?: boolean | null;
             /** Executive Summary */
             executive_summary?: string | null;
             expected?: components["schemas"]["CaseExpected"] | null;
