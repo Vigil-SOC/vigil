@@ -79,14 +79,24 @@
 .case-page .dh-meta .case-trust {
   margin: 0 0 0 auto;
   font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
 }
 
-/* Trust strip (CaseDetail board): a 72x4 meter, then the text and its ⓘ. Neutral fill unless the workflow has a floor. */
+/* Trust strip: agreement (meter stays with its text), the 30-day false-close rate,
+   and agreements given without the evidence. The row wraps between figures. */
 .case-page .dh-meta .case-trust-on {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  max-width: 100%;
   color: var(--tx2);
+}
+.case-page .case-trust-agree {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   white-space: nowrap;
 }
 .case-page .case-trust-bar {
@@ -2116,6 +2126,12 @@
 /* Reopen: the owner the case reopens with, beside the button. */
 /* Five cards: five across, then three, then two. A fifth card must not leave the others on the four-column grid. */
 .stat-cards.cases-strip { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.stat-cards.cases-strip .stat-card-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
 @container main (max-width: 1099px) {
   .stat-cards.cases-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

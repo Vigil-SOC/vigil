@@ -665,7 +665,10 @@ export function useInvestigateWorkflows() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([workflowApi.listAll(), analyticsApi.getAgreement('30d').catch(() => [])])
+    Promise.all([
+      workflowApi.listAll(),
+      analyticsApi.getAgreement('30d').catch(() => ({ by_workflow: [] })),
+    ])
       .then(([res, agreement]) => {
         if (cancelled) return
         const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter((w) => w.run_kind === 'investigate')
@@ -673,7 +676,7 @@ export function useInvestigateWorkflows() {
           listed.map((w) => ({
             id: w.id,
             name: w.name || w.id,
-            agreement: agreement.find((row) => row.workflow_id === w.id),
+            agreement: agreement.by_workflow.find((row) => row.workflow_id === w.id),
           })),
         )
         setPhase('ready')

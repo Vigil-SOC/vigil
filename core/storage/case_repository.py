@@ -339,6 +339,22 @@ def _closed_by_person_exists(person_channels: Sequence[str]):
     )
 
 
+def _drawn_on_agent_channel(person_channels: Sequence[str]):
+    """A sampled dismissal still closed on a channel that is not a person's.
+
+    The channel test is the one ``_closed_by_person_exists`` uses, on the row
+    that holds ``sampled_at``. Answering the draw moves that channel onto a
+    person, so the case leaves this filter.
+    """
+    return exists(
+        select(CaseClosureInfo.case_id).where(
+            CaseClosureInfo.case_id == Case.case_id,
+            CaseClosureInfo.sampled_at.isnot(None),
+            CaseClosureInfo.close_channel.notin_(list(person_channels)),
+        )
+    )
+
+
 def _alerts_in_span_exists(span: AlertSpan):
     """Cases holding an alert created in ``span`` (``None`` bounds are open).
 
@@ -730,8 +746,10 @@ class CaseRepository:
         investigation ran one of those workflows (an empty set returns none).
 
         ``working`` keeps open cases outside ``needs_you_ids``. ``closed_by``
-        (``agent`` or ``person``) keeps closed cases; ``person_channels`` are the
-        close channels that read as a person, and no closure row reads as an agent.
+        keeps closed cases: ``person`` is a person channel, ``agent`` is any
+        other close, and ``draw`` is a sampled dismissal still on a channel
+        that is not a person's. ``person_channels`` are the close channels
+        that read as a person.
         ``alerts_span`` keeps cases holding an alert created in ``(start, end)``,
         either bound open.
         """
@@ -835,7 +853,12 @@ class CaseRepository:
                 stmt = stmt.where(Case.case_id.notin_(sorted(needs_you_ids)))
         if closed_by:
             person = _closed_by_person_exists(person_channels)
-            stmt = stmt.where(person if closed_by == "person" else ~person)
+            if closed_by == "person":
+                stmt = stmt.where(person)
+            elif closed_by == "draw":
+                stmt = stmt.where(_drawn_on_agent_channel(person_channels))
+            else:
+                stmt = stmt.where(~person)
         if alerts_span is not None:
             stmt = stmt.where(_alerts_in_span_exists(alerts_span))
         total = self.session.execute(

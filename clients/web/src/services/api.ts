@@ -305,7 +305,7 @@ export const casesApi = {
     query?: string
     needs_you?: boolean
     working?: boolean
-    closed_by?: 'agent' | 'person'
+    closed_by?: 'agent' | 'person' | 'draw'
     alerts_from?: 'today' | 'all'
     kind?: string
     /** Owning-team ids. Repeated as `team=`. Omitted returns every readable case. */
@@ -892,23 +892,40 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
-/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
-export interface WorkflowAgreement {
-  workflow_id: string
+/** One tally in `agent_agreement` (core/reporting/analytics_service.py): overall, or one workflow. */
+export interface AgreementTally {
   agreed: number
   disagreed: number
   agreement_rate: number | null
   abstained: number
   closed_without_determination: number
   closed_by_agent_alone: number
+  agreed_unchecked: number
+  answered: number
+  false_close_rate: number | null
+  wilson_low: number | null
+  wilson_high: number | null
+}
+
+/** One workflow's tally. `overall` is the same shape without a workflow id. */
+export interface WorkflowAgreement extends AgreementTally {
+  workflow_id: string
+}
+
+export interface AgentAgreement {
+  overall?: AgreementTally
+  by_workflow: WorkflowAgreement[]
 }
 
 export const analyticsApi = {
   /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
   getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
     api
-      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
-      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
+      .get<{ agent_agreement?: { overall?: AgreementTally; by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res) => ({
+        overall: res.data.agent_agreement?.overall,
+        by_workflow: res.data.agent_agreement?.by_workflow ?? [],
+      })),
 }
 
 export const storageApi = {

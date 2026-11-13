@@ -309,9 +309,10 @@ def _matches(
     if needs_you_only and case_id not in needs_you_ids:
         return False
     # Demo closes have no closure row, so they all read as an agent close.
+    # A sampled dismissal needs ``sampled_at``, which a demo case does not have.
     if working and (status == _CLOSED or case_id in needs_you_ids):
         return False
-    if closed_by == "person":
+    if closed_by == "person" or closed_by == "draw":
         return False
     if alerts_from_ids is not None and not alerts_from_ids.intersection(
         _ids(case.get("finding_ids"))
