@@ -1,10 +1,19 @@
-import type { Ceiling, WorkflowAgreement } from '../services/api'
+import type { AgreementTally, Ceiling, WorkflowAgreement } from '../services/api'
 
 /** One workflow's stored entry in the ceiling (core/response/ceiling.py workflow_entry). */
 export interface WorkflowTier {
   tier: 'act' | 'assist'
   floor: number | null
-  evidence: { agreed: number; disagreed: number; agreement_rate: number | null; window_end: string } | null
+  evidence: {
+    agreed: number
+    disagreed: number
+    agreement_rate: number | null
+    window_end: string
+    false_close_rate: number | null
+    answered: number
+    wilson_low: number | null
+    wilson_high: number | null
+  } | null
   /** a principal id, or "system" when Vigil lowered it */
   by: string
   /** that principal's name, read at request time; null when blank or erased */
@@ -41,7 +50,7 @@ const asPct = (rate: number) => Math.round(rate * 100)
 
 /** "30 days · 4% false close · 25 answered · 1–9%". Null when the rate is absent. */
 export function falseCloseText(
-  row: Pick<WorkflowAgreement, 'false_close_rate' | 'answered' | 'wilson_low' | 'wilson_high'> | null | undefined,
+  row: Pick<AgreementTally, 'false_close_rate' | 'answered' | 'wilson_low' | 'wilson_high'> | null | undefined,
 ): string | null {
   if (!row || row.false_close_rate == null) return null
   const range =

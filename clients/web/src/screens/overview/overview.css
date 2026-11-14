@@ -421,6 +421,26 @@ a.ov-out-l:focus-visible span {
   height: 18px;
 }
 
+/* automatic resolution: the alert count and case line, then the fleet's 30-day false-close rate */
+.ov-out-rated {
+  height: 84px;
+}
+
+.ov-out-fc {
+  display: block;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--tx2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ov-out-fc .not-measured {
+  display: inline;
+  white-space: normal;
+}
+
 .ov-oslot {
   position: absolute;
   width: 184px;

@@ -9,7 +9,7 @@ import { ScrubField } from '../../shared/ScrubField'
 import { ConfirmDialog, Field, NumberInput, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { utcDayClock } from '../../shared/utc'
-import { agreementText, workflowTier, type WorkflowTier } from '../../shared/autonomy'
+import { agreementText, falseCloseText, workflowTier, type WorkflowTier } from '../../shared/autonomy'
 import {
   matchesProfile,
   useCeiling,
@@ -87,7 +87,10 @@ function lastChange(entry: WorkflowTier | undefined): string {
   const rate = entry.evidence?.agreement_rate
   if (entry.by === 'system') {
     // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
-    return `Lowered by Vigil ${at}: ${rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`} under the ${entry.floor}% floor`
+    const agree = rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`
+    // The stored evidence names the drop's false-close sample; a null rate was not measured.
+    const close = falseCloseText(entry.evidence) ?? 'false close not measured'
+    return `Lowered by Vigil ${at}: ${agree} under the ${entry.floor}% floor · ${close}`
   }
   const who = entry.by_label || entry.by
   if (entry.tier === 'assist') return `Set to Assist by ${who} ${at}`
@@ -120,11 +123,12 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
       }
     case 'workflow': {
       const shown = agreementText(pending.workflow.agreement)
+      const close = falseCloseText(pending.workflow.agreement) ?? 'false close not measured'
       return {
         title: `Let ${pending.workflow.name} act on its own?`,
         body: `Its tools that change something, such as revoking a session, will stop waiting for a person. Last 30 days: ${
           shown ? shown.text : 'not measured, no closure has been scored yet'
-        }. Below the floor, Vigil puts it back on Assist.`,
+        }; ${close}. Below the floor, Vigil puts it back on Assist.`,
       }
     }
     case 'tool':
@@ -527,12 +531,17 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       to === 'act' || (to === 'fleet' && current === 'assist' && Boolean(ceil?.act_reversible || ceil?.act_irreversible))
     const choices = WORKFLOW_CHOICES.filter((c) => c.to === current || (raises(c.to) ? canRaise : canLower))
     const shown = agreementText(w.agreement)
+    const close = falseCloseText(w.agreement)
     const change = lastChange(entry)
     return (
-      <div className="lim-row" key={w.id}>
+      <div className={`lim-row lim-wf${choices.length < 2 ? ' lim-wf-static' : ''}`} key={w.id}>
         <span className="lim-row-title">
           {w.name}
-          {shown ? <span>{shown.text}</span> : <NotMeasured />}
+          <span>
+            {shown ? shown.text : <NotMeasured />}
+            {' · '}
+            {close ?? <NotMeasured label="False close" />}
+          </span>
         </span>
         <span className="lim-wf-tag">
           <span>{entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}</span>

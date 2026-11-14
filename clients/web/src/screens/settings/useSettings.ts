@@ -25,6 +25,7 @@ import api, {
   type IngestionJob,
   type PlatformDatabaseProxyConfig,
   type ToolClass,
+  type AgentAgreement,
   type WorkflowAgreement,
 } from '../../services/api'
 import type { ApiWorkflow } from '../../data/mappers'
@@ -667,7 +668,7 @@ export function useInvestigateWorkflows() {
     let cancelled = false
     Promise.all([
       workflowApi.listAll(),
-      analyticsApi.getAgreement('30d').catch(() => ({ by_workflow: [] })),
+      analyticsApi.getAgreement('30d').catch((): Pick<AgentAgreement, 'by_workflow'> => ({ by_workflow: [] })),
     ])
       .then(([res, agreement]) => {
         if (cancelled) return

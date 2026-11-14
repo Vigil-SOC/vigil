@@ -892,7 +892,7 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
-/** One tally in `agent_agreement` (core/reporting/analytics_service.py): overall, or one workflow. */
+/** One tally in `agent_agreement` (core/reporting/analytics_service.py): overall, or one workflow. Rates are fractions from 0 to 1. */
 export interface AgreementTally {
   agreed: number
   disagreed: number
@@ -902,6 +902,7 @@ export interface AgreementTally {
   closed_by_agent_alone: number
   agreed_unchecked: number
   answered: number
+  false_closes: number
   false_close_rate: number | null
   wilson_low: number | null
   wilson_high: number | null
@@ -922,7 +923,7 @@ export const analyticsApi = {
   getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
     api
       .get<{ agent_agreement?: { overall?: AgreementTally; by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
-      .then((res) => ({
+      .then((res): AgentAgreement => ({
         overall: res.data.agent_agreement?.overall,
         by_workflow: res.data.agent_agreement?.by_workflow ?? [],
       })),
