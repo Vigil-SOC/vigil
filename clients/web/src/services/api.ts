@@ -892,23 +892,54 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
-/** One workflow's tally in `agent_agreement` (core/reporting/analytics_service.py). */
-export interface WorkflowAgreement {
-  workflow_id: string
+/** Shared counters in `agent_agreement` (core/reporting/analytics_service.py). Rates are fractions from 0 to 1. */
+export interface AgreementTally {
   agreed: number
   disagreed: number
   agreement_rate: number | null
   abstained: number
   closed_without_determination: number
   closed_by_agent_alone: number
+  answered: number
+  false_closes: number
+  false_close_rate: number | null
+  wilson_low: number | null
+  wilson_high: number | null
+}
+
+/** One workflow's tally. `overall` is the same shape without a workflow id. */
+export interface WorkflowAgreement extends AgreementTally {
+  workflow_id: string
+}
+
+export interface AgentAgreement {
+  overall: AgreementTally
+  by_workflow: WorkflowAgreement[]
+}
+
+const EMPTY_TALLY: AgreementTally = {
+  agreed: 0,
+  disagreed: 0,
+  agreement_rate: null,
+  abstained: 0,
+  closed_without_determination: 0,
+  closed_by_agent_alone: 0,
+  answered: 0,
+  false_closes: 0,
+  false_close_rate: null,
+  wilson_low: null,
+  wilson_high: null,
 }
 
 export const analyticsApi = {
   /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
   getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
     api
-      .get<{ agent_agreement?: { by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
-      .then((res) => res.data.agent_agreement?.by_workflow ?? []),
+      .get<{ agent_agreement?: { overall?: AgreementTally; by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .then((res): AgentAgreement => ({
+        overall: res.data.agent_agreement?.overall ?? EMPTY_TALLY,
+        by_workflow: res.data.agent_agreement?.by_workflow ?? [],
+      })),
 }
 
 export const storageApi = {

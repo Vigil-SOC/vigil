@@ -1165,7 +1165,7 @@ export function CasePage({
   // Read once per case open (not per poll), and again after a review.
   useEffect(() => {
     let live = true
-    analyticsApi.getAgreement('30d').then((rows) => { if (live) setAgreement(rows) }, () => { if (live) setAgreement([]) })
+    analyticsApi.getAgreement('30d').then((block) => { if (live) setAgreement(block.by_workflow) }, () => { if (live) setAgreement([]) })
     return () => { live = false }
   }, [id, agreementKey])
 
