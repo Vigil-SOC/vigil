@@ -132,6 +132,55 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.1.2 (2026-11-14)
+
+## What's Changed
+* The pepper: stored password and recovery-code hashes are encrypted under a ring key (#4298) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4303
+* Nightly: parallel erasures across two backend replicas on two nodes lose no id by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4308
+* Service accounts for integrations: token-only accounts with an accountable person; Medic's ensure never revives one by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4311
+* Invites: people set their own password through a single-use link; admins no longer type passwords (#4226) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4312
+* ci(medic): refuse vendor-directed copy and evidence-report mentions in shipped Medic content by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4309
+* A lost or exposed pepper: emergency rotation and restore leave people able to reset, never locked in a loop by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4315
+* Medic nightly: read the setup code from the backend log (#4304) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4317
+* Immediate erasure takes the feed row before the trail lock (concurrent erasures no longer deadlock) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4318
+* Password-age bell warnings skip accounts with no password by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4320
+* Operator endpoints page: use a personal API token, and say what a password login costs by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4321
+* Medic CI runs copy_check, so vendor-directed copy in shipped Medic content fails the build (#4316) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4323
+* Access recovery: reset links on the link table, admin reset link, MFA reset in the console and at the host (#4227) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4319
+* Delete the uncalled SLA warning sender by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4329
+* Team & access: the accounts table fits its card at 1440px (#4322) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4330
+* Give every case an owning team and record who is on it by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4331
+* Hand a case to another team, and let a member take an unclaimed one by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4333
+* Manage teams on Team & access, including who an invite joins by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4332
+* Show each team's queue, and claim, hand back, or move a case by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4335
+* Accept AGENT_INTERNAL_TOKEN_PREVIOUS on the API and on agent-serve by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4342
+* Raise a desktop notification for each new bell notice by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4343
+* Send notice email after the bell row commits by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4344
+* Document how to rotate AGENT_INTERNAL_TOKEN by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4349
+* End unfinished runs whose stored principal can't carry them, at the upgrade (#4348) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4350
+* Send each run's principal on every run-bridge call, and end a run the worker can no longer carry by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4351
+* Tell medic.admin when Medic stops watching by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4353
+* Restricted cases: reader list, the one read rule, and restrict/narrow/widen on the case API by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4365
+* Restricted cases: ownership, moves, claims, merge, watchers and notices follow the reader list by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4367
+* Restricted cases: counts, metrics, search and finding links say how many are hidden by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4369
+* Restricted cases: chat, MCP, the case shell and agent memory follow the case by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4370
+* Restricted cases: triage, pending AI actions, runs and detection proposals follow the case by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4372
+* Restricted cases: the case page's children follow the case (#4355) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4368
+* Restricted cases: the audit trail shows who and when, not contents (#4362) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4373
+* Restricted cases: host recovery and the "no active reader" count (#4363) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4374
+* Restricted cases: name a team as a reader, and judge every join to such a team (#4360) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4375
+* Restricted cases: the console restrict control, the restricted marker and its words (#4361) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4376
+* Restricted cases: SLA policy usage counts leave out what the caller can't read, and say so (#4377) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4378
+* Tell medic.admin about in-scope Medic incidents by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4371
+* Refuse a run-bridge call whose principal does not name that run by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4364
+* Retry every Redis connect the arq pool makes, not just the first by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4380
+* Score sampled dismissals and drop Act on a large false-close rate by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4385
+* Show the 30-day false-close rate and whether an agreement opened the evidence by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4386
+* Show the 30-day false-close rate beside autonomy and automatic resolutions by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4387
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.1...v1.1.2
+
 ## 1.1.1 (2026-11-11)
 
 ## What's Changed
