@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
-import { caseSearchApi, casesApi, workflowApi } from '../../services/api'
+import { analyticsApi, caseSearchApi, casesApi, workflowApi, type AgreementTally } from '../../services/api'
 import { mapQueueCase } from '../../data/mappers'
 import { CASE_EDIT_FIELDS, type CaseEditField, type CaseEditValues, type CaseRecord, type CaseRow } from '../../data/data'
 import type { Schema } from '../../services/apiTypes'
@@ -14,7 +14,9 @@ import {
   CASE_PAGE_LIMIT,
   INITIAL_CASE_FILTERS,
   isCaseStatus,
+  isClosedBy,
   type CaseFilters,
+  type ClosedByFilter,
   type CaseStatus,
   type Phase,
 } from './useCases'
@@ -36,6 +38,8 @@ import { ReaderPicker, RestrictCaseDialog, RestrictHelp, RestrictedMark, useRead
 import { caseConflicts, errorDetail, OWNER_CANNOT_READ_NOTE, STALE_OWNER_NOTE } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
+import { NotMeasured } from '../../shared/NotMeasured'
+import { falseCloseText } from '../../shared/autonomy'
 import { holdCase } from '../../shell/heldCase'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
@@ -97,9 +101,14 @@ const NEAR_SLA_TIP = {
   limit: 'A paused SLA, or a case with no SLA, is not counted. The team filter and the alerts-from filter narrow it.',
 }
 const CLOSED_TODAY_TIP = {
-  source: 'Case closure records.',
-  calculation: 'Closures since midnight UTC; "by an agent alone" is the share closed by an agent rather than from the console.',
-  limit: 'Today only. The team filter narrows whose cases count. State › Closed lists every closed case in that filter.',
+  source: 'Case closure records, and the fleet false-close tally over the last 30 days.',
+  calculation: 'Closures since midnight UTC. "By an agent alone" is the share of those closed by an agent rather than from the console. The 30-day figure is false closes over answered sampled dismissals, across every workflow.',
+  limit: 'The count is today only, and the team filter narrows whose cases count. Opening the card lists sampled dismissals still closed by the agent, not only today’s.',
+}
+const CLOSED_BY_LABEL: Record<ClosedByFilter, string> = {
+  agent: 'Closed by an agent',
+  person: 'Closed by a person',
+  draw: 'Sampled dismissal',
 }
 const STATE_WORDS = STATE_OPTIONS.filter((o) => o.value && o.value !== 'closed')
 const TONE_DOT: Record<PillTone, string> = {
@@ -240,10 +249,10 @@ export default function CasesScreen({ setViewFull, viewFull, openCase, caseSeed,
     const alertsFrom = searchParams.get('alerts_from')
     return {
       ...INITIAL_CASE_FILTERS,
-      state: searchParams.get('state') === 'closed' || closedBy === 'agent' || closedBy === 'person' ? 'closed' : '',
+      state: searchParams.get('state') === 'closed' || isClosedBy(closedBy) ? 'closed' : '',
       needsYou: searchParams.get('needs_you') === '1',
       working: searchParams.get('working') === '1',
-      closedBy: closedBy === 'agent' || closedBy === 'person' ? closedBy : '',
+      closedBy: isClosedBy(closedBy) ? closedBy : '',
       alertsFrom: alertsFrom === 'today' || alertsFrom === 'all' ? alertsFrom : '',
       assignee: searchParams.get('owner') ?? '',
       unassigned: searchParams.get('unassigned') === '1',
@@ -308,6 +317,23 @@ function CasesTable({
     return mineKey.split('\n')
   }, [peopleLoaded, everyone, peopleFailed, mineKey])
   const { rows, total, hidden, strip, phase, error, reload } = useCases(filters, teamIds)
+  const [overall, setOverall] = useState<AgreementTally | undefined>()
+  const [rateReady, setRateReady] = useState(false)
+  useEffect(() => {
+    let live = true
+    const load = () => {
+      analyticsApi.getAgreement('30d').then(
+        (block) => { if (live) { setOverall(block.overall); setRateReady(true) } },
+        () => { if (live) { setOverall(undefined); setRateReady(true) } },
+      )
+    }
+    load()
+    window.addEventListener(CASES_CHANGED, load)
+    return () => {
+      live = false
+      window.removeEventListener(CASES_CHANGED, load)
+    }
+  }, [])
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
@@ -494,12 +520,18 @@ function CasesTable({
             onClick={() => setFilters({ sla: filters.sla === 'risk' ? '' : 'risk', ...noOwner })}
             pressed={filters.sla === 'risk'}
           />
-          {/* display-only: the closed filter lists every closed case, not today's */}
           <StatCard
             label="Closed today"
             info={<InfoTip label="How closed today is counted" {...CLOSED_TODAY_TIP} />}
             value={strip.closed_today.toLocaleString()}
-            sub={`${agentShare} by an agent alone`}
+            sub={
+              <>
+                <span>{agentShare} by an agent alone</span>
+                {rateReady && <span>{falseCloseText(overall) ?? <NotMeasured label="30 days" />}</span>}
+              </>
+            }
+            onClick={() => setFilters(filters.closedBy === 'draw' ? { ...allOpen } : { ...allOpen, state: 'closed', closedBy: 'draw' })}
+            pressed={filters.closedBy === 'draw'}
           />
         </StatCards>
         <div className="filter-row" role="group" aria-label="Filters">
@@ -527,7 +559,7 @@ function CasesTable({
               <FilterChip
                 list
                 active
-                label={`Closed by ${filters.closedBy === 'agent' ? 'an agent' : 'a person'}`}
+                label={CLOSED_BY_LABEL[filters.closedBy]}
                 count={<Icon name="close" size={11} />}
                 title="Remove this filter"
                 onClick={() => setFilters({ closedBy: '' })}

@@ -62,12 +62,15 @@ export function ClosureFields({ category, reason, onCategory, onReason }: {
 }
 
 /** Close a Case from its page, or re-close one the agent closed (`initial` preselects the determination).
- *  Calls only the close endpoint, which sets the status itself. */
-export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close case', onClose, onClosed }: {
+ *  Calls only the close endpoint, which sets the status itself.
+ *  `evidenceOpened` is sent only when the caller passes it. The list's close goes through `closurePayload` and leaves the field off. */
+export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close case', evidenceOpened, onClose, onClosed }: {
   open: boolean
   id: string
   initial?: ClosureCategory
   title?: string
+  /** This session opened the Evidence section before the close. Omitted, the body does not carry the flag. */
+  evidenceOpened?: boolean
   onClose: () => void
   onClosed: () => void
 }) {
@@ -90,7 +93,10 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
     setBusy(true)
     setErr('')
     try {
-      await casesApi.closeCase(id, closurePayload(category, reason))
+      await casesApi.closeCase(id, {
+        ...closurePayload(category, reason),
+        ...(evidenceOpened === undefined ? {} : { evidence_opened: evidenceOpened }),
+      })
       onClosed()
       onClose()
     } catch (e) {

@@ -305,7 +305,7 @@ export const casesApi = {
     query?: string
     needs_you?: boolean
     working?: boolean
-    closed_by?: 'agent' | 'person'
+    closed_by?: 'agent' | 'person' | 'draw'
     alerts_from?: 'today' | 'all'
     kind?: string
     /** Owning-team ids. Repeated as `team=`. Omitted returns every readable case. */
@@ -892,7 +892,7 @@ export const budgetsApi = {
   getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
 }
 
-/** Shared counters in `agent_agreement` (core/reporting/analytics_service.py). Rates are fractions from 0 to 1. */
+/** One tally in `agent_agreement` (core/reporting/analytics_service.py): overall, or one workflow. Rates are fractions from 0 to 1. */
 export interface AgreementTally {
   agreed: number
   disagreed: number
@@ -900,6 +900,7 @@ export interface AgreementTally {
   abstained: number
   closed_without_determination: number
   closed_by_agent_alone: number
+  agreed_unchecked: number
   answered: number
   false_closes: number
   false_close_rate: number | null
@@ -913,22 +914,8 @@ export interface WorkflowAgreement extends AgreementTally {
 }
 
 export interface AgentAgreement {
-  overall: AgreementTally
+  overall?: AgreementTally
   by_workflow: WorkflowAgreement[]
-}
-
-const EMPTY_TALLY: AgreementTally = {
-  agreed: 0,
-  disagreed: 0,
-  agreement_rate: null,
-  abstained: 0,
-  closed_without_determination: 0,
-  closed_by_agent_alone: 0,
-  answered: 0,
-  false_closes: 0,
-  false_close_rate: null,
-  wilson_low: null,
-  wilson_high: null,
 }
 
 export const analyticsApi = {
@@ -937,7 +924,7 @@ export const analyticsApi = {
     api
       .get<{ agent_agreement?: { overall?: AgreementTally; by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
       .then((res): AgentAgreement => ({
-        overall: res.data.agent_agreement?.overall ?? EMPTY_TALLY,
+        overall: res.data.agent_agreement?.overall,
         by_workflow: res.data.agent_agreement?.by_workflow ?? [],
       })),
 }

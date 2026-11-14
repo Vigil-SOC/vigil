@@ -672,6 +672,17 @@
             "title": "Contributing Factors",
             "type": "array"
           },
+          "evidence_opened": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Opened"
+          },
           "executive_summary": {
             "anyOf": [
               {
@@ -737,6 +748,17 @@
               }
             ],
             "title": "Root Cause"
+          },
+          "sampled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampled At"
           }
         },
         "title": "CaseClosureInfoSchema",
@@ -3127,6 +3149,17 @@
               }
             ],
             "title": "Closure Notes"
+          },
+          "evidence_opened": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Opened"
           },
           "executive_summary": {
             "anyOf": [
@@ -7436,7 +7469,8 @@
                 {
                   "enum": [
                     "agent",
-                    "person"
+                    "person",
+                    "draw"
                   ],
                   "type": "string"
                 },

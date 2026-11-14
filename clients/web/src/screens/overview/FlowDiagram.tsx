@@ -159,7 +159,7 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
   useEffect(() => {
     let live = true
     analyticsApi.getAgreement('30d').then(
-      (block) => { if (live) setFleetClose(block.overall) },
+      (block) => { if (live) setFleetClose(block.overall ?? null) },
       () => { if (live) setFleetClose(null) },
     )
     return () => { live = false }

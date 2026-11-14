@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
 import { analyticsApi, approvalsApi, auditApi, autonomyApi, casesApi, workflowApi, type CaseRecordRow, type Ceiling, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
-import { actsByDefault, agreementText, workflowTier } from '../../shared/autonomy'
+import { actsByDefault, agreementText, falseCloseText, uncheckedText, workflowTier } from '../../shared/autonomy'
 import { AUTONOMY_CHANGED, notifyAutonomyChanged } from '../settings/useSettings'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
@@ -114,25 +114,33 @@ function closedLine(closure: CaseClosureView | null): string {
     .join(' · ')
 }
 
-/** The header's trust strip: how often this workflow's verdict matched a person's closure, last 30 days,
- *  and whether its runs act on their own. The bar is judged against the workflow's floor when it has one. */
+/** The header's trust strip: this workflow's 30-day agreement, its false-close rate, and the share of
+ *  agreements given without opening the evidence. The bar is judged against the workflow's floor when it has one. */
 function TrustStrip({ row, ceiling, workflowId }: { row: WorkflowAgreement | undefined; ceiling: Ceiling | null; workflowId: string | undefined }) {
   const shown = agreementText(row)
   const acts = actsByDefault(ceiling, workflowId) ? ' · acts by default' : ''
-  if (!shown) {
-    return acts ? <span className="case-trust case-trust-on"><NotMeasured />{acts}</span> : <NotMeasured className="case-trust" />
-  }
+  const falseClose = falseCloseText(row)
+  const unchecked = uncheckedText(row)
   const floor = workflowTier(ceiling, workflowId)?.floor
   const tone = floor && row?.agreement_rate != null ? (row.agreement_rate * 100 >= floor ? ' good' : ' poor') : ''
   return (
     <span className="case-trust case-trust-on">
-      <span className={`case-trust-bar${tone}`} aria-hidden><span style={{ width: `${shown.pct}%` }} /></span>
-      {shown.text}{acts}
+      {shown ? (
+        <span className="case-trust-agree">
+          <span className={`case-trust-bar${tone}`} aria-hidden><span style={{ width: `${shown.pct}%` }} /></span>
+          {shown.text}
+        </span>
+      ) : (
+        <NotMeasured />
+      )}
+      {falseClose ? <span>{falseClose}</span> : <NotMeasured label="30 days" />}
+      {unchecked ? <span>{unchecked}</span> : <NotMeasured label="Without evidence" />}
+      {acts}
       <InfoTip
         label="How this is measured"
-        source="Cases closed in the last 30 days that a run of this workflow investigated."
-        calculation="A person's closure, resolved or false positive, scored against the investigation's verdict: the share where both said the same."
-        limit="Leaves out abstentions (inconclusive, needs review), closures without a determination (duplicate, unable to resolve, unspecified) and cases the agent closed alone."
+        source="Cases closed in the last 30 days that a run of this workflow investigated, and the dismissals drawn into the sample in that window."
+        calculation="Agreement is a person's closure, resolved or false positive, against the investigation's verdict: the share where both said the same. False close is answered draws the investigation called not real and the person called real, over those answers, with the 95% Wilson range. Without evidence is agreements given before the Evidence section was opened, over those plus the agreements that opened it."
+        limit="Agreement leaves out abstentions, closures without a determination, cases the agent closed alone, and agreements given without opening the evidence. Nothing answered leaves the false-close rate unmeasured, and no agreement either way leaves the unchecked share unmeasured."
       />
     </span>
   )
@@ -1075,6 +1083,9 @@ export function CasePage({
 }) {
   const landingTab: Tab = TABS.find((name) => name === openTab) ?? 'Summary'
   const [tab, setTab] = useState<Tab>(landingTab)
+  // True only after this session's tab is Evidence, or a citation focuses an evidence row.
+  // The run fetch on mount does not count. Reset when the case changes.
+  const [evidenceOpened, setEvidenceOpened] = useState(landingTab === 'Evidence')
   const [sla, setSla] = useState<{ due: string; health: string } | null>(null)
   const [workflowNames, setWorkflowNames] = useState<Record<string, string>>({})
   const [rows, setRows] = useState<CaseRecordRow[]>([])
@@ -1088,6 +1099,14 @@ export function CasePage({
   const [runFilter, setRunFilter] = useState<string | null>(openRun ?? null)
   const [askSeed, setAskSeed] = useState<{ id: string; seed: ChatSeed } | null>(null)
   const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
+  const chooseTab = (next: Tab) => {
+    setTab(next)
+    if (next === 'Evidence') setEvidenceOpened(true)
+  }
+  const focusEvidenceRow = (rowId: string) => {
+    setFocusEvidence(rowId)
+    setEvidenceOpened(true)
+  }
   const [note, setNote] = useState('') // Reopen's failure, on Summary
   // Verify chain / Export audit outcome, shown in the Record header; level null while in flight
   const [recStatus, setRecStatus] = useState<{ level: Level; text: string } | null>(null)
@@ -1125,6 +1144,7 @@ export function CasePage({
   const seenCase = useRef(id)
   if (seenCase.current !== id) {
     seenCase.current = id
+    setEvidenceOpened(landingTab === 'Evidence')
     needsTicket.current += 1
     decisionBusyRef.current = null
     setNeedsItems([])
@@ -1185,6 +1205,7 @@ export function CasePage({
 
   useEffect(() => {
     setTab(landingTab)
+    if (landingTab === 'Evidence') setEvidenceOpened(true)
     setAssessed(null)
     setAskSeed(null)
     setFocusEvidence(null)
@@ -1568,7 +1589,10 @@ export function CasePage({
     setBusy(true)
     setNote('')
     try {
-      await casesApi.closeCase(id, { closure_category: closure.closure_category as ClosureCategory })
+      await casesApi.closeCase(id, {
+        closure_category: closure.closure_category as ClosureCategory,
+        evidence_opened: evidenceOpened,
+      })
       setAssessed('Agreed')
       afterClose()
       onChanged()
@@ -1608,9 +1632,9 @@ export function CasePage({
   const citations = caseCitations(fold, linkedFindings)
   const citeById = new Map(citations.map((cite) => [cite.id, cite]))
   const openCite = (cite: Citation) => {
-    setTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
+    chooseTab(cite.kind === 'explanation' ? 'Explanations' : 'Evidence')
     setRunFilter((held) => (held === runId ? held : null)) // citations point at the primary run
-    if (cite.kind === 'evidence') setFocusEvidence(cite.id)
+    if (cite.kind === 'evidence') focusEvidenceRow(cite.id)
   }
   const left = sla && !closed ? timeLeft(sla.due) : '' // a closed case's clock has stopped
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
@@ -1637,7 +1661,7 @@ export function CasePage({
   }, [onExpand, onClose, onBack])
 
   const watch = <WatchLink runId={runId} />
-  const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={setTab} />
+  const doors = <Doors counts={tabCounts} lines={doorLines(runs.length > 1 ? runs.map((one) => one.fold) : [fold], foldPhase, runId !== null, rows, recordPhase)} onOpen={chooseTab} />
   const tone = statePill(pillState, needsShown > 0).tone
   // Running furniture needs a run: a run-less case, or one whose needs item sits in the undo fuse, shows none.
   const running = runId !== null && !closed && !stopped && !ended && !answeredHere && tone !== 'needs'
@@ -1767,7 +1791,7 @@ export function CasePage({
           label="Case sections"
           tabs={TABS.map((name) => ({ id: name, label: name, count: name === 'Summary' ? undefined : tabCounts[name] }))}
           active={tab}
-          onChange={setTab}
+          onChange={chooseTab}
         />
       </div>
 
@@ -1973,10 +1997,11 @@ export function CasePage({
             </section>
           )}
           {tab === 'Summary' && note && <p className="muted">{note}</p>}
-          <CloseCaseDialog open={closing} id={id} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); afterClose(); onChanged() }} />
+          <CloseCaseDialog open={closing} id={id} evidenceOpened={evidenceOpened} onClose={() => setClosing(false)} onClosed={() => { void loadNeeds(); afterClose(); onChanged() }} />
           <CloseCaseDialog
             open={disagreeing}
             id={id}
+            evidenceOpened={evidenceOpened}
             initial={closure?.closure_category === 'false_positive' ? 'resolved' : 'false_positive'}
             title="Disagree · close it as"
             onClose={() => setDisagreeing(false)}

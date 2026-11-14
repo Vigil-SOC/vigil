@@ -60,14 +60,21 @@ export interface CaseLinkedFinding {
 /** Matches ``CaseRepository`` page size. */
 export const CASE_PAGE_LIMIT = 100
 
+export const CLOSED_BY_VALUES = ['agent', 'person', 'draw'] as const
+export type ClosedByFilter = (typeof CLOSED_BY_VALUES)[number]
+
+export function isClosedBy(value: string | null): value is ClosedByFilter {
+  return value !== null && (CLOSED_BY_VALUES as readonly string[]).includes(value)
+}
+
 export interface CaseFilters {
   query: string
   state: string
   needsYou: boolean
   // open cases that do not need you
   working: boolean
-  // with state 'closed': who closed it
-  closedBy: '' | 'agent' | 'person'
+  // with state 'closed': who closed it. `draw` is a sampled dismissal still on the agent channel.
+  closedBy: '' | ClosedByFilter
   // cases holding an alert created in that span
   alertsFrom: '' | 'today' | 'all'
   kind: string
