@@ -1,10 +1,19 @@
-import type { Ceiling, WorkflowAgreement } from '../services/api'
+import type { AgreementTally, Ceiling, WorkflowAgreement } from '../services/api'
 
 /** One workflow's stored entry in the ceiling (core/response/ceiling.py workflow_entry). */
 export interface WorkflowTier {
   tier: 'act' | 'assist'
   floor: number | null
-  evidence: { agreed: number; disagreed: number; agreement_rate: number | null; window_end: string } | null
+  evidence: {
+    agreed: number
+    disagreed: number
+    agreement_rate: number | null
+    window_end: string
+    false_close_rate: number | null
+    answered: number
+    wilson_low: number | null
+    wilson_high: number | null
+  } | null
   /** a principal id, or "system" when Vigil lowered it */
   by: string
   /** that principal's name, read at request time; null when blank or erased */
@@ -35,4 +44,16 @@ export function agreementText(row: Pick<WorkflowAgreement, 'agreed' | 'disagreed
   if (!row || !scored || row.agreement_rate == null) return null
   const pct = Math.round(row.agreement_rate * 100)
   return { text: `${scored} ${scored === 1 ? 'review' : 'reviews'} · ${pct}% agree`, pct }
+}
+
+const asPct = (rate: number) => `${Math.round(rate * 100)}%`
+
+/** "5% false close · 20 answered · Wilson 1–18% · 30 days", or null when the rate was not measured. */
+export function falseCloseText(row: Pick<AgreementTally, 'false_close_rate' | 'answered' | 'wilson_low' | 'wilson_high'> | null | undefined): string | null {
+  if (row?.false_close_rate == null) return null
+  const low = row.wilson_low
+  const high = row.wilson_high
+  const range = low != null && high != null ? `Wilson ${asPct(low)}–${asPct(high)}` : null
+  const answered = `${(row.answered ?? 0).toLocaleString('en-US')} answered`
+  return [`${asPct(row.false_close_rate)} false close`, answered, range, '30 days'].filter(Boolean).join(' · ')
 }

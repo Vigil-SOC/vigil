@@ -4798,6 +4798,7 @@
       flex-direction: column;
       gap: 2px;
       min-width: 0;
+      overflow-wrap: break-word;
       font-size: 13px;
       font-weight: 650;
       color: var(--tx0);
@@ -4808,6 +4809,11 @@
       font-weight: 400;
       line-height: 1.45;
       color: var(--tx2);
+   }
+
+   .lim-row-title .not-measured {
+      display: inline;
+      white-space: normal;
    }
 
    .lim-row-tag {
@@ -4835,13 +4841,18 @@
       font-weight: 600;
    }
 
-   /* the last change wraps, then stops at two lines; the full text is on hover */
+   /* the last change wraps, then stops at two lines; focus in the row shows the rest */
    .lim-wf-tag span + span {
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
       overflow-wrap: anywhere;
+   }
+
+   .lim-row:focus-within .lim-wf-tag span + span,
+   .lim-wf-static .lim-wf-tag span + span {
+      -webkit-line-clamp: unset;
    }
 
    .lim-floor {
@@ -5022,6 +5033,19 @@
       .lim-wf-tag {
          grid-column: 1;
          grid-row: 2;
+      }
+   }
+
+   /* A workflow row's false-close line needs the width; the choice sits under it. */
+   @container main (max-width: 700px) {
+      .lim-row.lim-wf {
+         grid-template-columns: minmax(0, 1fr);
+      }
+
+      .lim-row.lim-wf .lim-row-ctl {
+         grid-column: 1;
+         grid-row: 3;
+         justify-self: start;
       }
    }
 

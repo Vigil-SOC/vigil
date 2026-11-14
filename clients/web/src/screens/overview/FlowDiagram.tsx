@@ -1,12 +1,14 @@
-import { useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
+import { NotMeasured } from '../../shared/NotMeasured'
 import { useSourceBadge } from '../../shared/useSourceBadge'
 import { VigilMark } from '../../shared/VigilLogo'
 import { RangeToggle } from '../../shared/RangeToggle'
+import { falseCloseText } from '../../shared/autonomy'
 import { withRange } from '../../shared/countRange'
-import type { CountRange, OverviewOutcome, OverviewPayload } from '../../services/api'
+import { analyticsApi, type AgreementTally, type CountRange, type OverviewOutcome, type OverviewPayload } from '../../services/api'
 import './overview.css'
 import { layoutOutcomes } from './outcomeLayout'
 
@@ -17,6 +19,9 @@ const MAX_SOURCES = 7
 // Triage files an alert with no data source under this chip
 const UNKNOWN_SOURCE = 'Unknown'
 const MIN_W = 640
+// The automatic-resolution node adds the fleet's 30-day false-close line under its case count.
+const RATE_H = 84
+const RATE_SLOT = 92
 const SRC_DOT_X = 206
 const SRC_NODE_W = 196
 const SLOT_W = 236
@@ -148,13 +153,26 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
   const uid = useId().replace(/:/g, '')
   const [ref, W, measuredH, bar] = useSize()
   const [hover, setHover] = useState<Hover>(null)
+  // Fleet false-close rate for the automatic-resolution node. Not part of the overview payload:
+  // undefined until the 30-day read settles, null when that read fails.
+  const [fleetClose, setFleetClose] = useState<AgreementTally | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    analyticsApi.getAgreement('30d').then(
+      (block) => { if (live) setFleetClose(block.overall) },
+      () => { if (live) setFleetClose(null) },
+    )
+    return () => { live = false }
+  }, [])
+  const empty = data.empty
   // The diagram fills the height Overview leaves it, never below the floor; the engine scales with it.
-  const floor = wall ? 600 : 400
+  // 490 leaves the taller automatic-resolution row its slot when the canvas is at its shortest.
+  // The engine still treats 400 as scale 1, as it did before that row grew.
+  const floor = wall ? 600 : empty ? 400 : 490
   const H = Math.max(floor, measuredH)
-  const s = Math.min(ENGINE_MAX, H / floor)
+  const s = Math.min(ENGINE_MAX, H / (wall ? 600 : 400))
   const cx = W / 2
   const cy = H / 2 - 4
-  const empty = data.empty
   const x1 = cx - ENGINE_R * s // strands end here
   const xr = cx + ENGINE_R * s // bands start here
   const x2 = W - 198
@@ -206,7 +224,11 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
   })
 
   // Outcome bands: stacked at the engine's right edge, each landing on a row tall enough to hold it.
-  const lay = layoutOutcomes(measured.map((o) => o.count), H)
+  const lay = layoutOutcomes(
+    measured.map((o) => o.count),
+    H,
+    measured.map((o) => (o.state === 'resolved_auto' ? RATE_SLOT : 44)),
+  )
   let top = cy - lay.th.reduce((n, t) => n + t, 0) / 2
   const bands = measured.map((o, j) => {
     const th = lay.th[j]
@@ -429,6 +451,8 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                 ))
             : bands.map((b) => {
                 const link = b.o.count > 0 ? OUTCOME_LINK[b.o.state] : undefined
+                const rated = b.o.state === 'resolved_auto'
+                const close = rated && fleetClose !== undefined ? falseCloseText(fleetClose) : null
                 const sub =
                   CASE_NODES.has(b.o.state) && b.o.case_count !== null
                     ? cases(b.o.case_count)
@@ -444,12 +468,12 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                 return (
                   <div
                     key={b.o.state}
-                    className="ov-out"
+                    className={`ov-out${rated ? ' ov-out-rated' : ''}`}
                     role="group"
                     // a linked count takes the focus itself
                     tabIndex={link ? undefined : 0}
                     aria-label={b.o.label}
-                    style={{ left: x2 + 14, top: b.y - 19, opacity: outDim(b.o.state) }}
+                    style={{ left: x2 + 14, top: b.y - (rated ? RATE_H / 2 : 19), opacity: outDim(b.o.state) }}
                     onMouseEnter={() => setHover({ kind: 'out', key: b.o.state })}
                     onMouseLeave={leave}
                     onFocus={() => setHover({ kind: 'out', key: b.o.state })}
@@ -467,6 +491,9 @@ export default function FlowDiagram({ data, wall, onToggleWall, range, onRange }
                         {sub}
                         {b.o.info && <InfoTip label={b.o.info} text={b.o.info} />}
                       </span>
+                    )}
+                    {rated && fleetClose !== undefined && (
+                      <span className="ov-out-fc">{close ?? <NotMeasured label="30-day false close" />}</span>
                     )}
                   </div>
                 )

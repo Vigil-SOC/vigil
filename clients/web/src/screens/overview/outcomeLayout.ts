@@ -5,15 +5,19 @@ const OUT_GAP = 8 // space between a band's edge and the next row
 
 /**
  * Where each outcome lands and how thick its band is. Thickness is linear in the count; each row
- * takes at least OUT_SLOT and at least its band plus a gap, so neither bands nor labels overlap.
- * The scale shrinks until the rows fit the height.
+ * takes at least its floor (OUT_SLOT, or `rowMin` for a row that carries another line) and at
+ * least its band plus a gap, so neither bands nor labels overlap. Floors shrink together when
+ * they do not fit the height, then the scale shrinks until the rows fit.
  */
-export function layoutOutcomes(counts: number[], H: number) {
+export function layoutOutcomes(counts: number[], H: number, rowMin?: readonly number[]) {
   const avail = H - 2 * OUT_PAD
+  const want = counts.map((_, i) => rowMin?.[i] ?? OUT_SLOT)
+  const sumWant = want.reduce((n, h) => n + h, 0) || 1
+  const fit = sumWant > avail ? avail / sumWant : 1
+  const floors = want.map((h) => h * fit)
   const total = counts.reduce((n, c) => n + c, 0) || 1
-  const slotMin = Math.min(OUT_SLOT, avail / Math.max(1, counts.length))
   const thick = (k: number) => counts.map((c) => (c === 0 ? 0 : Math.max(2.5, c * k)))
-  const need = (k: number) => thick(k).reduce((n, t) => n + Math.max(slotMin, t + 2 * OUT_GAP), 0)
+  const need = (k: number) => thick(k).reduce((n, t, i) => n + Math.max(floors[i], t + 2 * OUT_GAP), 0)
   let k = BAND_MAX / total
   if (need(k) > avail) {
     let lo = 0
@@ -27,7 +31,7 @@ export function layoutOutcomes(counts: number[], H: number) {
   }
   const th = thick(k)
   // Spare height is shared out between the rows, so they still spread over the board as before.
-  const rowNeed = th.map((t) => Math.max(slotMin, t + 2 * OUT_GAP))
+  const rowNeed = th.map((t, i) => Math.max(floors[i], t + 2 * OUT_GAP))
   const spare = Math.max(0, avail - rowNeed.reduce((n, x) => n + x, 0)) / Math.max(1, counts.length)
   const slots = rowNeed.map((h) => h + spare)
   let at = OUT_PAD
