@@ -17,6 +17,7 @@ import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Pla
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
 import { harnessFor, internalToken, previousInternalToken, type HarnessFactory } from "./harness.js";
+import { replayRecordedRun, replayRequest } from "./replay-investigation.js";
 import { operatorPlugin } from "./plugins/registry.js";
 import type { ProjectionOptions } from "./plugins/hunt/projection.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
@@ -497,6 +498,19 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       if (run !== null) {
         const limit = Number(parsed.searchParams.get("evidence_limit"));
         return readFold(state, run[1] as string, "projection", res, Number.isInteger(limit) && limit > 0 ? { evidence_limit: limit } : undefined);
+      }
+
+      // One recorded investigate run on a candidate model. Not GET /runs/<id>/replay.
+      if (req.method === "POST" && parsed.pathname === "/investigation-replay") {
+        try {
+          const result = await replayRecordedRun(state, replayRequest(JSON.parse(await body(req))));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          if (error instanceof SpecError || error instanceof SyntaxError) return refuse(res, 422, error.message);
+          throw error;
+        }
+        return;
       }
 
       const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
