@@ -694,6 +694,17 @@
             ],
             "title": "Executive Summary"
           },
+          "false_positive_cause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Positive Cause"
+          },
           "false_positive_reason": {
             "anyOf": [
               {
@@ -3182,6 +3193,16 @@
               }
             ]
           },
+          "false_positive_cause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FalsePositiveCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "false_positive_reason": {
             "anyOf": [
               {
@@ -3397,6 +3418,17 @@
         ],
         "title": "EvidenceAdd",
         "type": "object"
+      },
+      "FalsePositiveCause": {
+        "description": "Which kind of fix a false-positive determination is.\n\nIt refines a ``false_positive`` close and a noise mark. Absence is a null\ncolumn, not a member: ``not_given`` is not stored.",
+        "enum": [
+          "expected",
+          "too_broad",
+          "data",
+          "other"
+        ],
+        "title": "FalsePositiveCause",
+        "type": "string"
       },
       "FindingListResponse": {
         "properties": {

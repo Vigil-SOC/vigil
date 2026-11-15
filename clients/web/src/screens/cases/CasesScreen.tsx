@@ -1097,6 +1097,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
   const [conflicts, setConflicts] = useState<CaseConflict[]>([])
   const [category, setCategory] = useState<ClosureCategory>('resolved')
   const [reason, setReason] = useState('')
+  const [cause, setCause] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   // The stored owner a save was refused over (OWNER_NOT_CURRENT); fixed with the picker above.
@@ -1147,7 +1148,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
       if (isClosing) {
-        await casesApi.closeCase(c.id, { ...closurePayload(category, reason), expected: { status: stored.status } })
+        await casesApi.closeCase(c.id, { ...closurePayload(category, reason, cause), expected: { status: stored.status } })
       }
       onSaved()
       onClose()
@@ -1199,7 +1200,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
           <Select value={values.status} onSelect={set('status')} options={withStored(CASE_STATUS_OPTIONS, values.status)} />
         </label>
       </div>
-      {closing && <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />}
+      {closing && <ClosureFields category={category} reason={reason} cause={cause} onCategory={setCategory} onReason={setReason} onCause={setCause} />}
       <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
         <span>Assignee</span>
         <PersonPicker

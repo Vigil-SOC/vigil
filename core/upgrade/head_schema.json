@@ -904,6 +904,11 @@
   "nullable": true,
   "type": "text"
  },
+ "column case_closure_info.false_positive_cause": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column case_closure_info.false_positive_reason": {
   "default": null,
   "nullable": true,
@@ -2925,6 +2930,11 @@
   "default": "finding_ips(entity_context)",
   "nullable": true,
   "type": "text[]"
+ },
+ "column findings.noise_cause": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column findings.noise_marked_at": {
   "default": null,

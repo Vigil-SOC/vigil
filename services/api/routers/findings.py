@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from core.audit import trail
 from core.auth.permissions import permission_gate
 from core.cases import case_trail
-from core.cases.closure import ClosedByKind
+from core.cases.closure import ClosedByKind, FalsePositiveCause
 from core.findings.enrichment import (
     FindingNotFound,
     NoProviderConfigured,
@@ -48,6 +48,7 @@ data_service = DatabaseDataService()
 
 class NoiseMarkRequest(BaseModel):
     reason: Optional[str] = None
+    noise_cause: Optional[FalsePositiveCause] = None
 
 
 class NoiseMarkResponse(BaseModel):
@@ -56,6 +57,7 @@ class NoiseMarkResponse(BaseModel):
     noise_marked_by: Optional[str] = None
     noise_marked_by_kind: Optional[str] = None
     noise_reason: Optional[str] = None
+    noise_cause: Optional[str] = None
 
 
 class IntakeLaunchResponse(BaseModel):
@@ -162,13 +164,19 @@ def mark_finding_noise(
     session: UnitOfWorkSession,
     body: Optional[NoiseMarkRequest] = None,
 ):
-    """Dismiss the finding as noise. The body is optional; the console sends none."""
+    """Dismiss the finding as noise. The body is optional.
+
+    The console sends one only when a cause was chosen. A cause outside the
+    set is rejected before this runs, so the mark does not land. No cause
+    stores null.
+    """
     finding = _finding_or_404(session, finding_id)
     reason = ((body.reason if body else None) or "").strip()
     finding.noise_marked_at = utcnow()
     finding.noise_marked_by = current_user.user_id
     finding.noise_marked_by_kind = ClosedByKind.ANALYST.value
     finding.noise_reason = reason or None
+    finding.noise_cause = body.noise_cause.value if body and body.noise_cause else None
     case_trail.append_or_legacy(
         session,
         action=trail.ACTION_FINDING_NOISE_MARK,
@@ -183,6 +191,7 @@ def mark_finding_noise(
         noise_marked_by=finding.noise_marked_by,
         noise_marked_by_kind=finding.noise_marked_by_kind,
         noise_reason=finding.noise_reason,
+        noise_cause=finding.noise_cause,
     )
 
 
@@ -211,6 +220,7 @@ def clear_finding_noise(
     finding.noise_marked_by = None
     finding.noise_marked_by_kind = None
     finding.noise_reason = None
+    finding.noise_cause = None
     return NoiseMarkResponse(finding_id=finding.finding_id)
 
 

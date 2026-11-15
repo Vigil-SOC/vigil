@@ -33,6 +33,11 @@ from core.cases.case_status import (
     record_status_change,
     status_change,
 )
+from core.cases.closure import (
+    ClosedByKind,
+    FalsePositiveCause,
+    false_positive_cause_value,
+)
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
@@ -401,17 +406,25 @@ def _sampled_context(context: Any) -> Any:
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
 # kind is agent, as with a status edit that closes a case; the reason is what makes it a record.
-def dismiss_finding(*, finding_id: str, reason: str) -> Args:
+def dismiss_finding(
+    *, finding_id: str, reason: str, noise_cause: Optional[str] = None
+) -> Args:
     if refusal := permission_refusal("findings.write"):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.cases.closure import ClosedByKind
     from core.storage.models import Finding
     from core.time import utcnow
 
     reason = (reason or "").strip()
     if not reason:
         return {"error": "A reason is required to dismiss a finding"}
+    try:
+        cause = false_positive_cause_value(noise_cause)
+    except ValueError:
+        return {
+            "error": f"{noise_cause!r} is not a false-positive cause",
+            "causes": [member.value for member in FalsePositiveCause],
+        }
     with service_session() as session:
         finding = session.get(Finding, finding_id)
         if finding is None:
@@ -420,12 +433,14 @@ def dismiss_finding(*, finding_id: str, reason: str) -> Args:
         finding.noise_marked_by = actor()
         finding.noise_marked_by_kind = ClosedByKind.AGENT.value
         finding.noise_reason = reason
+        finding.noise_cause = cause
         return {
             "success": True,
             "finding_id": finding_id,
             "noise_marked_by": finding.noise_marked_by,
             "noise_marked_by_kind": finding.noise_marked_by_kind,
             "noise_reason": reason,
+            "noise_cause": cause,
         }
 
 

@@ -167,6 +167,14 @@ What closing a **Case** determined: `resolved`, `false_positive`, `duplicate`,
 is a recorded absence, not a determination.
 _Avoid_: resolution, disposition, reason
 
+**False-Positive Cause** (`cases`):
+Which kind of fix a false-positive determination is: `expected` (the activity
+was expected or authorized), `too_broad` (the rule's logic needs work), `data`
+(a field, parser or source is wrong), or `other`. It refines a **Closure
+Category** of `false_positive` and a noise mark. Absence is a null column, not
+a member of the set.
+_Avoid_: not given, reason, disposition
+
 **Entity Key**:
 The `type:value` string an **Episodic Memory** row is written and queried on --
 `ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, sparing the

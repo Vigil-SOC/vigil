@@ -4735,7 +4735,11 @@ export interface paths {
         put?: never;
         /**
          * Mark Finding Noise
-         * @description Dismiss the finding as noise. The body is optional; the console sends none.
+         * @description Dismiss the finding as noise. The body is optional.
+         *
+         *     The console sends one only when a cause was chosen. A cause outside the
+         *     set is rejected before this runs, so the mark does not land. No cause
+         *     stores null.
          */
         post: operations["post_api_findings_finding_id_noise"];
         /**
@@ -9876,6 +9880,8 @@ export interface components {
             evidence_opened?: boolean | null;
             /** Executive Summary */
             executive_summary?: string | null;
+            /** False Positive Cause */
+            false_positive_cause?: string | null;
             /** False Positive Reason */
             false_positive_reason?: string | null;
             /** Lessons Learned */
@@ -11334,6 +11340,7 @@ export interface components {
             /** Executive Summary */
             executive_summary?: string | null;
             expected?: components["schemas"]["CaseExpected"] | null;
+            false_positive_cause?: components["schemas"]["FalsePositiveCause"] | null;
             /** False Positive Reason */
             false_positive_reason?: string | null;
             /** Lessons Learned */
@@ -11854,6 +11861,15 @@ export interface components {
             /** Evidence Opened */
             evidence_opened?: boolean | null;
         };
+        /**
+         * FalsePositiveCause
+         * @description Which kind of fix a false-positive determination is.
+         *
+         *     It refines a ``false_positive`` close and a noise mark. Absence is a null
+         *     column, not a member: ``not_given`` is not stored.
+         * @enum {string}
+         */
+        FalsePositiveCause: "expected" | "too_broad" | "data" | "other";
         /** FederationGlobalSettings */
         FederationGlobalSettings: {
             /**
@@ -13031,6 +13047,7 @@ export interface components {
         };
         /** NoiseMarkRequest */
         NoiseMarkRequest: {
+            noise_cause?: components["schemas"]["FalsePositiveCause"] | null;
             /** Reason */
             reason?: string | null;
         };
@@ -13038,6 +13055,8 @@ export interface components {
         NoiseMarkResponse: {
             /** Finding Id */
             finding_id: string;
+            /** Noise Cause */
+            noise_cause?: string | null;
             /** Noise Marked At */
             noise_marked_at?: string | null;
             /** Noise Marked By */
