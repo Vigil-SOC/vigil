@@ -375,11 +375,19 @@ class SecurityDetectionsTools:
         note: Any = None,
         exception_id: Any = None,
         reason: Any = None,
+        finding_ids: Any = None,
         **_kwargs: object,
     ) -> Dict:
         """Add a customer-specific exception to an overlay copy, or remove one."""
         return await asyncio.to_thread(
-            edit_exception, action, rule_id, match, note, exception_id, reason
+            edit_exception,
+            action,
+            rule_id,
+            match,
+            note,
+            exception_id,
+            reason,
+            finding_ids,
         )
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:

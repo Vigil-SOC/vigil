@@ -19,6 +19,10 @@ interface RuleException {
   seen: { rows: number; matched?: number; missing: string[]; at: string } | null
   /** Its matches on the window's days. */
   silenced: number
+  /** Finding ids an agent cited. Null when a person added it, or the copy was not checked. */
+  cited_finding_ids: string[] | null
+  /** Of those, how many a person currently judges false. Set when cited_finding_ids is a list. */
+  cited_false?: number
 }
 
 /** The rule's own fires over the days exception matches are counted for. */
@@ -104,6 +108,21 @@ function Silenced({ seen, who }: { seen: { rows: number; at: string }; who: stri
   )
 }
 
+/** Citations an agent stored. A null column shows nothing; an empty list cited none;
+ *  a list shows how many a person currently judges false, including zero. */
+function Cited({ x }: { x: RuleException }) {
+  const ids = x.cited_finding_ids
+  if (!Array.isArray(ids)) return null
+  if (ids.length === 0) return <span className="de-x-cite">None were cited</span>
+  const n = x.cited_false ?? 0
+  const label = n === 1 ? 'cited alert a person judges false' : 'cited alerts a person judges false'
+  return (
+    <span className="de-x-cite" title="Cited alerts a person currently judges false. One later judged real drops out of this count.">
+      <b>{n.toLocaleString()}</b> {label}
+    </span>
+  )
+}
+
 /** The hover for an exception's count: its matches on the window's days only. */
 function matchedTitle(days: Record<string, number>, since: string): string {
   const entries = Object.entries(days)
@@ -157,6 +176,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <Match match={x.match} />
                   <div className="de-x-note" title={x.note}>{x.note}</div>
                   <div className="de-x-by">Added by {x.created_by ?? 'unknown'}{x.created_at && ` · ${utcDayClock(x.created_at)}`}</div>
+                  <Cited x={x} />
                   <Missing seen={x.seen} />
                   {droppedAll(x.seen) && <Silenced seen={x.seen!} who="Dropped" />}
                 </div>
@@ -189,6 +209,7 @@ export default function RuleExceptions({ ruleId }: { ruleId: number }) {
                   <Match match={x.match} />
                   <div className="de-x-note" title={x.note}>{x.note}</div>
                   <div className="de-x-by">Added by {x.created_by ?? 'unknown'}{x.created_at && ` · ${utcDayClock(x.created_at)}`}</div>
+                  <Cited x={x} />
                   <div className="de-x-by" title={x.removal_reason ?? ''}>Removed by {x.removed_by ?? 'unknown'} · {utcDayClock(x.removed_at)} · {x.removal_reason}</div>
                 </div>
                 <div className="de-x-side">

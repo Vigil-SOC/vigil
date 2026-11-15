@@ -184,6 +184,8 @@
 .de-x-side { display: grid; justify-items: end; align-content: start; gap: 6px; text-align: right; }
 .de-x-n { font-size: 12px; color: var(--tx2); white-space: nowrap; }
 .de-x-n b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
+.de-x-cite { font-size: 12px; color: var(--tx2); overflow-wrap: anywhere; }
+.de-x-cite b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
 .de-x-rm { font-size: 12px; color: var(--poor); }
 .de-x-removed summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--tx2); }
 .de-x-removed summary:hover { color: var(--tx0); }
