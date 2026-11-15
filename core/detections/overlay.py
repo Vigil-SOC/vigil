@@ -254,8 +254,8 @@ def _parse(language: str, text: str) -> RuleRecord:
 
 def _wanted(
     given: Optional[Dict[str, Any]], copies: Dict[str, str]
-) -> Dict[str, List[Tuple[Dict[str, Any], str]]]:
-    """Exceptions per copy language as (match, note); Refused when one is malformed."""
+) -> Dict[str, List[Tuple[Dict[str, Any], str, Any]]]:
+    """Exceptions per copy language as (match, note, finding ids); Refused when one is malformed."""
     if not given:
         return {}
     if not isinstance(given, dict):
@@ -272,19 +272,20 @@ def _wanted(
         if not isinstance(items, list):
             raise Refused(f"{language} exceptions must be a list")
         try:
-            out[language] = [
-                excepts.checked(
-                    (i or {}).get("match") if isinstance(i, dict) else None,
-                    i.get("note") if isinstance(i, dict) else None,
-                )
-                for i in items
-            ]
+            parsed = []
+            for item in items:
+                body = item if isinstance(item, dict) else {}
+                match, note = excepts.checked(body.get("match"), body.get("note"))
+                parsed.append((match, note, body.get("finding_ids")))
+            out[language] = parsed
         except ValueError as exc:
             raise Refused(f"{language} exception: {exc}") from exc
     return out
 
 
-def _sigma_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Dict]:
+def _sigma_matches(
+    key: Optional[str], given: List[Tuple[Dict, str, Any]]
+) -> List[Dict]:
     """The Sigma copy's active exceptions, stored and given."""
     stored: List[Dict] = []
     if key:
@@ -297,7 +298,7 @@ def _sigma_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Di
             )
         if rid is not None:
             stored = [m for _, m in excepts.active([rid]).get(rid, [])]
-    return stored + [m for m, _ in given]
+    return stored + [m for m, _, _ids in given]
 
 
 def _evidence(
@@ -479,7 +480,7 @@ def _saved(keys: List[str]) -> List[Dict[str, Any]]:
 
 def _add_exceptions(
     prepared: List[Tuple[str, str, RuleRecord]],
-    wanted: Dict[str, List[Tuple[Dict[str, Any], str]]],
+    wanted: Dict[str, List[Tuple[Dict[str, Any], str, Any]]],
 ) -> List[Dict[str, Any]]:
     """Store the exceptions given for each saved copy, attributed to the caller."""
     if not wanted:
