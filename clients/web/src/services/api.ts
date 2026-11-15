@@ -791,6 +791,8 @@ export interface AIConfigResponse {
   assignments: Record<string, ComponentAssignment>
 }
 
+export type InvestigationReplayResponse = Schema<'InvestigationReplayResponse'>
+
 export const aiConfigApi = {
   getConfig: () => api.get<AIConfigResponse>('/ai/config'),
   setComponent: (
@@ -800,6 +802,10 @@ export const aiConfigApi = {
   clearComponent: (component: string) =>
     api.delete<{ component: string; cleared: boolean }>(`/ai/config/${component}`),
   listModels: () => api.get<{ models: AIModelInfo[] }>('/ai/models'),
+  // The one investigation replay (#4389). A 404 is "no investigation replay".
+  getInvestigationReplay: () => api.get<InvestigationReplayResponse>('/ai/investigation-replay'),
+  startInvestigationReplay: (body: Schema<'InvestigationReplayStart'>) =>
+    api.post<InvestigationReplayResponse>('/ai/investigation-replay', body),
 }
 
 export interface IngestionJob {
