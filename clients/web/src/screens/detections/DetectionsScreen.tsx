@@ -69,9 +69,22 @@ interface RuleRow extends StageFields {
   checks_run: number
   /** Its active exceptions, and the hits they silenced in the days the runner keeps. */
   exceptions?: number
+  /** Judged-false counts from the Accurate sweep, or null before one wrote them. */
+  false_split?: FalseSplit | null
   /** Vigil rules only: how many stage moves it has (its rollout fields are StageFields). */
   stage_moves?: number
   silenced?: number
+}
+
+interface FalseSplit {
+  expected: number
+  too_broad: number
+  data: number
+  other: number
+  not_given: number
+  false_person: number
+  false_agent: number
+  case_close: number
 }
 
 interface SiemTally {
@@ -153,12 +166,33 @@ function viewCount(report: RulesReport, view: View): number {
   return report.counts[view]
 }
 
+const SPLIT_CAUSES: { key: keyof FalseSplit; label: string }[] = [
+  { key: 'expected', label: 'expected' },
+  { key: 'too_broad', label: 'too broad' },
+  { key: 'data', label: 'data' },
+  { key: 'other', label: 'other' },
+  { key: 'not_given', label: 'not given' },
+]
+
+/** The row's judged-false split, or null when that total is zero. */
+function falseSplitLine(split: FalseSplit | null | undefined): string | null {
+  if (!split) return null
+  const total = SPLIT_CAUSES.reduce((sum, part) => sum + (split[part.key] || 0), 0)
+  if (total <= 0) return null
+  const causes = SPLIT_CAUSES.filter((part) => split[part.key] > 0).map((part) => `${n(split[part.key])} ${part.label}`)
+  return [
+    causes.join(', '),
+    `${n(split.false_person)} from a person, ${n(split.false_agent)} from the agent`,
+    `${n(split.case_close)} from a case close`,
+  ].join(' · ')
+}
+
 function prompt(r: RuleRow, days: number): string {
   const rule = `rule "${r.name}" (${SIEM_NAME[r.tool] ?? r.tool})`
   switch (r.worst) {
     case 'noisy': return `The ${rule} went noisy: far more alerts than its usual. Find what changed and suggest tuning.`
     case 'quiet': return `The ${rule} is over its alerts-per-day limit. Show what it alerts on and suggest tuning.`
-    case 'accurate': return `Most of the ${rule}'s judged alerts were false positives. Find the pattern and suggest an exception or a fix.`
+    case 'accurate': return `Most of the rule "${r.name}" (${SIEM_NAME[r.tool] ?? r.tool}, rule id ${r.rule_id})'s judged alerts were false positives. Find the pattern and suggest an exception or a fix.`
     case 'silent': return `The ${rule} used to fire regularly and has gone silent. Check whether its data still arrives, and why it stopped.`
     case 'drift': return `The ${rule} was changed in the SIEM but not in its repo. Show the difference and which copy should win.`
     case 'caught': return `Show me the proof that the ${rule} caught an attack: the case, the alert and its checks.`
@@ -558,6 +592,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
             const line = stageLine(r)
             const waiting = waitingNote(r, canWrite)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
+            const split = falseSplitLine(r.false_split)
             const fired = siemOnly ? `${n(r.siem_alerts ?? 0)} in SIEM` : r.health === 'no_fire_data' ? 'No data' : r.health === 'never_fired' ? 'Never' : 'None'
             return (
               <div key={item.key} data-index={item.index} ref={virtual.measureElement} className="de-tr de-row" style={{ transform: `translateY(${item.start - HEAD_ROW}px)` }}>
@@ -566,7 +601,12 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                   <div className="de-why-text" title={r.why}>{r.why}</div>
                   {others.length > 0 && (
                     <div className="de-flags">
-                      {others.map((f) => <span key={f} className={`de-flag ${FLAG[f].tone}`} title={FLAG[f].note}>{FLAG[f].label}</span>)}
+                      {others.map((f) => (
+                        <span key={f} className="de-flag-line">
+                          <span className={`de-flag ${FLAG[f].tone}`} title={FLAG[f].note}>{FLAG[f].label}</span>
+                          {f === 'accurate' && split && <span className="de-split">{split}</span>}
+                        </span>
+                      ))}
                     </div>
                   )}
                   <div className="de-meta">
@@ -585,6 +625,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                       <span>{!r.checks_run ? 'Not checked' : r.checks_passing ? plural(r.checks_passing, 'check passes', 'checks pass') : 'No check passes'}</span>
                     )}
                     {line && <span className={`de-st-line${line.amber ? ' amber' : ''}`} title={line.title || undefined}>· {line.text}</span>}
+                    {split && <span className="de-split">· {split}</span>}
                     {line?.live && canWrite && (
                       <span>· <button type="button" className="de-link de-st-revert" onClick={() => setOpen({ id: r.rule_id, what: 'revert' })}>Revert</button></span>
                     )}
@@ -626,7 +667,10 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                 <div className="de-tech" title={r.techniques.length ? r.techniques.join(', ') : 'No technique declared'}>
                   {r.techniques.length ? <>{r.techniques[0]}{r.techniques.length > 1 && <span className="de-tech-more"> +{r.techniques.length - 1}</span>}</> : <span className="de-none">—</span>}
                 </div>
-                <div className="col-low"><span className={`de-health ${h.tone}`}><i />{h.label}</span></div>
+                <div className="col-low de-health-cell">
+                  <span className={`de-health ${h.tone}`}><i />{h.label}</span>
+                  {r.worst === 'accurate' && split && <span className="de-split">{split}</span>}
+                </div>
                 <div className={`de-right de-fires${r.fires > 0 ? ' de-fired' : ''}`}>
                   {r.fires > 0 ? (
                     <button type="button" className="de-fires-link" aria-expanded={fdOpen} title={`Open the ${plural(r.fires, 'finding', 'findings')} it raised in ${days} days`} onClick={() => setOpen(fdOpen ? null : { id: r.rule_id, what: 'findings' })}>

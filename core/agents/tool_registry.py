@@ -8,6 +8,7 @@ import json
 import logging
 from contextlib import nullcontext
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
@@ -49,6 +50,7 @@ from core.llm.tool_schemas import (
 )
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
+from core.storage.models import Finding
 from core.teams import default_team
 
 if TYPE_CHECKING:
@@ -316,12 +318,42 @@ _TRIAGE_KEYS = (
 )
 
 
+# FindingSchema drops these. The frozen finding response stays without them;
+# the agent read puts the columns back on the dict it already returns.
+_NOISE_FIELDS = (
+    "noise_marked_at",
+    "noise_marked_by",
+    "noise_marked_by_kind",
+    "noise_reason",
+    "noise_cause",
+)
+
+
+def _iso_utc(value: Any) -> Any:
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _attach_noise(shaped: Args, finding_id: str) -> None:
+    with service_session() as session:
+        row = session.get(Finding, finding_id)
+        if row is None:
+            return
+        for key in _NOISE_FIELDS:
+            shaped[key] = _iso_utc(getattr(row, key))
+
+
 def get_finding(*, finding_id: str) -> Any:
     finding = _data().get_finding(finding_id)
     if not isinstance(finding, dict):
         return finding
     shaped = _for_agent(finding)
     shaped["detection_rule"] = rule_for_finding(finding)
+    if _data().is_using_database():
+        _attach_noise(shaped, finding_id)
     return shaped
 
 
@@ -412,7 +444,6 @@ def dismiss_finding(
     if refusal := permission_refusal("findings.write"):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.storage.models import Finding
     from core.time import utcnow
 
     reason = (reason or "").strip()
