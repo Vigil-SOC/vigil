@@ -12,6 +12,7 @@ from core.storage.models.ai import (
     AIModelConfig,
     ChatMessage,
     Conversation,
+    InvestigationReplay,
     LLMInteractionLog,
     LLMProviderConfig,
 )
@@ -108,6 +109,7 @@ from core.storage.models.workflow import (
 __all__ = [
     "AIDecisionLog",
     "AIModelConfig",
+    "InvestigationReplay",
     "ApprovalAction",
     "Base",
     "Case",

@@ -3116,6 +3116,121 @@
   "nullable": false,
   "type": "integer"
  },
+ "column investigation_replay.abstained": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.agreed": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.agreement_rate": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.agreement_wilson_high": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.agreement_wilson_low": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.cost_usd": {
+  "type": "double precision",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.disagreed": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.false_close": {
+  "type": "jsonb",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.false_close_rate": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.false_close_wilson_high": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.false_close_wilson_low": {
+  "type": "double precision",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.false_closes": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.id": {
+  "type": "smallint",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.model_id": {
+  "type": "character varying(200)",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.provider_id": {
+  "type": "character varying(64)",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.reason": {
+  "type": "text",
+  "nullable": true,
+  "default": null
+ },
+ "column investigation_replay.replayed": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.skipped": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.started_at": {
+  "type": "timestamp without time zone",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.started_by": {
+  "type": "character varying(64)",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.status": {
+  "type": "character varying(16)",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.total": {
+  "type": "integer",
+  "nullable": false,
+  "default": null
+ },
+ "column investigation_replay.updated_at": {
+  "type": "timestamp without time zone",
+  "nullable": false,
+  "default": null
+ },
  "column investigations.case_id": {
   "default": null,
   "nullable": true,
@@ -4695,6 +4810,9 @@
  "constraint integration_configs.integration_configs_pkey": "PRIMARY KEY (integration_id)",
  "constraint investigation_logs.investigation_logs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id)",
  "constraint investigation_logs.investigation_logs_pkey": "PRIMARY KEY (id)",
+ "constraint investigation_replay.investigation_replay_one": "CHECK ((id = 1))",
+ "constraint investigation_replay.investigation_replay_pkey": "PRIMARY KEY (id)",
+ "constraint investigation_replay.investigation_replay_status_check": "CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))",
  "constraint investigations.investigations_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE SET NULL",
  "constraint investigations.investigations_pkey": "PRIMARY KEY (investigation_id)",
  "constraint ip_exclusions.ck_ip_exclusions_origin": "CHECK (((origin)::text = ANY ((ARRAY['ad_hoc'::character varying, 'finding'::character varying, 'case'::character varying, 'run'::character varying])::text[])))",
@@ -5132,6 +5250,7 @@
  "index intake_triggers_pkey": "CREATE UNIQUE INDEX intake_triggers_pkey ON public.intake_triggers USING btree (id)",
  "index integration_configs_pkey": "CREATE UNIQUE INDEX integration_configs_pkey ON public.integration_configs USING btree (integration_id)",
  "index investigation_logs_pkey": "CREATE UNIQUE INDEX investigation_logs_pkey ON public.investigation_logs USING btree (id)",
+ "index investigation_replay_pkey": "CREATE UNIQUE INDEX investigation_replay_pkey ON public.investigation_replay USING btree (id)",
  "index investigations_pkey": "CREATE UNIQUE INDEX investigations_pkey ON public.investigations USING btree (investigation_id)",
  "index ip_exclusions_pkey": "CREATE UNIQUE INDEX ip_exclusions_pkey ON public.ip_exclusions USING btree (exclusion_id)",
  "index ix_ai_decision_logs_agent_id": "CREATE INDEX ix_ai_decision_logs_agent_id ON public.ai_decision_logs USING btree (agent_id)",
@@ -6873,6 +6992,28 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation investigation_replay": {
+  "kind": "r",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null,
+  "owner": "owner",
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ]
  },
  "relation investigations": {
   "acl": [

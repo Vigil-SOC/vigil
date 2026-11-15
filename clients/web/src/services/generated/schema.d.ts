@@ -235,6 +235,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai/investigation-replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Investigation Replay */
+        get: operations["get_api_ai_investigation-replay"];
+        put?: never;
+        /** Start Investigation Replay */
+        post: operations["post_api_ai_investigation-replay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai/models": {
         parameters: {
             query?: never;
@@ -11825,6 +11843,17 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** FalseCloseRow */
+        FalseCloseRow: {
+            /** Case Id */
+            case_id: string;
+            /** Closure Category */
+            closure_category: string;
+            /** Disposition */
+            disposition: string;
+            /** Evidence Opened */
+            evidence_opened?: boolean | null;
+        };
         /** FederationGlobalSettings */
         FederationGlobalSettings: {
             /**
@@ -12327,6 +12356,58 @@ export interface components {
             aggressive: components["schemas"]["InvestigationProfile"];
             balanced: components["schemas"]["InvestigationProfile"];
             conservative: components["schemas"]["InvestigationProfile"];
+        };
+        /** InvestigationReplayResponse */
+        InvestigationReplayResponse: {
+            /** Abstained */
+            abstained: number;
+            /** Agreed */
+            agreed: number;
+            /** Agreement Rate */
+            agreement_rate?: number | null;
+            /** Agreement Wilson High */
+            agreement_wilson_high?: number | null;
+            /** Agreement Wilson Low */
+            agreement_wilson_low?: number | null;
+            /** Cost Usd */
+            cost_usd: number;
+            /** Disagreed */
+            disagreed: number;
+            /** False Close */
+            false_close: components["schemas"]["FalseCloseRow"][];
+            /** False Close Rate */
+            false_close_rate?: number | null;
+            /** False Close Wilson High */
+            false_close_wilson_high?: number | null;
+            /** False Close Wilson Low */
+            false_close_wilson_low?: number | null;
+            /** False Closes */
+            false_closes: number;
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Reason */
+            reason?: string | null;
+            /** Replayed */
+            replayed: number;
+            /** Skipped */
+            skipped: number;
+            /** Started At */
+            started_at: string;
+            /** Started By */
+            started_by: string;
+            /** Status */
+            status: string;
+            /** Total */
+            total: number;
+        };
+        /** InvestigationReplayStart */
+        InvestigationReplayStart: {
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
         };
         /**
          * InviteCheck
@@ -15807,6 +15888,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_ai_investigation-replay": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvestigationReplayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_ai_investigation-replay": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvestigationReplayStart"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvestigationReplayResponse"];
                 };
             };
             /** @description Validation Error */
