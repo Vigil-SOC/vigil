@@ -18,7 +18,11 @@ it reads the indexer directly (no kibana_url), is never ingested: its unknown
 names that floor instead of "not enough data" (``logic.level``, read from the
 version's content). The result goes under checks['accurate'] on the latest
 version, written only when result, reason or counts changed; a result or reason
-change is also appended to detection_rule_check_changes. Local SQL only: no SIEM search.
+change is also appended to detection_rule_check_changes. Beside the four totals,
+the same payload counts the judged-false split: expected, too_broad, data, other
+and not_given (those add up to judged minus real), false_person and false_agent,
+and case_close (a winning false-positive close, once per finding). Local SQL
+only: no SIEM search.
 """
 
 from __future__ import annotations
@@ -26,12 +30,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from sqlalchemy import and_, bindparam, select, tuple_, update
 
-from core.cases.closure import ClosedByKind, closed_by_person, closure_says_real
+from core.cases.closure import (
+    ClosedByKind,
+    FalsePositiveCause,
+    closed_by_person,
+    closure_says_real,
+)
 from core.detections.inventory import catalog
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     Case,
@@ -49,10 +59,25 @@ FAIL_BELOW = 0.10
 # The finding data_sources that resolve: "elastic" carries Kibana and Wazuh
 # alerts, "splunk" Splunk notables.
 FINDING_SOURCES = ("elastic", "splunk")
-COUNTS = ("real", "judged", "analyst", "agent")
+# Judged-false causes. not_given is a count, not a stored cause. The five add
+# up to judged minus real, as do false_person and false_agent.
+FALSE_CAUSES = ("expected", "too_broad", "data", "other", "not_given")
+FALSE_SPLIT = FALSE_CAUSES + ("false_person", "false_agent", "case_close")
+COUNTS = ("real", "judged", "analyst", "agent") + FALSE_SPLIT
+_CAUSES = frozenset(cause.value for cause in FalsePositiveCause)
+# A page of one rule's judged-false determinations, same cap as search_findings.
+FALSE_PAGE = 25
 
-# (at, analyst, real): one determination of a finding.
-Determination = Tuple[datetime, bool, bool]
+
+class Determination(NamedTuple):
+    """One determination of a finding. ``case_close`` is a false-positive close."""
+
+    at: datetime
+    analyst: bool
+    real: bool
+    cause: Optional[str] = None
+    case_close: bool = False
+    text: str = ""
 
 
 @dataclass
@@ -71,13 +96,24 @@ def _utc(value: Optional[datetime]) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
-def _verdict(found: List[Determination]) -> Optional[Tuple[bool, bool]]:
-    """(real, analyst) of the latest analyst determination, else the latest agent one."""
+def _known_cause(value: Optional[str]) -> Optional[str]:
+    return value if value in _CAUSES else None
+
+
+def _free_text(*values: Optional[str]) -> str:
+    """The first text that was set. Blank is not set."""
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _winning(found: List[Determination]) -> Optional[Determination]:
+    """The latest analyst determination, else the latest agent one."""
     if not found:
         return None
-    analyst = [d for d in found if d[1]]
-    _, by_analyst, real = max(analyst or found, key=lambda d: d[0])
-    return real, by_analyst
+    analyst = [d for d in found if d.analyst]
+    return max(analyst or found, key=lambda d: d.at)
 
 
 def ingest_floor() -> Optional[int]:
@@ -119,8 +155,21 @@ def result_of(
     return {"result": result, "reason": reason, **counts}
 
 
-def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
-    """Every elastic or splunk finding, as much as resolving and its noise mark need."""
+def _sources(sources: Optional[Sequence[str]]) -> List[Any]:
+    """``None`` keeps every data source (an overlay copy's Wazuh findings included)."""
+    if sources is None:
+        return []
+    return [Finding.data_source.in_(tuple(sources))]
+
+
+def _findings(
+    session: Any, *where: Any, sources: Optional[Sequence[str]] = FINDING_SOURCES
+) -> Dict[str, Dict[str, Any]]:
+    """Findings matching ``where``, as much as resolving and a noise mark need.
+
+    ``entity_context`` is only ``source_evidence``, the same slice ``judge`` resolves.
+    A named overlay rule is not in it.
+    """
     rows = session.execute(
         select(
             Finding.finding_id,
@@ -129,52 +178,102 @@ def _findings(session: Any) -> Dict[str, Dict[str, Any]]:
             Finding.entity_context["source_evidence"],
             Finding.noise_marked_at,
             Finding.noise_marked_by_kind,
-        ).where(Finding.data_source.in_(FINDING_SOURCES))
+            Finding.noise_reason,
+            Finding.noise_cause,
+        ).where(*_sources(sources), *where)
     ).all()
     return {
         fid: {
             "data_source": source,
             "timestamp": ts,
             "entity_context": {"source_evidence": evidence},
-            "noise": (marked, kind),
+            "noise": (marked, kind, reason, cause),
         }
-        for fid, source, ts, evidence, marked, kind in rows
+        for fid, source, ts, evidence, marked, kind, reason, cause in rows
     }
 
 
-def _closes(session: Any, *where: Any) -> Dict[str, List[Determination]]:
-    """Each elastic or splunk finding's (matching ``where``) closed-Case determinations."""
+def _closes(
+    session: Any, *where: Any, sources: Optional[Sequence[str]] = FINDING_SOURCES
+) -> Dict[str, List[Determination]]:
+    """Each finding's (matching ``where``) closed-Case determinations."""
     out: Dict[str, List[Determination]] = {}
-    for fid, category, channel, closed_at in session.execute(
+    for (
+        fid,
+        category,
+        channel,
+        closed_at,
+        fp_reason,
+        notes,
+        fp_cause,
+    ) in session.execute(
         select(
             case_findings.c.finding_id,
             CaseClosureInfo.closure_category,
             CaseClosureInfo.close_channel,
             CaseClosureInfo.closed_at,
+            CaseClosureInfo.false_positive_reason,
+            CaseClosureInfo.closure_notes,
+            CaseClosureInfo.false_positive_cause,
         )
         .join(
             Case, and_(Case.case_id == case_findings.c.case_id, Case.status == "closed")
         )
         .join(CaseClosureInfo, CaseClosureInfo.case_id == Case.case_id)
         .join(Finding, Finding.finding_id == case_findings.c.finding_id)
-        .where(Finding.data_source.in_(FINDING_SOURCES), *where)
+        .where(*_sources(sources), *where)
     ):
         real = closure_says_real(category)
-        if real is not None:
-            out.setdefault(fid, []).append(
-                (_utc(closed_at), closed_by_person(channel), real)
+        if real is None:
+            continue
+        out.setdefault(fid, []).append(
+            Determination(
+                _utc(closed_at),
+                closed_by_person(channel),
+                real,
+                None if real else _known_cause(fp_cause),
+                True,
+                "" if real else _free_text(fp_reason, notes),
             )
+        )
     return out
 
 
-def verdict_of(
-    closes: List[Determination], marked: Optional[datetime], kind: Optional[str]
-) -> Optional[Tuple[bool, bool]]:
-    """(real, analyst) of one finding from its closes and noise mark, or None."""
+def determination_of(
+    closes: List[Determination],
+    marked: Optional[datetime],
+    kind: Optional[str],
+    reason: Optional[str] = None,
+    cause: Optional[str] = None,
+) -> Optional[Determination]:
+    """The winning determination, noise mark included, or None."""
     found = list(closes)
     if marked is not None:
-        found.append((_utc(marked), kind == ClosedByKind.ANALYST.value, False))
-    return _verdict(found)
+        found.append(
+            Determination(
+                _utc(marked),
+                kind == ClosedByKind.ANALYST.value,
+                False,
+                _known_cause(cause),
+                False,
+                _free_text(reason),
+            )
+        )
+    return _winning(found)
+
+
+def verdict_of(
+    closes: List[Determination],
+    marked: Optional[datetime],
+    kind: Optional[str],
+    reason: Optional[str] = None,
+    cause: Optional[str] = None,
+) -> Optional[Tuple[bool, bool]]:
+    """(real, analyst) of one finding from its closes and noise mark, or None."""
+    won = determination_of(closes, marked, kind, reason, cause)
+    if won is None:
+        return None
+    return won.real, won.analyst
 
 
 def verdicts(session: Any, *where: Any) -> Dict[str, Optional[Tuple[bool, bool]]]:
@@ -211,15 +310,87 @@ def judge(session: Any) -> Tuple[Dict[Tuple[int, int], Dict[str, int]], int]:
         if not rule["resolved"] or key not in latest:
             continue
         counted += 1
-        verdict = verdict_of(closes.get(fid, []), *findings[fid]["noise"])
-        if verdict is None:
+        won = determination_of(closes.get(fid, []), *findings[fid]["noise"])
+        if won is None:
             continue
-        real, analyst = verdict
         counts = latest[key]
         counts["judged"] += 1
-        counts["real"] += real
-        counts["analyst" if analyst else "agent"] += 1
+        counts["real"] += won.real
+        counts["analyst" if won.analyst else "agent"] += 1
+        if won.real:
+            continue
+        counts[won.cause or "not_given"] += 1
+        counts["false_person" if won.analyst else "false_agent"] += 1
+        if won.case_close:
+            counts["case_close"] += 1
     return latest, counted
+
+
+def _entry(finding_id: str, won: Determination) -> Dict[str, Any]:
+    return {
+        "finding_id": finding_id,
+        "text": won.text,
+        "person": won.analyst,
+        "cause": won.cause,
+    }
+
+
+def _false_of(session: Any, rule: Any) -> List[Dict[str, Any]]:
+    """One rule's judged-false determinations, newest first.
+
+    A Kibana, Wazuh or Splunk rule uses the same resolution as ``judge``: latest
+    version, ``catalog.RESOLVES``. An overlay copy takes findings that name it,
+    any version, including a Wazuh copy's ``wazuh`` findings. A repo rule has none.
+    """
+    if rule.source in catalog.RESOLVES:
+        findings = _findings(session)
+        resolved = catalog.resolve_findings(session, findings, full=False)
+        closes = _closes(session)
+        picked = []
+        for fid, mapped in resolved.items():
+            if (
+                not mapped.get("resolved")
+                or mapped.get("rule_id") != rule.id
+                or mapped.get("version") != rule.latest_version
+            ):
+                continue
+            won = determination_of(closes.get(fid, []), *findings[fid]["noise"])
+            if won is not None and not won.real:
+                picked.append((fid, won))
+    elif rule.source == OVERLAY_SOURCE:
+        named = Finding.entity_context["detection_rule"].contains({"rule_id": rule.id})
+        findings = _findings(session, named, sources=None)
+        closes = _closes(session, named, sources=None)
+        picked = []
+        for fid, found in findings.items():
+            won = determination_of(closes.get(fid, []), *found["noise"])
+            if won is not None and not won.real:
+                picked.append((fid, won))
+    else:
+        picked = []
+    picked.sort(key=lambda item: (item[1].at, item[0]), reverse=True)
+    return [_entry(fid, won) for fid, won in picked]
+
+
+def judged_false_page(rule_id: int, offset: int, limit: int) -> Dict[str, Any]:
+    """A page of one rule's judged-false determinations. Empty when it has none."""
+    offset = max(int(offset), 0)
+    limit = min(max(int(limit), 1), FALSE_PAGE)
+    with get_db_manager().session_scope() as session:
+        rule = session.get(DetectionRule, rule_id)
+        entries = _false_of(session, rule) if rule is not None else []
+    page = entries[offset : offset + limit]
+    end = offset + len(page)
+    more = end < len(entries)
+    return {
+        "total": len(entries),
+        "offset": offset,
+        "limit": limit,
+        "returned": len(page),
+        "has_more": more,
+        **({"next_offset": end} if more else {}),
+        "entries": page,
+    }
 
 
 def sweep() -> AccurateReport:

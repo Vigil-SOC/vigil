@@ -1356,6 +1356,9 @@ def _health_rows(
                 # Its active exceptions, and the hits they silenced (#3794).
                 "exceptions": len(excepted.get(rule.id, [])),
                 "silenced": _silenced(checks, excepted.get(rule.id, []), since_day),
+                # The Accurate sweep's judged-false split. The screen reads it
+                # here and does not scan findings.
+                "false_split": _false_split(checks),
                 **_stage_fields(rule.id, copies),
             }
         )
@@ -1395,6 +1398,21 @@ def _health_rows(
         "mapped": len(mapped),
         "by_siem": _by_siem(listed),
     }
+
+
+def _false_split(checks: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    """Judged-false counts on an Accurate payload, or None before a sweep wrote them."""
+    # accurate imports this module; the keys live with the sweep that writes them.
+    from core.detections.inventory.accurate import FALSE_SPLIT
+
+    accurate = checks.get("accurate")
+    if not isinstance(accurate, dict) or "not_given" not in accurate:
+        return None
+    out: Dict[str, int] = {}
+    for key in FALSE_SPLIT:
+        value = accurate.get(key, 0)
+        out[key] = value if type(value) is int else 0
+    return out
 
 
 def _stage_fields(rule_id: int, copies: Dict[str, Any]) -> Dict[str, Any]:
@@ -1771,6 +1789,7 @@ def search(
     quiet: Optional[str] = None,
     accurate: Optional[str] = None,
     caught: Optional[str] = None,
+    rule_id: Optional[int] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
@@ -1778,8 +1797,8 @@ def search(
     ``quiet`` and ``accurate`` keep rules whose latest version has that check result;
     ``caught`` 'pass' keeps caught versions, 'untested' the rest; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
-    flag. Each hit says whether it is flagged; a single hit carries its recent
-    check changes.
+    flag. ``rule_id`` keeps that one rule. Each hit says whether it is flagged;
+    a single hit carries its recent check changes.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -1816,6 +1835,8 @@ def search(
         statement = statement.where(
             CAUGHT.is_(None) if caught == "untested" else CAUGHT == caught
         )
+    if rule_id is not None:
+        statement = statement.where(DetectionRule.id == rule_id)
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))
