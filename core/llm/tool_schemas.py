@@ -495,7 +495,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "dismiss_finding",
-        "description": "Dismiss a finding as noise. This is the finding's terminal state: it reads Dropped and leaves the Overview feed. Recorded with you as the actor and the reason you give.",
+        "description": "Dismiss a finding as noise. This is the finding's terminal state: it reads Dropped and leaves the Overview feed. Recorded with you as the actor and the reason you give. noise_cause is optional and records which kind of fix the false positive is.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -506,6 +506,11 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "reason": {
                     "type": "string",
                     "description": "Why this finding is noise. Required.",
+                },
+                "noise_cause": {
+                    "type": "string",
+                    "enum": ["expected", "too_broad", "data", "other"],
+                    "description": "Which kind of fix this is. Optional. Omit it to record no cause.",
                 },
             },
             "required": ["finding_id", "reason"],

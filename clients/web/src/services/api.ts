@@ -211,8 +211,12 @@ export const findingsApi = {
 
   deleteAll: () => api.delete('/findings/all'),
 
-  markNoise: (id: string) =>
-    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+  // A body only when a cause was chosen. No body stores no cause, and the mark still lands.
+  markNoise: (id: string, cause?: string) =>
+    api.post(
+      `/findings/${encodeURIComponent(id)}/noise`,
+      cause ? { noise_cause: cause } : undefined,
+    ),
 
   clearNoise: (id: string) =>
     api.delete(`/findings/${encodeURIComponent(id)}/noise`),

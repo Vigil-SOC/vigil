@@ -31,6 +31,7 @@ from core.cases.closure import (
     CHANNEL_AGENT,
     ClosureCategory,
     closed_by_person,
+    false_positive_cause_value,
     trust_word,
 )
 from core.exceptions import NotFoundError, default_on_error
@@ -38,6 +39,10 @@ from core.storage.case_insert import insert_case
 from core.storage.models import Case, CaseTask, CaseTemplate, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
+
+# A close that did not mention the cause. Distinct from an explicit null,
+# which clears one a false-positive close had stored.
+_CAUSE_OMITTED = object()
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +407,7 @@ class CaseWorkflowService:
         false_positive_reason: Optional[str] = None,
         closure_notes: Optional[str] = None,
         evidence_opened: Optional[bool] = None,
+        false_positive_cause: object = _CAUSE_OMITTED,
         on_trail: bool = True,
     ):
         """Mark a case closed and record its closure metadata.
@@ -447,7 +453,20 @@ class CaseWorkflowService:
         on a person's close that writes the determination; an agent close and
         an absent field store null. A status edit that leaves a standing
         determination draws nothing and changes neither column.
+
+        ``false_positive_cause`` is touched only on the determining branch.
+        Any category other than ``false_positive`` clears it. A false-positive
+        close that states the field, including null, stores that. One that
+        omits the field leaves a standing cause. A value outside the set raises
+        ``ValueError`` before anything is written.
         """
+        if false_positive_cause is _CAUSE_OMITTED:
+            stated_cause: object = _CAUSE_OMITTED
+        elif false_positive_cause is None or isinstance(false_positive_cause, str):
+            stated_cause = false_positive_cause_value(false_positive_cause)
+        else:
+            raise ValueError(f"{false_positive_cause!r} is not a false-positive cause")
+
         from core.cases.case_sla_service import CaseSLAService
         from core.storage.models import CaseClosureInfo
         from core.storage.shared_ioc_repository import index_case_iocs_on_close
@@ -514,6 +533,10 @@ class CaseWorkflowService:
             closure.evidence_opened = (
                 evidence_opened if closed_by_person(channel) else None
             )
+            if category is not ClosureCategory.FALSE_POSITIVE:
+                closure.false_positive_cause = None
+            elif stated_cause is not _CAUSE_OMITTED:
+                closure.false_positive_cause = stated_cause
 
         closure.closed_at = utcnow()
         # Stated fields only. None means this call had nothing to say about the
@@ -558,7 +581,8 @@ class CaseWorkflowService:
         own -- would close the Case back into the determination the reopen
         retracted, and episodic memory would re-derive the Verdict the analyst
         reopened the Case to overturn. ``sampled_at`` is cleared so a later
-        agent dismissal can be drawn again. ``evidence_opened`` stays.
+        agent dismissal can be drawn again. The cause is cleared with the
+        category. ``evidence_opened`` stays.
         """
         from core.storage.models import CaseClosureInfo
 
@@ -567,6 +591,7 @@ class CaseWorkflowService:
             closure.closure_category = ClosureCategory.UNSPECIFIED.value
             # The draw does not outlive the determination it was taken from.
             closure.sampled_at = None
+            closure.false_positive_cause = None
         move_reopened_archived_team(session, case_id)
 
     def merge_cases(

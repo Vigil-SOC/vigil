@@ -5862,6 +5862,22 @@
       margin-top: 16px;
    }
 
+   /* Optional cause beside a dismiss control. Stays inside the row and wraps with the buttons. */
+   .cause-pick {
+      display: flex;
+      flex: 1 1 12rem;
+      width: 12rem;
+      max-width: 100%;
+      min-width: 0;
+   }
+
+   .cause-pick .field-select > span:first-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+   }
+
    .fp-preds {
       display: flex;
       flex-direction: column;

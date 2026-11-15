@@ -56,7 +56,7 @@ from core.cases.case_status import (
     record_status_change,
     status_change,
 )
-from core.cases.closure import PERSON_CHANNELS, ClosureCategory
+from core.cases.closure import PERSON_CHANNELS, ClosureCategory, FalsePositiveCause
 from core.cases.combined_state import queue_item
 from core.cases.linked_entities import (
     LINKED_SOURCE,
@@ -288,6 +288,9 @@ class ClosureInfo(BaseModel):
     recommendations: Optional[str] = None
     executive_summary: Optional[str] = None
     false_positive_reason: Optional[str] = None
+    # Stated, including null, stores that on a false-positive close. Omitted
+    # leaves a standing cause. Any other category drops a value in the set.
+    false_positive_cause: Optional[FalsePositiveCause] = None
     closure_notes: Optional[str] = None
     # Whether this person opened the evidence. Absent stores null. An agent
     # close stores null even when the field is sent.
@@ -1217,6 +1220,17 @@ def close_case(
         false_positive_reason=data.false_positive_reason,
         closure_notes=data.closure_notes,
         evidence_opened=data.evidence_opened,
+        **(
+            {
+                "false_positive_cause": (
+                    data.false_positive_cause.value
+                    if data.false_positive_cause
+                    else None
+                )
+            }
+            if "false_positive_cause" in data.model_fields_set
+            else {}
+        ),
     )
     if not closure:
         raise HTTPException(status_code=404, detail="Case not found")

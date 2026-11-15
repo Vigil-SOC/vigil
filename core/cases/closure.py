@@ -34,6 +34,29 @@ class ClosureCategory(str, Enum):
     UNSPECIFIED = "unspecified"
 
 
+class FalsePositiveCause(str, Enum):
+    """Which kind of fix a false-positive determination is.
+
+    It refines a ``false_positive`` close and a noise mark. Absence is a null
+    column, not a member: ``not_given`` is not stored.
+    """
+
+    EXPECTED = "expected"
+    TOO_BROAD = "too_broad"
+    DATA = "data"
+    OTHER = "other"
+
+
+def false_positive_cause_value(value: str | None) -> str | None:
+    """The cause to store. ``None`` stays null; anything else must be in the set."""
+    if value is None:
+        return None
+    try:
+        return FalsePositiveCause(value.strip()).value
+    except ValueError:
+        raise ValueError(f"{value!r} is not a false-positive cause") from None
+
+
 class ClosedByKind(str, Enum):
     """The Trust word a reader shows, and the kind a noise mark stores.
 
@@ -98,8 +121,10 @@ __all__: Sequence[str] = (
     "CLOSURE_OUTCOMES",
     "ClosedByKind",
     "ClosureCategory",
+    "FalsePositiveCause",
     "PERSON_CHANNELS",
     "closed_by_person",
     "closure_says_real",
+    "false_positive_cause_value",
     "trust_word",
 )

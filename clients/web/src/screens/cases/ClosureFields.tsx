@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { casesApi } from '../../services/api'
+import { FALSE_POSITIVE_CAUSES, type FalsePositiveCause } from '../../shared/falsePositiveCause'
 import { Popup, Select } from '../../shared/ui'
 import { inputCls } from './CaseSections'
 import { errorDetail } from './caseFormat'
@@ -17,21 +18,29 @@ export function closureProblem(category: ClosureCategory, reason: string): strin
     : null
 }
 
-/** The body for `casesApi.closeCase`: a false positive's reason is its own field. */
-export function closurePayload(category: ClosureCategory, reason: string) {
+/** The body for `casesApi.closeCase`: a false positive's reason is its own field.
+ *  A false positive always states the cause, null when none was chosen, so a
+ *  re-close does not keep a cause this person did not pick. */
+export function closurePayload(category: ClosureCategory, reason: string, cause: string) {
   const said = reason.trim() || undefined
+  const known = FALSE_POSITIVE_CAUSES.find((item) => item.value === cause)
+  const stated: FalsePositiveCause | null = known ? known.value : null
   return {
     closure_category: category,
-    ...(category === 'false_positive' ? { false_positive_reason: said } : { closure_notes: said }),
+    ...(category === 'false_positive'
+      ? { false_positive_reason: said, false_positive_cause: stated }
+      : { closure_notes: said }),
   }
 }
 
 /** The category and reason a Case is closed with; shared by Edit and Close so the rule has one home. */
-export function ClosureFields({ category, reason, onCategory, onReason }: {
+export function ClosureFields({ category, reason, cause, onCategory, onReason, onCause }: {
   category: ClosureCategory
   reason: string
+  cause: string
   onCategory: (c: ClosureCategory) => void
   onReason: (r: string) => void
+  onCause: (c: string) => void
 }) {
   return (
     <>
@@ -39,6 +48,20 @@ export function ClosureFields({ category, reason, onCategory, onReason }: {
         <span>What it turned out to be</span>
         <Select value={category} onSelect={(v) => onCategory(v as ClosureCategory)} options={[...CLOSURE_CATEGORIES]} />
       </label>
+      {category === 'false_positive' && (
+        <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
+          <span>Cause</span>
+          <Select
+            value={cause}
+            placeholder="Optional"
+            onSelect={onCause}
+            options={[{ value: '', label: 'Not given' }, ...FALSE_POSITIVE_CAUSES]}
+          />
+          <span className="text-[11.5px] font-normal normal-case tracking-normal text-tx-3 leading-[1.45]">
+            Optional. Which kind of fix this is. Nothing chosen is recorded as no cause.
+          </span>
+        </label>
+      )}
       <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
         <span>{category === 'false_positive' ? 'Why it is benign' : 'Reason'}</span>
         <textarea
@@ -76,6 +99,7 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
 }) {
   const [category, setCategory] = useState<ClosureCategory>(initial)
   const [reason, setReason] = useState('')
+  const [cause, setCause] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -83,6 +107,7 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
     if (open) {
       setCategory(initial)
       setReason('')
+      setCause('')
       setErr('')
     }
   }, [open, initial])
@@ -94,7 +119,7 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
     setErr('')
     try {
       await casesApi.closeCase(id, {
-        ...closurePayload(category, reason),
+        ...closurePayload(category, reason, cause),
         ...(evidenceOpened === undefined ? {} : { evidence_opened: evidenceOpened }),
       })
       onClosed()
@@ -109,7 +134,7 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
   return (
     <Popup open={open} onClose={onClose} title={title} width={480}>
       <div className="flex flex-col gap-3.5">
-        <ClosureFields category={category} reason={reason} onCategory={setCategory} onReason={setReason} />
+        <ClosureFields category={category} reason={reason} cause={cause} onCategory={setCategory} onReason={setReason} onCause={setCause} />
         {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
         <div className="flex justify-end gap-2.5">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
