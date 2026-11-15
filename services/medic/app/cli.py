@@ -1,4 +1,4 @@
-"""`python -m services.medic run | check`."""
+"""`python -m services.medic run | check | section`."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from services.medic.app.heartbeat import (
 from services.medic.app.pack_admin import PackAdmin
 from services.medic.app.policy_probe import Policy, PolicyCheck, Verdict
 from services.medic.app.policy_probe import probe as policy_probe
+from services.medic.app.section import section_main
 from services.medic.app.trace import TraceCapture, pack_of, start_capture
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
@@ -65,7 +66,7 @@ from services.medic.store import RecordHeld, StoreError, open_writer
 
 log = logging.getLogger("services.medic")
 
-USAGE = "usage: python -m services.medic {run|check [--ready]}"
+USAGE = "usage: python -m services.medic {run|check [--ready]|section [--since-days N]}"
 
 # httpcore's DEBUG trace logs raw response headers (Set-Cookie and the like) in a
 # shape K2's patterns miss, and httpx logs every request at INFO. A sensor's
@@ -114,6 +115,9 @@ def main(
     to real time and a real exit."""
     # Medic reads its own env: it may not import core.config (A3-1).
     env = os.environ if env is None else env  # noqa: ENV001
+    # Read-only export. Before `run`: no writer, no heartbeat, no API key.
+    if argv and argv[0] == "section":
+        return section_main(argv[1:], env, USAGE)
     if list(argv) not in (["run"], ["check"], ["check", "--ready"]):
         print(USAGE, file=sys.stderr)
         return 2

@@ -12,7 +12,16 @@ and `run` logs why and exits 0.
 python -m services.medic run     # the service (below)
 python -m services.medic check   # exit 0 only if the heartbeat is fresh (< 120 s) and says running (or degraded)
 python -m services.medic check --ready  # exit 0 only if the API answers the status op (Helm readiness)
+python -m services.medic section [--since-days N]  # public-safe prepare_support_bundle incidents (default 7)
 ```
+
+`section` reads `medic.db` through the read-only reader and writes one JSON
+document to stdout: incidents in the window whose stored `would_have` action is
+`prepare_support_bundle`, projected onto one field list. It writes nothing, reads
+no API key, and does not open a moved-aside `medic.db.corrupt-*` file. Exit 0
+when the document is whole, including zero incidents. Exit 1 with an empty
+stdout and one stderr line (`out of time`, `store unreadable`, or `malformed`)
+otherwise.
 
 `run` works in 15 s cycles: the sensors that are due read the agent worker's
 `/readyz` (one address on Compose and host-native, each pod on Helm) and
