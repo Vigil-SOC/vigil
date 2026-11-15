@@ -21,7 +21,7 @@ document to stdout: incidents in the window whose stored `would_have` action is
 no API key, and does not open a moved-aside `medic.db.corrupt-*` file. Exit 0
 when the document is whole, including zero incidents. Exit 1 with an empty
 stdout and one stderr line (`out of time`, `store unreadable`, or `malformed`)
-otherwise.
+when the document is not. Bad arguments exit 2.
 
 `run` works in 15 s cycles: the sensors that are due read the agent worker's
 `/readyz` (one address on Compose and host-native, each pod on Helm) and
