@@ -289,6 +289,8 @@ Re-run with `sudo` to include system logs that need elevation; the bundle still 
 
 When it finds a Vigil install, the bundle also collects its configuration, health output, container status, and logs. Secrets, keys, and database contents are never included; `SUMMARY.txt` lists what was left out. See [`scripts/vigil-support/README.md`](scripts/vigil-support/README.md).
 
+Pass `--medic` to also write Medic's section for the `--since` window: `medic/section.json` inside the archive, for the site's own team, and `<archive>.medic.json` beside it, the part that can go on a public defect report. Without the flag the run is unchanged, and the archive itself stays the site file the data notice describes.
+
 ---
 
 ## Architecture
