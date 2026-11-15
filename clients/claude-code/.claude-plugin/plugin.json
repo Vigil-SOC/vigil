@@ -16,6 +16,15 @@
     "incident-response",
     "threat-hunting"
   ],
+  "mcpServers": {
+    "vigil": {
+      "type": "http",
+      "url": "${user_config.vigil_url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.credential}"
+      }
+    }
+  },
   "userConfig": {
     "vigil_url": {
       "type": "string",
