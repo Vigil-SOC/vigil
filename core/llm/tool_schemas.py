@@ -11,6 +11,14 @@ from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL
 
 # Customer-specific exceptions per copy (#3794): kept apart from the rule body.
+# The same citation instruction as detection_rule_exception and the lint strings.
+_CITE = (
+    "Cite finding_ids of this copy's judged-false alerts when it has any "
+    "(one that matches is enough, and every cited id must be this copy's, "
+    "judged false, and matched by the exception); when it has none the "
+    "exception can still be added; a handed-off copy and a Sigma exception "
+    "are not checked; a person can add one either way."
+)
 _EXCEPTION_ITEMS = {
     "type": "array",
     "items": {
@@ -21,13 +29,19 @@ _EXCEPTION_ITEMS = {
                 "description": "{field: value} in this copy's own field names; every pair must equal. A CIDR value matches an address inside it.",
             },
             "note": {"type": "string", "description": "Why it is expected. Required."},
+            "finding_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Finding ids of this copy's judged-false alerts that this exception matches.",
+            },
         },
         "required": ["match", "note"],
     },
 }
 _EXCEPTIONS_SCHEMA = {
     "type": "object",
-    "description": "Customer-specific exceptions per copy, stored apart from the rule body instead of a `not filter_*` naming a host, address or account (lint refuses those). Keys are the copies being saved. Vigil's runner drops hits an exception matches; the replay counts a ruled-out event a sigma exception matches as excluded (a proven event one matches refuses the save). Adds no rule version; an exception already on the copy with the same match is kept as is.",
+    "description": "Customer-specific exceptions per copy, stored apart from the rule body instead of a `not filter_*` naming a host, address or account (lint refuses those). Keys are the copies being saved. Vigil's runner drops hits an exception matches; the replay counts a ruled-out event a sigma exception matches as excluded (a proven event one matches refuses the save). Adds no rule version; an exception already on the copy with the same match is kept as is. "
+    + _CITE,
     "properties": {
         "splunk": _EXCEPTION_ITEMS,
         "elastic": _EXCEPTION_ITEMS,
@@ -334,7 +348,8 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "detection_rule_exception",
-        "description": "Add a customer-specific exception to one of Vigil's overlay copies (search_detections tool 'overlay'), or remove one. An exception keeps an expected host, address or account out of the rule's query: Vigil's runner drops the hits whose fields equal every pair of match (a CIDR value matches an address inside it; a /0 such as 0.0.0.0/0 is refused, as it would match every event) before they are counted or become findings, and counts its matches per day in the version's checks.exceptions; checks.exceptions_seen records what they dropped together from the last run that fetched rows (rows, matched): matched equal to rows means the copy raised nothing that run. Field names are the copy's own: ECS paths for the Elastic copy, Splunk field names for the Splunk copy, Sigma fields for the Sigma form. Each exception covers one copy. Adding or removing one makes no new rule version and does not restart shadow. Exceptions are listed in the deploy pull request's description and stop applying once the SIEM's own copy runs the rule. Every addition and removal is recorded with you as the actor; a removed exception is kept with who removed it, when and why.",
+        "description": "Add a customer-specific exception to one of Vigil's overlay copies (search_detections tool 'overlay'), or remove one. An exception keeps an expected host, address or account out of the rule's query: Vigil's runner drops the hits whose fields equal every pair of match (a CIDR value matches an address inside it; a /0 such as 0.0.0.0/0 is refused, as it would match every event) before they are counted or become findings, and counts its matches per day in the version's checks.exceptions; checks.exceptions_seen records what they dropped together from the last run that fetched rows (rows, matched): matched equal to rows means the copy raised nothing that run. Field names are the copy's own: ECS paths for the Elastic copy, Splunk field names for the Splunk copy, Sigma fields for the Sigma form. Each exception covers one copy. Adding or removing one makes no new rule version and does not restart shadow. Exceptions are listed in the deploy pull request's description and stop applying once the SIEM's own copy runs the rule. Every addition and removal is recorded with you as the actor; a removed exception is kept with who removed it, when and why. "
+        + _CITE,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -358,6 +373,11 @@ SECURITY_DETECTION_TOOLS = [
                 "reason": {
                     "type": "string",
                     "description": "Why it is removed. Required to remove.",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Finding ids of this copy's judged-false alerts that this exception matches. Required when the copy has any; omit when it has none.",
                 },
             },
             "required": ["action"],

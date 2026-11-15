@@ -4,7 +4,8 @@ The schema is core/upgrade/versions/0026_detection_rules.sql,
 0027_detection_rule_checks.sql, 0028_detection_rule_origin.sql,
 0029_detection_rule_stages.sql, 0031_detection_rule_changes.sql,
 0033_detection_rule_known_name.sql, 0034_siem_searches.sql and
-0035_detection_rule_exceptions.sql; these models
+0035_detection_rule_exceptions.sql and
+0071_exception_citations.sql; these models
 mirror it for core/detections/inventory.
 """
 
@@ -198,6 +199,10 @@ class DetectionRuleException(Base):
             name="detection_rule_exceptions_match_check",
         ),
         CheckConstraint(
+            "cited_finding_ids IS NULL OR jsonb_typeof(cited_finding_ids) = 'array'",
+            name="detection_rule_exceptions_cited_check",
+        ),
+        CheckConstraint(
             "btrim(note) <> ''", name="detection_rule_exceptions_note_check"
         ),
         CheckConstraint(
@@ -218,6 +223,12 @@ class DetectionRuleException(Base):
     # {field: value} in the copy's own SIEM field names; every pair must equal.
     match: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
+    # Finding ids an agent cited. Null for a person, a Sigma copy, or a handed-off
+    # copy; [] when an agent added it and the copy had nothing judged false.
+    # none_as_null keeps a person's exception as SQL NULL. JSON null fails the check.
+    cited_finding_ids: Mapped[Optional[List[str]]] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

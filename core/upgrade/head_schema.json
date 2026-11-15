@@ -2179,6 +2179,11 @@
   "nullable": false,
   "type": "integer"
  },
+ "column detection_rule_exceptions.cited_finding_ids": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
  "column detection_rule_exceptions.created_at": {
   "default": "now()",
   "nullable": false,
@@ -4757,6 +4762,7 @@
  "constraint detection_proposals.detection_proposals_state_check": "CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'linted'::character varying, 'replayed'::character varying, 'converted'::character varying, 'shadow'::character varying, 'live'::character varying, 'rejected'::character varying])::text[])))",
  "constraint detection_rule_check_changes.detection_rule_check_changes_pkey": "PRIMARY KEY (id)",
  "constraint detection_rule_check_changes.detection_rule_check_changes_rule_id_fkey": "FOREIGN KEY (rule_id) REFERENCES detection_rules(id)",
+ "constraint detection_rule_exceptions.detection_rule_exceptions_cited_check": "CHECK (((cited_finding_ids IS NULL) OR (jsonb_typeof(cited_finding_ids) = 'array'::text)))",
  "constraint detection_rule_exceptions.detection_rule_exceptions_match_check": "CHECK (((jsonb_typeof(match) = 'object'::text) AND (match <> '{}'::jsonb)))",
  "constraint detection_rule_exceptions.detection_rule_exceptions_note_check": "CHECK ((btrim(note) <> ''::text))",
  "constraint detection_rule_exceptions.detection_rule_exceptions_pkey": "PRIMARY KEY (id)",
