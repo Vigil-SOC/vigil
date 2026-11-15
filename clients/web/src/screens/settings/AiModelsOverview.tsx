@@ -6,7 +6,7 @@
    ai_model_configs. Hosted-or-local is the setup wizard's rule
    (providerResidency), not a second one.
    ============================================================ */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, EmptyState, Select, SettingsCard } from '../../shared/ui'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -18,6 +18,7 @@ import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
 import { useModelAssignment } from './useSettings'
 import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
+import { InvestigationReplay } from './InvestigationReplay'
 import { PICK_AGENT_MODEL } from './modelPrompt'
 import type { SectionProps } from './types'
 import './aiModels.css'
@@ -366,6 +367,13 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     setPending(null)
   }
 
+  // The model this row is showing: its own, or Chat's while it inherits (including a pending reset).
+  const replayOf = ownOf('investigation') ?? assignments[CHAT_DEFAULT_KEY]
+  const replayIds =
+    replayOf?.provider_id && replayOf.model_id
+      ? { providerId: replayOf.provider_id, modelId: replayOf.model_id }
+      : { providerId: '', modelId: '' }
+
   // An inheriting row runs on chat_default's row, so it shows that fallback
   const fallbackOf = (c: string) =>
     (assignments[inheritsOf(c) ? CHAT_DEFAULT_KEY : c]?.settings?.[FALLBACK_KEY] as string | undefined) || ''
@@ -398,7 +406,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
           {providerIds.length === 0 && (
             <EmptyState compact icon="sparkle" title="No assignable models discovered" body="Add and test at least one active provider before assigning models to Vigil components." />
           )}
-          <div className="table-wrap">
+          <div className="table-wrap aim-table-wrap">
             <table className="tbl aim-table">
               <thead>
                 <tr>
@@ -422,7 +430,8 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                   const shown = ownOf(c) ?? assignments[CHAT_DEFAULT_KEY]
                   const shownModel = shown && models.find((m) => m.provider_id === shown.provider_id && m.model_id === shown.model_id)
                   return (
-                    <tr key={c}>
+                    <Fragment key={c}>
+                    <tr>
                       <td style={{ minWidth: 200, maxWidth: 300 }}>
                         <div className="aim-who">{meta.label}</div>
                         <div className="aim-note">{meta.description}</div>
@@ -501,6 +510,14 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                         </button>
                       </td>
                     </tr>
+                    {c === 'investigation' && (
+                      <tr className="aim-replay-row">
+                        <td colSpan={6}>
+                          <InvestigationReplay providerId={replayIds.providerId} modelId={replayIds.modelId} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>
