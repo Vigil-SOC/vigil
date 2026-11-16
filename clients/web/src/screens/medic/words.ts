@@ -174,22 +174,28 @@ export interface FixAttempt {
 
 /**
  * One line per `fix_run` already in the list. A check that did not pass is the end.
- * Otherwise the following `fix_verified` is, or waiting when `verify_at` is set and none follows.
+ * A passed check takes the next `fix_verified` after it that an earlier pass has not
+ * taken: a later refusal can be stored before that verification. Otherwise waiting,
+ * when `verify_at` is set.
  */
 export function fixAttempts(records: DecisionRecord[]): FixAttempt[] {
   const sorted = [...records].sort((a, b) => a.seq - b.seq)
   const runs = sorted.filter((r) => r.type === 'fix_run')
   const verified = sorted.filter((r) => r.type === 'fix_verified')
-  return runs.map((run, i) => {
+  let taken = 0
+  return runs.map((run) => {
     const body = asRecord(run.body)
-    const next = runs[i + 1]?.seq ?? Number.POSITIVE_INFINITY
-    const follow = verified.find((v) => v.seq > run.seq && v.seq < next)
     const result = asRecord(body.checks).result
     let end: string
     if (result !== 'passed') end = refusalPhrase(str(result))
-    else if (follow) end = verifiedPhrase(asRecord(follow.body))
-    else if (typeof body.verify_at === 'string' && body.verify_at) end = 'Waiting.'
-    else end = 'Restarted soc-daemon.'
+    else {
+      const at = verified.findIndex((v, i) => i >= taken && v.seq > run.seq)
+      if (at >= 0) {
+        taken = at + 1
+        end = verifiedPhrase(asRecord(verified[at].body))
+      } else if (typeof body.verify_at === 'string' && body.verify_at) end = 'Waiting.'
+      else end = 'Restarted soc-daemon.'
+    }
     return { seq: run.seq, who: str(body.who), end }
   })
 }
