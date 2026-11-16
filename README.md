@@ -104,7 +104,7 @@ Some integrations are marked **Experimental** in Settings. These are CrowdStrike
 
 Enable and configure integrations under **Settings → Integrations**, or generate one from API docs with the **Custom Integration Builder**. If you build an integration you find useful, someone else will too. Please contribute it.
 
-**Vigil's own MCP server.** Vigil serves its SOC operations (findings, cases, approvals, hunts) at `/mcp`, the same tools its agents use. The finding, case, and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions). To work Vigil from a Claude Code session, install [the Claude Code client](clients/claude-code/README.md): `claude plugin marketplace add Vigil-SOC/vigil@v<your Vigil version> --sparse .claude-plugin clients/claude-code`, then `claude plugin install vigil@vigil`.
+**Vigil's own MCP server.** Vigil serves its SOC operations (findings, cases, approvals, hunts) at `/mcp`, the same tools its agents use. The finding, case, and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions). To work Vigil from a Claude Code session, install [the Claude Code client](clients/claude-code/README.md): `claude plugin marketplace add Vigil-SOC/vigil@v<your Vigil version> --sparse .claude-plugin clients/claude-code`, then `claude plugin install vigil-soc@vigil`.
 
 **Detection rules.** The detection-engineering integration ([security-detections-mcp](https://www.npmjs.com/package/security-detections-mcp)) indexes community rule sets (Sigma, Splunk ESCU, Elastic, KQL) for search, coverage analysis, and gap identification. Vigil does not ship the rules; fetch them with `./scripts/setup_detection_repos.sh` (or `SETUP_DETECTION_REPOS=1 ./setup_dev.sh`).
 
@@ -362,6 +362,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 | [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
 | [Security keys](docs/security-keys.md) | The hostname and HTTPS rule, an internal CA for air-gapped consoles, and what "keys unavailable" means |
 | [Operator endpoints](docs/operator-endpoints.md) | API routes with no console screen: secrets backend status, dotenv → encrypted migration |
+| [Audit trail](docs/audit-trail.md) | What the trail keeps and does not rewrite, what a backup or a forwarded copy still holds, and that an account has no set end date |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure |
 | [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
 | [Adoption figures](docs/metrics.md) | Daily views, clones, stars, forks, and contributor history, published unaltered at [Vigil-SOC/metrics](https://github.com/Vigil-SOC/metrics) |

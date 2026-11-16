@@ -46,6 +46,7 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
   const [error, setError] = useState('')
   const [channel, setChannel] = useState<'email' | 'copy'>('copy')
   const [confirmedBy, setConfirmedBy] = useState('')
+  const [reason, setReason] = useState('')
   const [compromise, setCompromise] = useState(false)
   const [busy, setBusy] = useState(false)
   // the copied link, shown once
@@ -76,6 +77,7 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
     try {
       const { data } = await signInsApi.issueResetLink(user.user_id, {
         channel,
+        reason: reason.trim(),
         identity_confirmed_by: channel === 'copy' ? (confirmedBy as ConfirmedBy) : null,
         suspected_compromise: compromise,
       })
@@ -87,7 +89,7 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
         })
         if (tokens) notify('ok', tokens.trim())
       } else {
-        notify('ok', `Sent ${user.username} a reset link. It works once, for one hour.${tokens}`)
+        notify('ok', `Sent ${user.username} a reset link and ended their sign-ins. It works once, for one hour.${tokens}`)
         onClose()
       }
     } catch (e) {
@@ -132,7 +134,7 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
             </div>
           )}
           <span className="text-sm text-tx-2">
-            Give this to {user.username}. It works once and expires {utc(shown.expires)}.
+            Give this to {user.username}. It works once and expires {utc(shown.expires)}. Their open sign-ins were ended.
           </span>
           <div className="font-mono text-xs break-all rounded-[10px] bg-bg2 border border-ln0 p-3 select-all">{shown.link}</div>
           <div className="settings-banner">
@@ -154,7 +156,7 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
     )
   }
 
-  const ready = channel === 'email' ? emailOn : !!confirmedBy
+  const ready = !!reason.trim() && (channel === 'email' ? emailOn : !!confirmedBy)
   return (
     <Popup open onClose={() => !busy && onClose()} title={`Reset password · ${user.username}`} width={480}>
       <div className="flex flex-col gap-3.5">
@@ -164,8 +166,8 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
           </div>
         )}
         <span className="text-sm text-tx-2 leading-relaxed">
-          A single-use link to choose a new password, valid for one hour. Their two-step sign-in stays as it is. They
-          and the other people who manage users are told.
+          A single-use link to choose a new password, valid for one hour. Their open sign-ins end; their two-step
+          sign-in stays as it is. They and the other people who manage users are told.
         </span>
         {open && (
           <div className="settings-banner flex-wrap">
@@ -219,6 +221,9 @@ export function ResetLinkDialog({ user, notify, onClose }: { user: Person; notif
             <Select value={confirmedBy} options={CONFIRMED_BY} placeholder="Choose…" disabled={busy} onSelect={setConfirmedBy} />
           </Field>
         )}
+        <Field label="Reason" hint="Kept in the audit trail.">
+          <TextInput maxLength={500} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} />
+        </Field>
         <CompromiseBox checked={compromise} disabled={busy} onChange={setCompromise} />
         <div className="flex justify-end gap-2.5 mt-1">
           <button className="btn ghost" onClick={onClose} disabled={busy}>

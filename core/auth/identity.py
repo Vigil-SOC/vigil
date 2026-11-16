@@ -48,6 +48,8 @@ def identifier_in_use(
     value: str,
     except_user_id: Optional[str] = None,
     except_link_id: Optional[str] = None,
+    *,
+    pending_invites: bool = True,
 ) -> bool:
     """Whether another account, or a pending invite, already uses ``value`` as
     a username or email.
@@ -55,7 +57,9 @@ def identifier_in_use(
     Case-insensitive, so ``Ada@Example.com`` collides with ``ada@example.com``.
     An account may use one string for both of its own columns. An invite holds
     its address until it is used, revoked or expired; ``except_link_id`` leaves
-    out the invite that is being accepted.
+    out the invite that is being accepted. ``pending_invites=False`` asks about
+    accounts only, so a route that creates the account can cancel the invite
+    instead of treating it as a collision.
     """
     key = value.casefold()
     clauses = [
@@ -70,6 +74,8 @@ def identifier_in_use(
         clauses.append(User.user_id != except_user_id)
     if session.query(User.user_id).filter(*clauses).first() is not None:
         return True
+    if not pending_invites:
+        return False
     pending = [
         AuthLink.kind == "invite",
         AuthLink.used_at.is_(None),

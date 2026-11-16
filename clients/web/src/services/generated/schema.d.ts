@@ -924,6 +924,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend Email Confirmation
+         * @description Send another confirmation link for the signed-in person's address.
+         *
+         *     Replaces the open one. Mail and the install's public address both have to
+         *     be set; otherwise the address stays unconfirmed and the response says so.
+         */
+        post: operations["post_api_auth_email-confirmation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-confirmation/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Email Address
+         * @description Confirm the address. The link is used up by this request, not by opening it.
+         */
+        post: operations["post_api_auth_email-confirmation_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/invite": {
         parameters: {
             query?: never;
@@ -5991,6 +6034,7 @@ export interface paths {
          *     A run's id is derived from its investigation id and its ledger is terminal
          *     once finished, so the same investigation cannot run twice. The failure stays
          *     on record; the restart is a fresh Human Ask over the same workflow and findings.
+         *     A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -7267,6 +7311,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/sync/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Pushes
+         * @description Pushes refused because their username or email is in use, oldest first.
+         */
+        get: operations["get_api_users_sync_pending"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/pending/{pending_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Pending Push
+         * @description Attach one waiting push to one existing person account. The provider's
+         *     next retry matches the link and takes the account over. The password stays.
+         */
+        post: operations["post_api_users_sync_pending_pending_id_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Sync Window
+         * @description How many accounts a window reactivation would bring back. Changes nothing.
+         */
+        get: operations["get_api_users_sync_window"];
+        put?: never;
+        /**
+         * Reactivate Sync Window
+         * @description Reactivate every account directory sync deactivated in the window. Other
+         *     routes stay deactivated, tokens stay revoked, nobody is sent a notice.
+         */
+        post: operations["post_api_users_sync_window"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/teams": {
         parameters: {
             query?: never;
@@ -7559,6 +7669,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/remove-unused": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Unused Sync Account
+         * @description Remove an account a push created for the wrong person: its username and
+         *     email are freed, its link and pushed groups go, and it is deactivated. The
+         *     principal stays. The provider's next push creates a new account.
+         */
+        post: operations["post_api_users_user_id_remove-unused"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/reset-link": {
         parameters: {
             query?: never;
@@ -7574,9 +7706,10 @@ export interface paths {
         put?: never;
         /**
          * Issue Reset Link
-         * @description A one-hour, single-use reset link for the person, replacing any open one:
-         *     emailed to their address, or returned once to hand over. It never touches
-         *     two-step sign-in. They and the other holders of users.write are told.
+         * @description A one-hour, single-use reset link for the person, replacing any open one,
+         *     and their open sign-ins ended, with a typed reason: emailed to their address,
+         *     or returned once to hand over. It never touches two-step sign-in. They and
+         *     the other holders of users.write are told.
          */
         post: operations["post_api_users_user_id_reset-link"];
         /**
@@ -7683,9 +7816,10 @@ export interface paths {
         put?: never;
         /**
          * Unlock User
-         * @description End a lock and the failure count. users.write over the account, a role the
-         *     caller covers, and a person's own act, not a playbook's. A lock ends no
-         *     sign-in, so a locked caller's open session may not unlock anyone, itself included.
+         * @description End a lock, the failure count and the person's open sign-ins, with a typed
+         *     reason. users.write over the account, a role the caller covers, and a person's
+         *     own act, not a playbook's. A lock ends no sign-in, so a locked caller's open
+         *     session may not unlock anyone, itself included.
          */
         post: operations["post_api_users_user_id_unlock"];
         delete?: never;
@@ -9932,6 +10066,10 @@ export interface components {
             behind?: number | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Held */
+            held?: number | null;
+            /** Held Since */
+            held_since?: string | null;
             /** Last Delivered At */
             last_delivered_at?: string | null;
             /** Last Delivered Seq */
@@ -12078,6 +12216,14 @@ export interface components {
             sigma: string;
         };
         /**
+         * EmailConfirmation
+         * @description The value from the confirmation link. Opening the page does not send it.
+         */
+        EmailConfirmation: {
+            /** Token */
+            token: string;
+        };
+        /**
          * EndSignInsRequest
          * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
          */
@@ -13100,6 +13246,11 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** LinkRequest */
+        LinkRequest: {
+            /** User Id */
+            user_id: string;
+        };
         /** ListStatus */
         ListStatus: {
             /** Imported Count */
@@ -13793,6 +13944,42 @@ export interface components {
             /** Workflow Run Id */
             workflow_run_id?: string | null;
         };
+        /** PendingHolder */
+        PendingHolder: {
+            /** Full Name */
+            full_name?: string | null;
+            /** User Id */
+            user_id: string;
+            /** Username */
+            username: string;
+        };
+        /**
+         * PendingPush
+         * @description A pushed person whose username or email an existing account holds.
+         */
+        PendingPush: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email: string;
+            /** External Id */
+            external_id: string;
+            /** Holders */
+            holders: components["schemas"]["PendingHolder"][];
+            /** Pending Id */
+            pending_id: string;
+            /** Received At */
+            received_at: string;
+            /** Username */
+            username: string;
+        };
+        /** PendingPushes */
+        PendingPushes: {
+            /** Pending */
+            pending: components["schemas"]["PendingPush"][];
+            /** Sync Enabled */
+            sync_enabled: boolean;
+        };
         /** PeriodIn */
         PeriodIn: {
             /**
@@ -14234,8 +14421,8 @@ export interface components {
         };
         /**
          * ResetLinkRequest
-         * @description Send the person a reset link, or copy one to hand over. A copied link
-         *     needs how their identity was confirmed.
+         * @description A typed reason, and a reset link emailed or copied to hand over. A copied
+         *     link needs how their identity was confirmed.
          */
         ResetLinkRequest: {
             /**
@@ -14245,6 +14432,8 @@ export interface components {
             channel: "email" | "copy";
             /** Identity Confirmed By */
             identity_confirmed_by?: ("in_person" | "video_call" | "phone_call_back" | "other_verified_channel") | null;
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false
@@ -15239,6 +15428,11 @@ export interface components {
             /** Mapping Note */
             mapping_note?: string | null;
             /**
+             * Pending Links
+             * @default 0
+             */
+            pending_links: number;
+            /**
              * Role Refusals
              * @default []
              */
@@ -15256,6 +15450,33 @@ export interface components {
             token?: string | null;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /** SyncWindow */
+        SyncWindow: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            until: string;
+        };
+        /** SyncWindowCount */
+        SyncWindowCount: {
+            /** Count */
+            count: number;
+            /** Skipped */
+            skipped: number;
+        };
+        /** SyncWindowResult */
+        SyncWindowResult: {
+            /** Reactivated */
+            reactivated: number;
+            /** Skipped */
+            skipped: number;
         };
         /**
          * TaskAdd
@@ -15568,8 +15789,8 @@ export interface components {
         };
         /**
          * UnlockRequest
-         * @description How the manager confirmed the person is who they say. Kept in the trail.
-         *     ``suspected_compromise`` also revokes the person's API tokens.
+         * @description A typed reason and how the manager confirmed the person is who they say,
+         *     both kept. ``suspected_compromise`` also revokes the person's API tokens.
          */
         UnlockRequest: {
             /**
@@ -15577,6 +15798,8 @@ export interface components {
              * @enum {string}
              */
             identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false
@@ -17677,6 +17900,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfirmedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_email-confirmation_confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -28975,6 +29262,143 @@ export interface operations {
             };
         };
     };
+    get_api_users_sync_pending: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPushes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_pending_pending_id_link: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                pending_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_sync_window: {
+        parameters: {
+            query: {
+                since: string;
+                until: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowCount"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_window: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncWindow"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_users_teams: {
         parameters: {
             query?: never;
@@ -29455,6 +29879,39 @@ export interface operations {
         };
     };
     post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_remove-unused": {
         parameters: {
             query?: never;
             header?: {

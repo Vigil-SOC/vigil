@@ -6,13 +6,13 @@ Vigil's kernel does the work. The session starts investigations and hunts, steer
 
 | Skill | What it does | Tools it uses |
 |---|---|---|
-| `/vigil:status` | Does Vigil answer for this credential | `list_findings` |
-| `/vigil:queue` | Open findings and cases | `list_findings`, `list_cases` |
-| `/vigil:case <id>` | One case and its evidence | `get_case`, `get_case_iocs`, `get_case_comments` |
-| `/vigil:investigate <case id>` | Start an investigation run, steer it, read its conclusion once it ends | `list_workflows`, `list_operator_agents`, `start_run`, `send_directive`, `get_run` |
-| `/vigil:hunt <case id> <hypothesis>` | Start a hunt the same way | the same, and `list_completed_hunts` |
-| `/vigil:waiting` | What waits on a person, and reject one | `get_run`, `list_approval_actions`, `get_approval_action`, `reject_action` |
-| `/vigil:trail` | The audit trail | `list_audit_entries` |
+| `/vigil-soc:status` | Does Vigil answer for this credential | `list_findings` |
+| `/vigil-soc:queue` | Open findings and cases | `list_findings`, `list_cases` |
+| `/vigil-soc:case <id>` | One case and its evidence | `get_case`, `get_case_iocs`, `get_case_comments` |
+| `/vigil-soc:investigate <case id>` | Start an investigation run, steer it, read its conclusion once it ends | `list_workflows`, `list_operator_agents`, `start_run`, `send_directive`, `get_run` |
+| `/vigil-soc:hunt <case id> <hypothesis>` | Start a hunt the same way | the same, and `list_completed_hunts` |
+| `/vigil-soc:waiting` | What waits on a person, and reject one | `get_run`, `list_approval_actions`, `get_approval_action`, `reject_action` |
+| `/vigil-soc:trail` | The audit trail | `list_audit_entries` |
 
 ## Open the surface and mint a credential
 
@@ -30,7 +30,7 @@ The `/mcp` surface is off on a fresh install. Open it and mint a credential in e
 
   This opens the surface if it is closed and prints the token once. Both acts go on the trail.
 
-The credential acts as its person, with that person's role. Reading the trail (`/vigil:trail`) needs an Admin, Manager or auditor; an analyst's credential is refused it.
+The credential acts as its person, with that person's role. Reading the trail (`/vigil-soc:trail`) needs an Admin, Manager or auditor; an analyst's credential is refused it.
 
 ## Install
 
@@ -38,12 +38,12 @@ Pin the marketplace to the tag of the Vigil you run, so the skills match its too
 
 ```bash
 claude plugin marketplace add Vigil-SOC/vigil@v<your Vigil version> --sparse .claude-plugin clients/claude-code
-claude plugin install vigil@vigil
+claude plugin install vigil-soc@vigil
 ```
 
 `--sparse` fetches only the marketplace file and this directory, not the whole repository. From a local checkout, `claude plugin marketplace add /path/to/vigil` works the same way.
 
-Claude Code then asks for two values: your Vigil's address (for example `http://localhost:6987`, without `/mcp`) and the credential. The credential is marked sensitive, so Claude Code keeps it in the platform's secure store. No file in the plugin holds an address or a secret. Change either later with `/plugin` → vigil → configure, then run `/vigil:status`.
+Claude Code then asks for two values: your Vigil's address (for example `http://localhost:6987`, without `/mcp`) and the credential. The credential is marked sensitive, so Claude Code keeps it in the platform's secure store. No file in the plugin holds an address or a secret. Change either later with `/plugin` → vigil-soc → configure, then run `/vigil-soc:status`.
 
 ## What it cannot do
 
