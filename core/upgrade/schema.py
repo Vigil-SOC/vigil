@@ -5,8 +5,8 @@ triggers (and whether they are enabled), views, functions, sequences, row
 security and policies, owners and grants (column grants and default
 privileges included) into ``{object: description}``.
 Role names are mapped by role, not literal name: the connecting user is
-``owner`` and ``vigil_app`` is ``app``, so databases owned by different
-logins compare equal. Objects that belong to an extension and Alembic's own
+``owner``, ``vigil_app`` is ``app`` and ``vigil_agent`` is ``agent``, so
+databases owned by different logins compare equal. Objects that belong to an extension and Alembic's own
 ``alembic_version`` are left out.
 """
 
@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 APP_ROLE = "vigil_app"
+AGENT_ROLE = "vigil_agent"
 VERSION_TABLE = "alembic_version"
 
 # Members of extensions (pg_trgm puts its functions in public).
@@ -46,7 +47,7 @@ def _role(name: str, roles: dict[str, str]) -> str:
 
 def schema_state(conn: Connection) -> dict[str, Any]:
     owner = conn.execute(text("SELECT current_user")).scalar_one()
-    roles = {owner: "owner", APP_ROLE: "app"}
+    roles = {owner: "owner", APP_ROLE: "app", AGENT_ROLE: "agent"}
     state: dict[str, Any] = {}
 
     for (name,) in conn.execute(text("SELECT extname FROM pg_extension")):

@@ -192,6 +192,7 @@ if [[ $REAL == 1 ]]; then
     --set backend.image.pullPolicy=Never
     --set secrets.postgresPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.vigilAppPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
+    --set secrets.vigilAgentPassword="$(head -c 18 /dev/urandom | base64 | tr -dc A-Za-z0-9)"
     --set secrets.jwtSecretKey="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)")
   if [[ $MODE == full ]]; then
     # A real token, so P-1.c has one to clear; the poll interval is the one the
@@ -211,7 +212,7 @@ else
     --set config.DEV_MODE=true
     --set postgresql.enabled=false --set postgresql.external.host=none
     --set redis.enabled=false --set redis.external.url=redis://none:6379/0
-    --set secrets.postgresPassword=unused --set secrets.vigilAppPassword=unused-app)
+    --set secrets.postgresPassword=unused --set secrets.vigilAppPassword=unused-app --set secrets.vigilAgentPassword=unused-agent)
 fi
 helm --kube-context "kind-$CLUSTER" install "$REL" "$chart" -n "$NS" \
   --set medic.enabled=true \

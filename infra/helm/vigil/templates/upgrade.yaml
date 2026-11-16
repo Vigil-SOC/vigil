@@ -281,6 +281,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "vigil.postgres.appPasswordSecret" . }}
                   key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
+            - name: POSTGRES_AGENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
+                  key: {{ include "vigil.postgres.agentPasswordSecretKey" . }}
             - name: VIGIL_UPGRADE_DIR
               value: /var/lib/vigil-upgrade
             - name: VIGIL_UPGRADE_ACK_VERSION

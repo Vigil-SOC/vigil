@@ -35,7 +35,7 @@ helm upgrade vigil infra/helm/vigil -n vigil --reuse-values --timeout 30m \
 
 `upgrade.acknowledgeVersion` must equal the chart's `appVersion`, and the backend image must be that version. A value left over from an earlier upgrade (with `--reuse-values`, the previous one) refuses, as does an empty reason. That way each upgrade is acknowledged separately.
 
-**Install.** A post-install Job takes the empty database to head and sets `vigil_app`'s password. App pods fail their startup check until it finishes, then become Ready. Do not pass `--wait` on the first install. Helm waits for Ready before it runs post-install hooks, so the install would time out.
+**Install.** A post-install Job takes the empty database to head and sets `vigil_app`'s and `vigil_agent`'s passwords. App pods fail their startup check until it finishes, then become Ready. Do not pass `--wait` on the first install. Helm waits for Ready before it runs post-install hooks, so the install would time out.
 
 **Upgrade.** Two pre-upgrade Jobs run before Helm changes any manifest:
 
