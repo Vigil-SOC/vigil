@@ -120,6 +120,54 @@ def _assign(p: Mapping[str, Any]) -> str:
     return "Handed the case back" if p.get("unassigned") else "Assigned the case"
 
 
+def _jira_intent(p: Mapping[str, Any]) -> str:
+    project = p.get("project_key")
+    if project:
+        return f"Asked to push the case to Jira project {project}"
+    return "Asked to push the case to Jira"
+
+
+def _jira_outcome(p: Mapping[str, Any]) -> str:
+    outcome = p.get(trail.OUTCOME)
+    if outcome == trail.OUTCOME_DONE and p.get("issue_key"):
+        text = f"Pushed the case to Jira as {p['issue_key']}"
+        created, failed = p.get("subtasks_created"), p.get("subtasks_failed")
+        extra = []
+        if isinstance(created, int):
+            extra.append(f"{created} subtask{'' if created == 1 else 's'} created")
+        if isinstance(failed, int) and failed:
+            extra.append(f"{failed} failed")
+        return text + (f" ({', '.join(extra)})" if extra else "")
+    if outcome == "refused remotely":
+        return "Jira refused the push"
+    if outcome == trail.OUTCOME_FAILED:
+        return "The Jira push failed"
+    return "Pushed the case to Jira"
+
+
+def _elastic_intent(p: Mapping[str, Any]) -> str:
+    status = _word(p.get("status"))
+    if status:
+        return f"Asked to set an Elastic alert to {status}"
+    return "Asked to set an Elastic alert's status"
+
+
+def _elastic_outcome(p: Mapping[str, Any]) -> str:
+    outcome = p.get(trail.OUTCOME)
+    status = _word(p.get("status"))
+    if outcome == trail.OUTCOME_DONE:
+        return (
+            f"Set an Elastic alert to {status}"
+            if status
+            else "Set an Elastic alert's status"
+        )
+    if outcome == "refused remotely":
+        return "Elastic refused the alert status"
+    if outcome == trail.OUTCOME_FAILED:
+        return "The Elastic alert status sync failed"
+    return "Set an Elastic alert's status"
+
+
 def _move(p: Mapping[str, Any]) -> str:
     source = str(p.get("from_team_name") or "").strip()
     dest = str(p.get("to_team_name") or "").strip()
@@ -452,6 +500,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "case.findings.unlink": _findings("Unlinked", "unlinked"),
     "case.journal": "Added to the journal",
     "case.resolution_step": "Added a resolution step",
+    "case.jira.intent": _jira_intent,
+    "case.jira.outcome": _jira_outcome,
+    "elastic.alert.intent": _elastic_intent,
+    "elastic.alert.outcome": _elastic_outcome,
     "case.delete": "Deleted the case",
     "case.purge": lambda p: "Deleted every case"
     + (f" ({p['count']})" if p.get("count") else "")
