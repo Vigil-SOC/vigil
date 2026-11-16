@@ -1064,10 +1064,11 @@ def _indicator_lookup(args: Args) -> Any:
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
     return [
         {
+            **(hits.get(value) or {}),
+            # The row names the value as asked, not the feed's stored spelling.
             "indicator_type": indicator_type,
             "indicator_value": value,
             "known": value in hits,
-            **(hits.get(value) or {}),
         }
         for value in values
     ]
