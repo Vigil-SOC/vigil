@@ -28,15 +28,16 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
 from core.detections import gap_run
 from core.detections.engineering import lint as lint_mod
 from core.detections.engineering import siem_replay, sigma_text
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.detections.overlay import Refused
 from core.storage.models import (
     Case,
@@ -888,21 +889,22 @@ def for_gaps(gaps: Iterable[gap_run.Gap]) -> List[str]:
     return ids
 
 
-def _gap_proposals(session: Session, ids: Sequence[str]) -> List[DetectionProposal]:
-    """The gaps run's own proposals among ``ids``, locked: a save and a person can race."""
+def _gap_proposals(
+    session: Session, ids: Sequence[str], *, lock: bool = True
+) -> List[DetectionProposal]:
+    """The gaps run's own proposals among ``ids``, locked unless only read: a save and a
+    person can race."""
     if not ids:
         return []
-    return list(
-        session.scalars(
-            select(DetectionProposal)
-            .where(
-                DetectionProposal.proposal_id.in_(list(ids)),
-                DetectionProposal.origin["source"].astext == GAPS_RUN,
-            )
-            .order_by(DetectionProposal.proposal_id)
-            .with_for_update()
+    query = (
+        select(DetectionProposal)
+        .where(
+            DetectionProposal.proposal_id.in_(list(ids)),
+            DetectionProposal.origin["source"].astext == GAPS_RUN,
         )
+        .order_by(DetectionProposal.proposal_id)
     )
+    return list(session.scalars(query.with_for_update() if lock else query))
 
 
 def withdraw_gaps(proposal_ids: Sequence[str], reason: str) -> None:
@@ -926,6 +928,150 @@ def gap_run_started(proposal_ids: Sequence[str], run_id: str) -> None:
             _note(proposal, SYSTEM, SYSTEM, {"step": "run", "run_id": run_id})
 
 
+def _run_gap_ids(session: Session, run_id: str) -> List[str]:
+    """The proposals the gaps run put on the run's ``trigger_context``."""
+    context = session.scalar(
+        select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
+    )
+    return [
+        i for i in (context or {}).get("gap_proposal_ids") or () if isinstance(i, str)
+    ]
+
+
+def _answers(copy: Mapping[str, Any], technique: Optional[str]) -> bool:
+    """A copy answers a gap whose technique it carries exactly (a parent or
+    subtechnique only touches it, as identify_gaps counts)."""
+    return technique in {str(t).strip().upper() for t in copy.get("techniques") or ()}
+
+
+def _gap_drafts(session: Session, rule_ids: Sequence[int]) -> Set[int]:
+    """The overlay copies among ``rule_ids`` a gaps run drafted: those whose first
+    version was first seen after the earliest gap proposal that attached them was
+    opened. A rule that was there before, such as a person's own the run re-saved
+    under its id to answer the gap, is not one."""
+    if not rule_ids:
+        return set()
+    seen = dict(
+        session.execute(
+            select(DetectionRuleVersion.rule_id, DetectionRuleVersion.first_seen)
+            .join(DetectionRule, DetectionRule.id == DetectionRuleVersion.rule_id)
+            .where(
+                DetectionRuleVersion.rule_id.in_(list(rule_ids)),
+                DetectionRuleVersion.version == 1,
+                DetectionRule.source == OVERLAY_SOURCE,
+            )
+        ).all()
+    )
+    drafts: Set[int] = set()
+    for rule_id, first_seen in seen.items():
+        opened = session.scalar(
+            select(func.min(DetectionProposal.created_at))
+            .join(
+                DetectionProposalEvent,
+                DetectionProposalEvent.proposal_id == DetectionProposal.proposal_id,
+            )
+            .where(
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+                DetectionProposalEvent.evidence.contains(
+                    {"step": "attach", "rule_ids": [rule_id]}
+                ),
+            )
+        )
+        if opened is not None and opened <= first_seen:
+            drafts.add(rule_id)
+    return drafts
+
+
+def _earlier_copies(
+    session: Session, proposal: DetectionProposal, run_ids: Sequence[str]
+) -> Dict[int, Tuple[str, str]]:
+    """The copies the gaps run drafted for the same technique before ``proposal`` that
+    a new copy would replace, per language: those attached to the latest earlier
+    proposal that attached one of that language. ``{rule_id: (language, native_key)}``.
+
+    Earlier is opened before ``proposal`` and not handed to the same run. One whose run
+    saved nothing in a language is passed over, for that language, for the one before
+    it; one a person rejected after its run saved is not, as its copies are still the
+    drafts Vigil made for the gap. Of the chosen copies only the gap drafts count
+    (``_gap_drafts``): a person's own rule the run re-saved stays nobody's predecessor.
+    """
+    rows = session.execute(
+        select(DetectionProposalEvent.proposal_id, DetectionProposalEvent.evidence)
+        .join(
+            DetectionProposal,
+            DetectionProposal.proposal_id == DetectionProposalEvent.proposal_id,
+        )
+        .where(
+            DetectionProposal.origin["source"].astext == GAPS_RUN,
+            DetectionProposal.technique == proposal.technique,
+            DetectionProposal.created_at < proposal.created_at,
+            DetectionProposal.proposal_id.notin_(list(run_ids)),
+            DetectionProposalEvent.evidence["step"].astext == "attach",
+        )
+        .order_by(
+            DetectionProposal.created_at.desc(),
+            DetectionProposal.proposal_id.desc(),
+            DetectionProposalEvent.id,
+        )
+    ).all()
+    latest: Dict[str, str] = {}
+    chosen: Set[int] = set()
+    for proposal_id, evidence in rows:
+        for c in evidence.get("copies") or ():
+            if not isinstance(c, dict) or not isinstance(c.get("rule_id"), int):
+                continue
+            if latest.setdefault(str(c.get("language")), proposal_id) == proposal_id:
+                chosen.add(c["rule_id"])
+    drafts = _gap_drafts(session, sorted(chosen))
+    if not drafts:
+        return {}
+    return {
+        rid: (language, key)
+        for rid, language, key in session.execute(
+            select(
+                DetectionRule.id, DetectionRule.language, DetectionRule.native_key
+            ).where(DetectionRule.id.in_(sorted(drafts)))
+        ).all()
+    }
+
+
+def replaced_copies(
+    run_id: str, saving: Sequence[Mapping[str, Any]]
+) -> Dict[str, List[int]]:
+    """Each copy a run is saving and the earlier copies it replaces, by native key.
+
+    A copy that will attach to one of the run's gap proposals (``attach_saved``'s
+    match) replaces the earlier copies of its language the gaps run drafted for that
+    technique (``_earlier_copies``): the gap was raised again, so this draft takes
+    their place, whether they were switched off, removed, or are still in shadow or
+    live. Only copies a gaps run drafted count, never a person's own rule, and never a
+    copy under one of this save's native keys (saved under its own id, it is a new
+    version of that rule). Two drafts one run saves are not linked to each other: a
+    second rule for the same gap may as well stand beside the first. Each copy is
+    ``{language, native_key, techniques}``; a run the gaps run did not queue gets none.
+    """
+    links: Dict[str, List[int]] = {}
+    with unit_of_work() as session:
+        run_ids = _run_gap_ids(session, run_id)
+        proposals = _gap_proposals(session, run_ids, lock=False)
+        keys = {c["native_key"] for c in saving}
+        for proposal in proposals:
+            matched = [c for c in saving if _answers(c, proposal.technique)]
+            if not matched:
+                continue
+            earlier = _earlier_copies(session, proposal, run_ids)
+            for copy in matched:
+                replaced = links.setdefault(copy["native_key"], [])
+                for rid, (language, key) in sorted(earlier.items()):
+                    if (
+                        language == copy["language"]
+                        and key not in keys
+                        and rid not in replaced
+                    ):
+                        replaced.append(rid)
+    return {key: ids for key, ids in links.items() if ids}
+
+
 def attach_saved(
     run_id: str, actor: str, saved: Sequence[Mapping[str, Any]]
 ) -> List[str]:
@@ -940,22 +1086,9 @@ def attach_saved(
     own (the gaps run's built-in agent run starts none).
     """
     with unit_of_work() as session:
-        context = session.scalar(
-            select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
-        )
-        ids = [
-            i
-            for i in (context or {}).get("gap_proposal_ids") or ()
-            if isinstance(i, str)
-        ]
         attached: List[str] = []
-        for proposal in _gap_proposals(session, ids):
-            matched = [
-                c
-                for c in saved
-                if proposal.technique
-                in {str(t).strip().upper() for t in c.get("techniques") or ()}
-            ]
+        for proposal in _gap_proposals(session, _run_gap_ids(session, run_id)):
+            matched = [c for c in saved if _answers(c, proposal.technique)]
             if not matched:
                 continue
             rule_ids = [c["rule_id"] for c in matched]
