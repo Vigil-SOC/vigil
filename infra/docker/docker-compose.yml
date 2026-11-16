@@ -61,6 +61,11 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_COST: ${ORCHESTRATOR_MAX_COST:-5.0}
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
+  # Skill scanning, and so the hold on unscanned or flagged skills. The API scans
+  # and the daemon only reads verdicts, but both must agree it is on, or the
+  # daemon would hand held skills to its runs. Set it empty in .env to turn both
+  # off; the daemon image has no scanner, the path matters only to the API.
+  VIGIL_SKILL_SCANNER: ${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
 
 # One build for the API and the backup services. A second image tag would
 # compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
