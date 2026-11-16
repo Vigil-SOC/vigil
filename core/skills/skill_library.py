@@ -125,6 +125,10 @@ _AGENT_SKILL_DIRS = (
 )
 _CONTAINER_DEPTH = 3  # skills/<category>/<category>/<name>/SKILL.md
 _FALLBACK_DEPTH = 5  # how deep a folder with none of those places is searched
+# Folders the fallback looks in per top-level folder, and the bytes of a manifest
+# read. Not npx limits: this search runs on every load, not once at install.
+_FALLBACK_DIRS_MAX = 1000
+_MANIFEST_MAX = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -243,8 +247,14 @@ def _inside(base: Path, rel: Any) -> Optional[Path]:
 
 
 def _json(path: Path) -> Any:
+    """A manifest's JSON, or None. One over ``_MANIFEST_MAX`` is ignored: a
+    cloned repo's manifest is read on every load."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as handle:
+            raw = handle.read(_MANIFEST_MAX + 1)
+        if len(raw) > _MANIFEST_MAX:
+            return None
+        return json.loads(raw.decode("utf-8"))
     except (OSError, ValueError, RecursionError):  # nested past the parser's limit
         return None
 
@@ -264,7 +274,8 @@ def _listed_dirs(top: Path) -> tuple[List[Path], List[Path]]:
     if isinstance(config, dict) and isinstance(config.get("paths"), list):
         for rel in config["paths"]:
             folder = _inside(top, rel)
-            if folder and folder != top:  # npx skips a path that is the repo
+            # npx skips a path that is the repo, and a path listed twice.
+            if folder and folder != top and folder not in containers:
                 containers.append(folder)
 
     def add_plugin(base: Optional[Path], skills: Any) -> None:
@@ -274,10 +285,10 @@ def _listed_dirs(top: Path) -> tuple[List[Path], List[Path]]:
             if isinstance(rel, str) and rel.startswith("./"):
                 parent = posixpath.dirname(posixpath.normpath(rel))
                 folder = _inside(base, f"./{parent}")
-                if folder:
+                if folder and folder not in plugin_dirs:
                     plugin_dirs.append(folder)
         folder = _inside(base, "./skills")
-        if folder:
+        if folder and folder not in plugin_dirs:
             plugin_dirs.append(folder)
 
     market = _json(top / ".claude-plugin" / "marketplace.json")
@@ -309,26 +320,33 @@ def _source_skill_dirs(top: Path) -> List[Path]:
     ``.system``), each agent's ``.<agent>/skills`` and any ``skills.sh.json``
     path down to two category folders; folders a plugin manifest names. Only
     when none of those holds a valid skill is ``top`` searched down to
-    ``_FALLBACK_DEPTH`` folders. ``_SKIP_DIRS`` are never searched, and a skill
-    folder's own subfolders are its files, never skills.
+    ``_FALLBACK_DEPTH`` folders, looking in at most ``_FALLBACK_DIRS_MAX``.
+    ``_SKIP_DIRS`` are never searched, a skill folder's own subfolders are its
+    files, never skills, and a symlinked ``SKILL.md`` is not a skill.
     """
     found: List[Path] = []
     seen: set[Path] = set()
 
     def add(folder: Path) -> bool:
-        if not (folder / SKILL_FILE).is_file():
+        skill_md = os.path.join(folder, SKILL_FILE)  # os.path: called per folder
+        # A symlinked SKILL.md could read a file outside the root into a prompt.
+        if os.path.islink(skill_md) or not os.path.isfile(skill_md):
             return False
         if folder not in seen:
             seen.add(folder)
             found.append(folder)
         return True
 
+    checked = [0]  # folders the fallback has looked in
+
     def walk(
         folder: Path, max_depth: int, depth: int = 1, fallback: bool = False
     ) -> None:
         for child in _subdirs(folder):
-            if fallback and child.name in _SKIP_DIRS:
-                continue
+            if fallback:
+                checked[0] += 1
+                if checked[0] > _FALLBACK_DIRS_MAX or child.name in _SKIP_DIRS:
+                    continue
             if add(child) or depth >= max_depth or child.name in _SKIP_DIRS:
                 continue
             walk(child, max_depth, depth + 1, fallback)
