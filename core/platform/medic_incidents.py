@@ -490,18 +490,19 @@ def _opening_sentence(run: Optional[tuple[str, dict]]) -> str:
     return f"Medic refused: {words}."
 
 
-def _verified(records: list, incident_id: str, run_at: str, result: str) -> bool:
-    """A fix_verified for this incident after that run. ``not_verified`` is never asked."""
+def _verified(records: list, incident_id: str, result: str) -> bool:
+    """A fix_verified for this incident with ``result``. ``not_verified`` is never asked.
+
+    Not limited to the latest fix_run: a later click is recorded only after the
+    previous run has a verification, and one pass can see both.
+    """
     for rec in records:
         if not isinstance(rec, dict) or rec.get("type") != "fix_verified":
             continue
         body = rec.get("body")
         if not isinstance(body, dict):
             continue
-        if body.get("incident_id") != incident_id or body.get("result") != result:
-            continue
-        at = rec.get("at")
-        if isinstance(at, str) and at >= run_at:
+        if body.get("incident_id") == incident_id and body.get("result") == result:
             return True
     return False
 
@@ -541,6 +542,12 @@ def _add_fix_notices(
         key = (incident_id, reopen, event)
         if key in told:
             return
+        # The opening and the resolved line are per reopen. The two
+        # verification lines are once for the incident.
+        if event in (_FIX_NOT_HELD, _FIX_NOT_BACK) and any(
+            iid == incident_id and ev == event for iid, _reopen, ev in told
+        ):
+            return
         told.add(key)
         plan.notices.append(_fix_note(event, sentence, incident_id, reopen, frontend))
         plan.rows.append(_Row(incident_id, reopen, event, None, None))
@@ -568,12 +575,14 @@ def _add_fix_notices(
                 continue
         elif summary is None or summary.get("reopen_count") != reopen:
             continue
-        latest = _latest_run(decisions, iid)
-        if latest is not None and latest[0]:
-            if _verified(decisions, iid, latest[0], "not_cleared"):
-                emit(iid, reopen, _FIX_NOT_HELD, _NOT_HELD)
-            if _verified(decisions, iid, latest[0], "not_back"):
-                emit(iid, reopen, _FIX_NOT_BACK, _NOT_BACK)
+        elif summary.get("state") not in ("firing", "resolving", "resolved"):
+            # Off the open list and not resolved: a suppressed child is omitted
+            # from that list, and held is not told either.
+            continue
+        if _verified(decisions, iid, "not_cleared"):
+            emit(iid, reopen, _FIX_NOT_HELD, _NOT_HELD)
+        if _verified(decisions, iid, "not_back"):
+            emit(iid, reopen, _FIX_NOT_BACK, _NOT_BACK)
         if summary is None:
             continue
         if (
