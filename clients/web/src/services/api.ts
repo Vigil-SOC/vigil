@@ -1195,6 +1195,10 @@ export interface ProposalRow {
   /** The run the proposal was handed to, and the rule copies attached to it. */
   run_id: string | null
   rule_ids: number[]
+  /** The copy its stages follow: a SIEM's, else the Sigma form. */
+  rule_id: number | null
+  /** Its run's status: running, paused, completed, failed or cancelled. */
+  run_status: string | null
 }
 
 export interface ProposalEvent {
@@ -1212,8 +1216,6 @@ export interface ProposalEvent {
 export interface Proposal extends ProposalRow {
   sigma: string
   copies: Record<string, string>
-  /** The copy its stages follow: a SIEM's, else the Sigma form. */
-  rule_id: number | null
   events: ProposalEvent[]
   /** The attached copies' stage rows, oldest first; kept after a copy is removed. */
   stages: { rule_id: number; version: number; stage: 'shadow' | 'live' | 'off'; actor: string; reason: string; at: string }[]

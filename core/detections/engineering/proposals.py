@@ -192,6 +192,21 @@ def _links(
     return {"run_id": run_id, "rule_ids": rule_ids}
 
 
+def _run_statuses(session: Session, run_ids: Iterable[Optional[str]]) -> Dict[str, str]:
+    """Each run's status (running, paused, completed, failed or cancelled), so a
+    proposal handed to a run that ended without a rule reads as ended."""
+    wanted = {r for r in run_ids if r}
+    if not wanted:
+        return {}
+    return dict(
+        session.execute(
+            select(WorkflowRun.run_id, WorkflowRun.status).where(
+                WorkflowRun.run_id.in_(wanted)
+            )
+        ).all()
+    )
+
+
 def _link_steps(session: Session, ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     rows = session.execute(
         select(DetectionProposalEvent.proposal_id, DetectionProposalEvent.evidence)
@@ -269,6 +284,7 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "state": proposal.state.value,
         "rule_id": proposal.rule_id,
         **links,
+        "run_status": _run_statuses(session, [links["run_id"]]).get(links["run_id"]),
         "created_by": proposal.created_by,
         "created_at": proposal.created_at.isoformat(),
         "updated_at": proposal.updated_at.isoformat(),
@@ -301,6 +317,10 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
         replays = _latest_replays(session, ids)
         steps = _link_steps(session, ids)
         readable = _readable_cases(session, _gap_case_ids(p.origin for p in proposals))
+        links = {
+            p.proposal_id: _links(p, steps.get(p.proposal_id, ())) for p in proposals
+        }
+        statuses = _run_statuses(session, (link["run_id"] for link in links.values()))
         return [
             {
                 "proposal_id": p.proposal_id,
@@ -313,7 +333,10 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
                 "created_at": p.created_at.isoformat(),
                 "updated_at": p.updated_at.isoformat(),
                 "replay": replays.get(p.proposal_id),
-                **_links(p, steps.get(p.proposal_id, ())),
+                # The copy its stages follow: a SIEM's, else the Sigma form.
+                "rule_id": p.rule_id,
+                **links[p.proposal_id],
+                "run_status": statuses.get(links[p.proposal_id]["run_id"]),
             }
             for p in proposals
         ]

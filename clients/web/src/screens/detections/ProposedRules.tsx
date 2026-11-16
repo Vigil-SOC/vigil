@@ -13,7 +13,7 @@ import {
   type RuleDetail,
 } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
-import { who, type Stage } from './ruleStage'
+import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
@@ -26,30 +26,45 @@ const KIND: Record<ProposalGap['kind'], { word: string; tone: string }> = {
   blind: { word: 'Blind spot', tone: 'fair' },
 }
 
+/** Rule ids per rule listing read: under its 300-row cap and its 4000-character ``rules``. */
+const RULES_PER_READ = 200
+/** A run that ended, in the words a proposal it saved no rule for reads with. */
+const RUN_ENDED: Record<string, string> = { completed: 'ended', failed: 'failed', cancelled: 'was cancelled' }
+
 const plural = (v: number, one: string, many: string) => `${v.toLocaleString()} ${v === 1 ? one : many}`
 const short = (id: string) => id.slice(0, 8)
 const lang = (l: string) => LANG[l] ?? l
 
-/** A rule copy as the rule listing sends it: only the fields the list reads. */
-interface Listed {
+/** A rule copy as the rule listing sends it: only the fields this tab reads. */
+interface Listed extends StageFields {
   rule_id: number
   name: string
   language: string
-  stage?: Stage | null
-  days_in_shadow?: number | null
 }
 
-/** The copy a proposal's state follows: a SIEM copy before its Sigma form. */
-function mainRule(ids: number[], listed: Map<number, Listed>): Listed | null {
-  const rows = ids.map((id) => listed.get(id)).filter((r): r is Listed => !!r)
+/** The ids a proposal's state is read from: the copy its stages follow, else every copy. */
+const followed = (p: ProposalRow) => (p.rule_id != null ? [p.rule_id] : p.rule_ids)
+
+/** The copy a proposal's state follows: the one its stages follow (the latest save's),
+ * else (none recorded) a SIEM copy before its Sigma form. */
+function mainRule(p: ProposalRow, listed: Map<number, Listed>): Listed | null {
+  if (p.rule_id != null) return listed.get(p.rule_id) ?? null
+  const rows = p.rule_ids.map((id) => listed.get(id)).filter((r): r is Listed => !!r)
   return rows.find((r) => r.language !== 'sigma') ?? rows[0] ?? null
 }
 
+/** A run that ended without saving a rule for the proposal: how it ended, else null. */
+const endedBare = (p: ProposalRow) => (!p.rule_ids.length && p.run_id && p.run_status ? RUN_ENDED[p.run_status] ?? null : null)
+
 /** Where a proposal stands, in the rule list's own health pill. */
 function standing(p: ProposalRow, listed: Map<number, Listed> | null): { label: string; tone: string; gone?: boolean } {
-  if (!p.rule_ids.length) return p.run_id ? { label: 'No rule yet', tone: 'none' } : { label: 'Waiting for a run', tone: 'none' }
+  if (!p.rule_ids.length) {
+    if (!p.run_id) return { label: 'Waiting for a run', tone: 'none' }
+    const ended = endedBare(p)
+    return ended ? { label: `No rule · the run ${ended}`, tone: 'idle', gone: true } : { label: 'No rule yet', tone: 'none' }
+  }
   if (!listed) return { label: plural(p.rule_ids.length, 'rule', 'rules'), tone: 'none' }
-  const rule = mainRule(p.rule_ids, listed)
+  const rule = mainRule(p, listed)
   if (!rule) return { label: 'Removed', tone: 'idle', gone: true }
   if (rule.stage === 'shadow') return { label: `Shadow · ${plural(rule.days_in_shadow ?? 0, 'day', 'days')}`, tone: 'fair' }
   if (rule.stage === 'live') return { label: 'Live', tone: 'good' }
@@ -71,14 +86,21 @@ export default function ProposedRules() {
   const [params, setParams] = useSearchParams()
   const [rows, setRows] = useState<ProposalRow[] | null>(null)
   const [listed, setListed] = useState<Map<number, Listed> | null>(null)
+  const [rulesError, setRulesError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Only the copies the proposals follow, a share at a time: the listing caps its rows.
   const readRules = useCallback((props: ProposalRow[]) => {
-    const ids = [...new Set(props.flatMap((p) => p.rule_ids))]
-    if (!ids.length) { setListed(new Map()); return }
-    detectionRulesApi.rules({ rules: ids.join(',') })
-      .then((res) => setListed(new Map((res.data as { rules: Listed[] }).rules.map((r) => [r.rule_id, r]))))
-      .catch(() => setListed(null))
+    const ids = [...new Set(props.flatMap(followed))]
+    if (!ids.length) { setListed(new Map()); setRulesError(null); return }
+    const shares: number[][] = []
+    for (let i = 0; i < ids.length; i += RULES_PER_READ) shares.push(ids.slice(i, i + RULES_PER_READ))
+    Promise.all(shares.map((share) => detectionRulesApi.rules({ rules: share.join(',') })))
+      .then((reads) => {
+        setListed(new Map(reads.flatMap((res) => (res.data as { rules: Listed[] }).rules.map((r) => [r.rule_id, r] as const))))
+        setRulesError(null)
+      })
+      .catch((e) => { setListed(null); setRulesError(errorText(e, 'no answer from the server')) })
   }, [])
 
   useEffect(() => {
@@ -108,7 +130,12 @@ export default function ProposedRules() {
 
   const pickedId = params.get('proposal')
   const picked = rows.find((p) => p.proposal_id === pickedId) ?? rows[0]
-  const pick = (id: string) => setParams({ tab: 'proposed', proposal: id }, { replace: true })
+  const pick = (id: string) => setParams((now) => {
+    const next = new URLSearchParams(now)
+    next.set('tab', 'proposed')
+    next.set('proposal', id)
+    return next
+  }, { replace: true })
   const onKey = (e: KeyboardEvent<HTMLLIElement>, id: string) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(id) }
   }
@@ -122,10 +149,16 @@ export default function ProposedRules() {
             <p>Vigil’s drafts after a proven miss</p>
           </div>
         </div>
+        {rulesError && (
+          <p className="de-card-sub">
+            <span className="de-x-err" role="alert">Where each rule stands did not load: {rulesError}</span>{' '}
+            <button type="button" className="x1-link" onClick={() => readRules(rows)}>Try again</button>
+          </p>
+        )}
         <ul className="list-scroll de-prop-rows" role="listbox" aria-label="Proposed rules">
           {rows.map((p) => {
             const st = standing(p, listed)
-            const rule = listed ? mainRule(p.rule_ids, listed) : null
+            const rule = listed ? mainRule(p, listed) : null
             const sel = p.proposal_id === picked.proposal_id
             return (
               <li
@@ -150,13 +183,44 @@ export default function ProposedRules() {
           })}
         </ul>
       </section>
-      <ProposalDetail key={picked.proposal_id} id={picked.proposal_id} onChanged={() => readRules(rows)} />
+      <ProposalDetail
+        key={picked.proposal_id}
+        id={picked.proposal_id}
+        row={picked.rule_id != null ? listed?.get(picked.rule_id) ?? null : null}
+        onChanged={() => readRules(rows)}
+      />
     </div>
   )
 }
 
-/** The picked proposal and the rule copies attached to it; a copy no longer listed is null. */
-function ProposalDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
+/** A copy's name: its language, and its rule id when another attached copy shares it. */
+function copyName(r: RuleDetail, all: RuleDetail[]): string {
+  return all.filter((o) => o.source === r.source).length > 1 ? `${lang(r.source)} ${r.rule_id}` : lang(r.source)
+}
+
+type Decision = 'switch-off' | 'revert'
+
+/** What a person can decide about the rule, and what happens without them. */
+function decisionLine(main: RuleDetail | null, row: Listed | null, canWrite: boolean): string {
+  if (!main) return 'Its rule is no longer listed, so there is nothing left to decide here.'
+  if (main.stage === 'live') {
+    return canWrite
+      ? 'Live: analysts get its alerts. Revert to shadow takes it out of production and holds it there until a person releases it on the Rules tab.'
+      : 'Live: analysts get its alerts. A person who can edit detections can move it back to shadow.'
+  }
+  if (main.stage === 'off') return 'Switched off: it no longer runs, and a new version of it waits in shadow until a person releases it.'
+  if (main.stage !== 'shadow') return 'Saved, with no rollout stage yet.'
+  const stop = canWrite ? ' Switch it off to stop it.' : ' A person who can edit detections can switch it off.'
+  if (row?.held) return `Held in shadow: it runs but alerts nobody, and stays there until a person releases it on the Rules tab.${stop}`
+  const unproven = row ? unprovenNote(row) : null
+  return `Rollout is automatic: in shadow it runs but alerts nobody${unproven
+    ? `. ${unproven}`
+    : ', and Vigil moves it live after 7 quiet days with its data arriving, once it has been shown to catch the attack it was written for.'}${stop}`
+}
+
+/** The picked proposal and the rule copies attached to it; a copy no longer listed is null.
+ * ``row`` is the followed copy's rule listing row (its hold and why it stays in shadow). */
+function ProposalDetail({ id, row, onChanged }: { id: string; row: Listed | null; onChanged: () => void }) {
   const canWrite = useAuth().hasPermission('detections.write')
   const [proposal, setProposal] = useState<Proposal | null>(null)
   const [rules, setRules] = useState<(RuleDetail | null)[]>([])
@@ -183,18 +247,24 @@ function ProposalDetail({ id, onChanged }: { id: string; onChanged: () => void }
   if (!proposal) return <div className="de-prop-detail"><p className="x1-muted de-note">Reading the proposal…</p></div>
 
   const shown = rules.filter((r): r is RuleDetail => !!r)
-  const main = shown.find((r) => r.source !== 'sigma') ?? shown[0] ?? null
+  // The copy its stages follow (the latest save's); a removed one leaves none, never an older copy.
+  const at = proposal.rule_id != null ? proposal.rule_ids.indexOf(proposal.rule_id) : -1
+  const main = at >= 0 ? rules[at] ?? null : proposal.rule_id == null ? shown.find((r) => r.source !== 'sigma') ?? shown[0] ?? null : null
   const gap = proposal.origin.gap
   const attach = [...proposal.events].reverse().find((e) => e.evidence?.step === 'attach')
-  // The rule's text by copy: a listed copy's latest query, else what the run saved.
-  const texts: [string, string][] = shown.length
-    ? shown.map((r) => [r.source, r.source === 'sigma' && proposal.sigma ? proposal.sigma : r.query])
-    : [...Object.entries(proposal.copies), ...(proposal.sigma ? [['sigma', proposal.sigma] as [string, string]] : [])]
-  const langs = texts.map(([l]) => lang(l)).join(' + ')
-  const on = texts.find(([l]) => l === copy) ?? texts[0]
-  const switchable = canWrite && main?.stage === 'shadow'
+  // The rule's text by copy, [key, name, text]: each listed copy's latest query, else what the run saved.
+  const texts: [string, string, string][] = shown.length
+    ? shown.map((r) => [String(r.rule_id), copyName(r, shown), r.query])
+    : [...Object.entries(proposal.copies), ...(proposal.sigma ? [['sigma', proposal.sigma] as [string, string]] : [])].map(([l, t]) => [l, lang(l), t])
+  const langs = [...new Set(shown.length ? shown.map((r) => lang(r.source)) : texts.map(([, n]) => n))].join(' + ')
+  const on = texts.find(([k]) => k === copy) ?? (main && texts.find(([k]) => k === String(main.rule_id))) ?? texts[0]
+  const decision: Decision | null = !canWrite || !main ? null : main.stage === 'shadow' ? 'switch-off' : main.stage === 'live' ? 'revert' : null
   // The main copy's moves: from its rule read, else (a removed copy) from the proposal's record.
   const moves = main?.stages ?? proposal.stages.filter((m) => m.rule_id === (proposal.rule_id ?? proposal.rule_ids[0]))
+  const ended = endedBare(proposal)
+  const bare = proposal.run_id
+    ? ended ? `The run ${ended} without saving a rule for this gap` : 'The run has not saved a rule for this gap yet'
+    : 'No rule until a run drafts one'
   const changed = () => { setAsking(false); load(); onChanged() }
 
   return (
@@ -211,11 +281,12 @@ function ProposalDetail({ id, onChanged }: { id: string; onChanged: () => void }
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
-          {switchable && !asking && (
-            <button type="button" className="btn" onClick={() => setAsking(true)}>Switch off</button>
+          {decision && !asking && (
+            <button type="button" className="btn" onClick={() => setAsking(true)}>{decision === 'revert' ? 'Revert to shadow' : 'Switch off'}</button>
           )}
         </div>
-        {switchable && asking && main && <SwitchOff ruleId={main.rule_id} onDone={(done) => (done ? changed() : setAsking(false))} />}
+        {proposal.rule_ids.length > 0 && <p className="de-card-sub">{decisionLine(main, row, canWrite)}</p>}
+        {decision && asking && main && <Decide ruleId={main.rule_id} action={decision} onDone={(done) => (done ? changed() : setAsking(false))} />}
       </section>
 
       <section className="x1-card de-card">
@@ -225,24 +296,24 @@ function ProposalDetail({ id, onChanged }: { id: string; onChanged: () => void }
             <p>From the gap to the rule</p>
           </div>
         </div>
-        <WhyChain proposal={proposal} gap={gap} main={main} stage={moves.length ? moves[moves.length - 1].stage : null} langs={langs} attachAt={attach?.at ?? null} attachBy={attach?.actor ?? null} />
+        <WhyChain proposal={proposal} gap={gap} main={main} stage={moves.length ? moves[moves.length - 1].stage : null} langs={langs} bare={bare} attachAt={attach?.at ?? null} attachBy={attach?.actor ?? null} />
       </section>
 
       <section className="x1-card de-card">
         <div className="de-card-head">
           <div>
             <h2>The rule</h2>
-            <p>{main?.description || (texts.length ? 'What the run saved for this gap' : 'The run has not saved a rule for this gap')}</p>
+            <p>{main?.description || (texts.length ? 'What the run saved for this gap' : bare)}</p>
           </div>
           {texts.length > 1 && (
             <div className="de-prop-copies" role="group" aria-label="Rule copy">
-              {texts.map(([l]) => (
-                <button key={l} type="button" aria-pressed={on?.[0] === l} className={`btn ${on?.[0] === l ? 'primary' : 'ghost'}`} onClick={() => setCopy(l)}>{lang(l)}</button>
+              {texts.map(([k, name]) => (
+                <button key={k} type="button" aria-pressed={on?.[0] === k} className={`btn ${on?.[0] === k ? 'primary' : 'ghost'}`} onClick={() => setCopy(k)}>{name}</button>
               ))}
             </div>
           )}
         </div>
-        {on && <pre className="de-raw de-prop-query">{on[1]}</pre>}
+        {on && <pre className="de-raw de-prop-query">{on[2]}</pre>}
       </section>
 
       <section className="x1-card de-card">
@@ -258,13 +329,15 @@ function ProposalDetail({ id, onChanged }: { id: string; onChanged: () => void }
   )
 }
 
-function WhyChain({ proposal, gap, main, stage, langs, attachAt, attachBy }: {
+function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy }: {
   proposal: Proposal
   gap: ProposalGap | undefined
   main: RuleDetail | null
   /** The main copy's latest stage, read or recorded. */
   stage: Stage | null
   langs: string
+  /** What stands in for the rule while none is attached. */
+  bare: string
   attachAt: string | null
   attachBy: string | null
 }) {
@@ -312,7 +385,11 @@ function WhyChain({ proposal, gap, main, stage, langs, attachAt, attachBy }: {
       <li>
         <span className="de-rollout-name">3 · Run</span>
         <b>{proposal.run_id ? short(proposal.run_id) : '—'}</b>
-        <span className="de-rollout-line">{proposal.run_id ? 'Vigil handed the gap to an agent run to draft a rule' : 'Not handed to a run yet'}</span>
+        <span className="de-rollout-line">
+          {proposal.run_id
+            ? `Vigil handed the gap to an agent run to draft a rule${proposal.run_status ? ` (${RUN_ENDED[proposal.run_status] ?? proposal.run_status})` : ''}`
+            : 'Not handed to a run yet'}
+        </span>
         {proposal.run_id && (
           <Link className="de-rollout-target de-link" to={`/workflows?run=${encodeURIComponent(proposal.run_id)}`}>Open run</Link>
         )}
@@ -325,7 +402,7 @@ function WhyChain({ proposal, gap, main, stage, langs, attachAt, attachBy }: {
         <span className="de-rollout-line">
           {proposal.rule_ids.length
             ? `Saved${attachAt ? ` ${utcDayClock(attachAt)}` : ''}${attachBy ? ` by ${who(attachBy)}` : ''}${langs ? ` as ${langs}` : ''}${main ? '' : '; no longer listed'}`
-            : proposal.run_id ? 'The run has not saved a rule for this gap' : 'No rule until a run drafts one'}
+            : bare}
         </span>
       </li>
     </ul>
@@ -335,12 +412,13 @@ function WhyChain({ proposal, gap, main, stage, langs, attachAt, attachBy }: {
 const passWord = (c: RuleCheck | undefined, pass: string, fail: string) =>
   !c?.result ? null : c.result === 'pass' ? pass : c.result === 'fail' ? fail : 'Not known'
 
-/** A replay's result in words: the proven events it caught, and the ruled-out ones. */
+/** A replay's result in words. A pass means it matched at least one of the proven events it
+ * was given (not each of them) and none of the ruled-out ones. */
 function replayWord(c: RuleCheck): string {
   if (c.result !== 'pass') return c.result === 'fail' ? 'Missed' : 'Not known'
   const proven = Number(c.proven_events ?? 0)
   const out = Number(c.ruled_out_events ?? 0)
-  return `Caught ${plural(proven, 'event', 'events')}${out ? `, ${c.ruled_out_matched ? 'matched' : 'cleared'} ${out} ruled out` : ''}`
+  return `Matched ${proven > 1 ? `at least 1 of ${proven} proven events` : 'the proven event'}${out ? `, cleared ${out} ruled out` : ''}`
 }
 
 function Checks({ proposal, rules, shown, main, moves }: {
@@ -353,10 +431,11 @@ function Checks({ proposal, rules, shown, main, moves }: {
   if (!proposal.rule_ids.length) return <p className="de-card-sub">Nothing yet: there is no rule to check.</p>
   const before: { what: string; said: string; title?: string }[] = []
   for (const r of shown) {
+    const name = copyName(r, shown)
     const lint = passWord(r.checks.lint, 'Passed', 'Failed')
-    if (lint) before.push({ what: `Lint · ${lang(r.source)}`, said: lint, title: r.checks.lint?.reason ?? undefined })
+    if (lint) before.push({ what: `Lint · ${name}`, said: lint, title: r.checks.lint?.reason ?? undefined })
     const replay = r.checks.replay
-    if (replay?.result) before.push({ what: `Replay · ${lang(r.source)}`, said: replayWord(replay), title: replay.reason ?? undefined })
+    if (replay?.result) before.push({ what: `Replay · ${name}`, said: replayWord(replay), title: replay.reason ?? undefined })
   }
   const runs = (main?.checks.runs?.days ?? {}) as Record<string, { pass?: number; fail?: number }>
   const hits = (main?.checks.shadow?.days ?? {}) as Record<string, number>
@@ -402,26 +481,33 @@ function Group({ title, rows }: { title: string; rows: { what: string; said: str
   )
 }
 
-/** Switch off: the reason is required, and the rule then waits for a person. */
-function SwitchOff({ ruleId, onDone }: { ruleId: number; onDone: (changed: boolean) => void }) {
+/** Switch off (shadow) or Revert to shadow (live): the reason is required, and the rule
+ * then waits for a person. */
+function Decide({ ruleId, action, onDone }: { ruleId: number; action: Decision; onDone: (changed: boolean) => void }) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const off = action === 'switch-off'
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!reason.trim()) { setError('Say why.'); return }
     setBusy(true)
-    detectionRulesApi.switchOffRule(ruleId, reason.trim())
+    const call = off ? detectionRulesApi.switchOffRule : detectionRulesApi.revertRule
+    call(ruleId, reason.trim())
       .then(() => onDone(true))
-      .catch((err) => { setError(errorText(err, 'Could not switch it off.')); setBusy(false) })
+      .catch((err) => { setError(errorText(err, off ? 'Could not switch it off.' : 'Could not revert it.')); setBusy(false) })
   }
   return (
     <form className="de-x-form de-prop-ask" onSubmit={submit}>
-      <span className="de-card-sub">Vigil stops running it, and a later version waits in shadow for a person.</span>
-      <input className="de-x-in" aria-label="Reason" placeholder="Why switch it off (required)" value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+      <span className="de-card-sub">
+        {off
+          ? 'Vigil stops running it, and a later version waits in shadow for a person.'
+          : 'Analysts stop getting its alerts; it keeps running in shadow until a person releases it.'}
+      </span>
+      <input className="de-x-in" aria-label="Reason" placeholder={off ? 'Why switch it off (required)' : 'Why move it back to shadow (required)'} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
       {error && <span className="de-x-err" role="alert">{error}</span>}
       <div className="de-x-actions">
-        <button type="submit" className="btn de-x-btn danger" disabled={busy}>{busy ? 'Switching off…' : 'Switch off'}</button>
+        <button type="submit" className={`btn de-x-btn ${off ? 'danger' : 'primary'}`} disabled={busy}>{busy ? 'Saving…' : off ? 'Switch off' : 'Revert to shadow'}</button>
         <button type="button" className="btn ghost de-x-btn" onClick={() => onDone(false)}>Cancel</button>
       </div>
     </form>

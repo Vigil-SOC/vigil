@@ -220,7 +220,14 @@ const SECTIONS: readonly { id: Section; label: string }[] = [
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
   const [params, setParams] = useSearchParams()
   const section = SECTIONS.find((s) => s.id === params.get('tab'))?.id ?? 'rules'
-  const setSection = (id: Section) => setParams(id === 'rules' ? {} : { tab: id })
+  // Only the tab changes: ?rules= (a rule-health link) stays, and a picked proposal goes with its tab.
+  const setSection = (id: Section) => setParams((now) => {
+    const next = new URLSearchParams(now)
+    if (id === 'rules') next.delete('tab')
+    else next.set('tab', id)
+    if (id !== 'proposed') next.delete('proposal')
+    return next
+  })
   return (
     <div className="x1 de">
       <div className="de-top de-top-tabs">
