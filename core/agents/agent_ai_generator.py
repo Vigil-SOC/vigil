@@ -172,9 +172,9 @@ class AgentAIGenerator:
 
     def _skills_context(self) -> str:
         try:
-            from core.skills.skill_library import load_skills, skill_roots
+            from core.skills.skill_hold import agent_skills
 
-            skills = load_skills(skill_roots())
+            skills = agent_skills()
         except Exception as e:
             logger.warning(f"Could not load skills: {e}")
             return "(none)"

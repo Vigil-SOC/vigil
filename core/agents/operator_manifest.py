@@ -87,9 +87,10 @@ def manifest_skills(doc: Mapping[str, Any]) -> List[Dict[str, str]]:
     names = _strings(doc.get("skills"))
     if not names:
         return []
-    from core.skills.skill_library import load_skills, skill_body, skill_roots
+    from core.skills.skill_hold import agent_skills
+    from core.skills.skill_library import skill_body
 
-    found = {skill.name: skill for skill in load_skills(skill_roots())}
+    found = {skill.name: skill for skill in agent_skills()}
     return [
         {
             "name": found[name].name,

@@ -9,7 +9,8 @@ from typing import Dict, Iterable, Optional
 
 from core.memory.recall_contract import RECALL_TOOL
 from core.response.config import ResponseConfig
-from core.skills.skill_library import READ_SKILL_TOOL, Skill, load_skills, skill_roots
+from core.skills.skill_hold import agent_skills
+from core.skills.skill_library import READ_SKILL_TOOL, Skill
 
 # Read-only, and the wording carries ADR 0015 rather than gesturing at it. A
 # prior Verdict is not a disposition: the ADR's first named failure is a benign
@@ -84,7 +85,7 @@ def _skills_section(
     if READ_SKILL_TOOL not in set(tools or ()):
         return ""
     if skills is None:
-        skills = load_skills(skill_roots())
+        skills = agent_skills()
     # One line per skill even when the description was a YAML block scalar.
     lines = [f"- {s.name}: {' '.join(s.description.split())}" for s in skills]
     return (
