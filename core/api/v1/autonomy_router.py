@@ -18,8 +18,13 @@ from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
-from core.deps import provide_mcp_registry
+from core.deps import provide_approvals, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
+from core.response.approval_service import (
+    ActionNotFound,
+    ApprovalService,
+    NotHeld,
+)
 from core.response.ceiling import (
     CeilingRefusal,
     CeilingWriteError,
@@ -46,6 +51,7 @@ ROUTER_META = RouterMeta(
 
 _READ = [permission_gate("ai_autonomy.read")]
 _WRITE = [permission_gate("ai_autonomy.write")]
+_DECIDE = [permission_gate("ai_decisions.approve")]
 
 
 class CeilingBody(BaseModel):
@@ -60,6 +66,18 @@ class CeilingBody(BaseModel):
     four_eyes: Optional[bool] = None
 
 
+class HeldAction(BaseModel):
+    """One approved outside action a stop is still holding."""
+
+    action_id: str
+    action_type: str = ""
+    title: str = ""
+    target: str = ""
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    restricted: bool = False
+
+
 class CeilingResponse(BaseModel):
     act_reversible: bool
     act_irreversible: bool
@@ -69,9 +87,15 @@ class CeilingResponse(BaseModel):
     propose: bool
     environment_locked: bool
     four_eyes: bool
+    # Latest stop. Null when autonomy is not stopped.
+    stopped_by: Optional[str] = None
+    stopped_at: Optional[str] = None
+    stopped_by_label: Optional[str] = None
     # Workflow id to its own entry: tier, floor, evidence, by, at (#3624),
     # plus by_label, the principal's name read now (#3642).
     workflows: Dict[str, Dict[str, Any]] = {}
+    # Approved outside actions a stop is holding, including after resume.
+    held: List[HeldAction] = []
 
 
 def _view() -> CeilingResponse:
@@ -164,6 +188,64 @@ def post_resume(
         ) from exc
     except HTTPException:
         raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+
+
+def _principal(user: User) -> Optional[str]:
+    return getattr(user, "principal_id", None) or getattr(user, "user_id", None)
+
+
+@router.post("/held/release", dependencies=_DECIDE, response_model=CeilingResponse)
+def post_release_held(
+    service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
+) -> CeilingResponse:
+    """Clear the hold on every held action this person may decide.
+
+    Executes nothing. Each released row writes one trail entry.
+    """
+    try:
+        service.release_held(current_user.username, _principal(current_user))
+        return _view()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to release the held actions"
+        ) from exc
+
+
+@router.post(
+    "/held/{action_id}/release",
+    dependencies=_DECIDE,
+    response_model=CeilingResponse,
+)
+def post_release_action(
+    action_id: str,
+    service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
+) -> CeilingResponse:
+    """Clear the hold on one action. The next executor pass runs it.
+
+    Executes nothing itself.
+    """
+    try:
+        updated = service.release_action(
+            action_id, current_user.username, _principal(current_user)
+        )
+    except NotHeld as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ActionNotFound:
+        raise HTTPException(
+            status_code=404, detail=f"Approval not found: {action_id}"
+        ) from None
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    try:
+        return _view()
     except Exception as exc:
         raise HTTPException(
             status_code=503, detail="Could not read the autonomy ceiling"

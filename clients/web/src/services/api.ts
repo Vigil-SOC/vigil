@@ -1436,6 +1436,10 @@ export const autonomyApi = {
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),
+  // Clears the stop's hold. The row stays approved; the next executor pass runs it.
+  releaseHeld: (actionId: string) =>
+    api.post<Ceiling>(`/autonomy/held/${encodeURIComponent(actionId)}/release`),
+  releaseAllHeld: () => api.post<Ceiling>('/autonomy/held/release'),
 }
 
 export interface OrchestratorStatus {
@@ -2054,6 +2058,10 @@ export type DirectorySync = {
   token_expires_at: string | null
   failed_authentications: number
   last_manager_refusals: string[]
+  skipped_joins: number
+  broken_lines: { external_id: string; on: string }[]
+  mapping_note: string | null
+  role_refusals: string[]
   scim_path: string
   token?: string | null
 }
@@ -2061,6 +2069,35 @@ export const directorySyncApi = {
   get: () => api.get<DirectorySync>('/auth/sso/sync'),
   save: (directory_id_claim: string, mint = false) =>
     api.post<DirectorySync>('/auth/sso/sync', { directory_id_claim, mint }),
+  mapping: () => api.get<DirectoryMapping>('/auth/sso/mapping'),
+  saveMapping: (
+    body: { group_roles: { group: string; role_id: string }[]; team_lines: TeamLine[] },
+    version: number,
+    dryRun = false,
+  ) =>
+    api.post<MappingEffect>('/auth/sso/mapping', body, {
+      params: dryRun ? { dry_run: true } : undefined,
+      headers: { 'If-Match': `"${version}"` },
+    }),
+}
+
+export type PushedGroup = { id: string; external_id: string; display_name: string }
+export type TeamLine = { group: string; team_id: string }
+export type DirectoryMapping = {
+  group_roles: { group: string; role_id: string }[]
+  team_lines: TeamLine[]
+  groups: PushedGroup[]
+  version: number
+  mapping_author: string | null
+}
+export type MappingEffect = {
+  roles_rise: number
+  roles_fall: number
+  roles_default: number
+  memberships_added: number
+  memberships_removed: number
+  applied: boolean
+  version: number
 }
 
 // The shipped breached-password list and what an administrator has imported onto it.

@@ -25,9 +25,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.audit import outside, trail
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, may_read_case, permission_gate
-from core.cases import case_journal_service, case_readers, case_records_service
+from core.cases import (
+    case_journal_service,
+    case_readers,
+    case_records_service,
+    case_trail,
+)
 from core.cases.assignee import (
     owner_states,
     require_current_owner,
@@ -67,7 +73,7 @@ from core.deps import provide_workflows
 from core.detections.inventory import catalog
 from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
-from core.integrations.elastic.ingestion import ElasticIngestion
+from core.integrations.elastic.ingestion import ElasticIngestion, elastic_alert_status
 from core.memory.entity_keys import finding_entity_keys
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
@@ -121,17 +127,126 @@ ROUTER_META = RouterMeta(
 data_service = DatabaseDataService()
 
 
-async def _sync_upstream_status(case_id: str, new_status: str) -> None:
+def _sync_actor(session, username: str) -> tuple:
+    """Who this request is. The background task has no request user."""
+    try:
+        return case_trail._actor(session, username)
+    except Exception:
+        logger.exception("could not name who changed case status")
+        return (None, username, None)
+
+
+def _elastic_alert_ids(findings, *, linked: bool) -> list[str]:
+    """Alert ids the sync visits.
+
+    The loop has always read ``metadata.elastic_alert_id``. A stored finding
+    has no metadata column; the id ingest keeps is ``external_id``. That link
+    is followed only when the trail is recording the call, so an install
+    without the trail still syncs only what it synced before.
+    """
+    ids = []
+    for finding in findings:
+        alert_id = (finding.get("metadata") or {}).get("elastic_alert_id")
+        if (
+            not alert_id
+            and linked
+            and finding.get("data_source") == "elastic"
+            and finding.get("external_id")
+        ):
+            alert_id = finding["external_id"]
+        if alert_id:
+            ids.append(str(alert_id))
+    return ids
+
+
+async def _sync_one(svc: ElasticIngestion, alert_id: str, new_status: str) -> None:
+    """Today's sync: the result is an application log line."""
+    try:
+        synced = await svc.update_upstream_alert_status(alert_id, new_status)
+    except Exception as exc:
+        logger.warning("Failed to sync status to elastic alert %s: %s", alert_id, exc)
+        return
+    if synced:
+        logger.info("Synced status '%s' to elastic alert %s", new_status, alert_id)
+    else:
+        logger.warning(
+            "Elastic did not accept status '%s' for alert %s", new_status, alert_id
+        )
+
+
+async def _sync_recorded(
+    svc: ElasticIngestion,
+    case_id: str,
+    alert_id: str,
+    new_status: str,
+    actor: tuple,
+) -> None:
+    """One intent, then the call, then an outcome. No intent means no call."""
+    status = elastic_alert_status(new_status)
+    try:
+        seq = outside.commit_intent(
+            actor,
+            outside.ELASTIC_INTENT,
+            case_id=case_id,
+            elastic_alert_id=alert_id,
+            status=status,
+        )
+    except Exception as exc:
+        logger.warning(
+            "skipping elastic alert %s: intent was not recorded: %s", alert_id, exc
+        )
+        return
+    if seq is None:
+        await _sync_one(svc, alert_id, new_status)
+        return
+    outcome = trail.OUTCOME_FAILED
+    try:
+        code = await svc.push_alert_status(alert_id, new_status)
+    except Exception as exc:
+        logger.warning("Failed to sync status to elastic alert %s: %s", alert_id, exc)
+    else:
+        if code is None:
+            logger.warning(
+                "Elastic did not accept status '%s' for alert %s", new_status, alert_id
+            )
+        else:
+            outcome = outside.http_outcome(code)
+            if outcome == trail.OUTCOME_DONE:
+                logger.info(
+                    "Synced status '%s' to elastic alert %s", new_status, alert_id
+                )
+            else:
+                logger.warning(
+                    "Elastic did not accept status '%s' for alert %s",
+                    new_status,
+                    alert_id,
+                )
+    # The case row committed, with its own trail entry, before this task ran.
+    outside.commit_outcome(
+        actor,
+        outside.ELASTIC_OUTCOME,
+        intent=seq,
+        outcome=outcome,
+        case_id=case_id,
+        elastic_alert_id=alert_id,
+        status=status,
+        local_committed=True,
+    )
+
+
+async def _sync_upstream_status(case_id: str, new_status: str, actor: tuple) -> None:
     try:
         findings = data_service.get_findings_by_case(case_id)
     except Exception as exc:
         logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
         return
-    alert_ids = [
-        alert_id
-        for finding in findings
-        if (alert_id := (finding.get("metadata") or {}).get("elastic_alert_id"))
-    ]
+    try:
+        record = outside.recording()
+    except Exception as exc:
+        # Can't tell whether the call would be unrecorded, so it is not made.
+        logger.warning("Upstream status sync skipped for case %s: %s", case_id, exc)
+        return
+    alert_ids = _elastic_alert_ids(findings, linked=record)
     if not alert_ids:
         return
     try:
@@ -139,20 +254,24 @@ async def _sync_upstream_status(case_id: str, new_status: str) -> None:
     except Exception as exc:
         logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
         return
-    for alert_id in alert_ids:
-        try:
-            synced = await svc.update_upstream_alert_status(alert_id, new_status)
-        except Exception as exc:
-            logger.warning(
-                "Failed to sync status to elastic alert %s: %s", alert_id, exc
-            )
-            continue
-        if synced:
-            logger.info("Synced status '%s' to elastic alert %s", new_status, alert_id)
-        else:
+    if not record:
+        for alert_id in alert_ids:
+            await _sync_one(svc, alert_id, new_status)
+        return
+    # A missing Kibana URL returns before any call: no intent for it.
+    try:
+        ready = svc.calls_kibana()
+    except Exception as exc:
+        logger.warning("Upstream status sync error for case %s: %s", case_id, exc)
+        return
+    if not ready:
+        for alert_id in alert_ids:
             logger.warning(
                 "Elastic did not accept status '%s' for alert %s", new_status, alert_id
             )
+        return
+    for alert_id in alert_ids:
+        await _sync_recorded(svc, case_id, alert_id, new_status, actor)
 
 
 class CaseCreate(BaseModel):
@@ -905,7 +1024,12 @@ def update_case(
 
     # Fire upstream SIEM status sync when status changes
     if case_data.status is not None:
-        background_tasks.add_task(_sync_upstream_status, case_id, case_data.status)
+        background_tasks.add_task(
+            _sync_upstream_status,
+            case_id,
+            case_data.status,
+            _sync_actor(session, current_user.username),
+        )
 
     return {"success": True}
 
@@ -1239,7 +1363,12 @@ def close_case(
     # this one never did: a Case closed here, by either MCP tool or by a merge,
     # stayed open in the SIEM that raised it. Best-effort and fire-and-forget, as
     # it is there -- the close is recorded either way.
-    background_tasks.add_task(_sync_upstream_status, case_id, "closed")
+    background_tasks.add_task(
+        _sync_upstream_status,
+        case_id,
+        "closed",
+        _sync_actor(session, current_user.username),
+    )
     return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
 
 

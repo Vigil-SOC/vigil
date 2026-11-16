@@ -54,6 +54,10 @@ class Ceiling:
     act_reversible: bool = False
     act_irreversible: bool = False
     stopped: bool = False
+    # Latest stop. Cleared on resume. The id is the principal's (a person's
+    # or a service account's user id).
+    stopped_by: Optional[str] = None
+    stopped_at: Optional[str] = None
     four_eyes: bool = False
     # workflow id -> {tier, floor, evidence, by, at}. Absent follows the fleet.
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
@@ -95,6 +99,13 @@ def _flag(value: Any) -> bool:
     return value if isinstance(value, bool) else False
 
 
+def _text(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def environment_locks_act(settings: Optional[Settings] = None) -> bool:
     """Force-approval, or auto-response turned off, beats a stored act flag.
 
@@ -127,6 +138,8 @@ def _parse(value: Any) -> Ceiling:
         act_reversible=_flag(value.get("act_reversible")),
         act_irreversible=_flag(value.get("act_irreversible")),
         stopped=_flag(value.get("stopped")),
+        stopped_by=_text(value.get("stopped_by")),
+        stopped_at=_text(value.get("stopped_at")),
         four_eyes=_flag(value.get("four_eyes")),
         workflows=_workflow_entries(value.get("workflows")),
     )
@@ -237,21 +250,33 @@ def ceiling_read() -> dict[str, Any]:
     """The ceiling as ``GET /api/v1/autonomy`` and the MCP tool return it.
 
     Each workflow entry gains ``by_label``, the principal's name read now (#3642).
+    A stop names ``stopped_by`` the same way. ``held`` is the approved outside
+    actions that stop is still holding.
     """
     stored = read_ceiling()
-    labels = _labels(
-        {
-            e.get("by")
-            for e in stored.workflows.values()
-            if e.get("by") not in (None, "system")
-        }
-    )
+    named = {
+        e.get("by")
+        for e in stored.workflows.values()
+        if e.get("by") not in (None, "system")
+    }
+    if stored.stopped_by not in (None, "system"):
+        named.add(stored.stopped_by)
+    labels = _labels(named)
+    # approval_service imports this module; a top-level import cycles.
+    from core.response.approval_service import held_for_ceiling
+
     return {
         **vars(ceiling_view(stored)),
+        "stopped_by": stored.stopped_by,
+        "stopped_at": stored.stopped_at,
+        "stopped_by_label": (
+            labels.get(stored.stopped_by) if stored.stopped_by else None
+        ),
         "workflows": {
             wid: {**entry, "by_label": labels.get(entry.get("by"))}
             for wid, entry in stored.workflows.items()
         },
+        "held": held_for_ceiling(),
     }
 
 
@@ -270,14 +295,11 @@ def _dump(ceiling: Ceiling) -> dict[str, Any]:
         "act_reversible": ceiling.act_reversible,
         "act_irreversible": ceiling.act_irreversible,
         "stopped": ceiling.stopped,
+        "stopped_by": ceiling.stopped_by,
+        "stopped_at": ceiling.stopped_at,
         "four_eyes": ceiling.four_eyes,
         "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
     }
-
-
-def _store(user_id: str, reason: str, **fields: Any) -> Ceiling:
-    """Write only ``fields`` over the row as it is now; the rest stays as stored."""
-    return _locked_update(lambda current: (replace(current, **fields), reason), user_id)
 
 
 def _raises(current: bool, requested: Optional[bool]) -> bool:
@@ -297,57 +319,106 @@ def update_ceiling(
 
     A service account may lower an act flag. It may not raise one, resume,
     or switch four-eyes. An act flag is not stored on while the environment
-    has locked them off.
+    has locked them off. While stopped, raising an act flag or turning
+    four-eyes off is refused; a lower, and turning four-eyes on, still store.
+    The refusal is decided on the locked row, so a stop that lands during
+    the write is not stored past.
     """
     if locked is None:
         locked = environment_locks_act()
-    current = read_ceiling()
-    wants_act_on = act_reversible is True or act_irreversible is True
-    if locked and wants_act_on:
-        raise CeilingRefusal(409, "The environment wins; Act was not saved.")
-    if caller_is_service:
-        if four_eyes is not None and four_eyes != current.four_eyes:
-            raise CeilingRefusal(403, "A service account cannot switch four-eyes")
-        if _raises(current.act_reversible, act_reversible) or _raises(
-            current.act_irreversible, act_irreversible
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        wants_act_on = act_reversible is True or act_irreversible is True
+        if locked and wants_act_on:
+            raise CeilingRefusal(409, "The environment wins; Act was not saved.")
+        if caller_is_service:
+            if four_eyes is not None and four_eyes != current.four_eyes:
+                raise CeilingRefusal(403, "A service account cannot switch four-eyes")
+            if _raises(current.act_reversible, act_reversible) or _raises(
+                current.act_irreversible, act_irreversible
+            ):
+                raise CeilingRefusal(403, "A service account cannot raise the ceiling")
+        if current.stopped and (
+            _raises(current.act_reversible, act_reversible)
+            or _raises(current.act_irreversible, act_irreversible)
+            or (four_eyes is False and current.four_eyes)
         ):
-            raise CeilingRefusal(403, "A service account cannot raise the ceiling")
-    edit = {
-        name: value
-        for name, value in (
-            ("act_reversible", act_reversible),
-            ("act_irreversible", act_irreversible),
-            ("four_eyes", four_eyes),
-        )
-        if value is not None
-    }
-    if replace(current, **edit) == current:
-        return current
-    return _store(user_id, "Autonomy ceiling updated", **edit)
+            raise CeilingRefusal(409, "Stopped: resume first")
+        edit = {
+            name: value
+            for name, value in (
+                ("act_reversible", act_reversible),
+                ("act_irreversible", act_irreversible),
+                ("four_eyes", four_eyes),
+            )
+            if value is not None
+        }
+        return replace(current, **edit), "Autonomy ceiling updated"
+
+    return _locked_update(change, user_id)
 
 
 def stop_ceiling(user_id: str) -> Ceiling:
-    """Set ``stopped``. Stored act flags stay, so a later resume can restore them.
+    """Set ``stopped`` and record who stopped it, and when.
 
-    Effective act flags are off while stopped. This does not execute anything.
+    Stored act flags stay, so a later resume restores them. A stop while
+    already stopped keeps that first snapshot, updates who stopped it, and
+    writes its own entry. Approved outside actions the executor runs are
+    marked held in this same transaction. This does not execute anything.
     """
-    current = read_ceiling()
-    if current.stopped:
-        return current
-    return _store(user_id, "Autonomy stopped", stopped=True)
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        return (
+            replace(
+                current,
+                stopped=True,
+                stopped_by=user_id,
+                stopped_at=utcnow().isoformat(),
+            ),
+            "Autonomy stopped",
+        )
+
+    def hold(session: Any) -> None:
+        # approval_service imports this module; a top-level import cycles.
+        from core.response.approval_service import stamp_held_approvals
+
+        stamp_held_approvals(session)
+
+    return _locked_update(change, user_id, after=hold)
 
 
 def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
     """Clear ``stopped``. Act flags already lowered during the stop stay off.
 
-    Executes nothing. A service account cannot resume.
+    Held actions stay held. Executes nothing. A service account cannot resume.
     """
     if caller_is_service:
         raise CeilingRefusal(403, "A service account cannot resume")
-    current = read_ceiling()
-    if not current.stopped:
-        return current
-    return _store(user_id, "Autonomy resumed", stopped=False)
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        if not current.stopped:
+            return current, "Autonomy resumed"
+        return (
+            replace(current, stopped=False, stopped_by=None, stopped_at=None),
+            "Autonomy resumed",
+        )
+
+    return _locked_update(change, user_id)
+
+
+def locked_flags(session: Any) -> tuple[bool, bool]:
+    """``(stopped, four_eyes)`` with the ceiling row share-locked until commit.
+
+    Call this before locking an approval row. Stop locks the ceiling first
+    and then the approval rows; the other order deadlocks.
+    """
+    row = session.execute(
+        select(SystemConfig)
+        .where(SystemConfig.key == CEILING_KEY)
+        .with_for_update(read=True)
+    ).scalar_one_or_none()
+    value = row.value if row is not None and isinstance(row.value, dict) else {}
+    return value.get("stopped") is True, value.get("four_eyes") is True
 
 
 def raises_workflow(current: Ceiling, workflow_id: str, after: Ceiling) -> bool:
@@ -425,22 +496,29 @@ def workflow_entry(
 
 
 def _locked_update(
-    change: Callable[[Ceiling], tuple[Ceiling, str]], actor: str
+    change: Callable[[Ceiling], tuple[Ceiling, str]],
+    actor: str,
+    after: Optional[Callable[[Any], None]] = None,
 ) -> Ceiling:
     """Read, change and write the row in one transaction with it locked.
 
     ``change`` sees the row as it is now, so no other write is lost, and the
     write leaves the same ``config.change`` entry as ``set_system_config``.
+    ``after`` runs in that transaction, before the write is skipped as a no-op.
     """
     try:
-        return _write_locked(change, actor)
+        return _write_locked(change, actor, after)
     except CeilingRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
         raise CeilingWriteError("autonomy.ceiling was not stored") from exc
 
 
-def _write_locked(change: Callable[[Ceiling], tuple[Ceiling, str]], actor: str):
+def _write_locked(
+    change: Callable[[Ceiling], tuple[Ceiling, str]],
+    actor: str,
+    after: Optional[Callable[[Any], None]] = None,
+):
     with unit_of_work() as session:
         row = session.execute(
             select(SystemConfig)
@@ -449,6 +527,8 @@ def _write_locked(change: Callable[[Ceiling], tuple[Ceiling, str]], actor: str):
         ).scalar_one_or_none()
         current = _parse(row.value) if row is not None else Ceiling()
         updated, reason = change(current)
+        if after is not None:
+            after(session)
         if updated == current:
             return current
         old = row.value if row is not None else None

@@ -47,6 +47,7 @@ SLA_PAUSE = "case.sla.pause"
 SLA_RESUME = "case.sla.resume"
 APPROVE = "approval.approve"
 REJECT = "approval.reject"
+RELEASE = "approval.release"
 # The case row and its journal (#3403)
 CREATE = "case.create"
 STATUS = "case.status"
@@ -332,7 +333,7 @@ def append_approval(
     username: Optional[str],
     operator_text: Optional[str] = None,
 ) -> None:
-    """Append an approve or reject in the caller's transaction.
+    """Append an approve, reject, or release in the caller's transaction.
 
     ``principal_id`` is the one the caller already resolved; ``approved_by``
     and ``approved_by_principal_id`` are not changed. No legacy row:

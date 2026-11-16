@@ -14,7 +14,6 @@ const RESTRICT_HELP = [
   'Auditors see who changed this case and when, not its contents.',
   'Vigil’s agents, including automation your admins configure, can read it to investigate; what Vigil records from that stays with this case.',
   'People who can install integrations or configure Vigil’s agents can reach it through what they configure.',
-  'A team kept in step with your identity provider includes whoever is added to that group there.',
   'New cases start open; restrict a case to limit who can see it.',
 ]
 
@@ -30,6 +29,7 @@ interface NamedTeam {
   id: string
   name: string
   is_default: boolean
+  synced: boolean
 }
 
 // One teams read shared by every caller within a minute, like the people list.
@@ -39,7 +39,12 @@ function loadTeams(): Promise<NamedTeam[]> {
   if (teamsCache && Date.now() - teamsAt < 60_000) return teamsCache
   teamsAt = Date.now()
   teamsCache = teamsApi.list().then(
-    (r) => r.data.filter((team) => !team.archived),
+    (r) => r.data.filter((team) => !team.archived).map((team) => ({
+      id: team.id,
+      name: team.name,
+      is_default: team.is_default,
+      synced: !!team.synced,
+    })),
     (e) => {
       teamsCache = null
       throw e
@@ -164,10 +169,15 @@ export function ReaderPicker({
           <div className="reader-pick-list" role="group" aria-label="Teams whose members can read this case">
             {teams.length === 0 && <span className="reader-pick-note">No teams.</span>}
             {teams.map((team) => (
-              <label key={team.id} className="reader-pick-row">
+              <label key={team.id} className={`reader-pick-row${team.synced ? ' synced' : ''}`}>
                 <input type="checkbox" checked={readerTeams.includes(team.id)} onChange={() => onTeams(toggle(readerTeams, team.id))} />
                 <span className="reader-pick-name">{team.name}</span>
                 {me?.teams.some((t) => t.id === team.id) && <span className="reader-pick-sub">your team</span>}
+                {team.synced && (
+                  <span className="reader-pick-sync">
+                    A team kept in step with your identity provider includes whoever is added to that group there.
+                  </span>
+                )}
               </label>
             ))}
           </div>

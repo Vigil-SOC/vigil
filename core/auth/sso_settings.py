@@ -37,8 +37,16 @@ def missing(endpoint: str) -> str:
 
 
 class GroupRole(BaseModel):
-    group: str = Field(min_length=1, max_length=256)
+    # A claim string while sync is off. While sync is on, the group's externalId.
+    group: str = Field(min_length=1, max_length=1024)
     role_id: str = Field(min_length=1)
+
+
+class TeamLine(BaseModel):
+    """A pushed group's externalId, and the team its members join."""
+
+    group: str = Field(min_length=1, max_length=1024)
+    team_id: str = Field(min_length=1, max_length=50)
 
 
 class SsoSettings(BaseModel):
@@ -47,8 +55,14 @@ class SsoSettings(BaseModel):
     client_id: str = Field("", max_length=512)
     # The provider's issuer from the last successful discovery check; None: never reached.
     issuer: Optional[str] = None
-    # Checked top to bottom at sign-in; the first match wins.
+    # Checked top to bottom; the first match wins. Sign-in reads these for an
+    # account that is not managed. A saved mapping reads them for one that is.
     group_roles: list[GroupRole] = Field(default_factory=list, max_length=200)
+    # Teams kept in step with pushed groups. Empty until a mapping is saved.
+    team_lines: list[TeamLine] = Field(default_factory=list, max_length=200)
+    # The person who last saved the role lines or the team lines. None until then,
+    # and while it is none a push stores membership and changes no role or team.
+    mapping_author: Optional[str] = None
     default_role_id: str = DEFAULT_ROLE
     groups_claim: str = Field("groups", min_length=1, max_length=128)
     # Password sign-in and reset links are refused for people while on (#4286).
