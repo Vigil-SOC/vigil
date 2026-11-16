@@ -291,6 +291,16 @@ def linked_principals(session: Session) -> set[str]:
     return {pid for (pid,) in session.query(SsoLink.principal_id).all()}
 
 
+def sso_only(session: Session, user) -> bool:
+    """No local password and linked to a provider: it signs in only through SSO."""
+    if user.password_hash:
+        return False
+    q = session.query(SsoLink.principal_id).filter(
+        SsoLink.principal_id == user.principal_id
+    )
+    return q.first() is not None
+
+
 def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:
     return (
         session.query(SsoLink)
