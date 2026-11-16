@@ -862,8 +862,9 @@ def _skill_folders(paths: Iterable[str]) -> List[str]:
     """The zip folders holding a ``SKILL.md``, ``""`` for the root, sorted.
 
     Any depth is allowed, so a GitHub "download zip" wrapper and category
-    folders above the skills need no unpacking first. A skill folder inside another one is refused: it would otherwise be stored
-    as a supporting file of the outer skill and never load.
+    folders above the skills need no unpacking first. A skill folder inside
+    another one is refused: it would otherwise be stored as a supporting file
+    of the outer skill and never load.
     """
     folders = sorted(
         p[: -len(SKILL_FILE)].rstrip("/")

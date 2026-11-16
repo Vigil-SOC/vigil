@@ -15141,7 +15141,7 @@ export interface components {
          * SkillUploadResponse
          * @description The first skill installed, as a single upload always returned, plus all of them.
          *
-         *     A zip may hold several skills; ``skills`` lists every one, by folder path.
+         *     A zip may hold several skills; ``skills`` lists every skill installed.
          */
         SkillUploadResponse: {
             /**
@@ -15163,7 +15163,7 @@ export interface components {
              */
             reads_7d: number;
             /** Skills */
-            skills?: components["schemas"]["SkillResponse"][];
+            skills: components["schemas"]["SkillResponse"][];
             /** Source Path */
             source_path: string;
         };

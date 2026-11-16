@@ -18,6 +18,11 @@ export interface ApiSkill {
   agents_7d?: number
 }
 
+/** POST /api/skills/upload: the first skill installed, plus every skill the upload installed. */
+export interface ApiSkillUpload extends ApiSkill {
+  skills: ApiSkill[]
+}
+
 /** A file in the skill folder: posix path relative to it, and size in bytes. */
 interface ApiSkillFile {
   path: string
@@ -67,12 +72,12 @@ export const skillsApi = {
       )
       .then((r) => r.data),
   save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
-  /** Installs a SKILL.md or a skill .zip under the operator root; a taken name is refused (409). */
+  /** Installs a SKILL.md or a .zip of one or more skills under the operator root, all or none; a taken name is refused (409). */
   upload: (file: File) => {
     const form = new FormData()
     form.append('file', file)
     return api
-      .post<ApiSkill>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .post<ApiSkillUpload>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       .then((r) => r.data)
   },
   generate: (description: string) =>

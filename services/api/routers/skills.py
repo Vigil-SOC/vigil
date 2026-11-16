@@ -76,10 +76,10 @@ class SkillResponse(BaseModel):
 class SkillUploadResponse(SkillResponse):
     """The first skill installed, as a single upload always returned, plus all of them.
 
-    A zip may hold several skills; ``skills`` lists every one, by folder path.
+    A zip may hold several skills; ``skills`` lists every skill installed.
     """
 
-    skills: List[SkillResponse] = Field(default_factory=list)
+    skills: List[SkillResponse]
 
 
 class SkillFile(BaseModel):
