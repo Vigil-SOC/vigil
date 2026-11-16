@@ -7,7 +7,7 @@ bundled library is never modified.
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
@@ -29,7 +29,7 @@ from core.skills.skill_library import (
     SkillError,
     SkillNotFound,
     delete_operator_skill,
-    install_uploaded_skill,
+    install_uploaded_skills,
     is_bundled,
     load_skills,
     operator_skills_root,
@@ -38,6 +38,7 @@ from core.skills.skill_library import (
     skill_files,
     skill_roots,
     skill_version,
+    skipped_note,
     write_operator_skill,
 )
 from core.skills.skill_usage import skill_usage
@@ -71,6 +72,19 @@ class SkillResponse(BaseModel):
     # skills themselves come from disk and must still list.
     reads_7d: int = 0
     agents_7d: int = 0
+
+
+class SkillUploadResponse(SkillResponse):
+    """The first skill installed, as a single upload always returned, plus all of them.
+
+    A zip may hold several skills; ``skills`` lists every skill installed, and
+    ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+    explains.
+    """
+
+    skills: List[SkillResponse]
+    skipped: int = 0
+    skipped_note: Optional[str] = None
 
 
 class SkillFile(BaseModel):
@@ -248,18 +262,27 @@ async def save_skill(req: SkillWriteRequest):
     return _response(skill)
 
 
-@router.post("/upload", response_model=SkillResponse, dependencies=_SKILLS_WRITE)
+@router.post("/upload", response_model=SkillUploadResponse, dependencies=_SKILLS_WRITE)
 async def upload_skill(file: UploadFile = File(...)):
-    """Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+    """Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
 
-    A name already taken is refused (409); nothing is overwritten.
+    All or nothing: a skill refused refuses the upload, and a name already
+    taken is refused (409); nothing is overwritten. Skills are found where
+    ``npx skills`` looks in a repo; any other ``SKILL.md`` is skipped and
+    counted, not installed.
     """
     data = await file.read(UPLOAD_MAX + 1)  # one byte over is enough to refuse it
     try:
-        skill = install_uploaded_skill(file.filename or "", data)
+        installed, skipped = install_uploaded_skills(file.filename or "", data)
     except SkillError as exc:
         raise _http(exc) from exc
-    return _response(skill)
+    skills = [_response(s) for s in installed]
+    return SkillUploadResponse(
+        **skills[0].model_dump(),
+        skills=skills,
+        skipped=skipped,
+        skipped_note=skipped_note(skipped),
+    )
 
 
 @router.post(

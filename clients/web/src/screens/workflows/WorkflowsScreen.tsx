@@ -4097,7 +4097,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
+  // One line under the bar: the import's error, or which skills a zip of several installed
+  // and how many it skipped.
+  const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
@@ -4107,11 +4109,18 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const importFile = (file: File | undefined) => {
     if (!file) return
     setImporting(true)
-    setImportError(null)
+    setImportNotice(null)
     skillsApi
       .upload(file)
-      .then((skill) => { reload(); setEditName(skill.name) })
-      .catch((e) => setImportError(e?.response?.data?.detail || e?.message || 'Could not import the skill'))
+      .then(({ skills, skipped_note }) => {
+        reload()
+        if (skills.length === 1) setEditName(skills[0].name)
+        if (skills.length > 1 || skipped_note) {
+          const names = `Imported ${skills.length} skill${skills.length === 1 ? '' : 's'}: ${skills.map((s) => s.name).join(', ')}`
+          setImportNotice({ text: skipped_note ? `${names}; ${skipped_note}` : names, error: false })
+        }
+      })
+      .catch((e) => setImportNotice({ text: e?.response?.data?.detail || e?.message || 'Could not import the skill', error: true }))
       .finally(() => setImporting(false))
   }
 
@@ -4134,7 +4143,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           </>
         )}
       </div>
-      {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
+      {importNotice && (
+        <div role={importNotice.error ? 'alert' : 'status'} className={`px-[22px] pt-2 text-[12.5px]${importNotice.error ? '' : ' text-tx-2'}`} style={importNotice.error ? { color: 'var(--crit)' } : undefined}>{importNotice.text}</div>
+      )}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}

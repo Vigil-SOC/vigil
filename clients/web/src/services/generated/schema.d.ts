@@ -6637,9 +6637,12 @@ export interface paths {
         put?: never;
         /**
          * Upload Skill
-         * @description Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+         * @description Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
          *
-         *     A name already taken is refused (409); nothing is overwritten.
+         *     All or nothing: a skill refused refuses the upload, and a name already
+         *     taken is refused (409); nothing is overwritten. Skills are found where
+         *     ``npx skills`` looks in a repo; any other ``SKILL.md`` is skipped and
+         *     counted, not installed.
          */
         post: operations["post_api_skills_upload"];
         delete?: never;
@@ -15182,6 +15185,45 @@ export interface components {
             no_cases: boolean;
             /** Results */
             results: components["schemas"]["SkillCaseResult"][];
+        };
+        /**
+         * SkillUploadResponse
+         * @description The first skill installed, as a single upload always returned, plus all of them.
+         *
+         *     A zip may hold several skills; ``skills`` lists every skill installed, and
+         *     ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+         *     explains.
+         */
+        SkillUploadResponse: {
+            /**
+             * Agents 7D
+             * @default 0
+             */
+            agents_7d: number;
+            /** Bundled */
+            bundled: boolean;
+            /** Description */
+            description: string;
+            /** File Count */
+            file_count: number;
+            /** Name */
+            name: string;
+            /**
+             * Reads 7D
+             * @default 0
+             */
+            reads_7d: number;
+            /** Skills */
+            skills: components["schemas"]["SkillResponse"][];
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Skipped Note */
+            skipped_note?: string | null;
+            /** Source Path */
+            source_path: string;
         };
         /** SkillWriteRequest */
         SkillWriteRequest: {
@@ -28163,7 +28205,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SkillResponse"];
+                    "application/json": components["schemas"]["SkillUploadResponse"];
                 };
             };
             /** @description Validation Error */
