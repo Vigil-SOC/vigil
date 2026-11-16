@@ -30,7 +30,11 @@ from core.auth import (
 )
 from core.auth.auth_cookies import context_path_prefix
 from core.auth.password_reset import default_base_url
-from core.auth.permissions import deny_unless, require_permission
+from core.auth.permissions import (
+    deny_unless,
+    require_permission,
+    require_person_permission,
+)
 from core.config import get_settings
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, secret_write_failure_detail, set_secret
@@ -50,6 +54,10 @@ ROUTER_META = RouterMeta(
 )
 
 _MANAGE = require_permission("roles.manage")
+# Every write here can widen access (group and default roles, turning off Require
+# single sign-on, choosing the provider), so it is a person's own act: a service
+# account or an API token may read but not save.
+_PERSON_MANAGE = require_person_permission("roles.manage", refuse_machine=True)
 
 NOT_REACHED = (
     "Single sign-on can be turned on only after a save has reached the provider"
@@ -181,7 +189,7 @@ def put_sso_settings(
     request: Request,
     response: Response,
     session: UnitOfWorkSession,
-    user: User = Depends(_MANAGE),
+    user: User = Depends(_PERSON_MANAGE),
     if_match: Optional[str] = Header(None),
 ):
     """Replace the settings, checking the provider when its address or client changes."""
@@ -414,7 +422,9 @@ def get_sync(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
 
 
 @router.post("/sync", response_model=SyncOut)
-def post_sync(body: SyncIn, session: UnitOfWorkSession, user: User = Depends(_MANAGE)):
+def post_sync(
+    body: SyncIn, session: UnitOfWorkSession, user: User = Depends(_PERSON_MANAGE)
+):
     """Turn directory sync on, or change its claim, and optionally mint a new token.
 
     Turning it on mints the token once. Minting again revokes the previous one.
@@ -514,7 +524,7 @@ def get_mapping(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
 def post_mapping(
     body: MappingIn,
     session: UnitOfWorkSession,
-    user: User = Depends(_MANAGE),
+    user: User = Depends(_PERSON_MANAGE),
     if_match: Optional[str] = Header(None),
     dry_run: bool = False,
 ):
