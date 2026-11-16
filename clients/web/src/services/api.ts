@@ -2035,12 +2035,32 @@ export const sessionPolicyApi = {
 }
 
 // Single sign-on settings. The client secret is sent on a save and never comes back.
-export type SsoSettings = Schema<'SsoSettingsOut'>
+export type SsoSettings = Schema<'SsoSettingsOut'> & {
+  sync_enabled?: boolean
+  directory_id_claim?: string
+}
 export type SsoSettingsBody = Schema<'SsoSettingsIn'>
 export const ssoApi = {
   get: () => api.get<SsoSettings>('/auth/sso/settings'),
   put: (body: SsoSettingsBody, version: number) =>
     api.put<SsoSettings>('/auth/sso/settings', body, { headers: { 'If-Match': `"${version}"` } }),
+}
+
+/** Directory sync status. `token` is present only in the response that minted it. */
+export type DirectorySync = {
+  sync_enabled: boolean
+  directory_id_claim: string
+  last_push: string | null
+  token_expires_at: string | null
+  failed_authentications: number
+  last_manager_refusals: string[]
+  scim_path: string
+  token?: string | null
+}
+export const directorySyncApi = {
+  get: () => api.get<DirectorySync>('/auth/sso/sync'),
+  save: (directory_id_claim: string, mint = false) =>
+    api.post<DirectorySync>('/auth/sso/sync', { directory_id_claim, mint }),
 }
 
 // The shipped breached-password list and what an administrator has imported onto it.

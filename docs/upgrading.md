@@ -152,6 +152,10 @@ FROM system_config WHERE key = 'auth.password_scheme_upgraded_at';
 
 Each bcrypt password hash is replaced at that person's first good sign-in. The old hashing ends 12 months after the date in that row. A person who has not signed in by then sets a new password with a reset link. To find accounts that have not signed in, open Settings > Users: the Last Login column shows each account's last sign-in, and "Never" for an account that has none.
 
+## Medic's gateway token on Compose
+
+Medic's gateway on Compose reads the backend with an API token now, in a `medic_gateway_token` file beside `viewer_password` (#4429, epic #4425). A site enabled before keeps reading on its password with no step on upgrade day: both files are optional, and `./start.sh` creates an empty placeholder for a missing one, which the gateway treats as absent (a `docker compose` command typed by hand doesn't; see `docs/medic/enable.md`). To move the site, re-run `scripts/medic/enable-compose.sh`; it mints the token and recreates the gateway, and the backend ends the account's password when it first accepts the token. Nothing moves a site on its own. The password path is kept through an announced window and is removed no earlier than the release that ends it. After restoring a database from before the mint, mint again: delete `medic_gateway_token` and re-run the script (see `docs/medic/enable.md`).
+
 ## What run scoping does to unfinished runs on upgrade day
 
 Run scoping refuses an agent run's calls unless the run's own principal (the credential Vigil signs for it when it starts) names that run and has not expired. Revision `0065_end_unscoped_runs` ends, at the upgrade, every started run that could not make its next call under that rule.

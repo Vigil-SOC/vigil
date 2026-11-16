@@ -335,6 +335,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "credential.expired": "Refused an expired API token",
     "credential.refused": "Refused a token of an inactive account",
     "credential.expiry_set": "Set an API token to expire in 90 days",
+    "auth.password_ended": "Ended Medic's password on its token's first use",
     "user.created": lambda p: "Created "
     + ("a service account" if p.get("service_account") else "an account")
     + {"sso": " through single sign-on", "invite": " from an invite"}.get(

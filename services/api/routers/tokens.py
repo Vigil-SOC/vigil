@@ -14,16 +14,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from core.auth import current_user as current_user_module
+from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
 from core.auth.auth_service import AuthService, _is_service_account
 from core.auth.permissions import STEP_UP, deny_unless, missing_permission
+from core.auth.service_account import is_medic as _is_medic
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta
 from core.storage.models import McpCredential, Principal, User
 from core.storage.unit_of_work import unit_of_work
 from services.api.middleware.auth import get_current_active_user
-from services.api.routers.users import _is_medic, _require_privileges_cover_target
+from services.api.routers.users import _require_privileges_cover_target
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -104,7 +106,7 @@ def _confirm(request: Request, user: User, action: str) -> None:
 
 def _may_mint_for(caller: User, holder: User) -> bool:
     """A person for themselves, or a person holding users.write for a service
-    account that is not Medic's (Medic's gets no tokens)."""
+    account that is not Medic's (Medic's is minted from the host only)."""
     if _is_service_account(caller):
         return False
     if caller.user_id == holder.user_id:
@@ -200,7 +202,12 @@ def mint(
             raise HTTPException(status_code=404, detail="Service account not found")
         if _is_medic(holder):
             raise HTTPException(
-                status_code=403, detail="Medic's account is managed by Medic: no tokens"
+                status_code=403, detail="Medic's token is minted from the host only"
+            )
+        if directory_sync.is_sync_account(holder):
+            raise HTTPException(
+                status_code=403,
+                detail="Directory sync's token is minted from Single sign-on",
             )
         _check_holder(current_user, holder)
     _confirm(request, current_user, "create a token")
@@ -242,6 +249,11 @@ def rotate(
     for the holder rotates, so an admin revokes another person's token, never this."""
     _refuse_token_request(request, "rotate tokens")
     credential, holder = _found(credential_id)
+    if directory_sync.is_sync_account(holder):
+        raise HTTPException(
+            status_code=403,
+            detail="Directory sync's token is minted from Single sign-on",
+        )
     if not _may_mint_for(current_user, holder):
         if holder.user_id != current_user.user_id and not _manages(current_user):
             raise HTTPException(status_code=404, detail="Token not found")

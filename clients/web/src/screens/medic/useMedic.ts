@@ -9,9 +9,21 @@ const PAGE = 100
 /** Pages followed for one read: 100 × 50 is far past what one incident or list holds. */
 const MAX_PAGES = 50
 
+interface ProblemBody {
+  code?: unknown
+  reason?: unknown
+}
+
+const problemBody = (e: unknown): ProblemBody => {
+  const data = (e as { response?: { data?: unknown } })?.response?.data
+  return typeof data === 'object' && data !== null ? (data as ProblemBody) : {}
+}
+
 /** The proxy's problem+json `{status, code}`; the code, or '' for a network failure. */
-export const problemCode = (e: unknown): string =>
-  (e as { response?: { data?: { code?: unknown } } })?.response?.data?.code?.toString() ?? ''
+export const problemCode = (e: unknown): string => problemBody(e).code?.toString() ?? ''
+
+/** `reason` on a passed-through refusal, or '' when the body has none. */
+export const problemReason = (e: unknown): string => problemBody(e).reason?.toString() ?? ''
 
 /** Calls `fn` every 30 s while the page is visible, and once more when it becomes visible again. */
 function useVisiblePoll(fn: () => void, on: boolean) {
@@ -198,6 +210,13 @@ export function useIncidentDetail(id: string, enabled: boolean) {
 /** POST /api/medic/incidents/{id}/feedback: the stored record. The admin is the session's, so the body names no user. */
 export const postFeedback = (id: string, body: FeedbackBody) =>
   api.post<{ record: DecisionRecord }>(`/medic/incidents/${encodeURIComponent(id)}/feedback`, body).then((r) => r.data.record)
+
+/** The shared client gives up at 15s; the fix route waits up to `_FIX_TIMEOUT_S` (90s) for the restart. */
+const FIX_TIMEOUT_MS = 100_000
+
+/** POST /api/medic/incidents/{id}/fix: an empty object. The admin is the session's. 201 is the stored fix_run. */
+export const postFix = (id: string) =>
+  api.post<{ record: DecisionRecord }>(`/medic/incidents/${encodeURIComponent(id)}/fix`, {}, { timeout: FIX_TIMEOUT_MS }).then((r) => r.data.record)
 
 /** Medic's problem+json for a pack read or write: the code, and for a refusal the `pack_code` that says which check. */
 export const packProblem = (e: unknown): { status: number; code: string; packCode: string } => {

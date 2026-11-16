@@ -43,17 +43,19 @@ a setup code, which the backend logs once its database is ready:
 {{- $medic := .Values.medic | default dict }}
 {{- if eq ($medic.enabled | toString) "true" }}
 {{- $user := dig "gateway" "viewer" "username" "<medic.gateway.viewer.username>" $medic }}
-{{- $secret := dig "gateway" "viewer" "passwordSecret" "name" "<passwordSecret.name>" $medic }}
-{{- $key := dig "gateway" "viewer" "passwordSecret" "key" "password" $medic }}
+{{- $tok := include "vigil.medicGateway.tokenSecret" . }}
+{{- $ns := .Release.Namespace }}
 
-Medic is on. Once the backend is up, create its gateway's Viewer service account
-(lockout-exempt, Viewer only; docs/medic/enable.md). The password goes from the
-Secret to the backend on a pipe, never on a command line. Re-run after changing
-the Secret to rotate, then restart the gateway:
+Medic is on. Until its gateway has a token it reports no_credential. Once the
+backend is up, mint the token (this creates the Viewer service account {{ $user }}
+if needed; docs/medic/enable.md) and store it in the Secret {{ $tok }}.
+The token goes on a pipe, never on a command line. The gateway picks it up within
+about a minute, no restart; any old password stops working once the token is
+used. Run it again to renew the token:
 
-   kubectl -n {{ .Release.Namespace }} get secret {{ $secret }} -o jsonpath='{.data.{{ $key }}}' | base64 -d \
-     | kubectl -n {{ .Release.Namespace }} exec -i deploy/{{ include "vigil.backend.fullname" . }} -- \
-         python -m core.auth.service_account ensure {{ $user }}
+   kubectl -n {{ $ns }} exec deploy/{{ include "vigil.backend.fullname" . }} -- python -m core.auth.service_account token {{ $user }} \
+     | kubectl -n {{ $ns }} create secret generic {{ $tok }} --from-file={{ .Values.medic.gateway.tokenSecret.key }}=/dev/stdin --dry-run=client -o yaml \
+     | kubectl -n {{ $ns }} apply -f -
 {{- end }}
 
 {{- if not .Values.bifrost.enabled }}

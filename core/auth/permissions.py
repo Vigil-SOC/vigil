@@ -74,6 +74,8 @@ CATALOG = {
         "teams.manage": _NEW_CAPABILITY,
         "sessions.manage": _NEW_CAPABILITY,
         "ai_decisions.read": _SIGNED_IN_READ,
+        # Held only by the directory-sync account, on no built-in role (#4423).
+        "directory.sync": _NEW_CAPABILITY,
     },
     "builtins": {
         "role-admin": {
@@ -207,6 +209,11 @@ CATALOG = {
 # Every key a role may hold: Admin holds them all.
 KNOWN_PERMISSIONS = frozenset(CATALOG["permissions"]) | frozenset(
     CATALOG["builtins"]["role-admin"]
+)
+# A new capability goes to the built-ins only. Read from the catalog's origin,
+# so a later permission with that origin joins this set on its own.
+NEW_CAPABILITIES = frozenset(
+    name for name, origin in CATALOG["permissions"].items() if origin == _NEW_CAPABILITY
 )
 # Platform-equivalent: installing integration code runs code as Vigil. In no preset.
 PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
