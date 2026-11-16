@@ -714,22 +714,24 @@ class ElasticService:
         self,
         signal_ids: List[str],
         status: str,
-    ) -> bool:
-        """Update alert status (open, acknowledged, closed)."""
+    ) -> int:
+        """Post an alert status. Returns the HTTP status.
+
+        Timeouts and connection errors propagate. A 4xx stays a status code
+        so the caller can tell it from a transport failure.
+        """
         body: Dict[str, Any] = {
             "signal_ids": signal_ids,
             "status": status,
         }
-        try:
-            resp = await self.kibana_client.post(
-                "/api/detection_engine/signals/status", json=body
-            )
-            resp.raise_for_status()
+        resp = await self.kibana_client.post(
+            "/api/detection_engine/signals/status", json=body
+        )
+        if resp.is_success:
             logger.info(f"Updated {len(signal_ids)} alerts to status '{status}'")
-            return True
-        except Exception as exc:
-            logger.error(f"Error updating alert status: {exc}")
-            return False
+        else:
+            logger.error("Error updating alert status: HTTP %s", resp.status_code)
+        return resp.status_code
 
     # ------------------------------------------------------------------
     # Kibana Security — Cases
