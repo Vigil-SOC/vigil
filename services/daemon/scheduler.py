@@ -290,8 +290,9 @@ class TaskScheduler:
         proposal holding the gap and its evidence ids, the run carries their ids in
         its trigger_context, and the rules it saves are attached to them. A blind
         spot is a missing data source no rule answers, shown on the Detections page:
-        it is remembered as raised but never handed to the run, so a day that raises
-        only blind spots, or nothing, queues nothing. What was raised is remembered
+        it is never handed to the run, and is logged as new the day it is raised (it
+        is remembered as raised while it stays open), so a day that raises only blind
+        spots, or nothing, queues nothing. What was raised is remembered
         only once the run has queued, or found nothing to queue.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
@@ -323,12 +324,18 @@ class TaskScheduler:
         raised, held = gap_run.to_raise(gaps, before, worked, window_start=window_start)
         after = gap_run.after_run(before, started, window_start, gaps, raised, held)
         to_draft = gap_run.rule_gaps(raised)
+        blind = [g for g in raised if g.kind == gap_run.BLIND]
+        if blind:
+            # Not handed to the run, so this line is where a new one shows.
+            logger.info(
+                "Daily detection gaps run: new blind spots, no rule drafted: %s",
+                "; ".join(g.line() for g in blind),
+            )
         if not to_draft:
             logger.info(
                 "Daily detection gaps run: no new gaps a rule can answer at or above "
-                "%d (%d new blind spots), nothing queued",
+                "%d, nothing queued",
                 gap_run.GAP_FLOOR,
-                len(raised),
             )
             gap_run.write_raised(after)
             return
@@ -336,8 +343,8 @@ class TaskScheduler:
         hypothesis = (
             "Draft a detection rule for each detection gap below that you judge "
             "real, check it with check_detection_candidate and save it with "
-            "save_detection_rule. Each gap is tracked as a proposal on the "
-            "Detections page and the rules you save attach to it; open no Case."
+            "save_detection_rule. Each gap is tracked as a detection proposal and "
+            "the rules you save attach to it; open no Case."
         )
         hypothesis += " New gaps, biggest first: " + "; ".join(
             g.line() for g in to_draft
