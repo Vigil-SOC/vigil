@@ -4897,6 +4897,14 @@
       min-width: 0;
    }
 
+   .lim-held-ctl {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+   }
+
    /* Under the Detection rules rows: where the SIEM thresholds are set */
    .lim-foot {
       margin: 10px 0 0;
@@ -5036,16 +5044,23 @@
       }
    }
 
-   /* A workflow row's false-close line needs the width; the choice sits under it. */
+   /* A workflow row's false-close line needs the width; the choice sits under it.
+      Held rows do the same so Release and Reject stay on screen. */
    @container main (max-width: 700px) {
-      .lim-row.lim-wf {
+      .lim-row.lim-wf,
+      .lim-row.lim-held {
          grid-template-columns: minmax(0, 1fr);
       }
 
-      .lim-row.lim-wf .lim-row-ctl {
+      .lim-row.lim-wf .lim-row-ctl,
+      .lim-row.lim-held .lim-row-ctl {
          grid-column: 1;
          grid-row: 3;
          justify-self: start;
+      }
+
+      .lim-row.lim-held .lim-held-ctl {
+         justify-content: flex-start;
       }
    }
 
@@ -5403,15 +5418,30 @@
       display: flex;
       align-items: center;
       gap: 9px;
+      min-width: 0;
       font-size: 12.5px;
       padding: 9px 12px;
       border-radius: var(--r-sm);
       border: 1px solid var(--line);
    }
 
+   .settings-banner > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+   }
+
    /* a wrapped message must not squeeze the icon */
    .settings-banner > svg {
       flex: none;
+   }
+
+   /* A multi-line stop keeps the icon on the first line. */
+   .settings-banner.lim-stopped {
+      align-items: flex-start;
+   }
+
+   .settings-banner.lim-stopped > span {
+      min-width: 0;
    }
 
    .settings-banner.ok {
@@ -5569,6 +5599,25 @@
    .sso-map-n {
       font-size: 12px;
       text-align: center;
+   }
+
+   .sso-map-sync {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--tx-3);
+   }
+
+   .sso-map-sync .drop {
+      flex: 1 1 140px;
+      min-width: 0;
+   }
+
+   .sso-map-sync .field-select > span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
    }
 
    .sso-require {

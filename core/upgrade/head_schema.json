@@ -314,6 +314,11 @@
   "nullable": true,
   "type": "jsonb"
  },
+ "column approval_actions.held": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
+ },
  "column approval_actions.idempotency_key": {
   "default": null,
   "nullable": true,

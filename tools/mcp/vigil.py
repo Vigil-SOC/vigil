@@ -1589,8 +1589,9 @@ def get_operator_agent(agent_id: str) -> str:
 @requires("ai_autonomy.read")
 def get_autonomy_ceiling() -> str:
     """Read the autonomy ceiling, as GET /api/v1/autonomy does: the stored act
-    flags, the effective read/write/propose state, environment_locked, four_eyes
-    and each workflow's own tier. Read only."""
+    flags, who stopped it, the actions that stop is holding, the effective
+    read/write/propose state, environment_locked, four_eyes and each workflow's
+    own tier. Read only."""
     try:
         return jdump(ceiling_read())
     except Exception as e:

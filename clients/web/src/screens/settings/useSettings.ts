@@ -650,6 +650,25 @@ export function useCeiling() {
     }
   }, [refresh])
   const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
+  const releaseHeld = useCallback(
+    async (actionId: string) => {
+      try {
+        return apply((await autonomyApi.releaseHeld(actionId)).data)
+      } catch (err) {
+        refresh()
+        throw err
+      }
+    },
+    [apply, refresh],
+  )
+  const releaseAllHeld = useCallback(async () => {
+    try {
+      return apply((await autonomyApi.releaseAllHeld()).data)
+    } catch (err) {
+      refresh()
+      throw err
+    }
+  }, [apply, refresh])
   const setWorkflow = useCallback(
     async (id: string, body: Schema<'WorkflowAutonomyBody'>) => {
       try {
@@ -662,7 +681,7 @@ export function useCeiling() {
     [apply, refresh],
   )
 
-  return { ceiling, phase, save, stop, resume, refresh, setWorkflow }
+  return { ceiling, phase, save, stop, resume, refresh, setWorkflow, releaseHeld, releaseAllHeld }
 }
 
 export interface InvestigateWorkflow {

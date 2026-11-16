@@ -8,7 +8,8 @@ joinable surface that links workflow phase approvals back to the run
 they paused.
 
 Public API (``create_action``, ``approve_action``, ``reject_action``,
-``mark_executed``, ``mark_failed``, ``list_actions``, ``get_action``)
+``release_action``, ``mark_executed``, ``mark_failed``, ``list_actions``,
+``get_action``)
 is intentionally preserved so ``daemon/orchestrator.py`` (and any
 other existing callers) keep working.
 """
@@ -20,12 +21,17 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from opentelemetry.metrics import Observation
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.cases import case_trail
 from core.cases.case_status import CLOSED
-from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, environment_locks_act
+from core.response.ceiling import (
+    IRREVERSIBLE,
+    REVERSIBLE,
+    environment_locks_act,
+    locked_flags,
+)
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -46,6 +52,8 @@ _pending_gauge: Any = None
 # Action types something executes once approved (AutonomousResponseService). A
 # pending row of any other type, outside a run or checkpoint, is a recommendation.
 EXECUTABLE_ACTION_TYPES = frozenset({"waf_block", "gateway_block", "access_revoke"})
+# What a stop holds: the rows execute_approved_actions would run.
+HELD_ACTION_TYPES = EXECUTABLE_ACTION_TYPES | frozenset({"isolate_host"})
 # Rollout acts on these once approved (rollout_approval), not the executor above.
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
 
@@ -69,6 +77,14 @@ FOUR_EYES_REFUSAL = (
 
 class ActionNotFound(LookupError):
     """No such action, or one on a restricted case the caller can't read (#4359)."""
+
+
+class NotHeld(Exception):
+    """The row is not an approved action a stop is holding."""
+
+    def __init__(self, action_id: str):
+        super().__init__(f"Action {action_id} is not held")
+        self.action_id = action_id
 
 
 class FourEyesRefused(Exception):
@@ -176,6 +192,8 @@ class PendingAction:
     # "reversible" or "irreversible": the console's undo fuse reads it.
     reversibility: str = REVERSIBLE
     idempotency_key: Optional[str] = None
+    # Set while a stop holds this approved outside action.
+    held: bool = False
     # Set at read (#4359): a placeholder for a non-reader, or why it waits.
     restricted: bool = False
     waiting: Optional[str] = None
@@ -257,6 +275,7 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         workflow_phase_id=row.workflow_phase_id,
         reversibility=row.reversibility or REVERSIBLE,
         idempotency_key=row.idempotency_key,
+        held=bool(row.held),
     )
 
 
@@ -513,6 +532,7 @@ class ApprovalService:
         action_type: Optional[ActionType] = None,
         requires_approval: Optional[bool] = None,
         workflow_run_id: Optional[str] = None,
+        held: Optional[bool] = None,
         limit: int = 500,
     ) -> List[PendingAction]:
         """List actions with optional filters, newest first."""
@@ -534,6 +554,8 @@ class ApprovalService:
                     stmt = stmt.where(
                         ApprovalActionRow.workflow_run_id == workflow_run_id
                     )
+                if held is not None:
+                    stmt = stmt.where(ApprovalActionRow.held.is_(held))
                 stmt = stmt.order_by(ApprovalActionRow.created_at.desc()).limit(limit)
                 rows = session.execute(stmt).scalars().all()
                 return [_row_to_pending(r) for r in rows]
@@ -575,17 +597,17 @@ class ApprovalService:
 
         With the ceiling's ``four_eyes`` on, raises ``FourEyesRefused`` when the
         approver created the action or is the person its run acted for. Checked
-        here, at approve time, so rows already pending are covered.
+        here, at approve time, so rows already pending are covered. An approval
+        while stopped holds an outside action the executor runs.
         """
-        from core.response.ceiling import read_ceiling
-
-        four_eyes = read_ceiling().four_eyes
         try:
             db = get_db_manager()
             decided: Optional[str] = None
             refused = False
             pending: Optional[PendingAction] = None
             with db.session_scope() as session:
+                # Ceiling first, then the action row: stop locks them in that order.
+                stopped, four_eyes = locked_flags(session)
                 row = session.get(ApprovalActionRow, action_id, with_for_update=True)
                 if row is None:
                     logger.warning("Action %s not found", action_id)
@@ -609,6 +631,8 @@ class ApprovalService:
                         if approved_by_principal_id is not None
                         else ("system" if approved_by == "system" else None)
                     )
+                    if stopped and row.action_type in HELD_ACTION_TYPES:
+                        row.held = True
                     session.flush()
                     case_trail.append_approval(
                         session,
@@ -643,7 +667,10 @@ class ApprovalService:
         rejected_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Reject a pending action. Raises ``AlreadyDecided`` if it is not pending."""
+        """Reject a pending action, or an approved one a stop is holding.
+
+        Raises ``AlreadyDecided`` when the row is neither.
+        """
         try:
             db = get_db_manager()
             decided: Optional[str] = None
@@ -654,7 +681,8 @@ class ApprovalService:
                     logger.warning("Action %s not found", action_id)
                     return None
                 _refuse_unreadable(row)
-                if row.status != ActionStatus.PENDING.value:
+                held_approved = row.status == ActionStatus.APPROVED.value and row.held
+                if row.status != ActionStatus.PENDING.value and not held_approved:
                     decided = row.status
                 else:
                     row.status = ActionStatus.REJECTED.value
@@ -693,6 +721,82 @@ class ApprovalService:
         except SQLAlchemyError as e:
             logger.error("DB error rejecting action %s: %s", action_id, e)
             return None
+
+    def release_action(
+        self,
+        action_id: str,
+        released_by: str,
+        principal_id: Optional[str] = None,
+    ) -> Optional[PendingAction]:
+        """Clear the stop's hold. The row stays approved. Raises ``NotHeld``.
+
+        The next executor pass runs it, unless autonomy is still stopped.
+        """
+        db = get_db_manager()
+        not_held = False
+        pending: Optional[PendingAction] = None
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None:
+                logger.warning("Action %s not found", action_id)
+                return None
+            _refuse_unreadable(row)
+            if row.status != ActionStatus.APPROVED.value or not row.held:
+                not_held = True
+            else:
+                row.held = False
+                session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.RELEASE,
+                    principal_id=_release_actor(principal_id, released_by),
+                    action_id=action_id,
+                    username=released_by,
+                )
+                pending = _row_to_pending(row)
+        if not_held:
+            raise NotHeld(action_id)
+        logger.info("Action %s released by %s", action_id, released_by)
+        return pending
+
+    def release_held(
+        self, released_by: str, principal_id: Optional[str] = None
+    ) -> List[PendingAction]:
+        """Clear the hold on every held row this caller may decide.
+
+        One trail entry per row. A row on a restricted case they can't read
+        stays held.
+        """
+        db = get_db_manager()
+        released: List[PendingAction] = []
+        actor = _release_actor(principal_id, released_by)
+        with db.session_scope() as session:
+            rows = (
+                session.execute(
+                    select(ApprovalActionRow)
+                    .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
+                    .where(ApprovalActionRow.held.is_(True))
+                    .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                    .order_by(ApprovalActionRow.created_at.asc())
+                    .with_for_update()
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                if not may_decide(_row_to_pending(row)):
+                    continue
+                row.held = False
+                session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.RELEASE,
+                    principal_id=actor,
+                    action_id=row.action_id,
+                    username=released_by,
+                )
+                released.append(_row_to_pending(row))
+        return released
 
     def mark_executed(
         self,
@@ -834,6 +938,66 @@ class ApprovalService:
                 row.parameters = params
                 session.flush()
             return _row_to_pending(row)
+
+
+def _release_actor(principal_id: Optional[str], username: str) -> Optional[str]:
+    if principal_id is not None:
+        return principal_id
+    return "system" if username == "system" else None
+
+
+def stamp_held_approvals(session) -> None:
+    """Mark approved executor rows held, in the caller's transaction."""
+    session.execute(
+        update(ApprovalActionRow)
+        .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
+        .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+        .values(held=True)
+    )
+
+
+def held_for_ceiling() -> List[dict]:
+    """Approved outside actions a stop is still holding, as the ceiling read shows them."""
+    db = get_db_manager()
+    with db.session_scope() as session:
+        rows = (
+            session.execute(
+                select(ApprovalActionRow)
+                .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
+                .where(ApprovalActionRow.held.is_(True))
+                .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                .order_by(
+                    ApprovalActionRow.approved_at.asc().nulls_last(),
+                    ApprovalActionRow.created_at.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        actions = [_row_to_pending(row) for row in rows]
+    return [_held_payload(action) for action in screen_actions(actions)]
+
+
+def _held_payload(action: PendingAction) -> dict:
+    if action.restricted:
+        return {
+            "action_id": action.action_id,
+            "action_type": "",
+            "title": action.title,
+            "target": "",
+            "approved_by": None,
+            "approved_at": None,
+            "restricted": True,
+        }
+    return {
+        "action_id": action.action_id,
+        "action_type": action.action_type,
+        "title": action.title,
+        "target": action.target,
+        "approved_by": action.approved_by,
+        "approved_at": action.approved_at,
+        "restricted": False,
+    }
 
 
 def _trail_refusal(session, action_id: str, approver: str) -> None:
@@ -1102,6 +1266,7 @@ def _placeholder(action: PendingAction) -> PendingAction:
         approved_at=action.approved_at,
         parameters={},
         reversibility=action.reversibility,
+        held=action.held,
         restricted=True,
     )
 
