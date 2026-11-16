@@ -105,6 +105,7 @@ class ApprovalActionSchema(ORMSchema):
     created_by: Optional[str] = None
     requires_approval: CoercedBool = False
     status: Optional[str] = None
+    held: bool = False
     approved_at: OptDateTime = None
     approved_by: Optional[str] = None
     executed_at: OptDateTime = None
