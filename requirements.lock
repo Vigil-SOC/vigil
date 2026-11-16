@@ -176,7 +176,7 @@ numpy==2.5.3
     # via -r requirements.txt
 openai==3.3.1
     # via -r requirements.txt
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
     # via
     #   -r requirements.txt
     #   fastapi
@@ -209,29 +209,29 @@ opentelemetry-exporter-otlp-proto-http==1.45.1
     # via -r requirements.txt
 opentelemetry-exporter-prometheus==0.66b1
     # via -r requirements.txt
-opentelemetry-instrumentation==0.66b1
+opentelemetry-instrumentation==0.66b2
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-instrumentation-logging
     #   opentelemetry-instrumentation-redis
     #   opentelemetry-instrumentation-sqlalchemy
-opentelemetry-instrumentation-asgi==0.66b1
+opentelemetry-instrumentation-asgi==0.66b2
     # via opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-fastapi==0.66b1
+opentelemetry-instrumentation-fastapi==0.66b2
     # via -r requirements.txt
-opentelemetry-instrumentation-logging==0.66b1
+opentelemetry-instrumentation-logging==0.66b2
     # via -r requirements.txt
-opentelemetry-instrumentation-redis==0.66b1
+opentelemetry-instrumentation-redis==0.66b2
     # via -r requirements.txt
-opentelemetry-instrumentation-sqlalchemy==0.66b1
+opentelemetry-instrumentation-sqlalchemy==0.66b2
     # via -r requirements.txt
 opentelemetry-proto==1.45.1
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-sdk==1.45.1
+opentelemetry-sdk==1.45.2
     # via
     #   -r requirements.txt
     #   opentelemetry-exporter-otlp-common
@@ -239,7 +239,7 @@ opentelemetry-sdk==1.45.1
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-exporter-prometheus
     #   opentelemetry-semantic-conventions-ai
-opentelemetry-semantic-conventions==0.66b1
+opentelemetry-semantic-conventions==0.66b2
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
@@ -251,7 +251,7 @@ opentelemetry-semantic-conventions==0.66b1
     #   opentelemetry-semantic-conventions-ai
 opentelemetry-semantic-conventions-ai==0.5.1
     # via -r requirements.txt
-opentelemetry-util-http==0.66b1
+opentelemetry-util-http==0.66b2
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
@@ -325,7 +325,7 @@ pytest==9.1.1
     #   -r requirements.txt
     #   pytest-asyncio
     #   pytest-cov
-pytest-asyncio==1.4.0
+pytest-asyncio==1.5.0
     # via -r requirements.txt
 pytest-cov==7.1.0
     # via -r requirements.txt
@@ -426,6 +426,7 @@ typing-extensions==4.16.0
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
+    #   pyopenssl
     #   pytest-asyncio
     #   referencing
     #   sqlalchemy
