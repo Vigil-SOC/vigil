@@ -188,3 +188,16 @@ A run whose principal names it and is still live is left alone and resumes after
 ## Restricted cases and restores
 
 A restricted case's reader list is part of the case row, so a restore brings back the list as it was when the backup was taken. **Restoring a backup taken before a case was restricted reopens that case** to everyone who can read cases. Revisions run forward only (`core/upgrade/__init__.py`), so this holds for Vigil's restore and for a Helm rollback from your own backup alike. After a restore, restrict again any case that must stay restricted; the audit trail's `case.restrict` entries name them.
+
+## What teams add to the case API
+
+Teams (1.1.2, epic #4306) keep the case API's routes and tools and add two refusals to them. Nothing is migrated, and a caller that sets no owner and merges within one team sees no change.
+
+**A newly set owner must hold `cases.write` and be on the case's team.** `PATCH /api/v1/cases/{id}` and the frozen `create_case` and `update_case` tools (the agent tools and the MCP ones) check the owner a save newly gives the case. The checks run in this order:
+
+1. No such user, or a user without `cases.write`: 400 `OWNER_CANNOT_WRITE`.
+2. Not a current member of the case's team: 400 `OWNER_OFF_TEAM`. An inactive person whose membership row is still there is not current. The message names `POST /api/v1/cases/{id}/move` and the `move_case` tool, which can carry the owner.
+
+The tools answer `{"error", "code"}` with the same codes instead of an HTTP status. `create_case` judges the default team, and its `OWNER_OFF_TEAM` message holds the literal `{case_id}`, as the case does not exist yet; the route to use is `POST /api/v1/cases/{id}/move` with the real id. Saving the stored owner again, and clearing it, are not checked. `OWNER_CANNOT_WRITE` applies from the upgrade, while everyone is on the default team. `OWNER_OFF_TEAM` applies only once an admin splits teams.
+
+**A cross-team merge needs the source team or `cases.move`.** `POST /api/v1/cases/{id}/merge` (`{id}` is the target; the body's `source_case_id` is the source) is checked only when the two cases are on different teams: the caller must be a member of the source case's team or hold `cases.move`, or the answer is 403 with `Permission denied: cases.move required`. A merge between two cases on one team is unchanged. There is no frozen MCP merge tool. This applies only once teams are split.
