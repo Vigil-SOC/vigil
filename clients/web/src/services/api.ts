@@ -1138,6 +1138,97 @@ export interface RuleStageChange {
   hold: boolean
 }
 
+/** One stored check on a rule version, as the sync and sweeps wrote it. */
+export interface RuleCheck {
+  result?: 'pass' | 'fail' | 'unknown' | string
+  reason?: string | null
+  checked_at?: string
+  [key: string]: unknown
+}
+
+/** GET /detection-rules/rules/{id}: one listed rule copy with its query and stored checks. */
+export interface RuleDetail {
+  rule_id: number
+  title: string
+  /** The copy's language: splunk, elastic, wazuh or sigma. */
+  source: string
+  /** 'overlay' for Vigil's own rules. */
+  tool: string
+  version: number
+  description: string
+  query: string
+  checks: Record<string, RuleCheck | undefined>
+  stage: 'shadow' | 'live' | 'off' | null
+  /** Oldest first, each with the proof the move was made on. */
+  stages: { version: number; stage: 'shadow' | 'live' | 'off'; proof: Record<string, unknown>; actor: string; reason: string; at: string }[]
+}
+
+/** The gap a gaps-run proposal answers, as the run recorded it. */
+export interface ProposalGap {
+  kind: 'missed' | 'paper' | 'intel' | 'blind'
+  technique: string
+  count: number
+  confirmed: number
+  /** Missed runs by key: "hunt:<id>", "case:<id>". */
+  runs: string[]
+  /** Alerts on a paper-only technique, by finding id. */
+  alerts: string[]
+  /** The intrusion sets and reports that name an intel gap's technique. */
+  sources: string[]
+  /** How many of its Cases this reader can't read. */
+  runs_withheld?: number
+  /** Its alerts are hidden: the reader can't read findings. */
+  alerts_withheld?: boolean
+}
+
+/** One detection proposal as GET /detection-engineering/proposals lists it. */
+export interface ProposalRow {
+  proposal_id: string
+  title: string
+  technique: string | null
+  case_id: string | null
+  state: string
+  origin: { source?: string; rollout?: string; gap?: ProposalGap; [key: string]: unknown }
+  created_by: string
+  created_at: string
+  updated_at: string
+  /** The run the proposal was handed to, and the rule copies attached to it. */
+  run_id: string | null
+  rule_ids: number[]
+  /** The copy its stages follow: a SIEM's, else the Sigma form. */
+  rule_id: number | null
+  /** Its run's status: running, paused, completed, failed or cancelled. */
+  run_status: string | null
+}
+
+export interface ProposalEvent {
+  id: number
+  from_state: string | null
+  to_state: string
+  actor: string
+  actor_kind: string
+  reason: string
+  at: string
+  evidence: { step?: string; run_id?: string; rule_ids?: number[]; [key: string]: unknown }
+}
+
+/** GET /detection-engineering/proposals/{id}: the proposal with its text, copies and events. */
+export interface Proposal extends ProposalRow {
+  sigma: string
+  copies: Record<string, string>
+  events: ProposalEvent[]
+  /** The attached copies' stage rows, oldest first; kept after a copy is removed. */
+  stages: { rule_id: number; version: number; stage: 'shadow' | 'live' | 'off'; actor: string; reason: string; at: string }[]
+}
+
+/** Detection proposals: rules Vigil or a person drafted, with every step on the record. */
+export const detectionEngineeringApi = {
+  /** Newest first. */
+  proposals: () => api.get<{ proposals: ProposalRow[] }>('/detection-engineering/proposals'),
+
+  proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
+}
+
 /** The signed-in person's notices and live conditions (the bell's second source). */
 export const noticesApi = {
   list: () => api.get<Notices>('/notices'),
@@ -1163,6 +1254,13 @@ export const detectionRulesApi = {
   /** Moves a live rule to shadow and holds it there until a person releases it. */
   revertRule: (ruleId: number, reason: string) =>
     api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/revert`, { reason }),
+
+  /** One rule copy: its latest version's query, description and stored checks. */
+  rule: (ruleId: number) => api.get<RuleDetail>(`/detection-rules/rules/${ruleId}`),
+
+  /** Switches a shadow rule off and holds it there; a signed-in person only. */
+  switchOffRule: (ruleId: number, reason: string) =>
+    api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/switch-off`, { reason }),
 
   /** Lifts a person's hold: the normal rollout applies to the rule again. */
   releaseRule: (ruleId: number, reason: string) =>
