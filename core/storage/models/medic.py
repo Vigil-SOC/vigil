@@ -111,9 +111,12 @@ class MedicWatchState(Base):
 
 
 class MedicIncidentNotice(Base):
-    """One sent incident event: opened, cleared or summary (#4366).
+    """One sent incident event (#4366, #4421).
 
-    Unique on incident, reopen count and event. Written with the bell rows.
+    ``opened``, ``cleared`` and ``summary`` are the #4338 rows. A fix Medic can
+    run uses ``fix_open``, ``fix_not_held``, ``fix_not_back`` and ``fix_fixed``,
+    so those rows are not read as already told. Unique on incident, reopen
+    count and event. Written with the bell rows.
     """
 
     __tablename__ = "medic_incident_notice"
@@ -124,7 +127,10 @@ class MedicIncidentNotice(Base):
         ),
         CheckConstraint("reopen_count >= 0", name="medic_incident_notice_reopen"),
         CheckConstraint(
-            "event IN ('opened', 'cleared', 'summary')",
+            "event IN ("
+            "'opened', 'cleared', 'summary', "
+            "'fix_open', 'fix_not_held', 'fix_not_back', 'fix_fixed'"
+            ")",
             name="medic_incident_notice_event",
         ),
         CheckConstraint(
