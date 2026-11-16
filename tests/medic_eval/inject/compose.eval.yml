@@ -37,8 +37,14 @@ services:
     restart: "no"
 
   # Medic: images are the ones enable-compose.sh builds (vigil-medic*:local).
+  # DEV_MODE here is Medic's, not the backend's. Unset stays off, so Medic keeps
+  # the bundled pack and the API sensors. The hang cells set MEDIC_EVAL_SOURCE_PACK
+  # so Medic loads the source pack: the release has not bundled this rule yet.
+  # daemon_health reads the daemon's port, so it still runs with the API sensors off.
   medic:
     container_name: !reset null
+    environment:
+      DEV_MODE: ${MEDIC_EVAL_SOURCE_PACK:-false}
   medic-gateway:
     container_name: !reset null
   medic-dockerproxy:
@@ -57,6 +63,7 @@ services:
       # Empty is the I-5.a fault: the daemon then refuses every push with 503.
       DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
       # sitecustomize.py (below): SIGUSR1 fails the scheduler task (P-3.a).
+      # SIGUSR2 stalls that loop without failing the task (P-3.d).
       PYTHONPATH: /app:/eval-site
     volumes:
       - ${MEDIC_EVAL_SITE:?}:/eval-site/sitecustomize.py:ro
