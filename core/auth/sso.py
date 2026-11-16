@@ -43,11 +43,12 @@ ASYMMETRIC = [
     "ES256", "ES384", "ES512", "EdDSA",
 ]  # fmt: skip
 
-# The login page's three messages (decision 7).
+# The login page's messages (decision 7, plus a directory-sync refusal, #4423).
 FAILED = "failed"
 DEACTIVATED = "deactivated"
 EMAIL_NOT_VERIFIED = "email_not_verified"
-CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED)
+NOT_PROVISIONED = "not_provisioned"
+CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED)
 
 
 class Refused(Exception):
@@ -294,6 +295,19 @@ def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:
     return (
         session.query(SsoLink)
         .filter(SsoLink.issuer == issuer, SsoLink.subject == subject)
+        .first()
+    )
+
+
+def linked_by_directory(
+    session: Session, issuer: str, directory_id: str
+) -> Optional[SsoLink]:
+    """The link whose externalId is ``directory_id`` at this issuer."""
+    if not directory_id:
+        return None
+    return (
+        session.query(SsoLink)
+        .filter(SsoLink.issuer == issuer, SsoLink.directory_id == directory_id)
         .first()
     )
 

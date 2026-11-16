@@ -74,6 +74,8 @@ CATALOG = {
         "teams.manage": _NEW_CAPABILITY,
         "sessions.manage": _NEW_CAPABILITY,
         "ai_decisions.read": _SIGNED_IN_READ,
+        # Held only by the directory-sync account, on no built-in role (#4423).
+        "directory.sync": _NEW_CAPABILITY,
     },
     "builtins": {
         "role-admin": {

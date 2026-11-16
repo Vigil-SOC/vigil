@@ -233,6 +233,12 @@ key_age.register()
 register_medic_notices()
 app.add_middleware(CSRFMiddleware)
 
+# A 401 on /scim/ never reaches the handler. The note counts it and does not
+# read the body or the Authorization header (#4423).
+from services.api.middleware.scim_auth import ScimAuthNoteMiddleware  # noqa: E402
+
+app.add_middleware(ScimAuthNoteMiddleware)
+
 # Security headers added AFTER CORS so it is the outermost middleware on the
 # response path. That way HSTS/CSP/X-Frame-Options apply to CORS preflight
 # responses too (CORSMiddleware short-circuits OPTIONS without calling inner
@@ -1021,6 +1027,7 @@ _SERVED_BY_THE_BACKEND = (
     "/api",
     "/internal",
     "/mcp",
+    "/scim",
     "/assets",
     "/metrics",
     "/docs",

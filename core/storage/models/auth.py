@@ -167,6 +167,12 @@ class SsoLink(Base):
     )
     issuer: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str] = mapped_column(Text, nullable=False)
+    # The provider's externalId. Nullable until a sign-in or a push records it.
+    # Unique per issuer when set. ``managed`` is set by a push, not by sign-in.
+    directory_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    managed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
@@ -174,6 +180,13 @@ class SsoLink(Base):
     __table_args__ = (
         Index("idx_sso_links_principal", "principal_id"),
         Index("uq_sso_links_subject", "issuer", "subject", unique=True),
+        Index(
+            "uq_sso_links_directory",
+            "issuer",
+            "directory_id",
+            unique=True,
+            postgresql_where=text("directory_id IS NOT NULL"),
+        ),
     )
 
 
@@ -270,6 +283,14 @@ class User(Base):
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Why the account is inactive, written only by deactivate_account and cleared
+    # on reactivate. Null on rows deactivated before this existed, and that is
+    # not a sync deactivation. scim_version is the If-Match token for a push.
+    deactivation_route: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    scim_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
 
     # MFA
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
