@@ -532,7 +532,6 @@ class CaseSpec:
     finding_ids: List[str]
     priority: str
     case_id: Optional[str] = None
-    mitre_techniques: Optional[List[str]] = None
 
 
 def _new_case_id() -> str:
@@ -609,7 +608,6 @@ def _mint_case(session, spec: CaseSpec) -> str:
         status="open",
         priority=spec.priority,
         timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
-        mitre_techniques=spec.mitre_techniques or None,
         finding_ids=spec.finding_ids,
     )
     return case.case_id
@@ -1118,8 +1116,10 @@ class Orchestrator:
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
             else:
-                # Only the daily gaps run hands a run its gap proposals.
+                # Only the daily gaps run hands a run its gap proposals, and only it
+                # runs with no Case.
                 item.pop("gap_proposal_ids", None)
+                item.pop("no_case", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1183,13 +1183,13 @@ class Orchestrator:
         findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
-        if not case_id:
+        # The daily gaps run keeps its record on the run and its detection
+        # proposals; every other intake with no case_id gets a Case of its own.
+        if not case_id and not item.get("no_case"):
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
                 finding_ids=list(finding_ids),
                 priority=item.get("priority") or "medium",
-                # The daily gaps run names the techniques its Case is about.
-                mitre_techniques=list(item.get("case_techniques") or []) or None,
             )
 
         await self._create_investigation(
