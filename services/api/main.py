@@ -722,6 +722,11 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
+    # Cancelling the task cannot stop the thread a sweep runs in; this does, at
+    # the next skill, so shutdown is not held for the rest of a long sweep.
+    from core.skills import skill_hold
+
+    skill_hold.cancel.set()
     for name in (
         "key_ring_task",
         "key_age_task",

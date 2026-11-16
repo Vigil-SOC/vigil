@@ -34,6 +34,7 @@ _HELD_BECAUSE = {
     "pending": "is waiting for its security scan",
     "failed": "could not be security scanned",
     "flagged": "was flagged by its security scan and is not approved",
+    "refused": "contains a symlink and is never run",
 }
 
 

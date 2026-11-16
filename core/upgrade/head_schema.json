@@ -4124,7 +4124,7 @@
  "column skill_scans.approved_at": {
   "default": null,
   "nullable": true,
-  "type": "timestamp with time zone"
+  "type": "timestamp without time zone"
  },
  "column skill_scans.approved_by": {
   "default": null,
@@ -4157,9 +4157,9 @@
   "type": "text"
  },
  "column skill_scans.scanned_at": {
-  "default": "now()",
+  "default": "(now() AT TIME ZONE 'utc'::text)",
   "nullable": false,
-  "type": "timestamp with time zone"
+  "type": "timestamp without time zone"
  },
  "column skill_scans.scanner_version": {
   "default": null,

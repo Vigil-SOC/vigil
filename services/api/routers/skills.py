@@ -6,6 +6,7 @@ operator root (``VIGIL_SKILLS_PATH``, else ``~/.vigil/skills``); see
 bundled library is never modified.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -65,8 +66,9 @@ ROUTER_META = RouterMeta(
 
 
 class SkillScanSummary(BaseModel):
-    # bundled | unchecked | pending | failed | safe | flagged | approved. Only
-    # bundled, unchecked, safe and approved skills reach agents; the rest are held.
+    # bundled | unchecked | pending | failed | safe | flagged | approved | refused.
+    # Only bundled, unchecked, safe and approved skills reach agents; the rest are
+    # held. refused: the folder contains a symlink, which is never allowed.
     state: str
     held: bool
     recommendation: Optional[str] = None  # SAFE | CAUTION | DO_NOT_INSTALL
@@ -255,7 +257,7 @@ async def list_skills():
     """Every valid skill under the configured roots, bundled library first."""
     usage = _usage_by_skill()
     skills = load_skills(skill_roots())
-    states = scan_states(skills)
+    states = await asyncio.to_thread(scan_states, skills)
     return [_response(skill, states[skill.name], usage) for skill in skills]
 
 
@@ -271,7 +273,7 @@ async def get_skill(name: str):
     except OSError as exc:
         logger.warning("could not read skill %s: %s", name, exc)
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
-    state = _state_of(skill)
+    state = await asyncio.to_thread(_state_of, skill)
     listed = _response(skill, state, _usage_by_skill())
     return SkillDetail(
         **listed.model_dump(exclude={"scan"}),
@@ -324,7 +326,7 @@ async def save_skill(req: SkillWriteRequest):
     except SkillError as exc:
         raise _http(exc) from exc
     skill_sweep.request()
-    return _response(skill, _state_of(skill))
+    return _response(skill, await asyncio.to_thread(_state_of, skill))
 
 
 @router.post("/upload", response_model=SkillUploadResponse, dependencies=_SKILLS_WRITE)
@@ -342,7 +344,7 @@ async def upload_skill(file: UploadFile = File(...)):
     except SkillError as exc:
         raise _http(exc) from exc
     skill_sweep.request()
-    states = scan_states(installed)
+    states = await asyncio.to_thread(scan_states, installed)
     skills = [_response(s, states[s.name]) for s in installed]
     return SkillUploadResponse(
         **skills[0].model_dump(),
@@ -401,6 +403,15 @@ async def test_skill(name: str):
         skill = _loaded(name)
     except SkillError as exc:
         raise _http(exc) from exc
+
+    # Running a held skill would put its content in front of a model, which is
+    # what the hold exists to prevent.
+    state = await asyncio.to_thread(_state_of, skill)
+    if not state.allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Skill {name!r} is held ({state.state}) and cannot be tested until it is released.",
+        )
 
     try:
         cases = load_cases(skill) if has_cases(skill) else []

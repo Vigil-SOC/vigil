@@ -820,7 +820,7 @@ class WorkflowsService:
             }
 
         try:
-            operator = operator_request(workflow.metadata)
+            operator = await asyncio.to_thread(operator_request, workflow.metadata)
         except SkillHeld as exc:
             run_service.finalize_run(run_id, status="failed", error=str(exc))
             note_terminal(run_id, "failed", "")

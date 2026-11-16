@@ -40,6 +40,8 @@ def request() -> None:
 async def run() -> None:
     global _wake
     _wake = asyncio.Event()
+    # A previous shutdown in this process leaves it set (tests start the app twice).
+    skill_hold.cancel.clear()
     await asyncio.sleep(FIRST_SWEEP_SECONDS)
     while True:
         _wake.clear()

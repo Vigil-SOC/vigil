@@ -15,6 +15,7 @@ States, for the folder as it is now:
 - ``safe``      the scan said SAFE: allowed
 - ``flagged``   CAUTION or DO_NOT_INSTALL and nobody approved it: held
 - ``approved``  a person released this digest: allowed
+- ``refused``   the folder contains a symlink: held, never scanned, never approvable
 
 ``load_skills`` runs on every chat message, so ``agent_skills`` makes one query
 and digests are cached against file sizes and modification times.
@@ -53,12 +54,17 @@ FAILED = "failed"
 SAFE = "safe"
 FLAGGED = "flagged"
 APPROVED = "approved"
+REFUSED = "refused"
 
 ALLOWED = frozenset({BUNDLED, UNCHECKED, SAFE, APPROVED})
 
 # A failed scan is tried again after this long, so a scanner that was down or a
 # skill that timed out is not hammered every sweep.
 RETRY_FAILED_AFTER = timedelta(hours=1)
+
+# Set at shutdown so a sweep stops between skills instead of scanning on, which
+# would hold the process open for the rest of the folder.
+cancel = threading.Event()
 
 
 @dataclass(frozen=True)
@@ -84,10 +90,12 @@ def scanning_on(settings: Optional[Settings] = None) -> bool:
 
 
 # Digest cache: reading every file of every operator skill per chat message
-# would be wasteful. A file's relative path, size and mtime stand in for its
-# bytes; any edit moves at least one of them. The signature costs one stat per
-# file, the digest a full read, paid only after a change.
-_Signature = Tuple[Tuple[str, int, int], ...]
+# would be wasteful. A file's relative path, size, mtime, inode and ctime stand
+# in for its bytes. mtime alone can be put back by hand after an edit; ctime is
+# set by the kernel on every write or utime and cannot be, and the inode changes
+# when a file is replaced. The signature costs one stat per file, the digest a
+# full read, paid only after a change.
+_Signature = Tuple[Tuple[str, int, int, int, int], ...]
 _digests: Dict[str, Tuple[_Signature, str]] = {}
 _digests_lock = threading.Lock()
 
@@ -99,9 +107,30 @@ def _signature(folder: Path) -> _Signature:
             continue
         stat = path.stat()
         entries.append(
-            (path.relative_to(folder).as_posix(), stat.st_size, stat.st_mtime_ns)
+            (
+                path.relative_to(folder).as_posix(),
+                stat.st_size,
+                stat.st_mtime_ns,
+                stat.st_ino,
+                stat.st_ctime_ns,
+            )
         )
     return tuple(sorted(entries))
+
+
+REFUSED_REASON = "contains a symlink"
+
+
+def contains_symlink(folder: Path) -> bool:
+    """Whether the folder, or anything inside it at any depth, is a symlink.
+
+    The digest skips links but the loader and ``read_skill`` follow them, so a
+    link could swap what an agent reads without moving the digest. Such a folder
+    is refused outright rather than reasoned about.
+    """
+    if folder.is_symlink():
+        return True
+    return any(path.is_symlink() for path in folder.rglob("*"))
 
 
 def digest_of(folder: Path) -> str:
@@ -158,6 +187,9 @@ def scan_states(
             states[skill.name] = ScanState(UNCHECKED)
         else:
             try:
+                if contains_symlink(skill.path):
+                    states[skill.name] = ScanState(REFUSED, error=REFUSED_REASON)
+                    continue
                 digests[skill.name] = digest_of(skill.path)
             except OSError as exc:
                 logger.warning("skill %s could not be digested: %s", skill.name, exc)
@@ -186,12 +218,6 @@ def agent_skills(
     skills = load_skills(skill_roots(settings) if roots is None else roots)
     states = scan_states(skills, settings)
     return [s for s in skills if states[s.name].allowed]
-
-
-def allowed_skill_names(
-    roots: Optional[Iterable[Path]] = None, settings: Optional[Settings] = None
-) -> frozenset:
-    return frozenset(s.name for s in agent_skills(roots, settings))
 
 
 def _row_for(name: str, result) -> Dict[str, Any]:
@@ -251,7 +277,11 @@ def sweep(
         return 0
     digests = {}
     for skill in skills:
+        if cancel.is_set():
+            return 0
         try:
+            if contains_symlink(skill.path):
+                continue  # refused, not scanned: see scan_states
             digests[skill.name] = digest_of(skill.path)
         except OSError as exc:
             logger.warning("skill %s could not be digested: %s", skill.name, exc)
@@ -267,6 +297,8 @@ def sweep(
     now = utcnow()
     recorded = 0
     for skill in skills:
+        if cancel.is_set():
+            return recorded
         digest = digests.get(skill.name)
         if digest is None:
             continue

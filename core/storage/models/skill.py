@@ -55,13 +55,14 @@ class SkillScan(Base):
     )
     scanner_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Naive UTC, as everywhere else (core/time.py).
     scanned_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
+        DateTime(),
+        nullable=False,
+        server_default=text("(now() AT TIME ZONE 'utc')"),
     )
     approved_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    approved_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 
     __table_args__ = (
         CheckConstraint("status IN ('scanned', 'failed')", name="skill_scans_status"),

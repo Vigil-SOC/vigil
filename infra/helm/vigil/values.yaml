@@ -811,6 +811,12 @@ config:
   # Empty trusts the TCP peer. Set the ingress controller's pod CIDR when
   # ingress terminates TLS. "*" is ignored by the API.
   VIGIL_TRUSTED_PROXIES: ""
+  # Skill scanning, and so the hold on unscanned or flagged operator skills. The
+  # chart's configmap reaches the backend, llm-worker and daemon alike, so they
+  # agree on it: a process that thought scanning was off would hand held skills
+  # to its runs. The backend image carries the scanner at this path and the
+  # backend runs the scans. Set to "" to turn scanning off everywhere.
+  VIGIL_SKILL_SCANNER: "/opt/skillspector/bin/skillspector"
   # Include the context path under a subdirectory (e.g. https://example.com/vigil).
   VIGIL_FRONTEND_URL: ""
 
