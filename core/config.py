@@ -153,9 +153,10 @@ class Settings(BaseSettings):
     # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
     # The SkillSpector program that scans a skill folder (core.skills.skill_scan).
-    # The default is where the backend image installs it; empty turns scanning off.
-    # A path that does not exist reads as "scanner unavailable", never a crash.
-    vigil_skill_scanner: str = "/opt/skillspector/bin/skillspector"
+    # Empty, the default, turns scanning off; the backend image sets it to the
+    # copy it installs. A path that does not exist reads as "scanner
+    # unavailable", never a crash.
+    vigil_skill_scanner: str = ""
     # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
     # uses its bundled list of known-bad packages and sends nothing out.
     vigil_skill_scanner_osv: bool = False

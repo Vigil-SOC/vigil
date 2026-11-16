@@ -169,10 +169,13 @@ RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; f
 
 USER vigil
 
+# The image ships the skill scanner, so scanning is on here; elsewhere the
+# setting defaults to off (core/config.py).
 ENV HOME=/home/vigil \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
-    PORT=6987
+    PORT=6987 \
+    VIGIL_SKILL_SCANNER=/opt/skillspector/bin/skillspector
 
 EXPOSE 6987
 
