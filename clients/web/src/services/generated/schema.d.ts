@@ -7309,6 +7309,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/sync/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Pushes
+         * @description Pushes refused because their username or email is in use, oldest first.
+         */
+        get: operations["get_api_users_sync_pending"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/pending/{pending_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Pending Push
+         * @description Attach one waiting push to one existing person account. The provider's
+         *     next retry matches the link and takes the account over. The password stays.
+         */
+        post: operations["post_api_users_sync_pending_pending_id_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Sync Window
+         * @description How many accounts a window reactivation would bring back. Changes nothing.
+         */
+        get: operations["get_api_users_sync_window"];
+        put?: never;
+        /**
+         * Reactivate Sync Window
+         * @description Reactivate every account directory sync deactivated in the window. Other
+         *     routes stay deactivated, tokens stay revoked, nobody is sent a notice.
+         */
+        post: operations["post_api_users_sync_window"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/teams": {
         parameters: {
             query?: never;
@@ -7595,6 +7661,28 @@ export interface paths {
          *     tokens stay revoked. Restores the whole role, so a person's own act.
          */
         post: operations["post_api_users_user_id_reactivate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/remove-unused": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Unused Sync Account
+         * @description Remove an account a push created for the wrong person: its username and
+         *     email are freed, its link and pushed groups go, and it is deactivated. The
+         *     principal stays. The provider's next push creates a new account.
+         */
+        post: operations["post_api_users_user_id_remove-unused"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13156,6 +13244,11 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** LinkRequest */
+        LinkRequest: {
+            /** User Id */
+            user_id: string;
+        };
         /** ListStatus */
         ListStatus: {
             /** Imported Count */
@@ -13848,6 +13941,42 @@ export interface components {
             workflow_phase_id?: string | null;
             /** Workflow Run Id */
             workflow_run_id?: string | null;
+        };
+        /** PendingHolder */
+        PendingHolder: {
+            /** Full Name */
+            full_name?: string | null;
+            /** User Id */
+            user_id: string;
+            /** Username */
+            username: string;
+        };
+        /**
+         * PendingPush
+         * @description A pushed person whose username or email an existing account holds.
+         */
+        PendingPush: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email: string;
+            /** External Id */
+            external_id: string;
+            /** Holders */
+            holders: components["schemas"]["PendingHolder"][];
+            /** Pending Id */
+            pending_id: string;
+            /** Received At */
+            received_at: string;
+            /** Username */
+            username: string;
+        };
+        /** PendingPushes */
+        PendingPushes: {
+            /** Pending */
+            pending: components["schemas"]["PendingPush"][];
+            /** Sync Enabled */
+            sync_enabled: boolean;
         };
         /** PeriodIn */
         PeriodIn: {
@@ -15297,6 +15426,11 @@ export interface components {
             /** Mapping Note */
             mapping_note?: string | null;
             /**
+             * Pending Links
+             * @default 0
+             */
+            pending_links: number;
+            /**
              * Role Refusals
              * @default []
              */
@@ -15314,6 +15448,33 @@ export interface components {
             token?: string | null;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /** SyncWindow */
+        SyncWindow: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            until: string;
+        };
+        /** SyncWindowCount */
+        SyncWindowCount: {
+            /** Count */
+            count: number;
+            /** Skipped */
+            skipped: number;
+        };
+        /** SyncWindowResult */
+        SyncWindowResult: {
+            /** Reactivated */
+            reactivated: number;
+            /** Skipped */
+            skipped: number;
         };
         /**
          * TaskAdd
@@ -29099,6 +29260,143 @@ export interface operations {
             };
         };
     };
+    get_api_users_sync_pending: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPushes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_pending_pending_id_link: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                pending_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_sync_window: {
+        parameters: {
+            query: {
+                since: string;
+                until: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowCount"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_window: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncWindow"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_users_teams: {
         parameters: {
             query?: never;
@@ -29579,6 +29877,39 @@ export interface operations {
         };
     };
     post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_remove-unused": {
         parameters: {
             query?: never;
             header?: {
