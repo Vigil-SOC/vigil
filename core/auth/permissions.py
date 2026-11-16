@@ -210,6 +210,11 @@ CATALOG = {
 KNOWN_PERMISSIONS = frozenset(CATALOG["permissions"]) | frozenset(
     CATALOG["builtins"]["role-admin"]
 )
+# A new capability goes to the built-ins only. Read from the catalog's origin,
+# so a later permission with that origin joins this set on its own.
+NEW_CAPABILITIES = frozenset(
+    name for name, origin in CATALOG["permissions"].items() if origin == _NEW_CAPABILITY
+)
 # Platform-equivalent: installing integration code runs code as Vigil. In no preset.
 PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
 

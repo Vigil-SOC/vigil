@@ -1012,6 +1012,7 @@ function RolesCard({
 
   const viewing = dialog?.mode === 'view' ? dialog.role : null
   const platformEquivalent = new Set(meta.platform_equivalent)
+  const personOnly = new Set(meta.person_only)
 
   return (
     <SettingsCard
@@ -1031,6 +1032,15 @@ function RolesCard({
           <Icon name="alert" size={14} /> Nobody on this install can manage roles. On the host, run{' '}
           <code className="font-mono">python -m core.auth.recover_admin &lt;username&gt;</code>. If Require single sign-on is on
           and the provider is down, run <code className="font-mono">python -m core.auth.require_sso_off</code> to let passwords back in.
+        </div>
+      )}
+      {meta.new_permissions_unheld.length > 0 && (
+        <div className="settings-banner info items-start mb-3">
+          <Icon name="info" size={14} />
+          <span className="min-w-0">
+            New permissions no custom role holds yet:{' '}
+            <span className="font-mono">{meta.new_permissions_unheld.join(', ')}</span>
+          </span>
         </div>
       )}
       <div className="table-wrap">
@@ -1150,15 +1160,23 @@ function RolesCard({
           <div>
             <div className="field-label mb-1.5">Permissions</div>
             <div
-              className="grid grid-cols-2 gap-x-4 gap-y-2"
-              style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 10 }}
+              className="grid gap-x-4 gap-y-2"
+              style={{
+                maxHeight: 300,
+                overflowY: 'auto',
+                border: '1px solid var(--line)',
+                borderRadius: 6,
+                padding: 10,
+                // One column when the dialog is narrow, two once a name and its tag fit.
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+              }}
             >
               {byArea(meta.permissions).map(([area, keys]) => (
-                <div key={area} className="flex flex-col">
+                <div key={area} className="flex flex-col min-w-0">
                   {keys.map((k) => (
                     <label
                       key={k}
-                      className="flex flex-wrap items-center gap-2 py-0.5 text-xs"
+                      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-xs min-w-0"
                       style={{ cursor: viewing ? 'default' : 'pointer' }}
                     >
                       <input
@@ -1177,6 +1195,9 @@ function RolesCard({
                         <span className="text-tx-3 basis-full">not grantable</span>
                       )}
                       {platformEquivalent.has(k) && <span className="text-tx-3 whitespace-nowrap">platform-equivalent</span>}
+                      {personOnly.has(k) && !!form.permissions[k] && (
+                        <span className="text-tx-3">no effect for a service account</span>
+                      )}
                     </label>
                   ))}
                 </div>

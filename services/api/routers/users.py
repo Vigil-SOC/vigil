@@ -56,6 +56,7 @@ from core.auth.password_validator import USERS_LINK
 from core.auth.permissions import (
     CATALOG,
     KNOWN_PERMISSIONS,
+    NEW_CAPABILITIES,
     PLATFORM_EQUIVALENT,
     PRESETS,
     STEP_UP,
@@ -2405,6 +2406,8 @@ def list_roles(
             "presets": [{"key": key, **preset} for key, preset in PRESETS.items()],
             "permissions": sorted(KNOWN_PERMISSIONS),
             "platform_equivalent": sorted(PLATFORM_EQUIVALENT),
+            "person_only": sorted(PERSON_ONLY),
+            "new_permissions_unheld": _new_permissions_unheld(roles),
             "nobody_can_manage_roles": _role_managers(session) == 0,
         }
 
@@ -2414,6 +2417,25 @@ def list_roles(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list roles",
         )
+
+
+def _new_permissions_unheld(roles: list[Role]) -> list[str]:
+    """New-capability permissions no custom or legacy role holds.
+
+    Built-ins receive these by definition, so they never take one off the
+    list. A later catalog permission whose origin is a new capability appears
+    here with no other change.
+    """
+    held: set[str] = set()
+    for role in roles:
+        if role.role_id in CATALOG["builtins"]:
+            continue
+        for key, value in (role.permissions or {}).items():
+            if value is True:
+                held.add(key)
+    # directory.sync is a new capability no custom role may hold, so it is
+    # not a gap an admin can close.
+    return sorted(NEW_CAPABILITIES - held - {directory_sync.PERMISSION})
 
 
 def _role_entry(role: Role, holders: int) -> dict:
