@@ -17,8 +17,10 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -39,6 +41,11 @@ STATUS_FAILED = "failed"
 
 # Findings quote the matched code, which can be long.
 _MESSAGE_MAX = 300
+
+# A report is small; a hostile skill must not be able to make the scanner fill
+# the disk or the API's memory by printing without end.
+_OUTPUT_MAX_BYTES = 10 * 1024 * 1024
+_POLL_SECONDS = 0.1
 
 # Cap on stderr/stdout quoted in an error so a noisy scanner cannot bloat rows.
 _ERROR_TAIL = 500
@@ -125,6 +132,39 @@ def _parse(stdout: str) -> ScanResult:
         return ScanResult(STATUS_FAILED, error=f"unparseable scanner output: {exc}")
 
 
+def _kill_group(proc: "subprocess.Popen[bytes]") -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _oversize(out_path: Path, err_path: Path) -> Optional[str]:
+    if max(out_path.stat().st_size, err_path.stat().st_size) > _OUTPUT_MAX_BYTES:
+        return f"scanner output exceeded {_OUTPUT_MAX_BYTES // (1024 * 1024)} MB"
+    return None
+
+
+def _wait(
+    proc: "subprocess.Popen[bytes]", out_path: Path, err_path: Path, timeout: float
+) -> Optional[str]:
+    """Wait for the scanner; return why to give up, or None when it exited."""
+    deadline = time.monotonic() + timeout
+    problem: Optional[str] = None
+    while proc.poll() is None:
+        if time.monotonic() >= deadline:
+            problem = f"scan timed out after {timeout:g}s"
+        else:
+            problem = _oversize(out_path, err_path)
+        if problem:
+            break
+        time.sleep(_POLL_SECONDS)
+    # Also on a normal exit: a descendant left running must not outlive the scan.
+    _kill_group(proc)
+    proc.wait()
+    return problem or _oversize(out_path, err_path)
+
+
 def scan_skill(
     folder: Path,
     settings: Optional[Settings] = None,
@@ -141,35 +181,46 @@ def scan_skill(
     # cwd and HOME are a throwaway directory so the scanner has nowhere in the
     # skill folder or the user's home to read from or write to.
     with tempfile.TemporaryDirectory(prefix="skill-scan-") as scratch:
-        try:
-            proc = subprocess.run(
-                [
-                    scanner,
-                    "scan",
-                    str(Path(folder).resolve()),
-                    "--no-llm",
-                    "--format",
-                    "json",
-                ],
-                cwd=scratch,
-                env=_child_env(scratch, settings.vigil_skill_scanner_osv),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return ScanResult(STATUS_FAILED, error=f"scan timed out after {timeout:g}s")
-        except OSError as exc:
-            return ScanResult(STATUS_UNAVAILABLE, error=f"scanner not runnable: {exc}")
+        out_path = Path(scratch) / "stdout.txt"
+        err_path = Path(scratch) / "stderr.txt"
+        # Output goes to files, not pipes: a grandchild that inherits a pipe
+        # would keep a read open after the scanner is killed and block us.
+        with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
+            try:
+                proc = subprocess.Popen(
+                    [
+                        scanner,
+                        "scan",
+                        str(Path(folder).resolve()),
+                        "--no-llm",
+                        "--format",
+                        "json",
+                    ],
+                    cwd=scratch,
+                    env=_child_env(scratch, settings.vigil_skill_scanner_osv),
+                    stdin=subprocess.DEVNULL,
+                    stdout=out_f,
+                    stderr=err_f,
+                    # Its own process group, so a timeout can kill the scanner
+                    # and everything it spawned, not just the direct child.
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                return ScanResult(
+                    STATUS_UNAVAILABLE, error=f"scanner not runnable: {exc}"
+                )
+            problem = _wait(proc, out_path, err_path, timeout)
+        if problem:
+            return ScanResult(STATUS_FAILED, error=problem)
+        stdout = out_path.read_text(errors="replace")
+        stderr = err_path.read_text(errors="replace")
 
     # Exit 1 is how the scanner reports a risky skill (it still prints the full
     # report); any other non-zero exit, or exit 1 with no report, is a failure.
     if proc.returncode in (0, 1):
-        result = _parse(proc.stdout)
+        result = _parse(stdout)
         if result.scanned or proc.returncode == 0:
             return result
-    tail = (proc.stderr or proc.stdout or "").strip()[-_ERROR_TAIL:]
+    tail = (stderr or stdout or "").strip()[-_ERROR_TAIL:]
     logger.warning("skill scan exited %s for %s", proc.returncode, folder)
     return ScanResult(STATUS_FAILED, error=f"scanner exit {proc.returncode}: {tail}")
