@@ -84,7 +84,7 @@ import logging
 import posixpath
 import re
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set
@@ -154,10 +154,17 @@ class Saves:
     version the sync creates whose fingerprint matches gets one SAVED trail
     entry in the sync's own transaction. A version created with none was
     first seen by the sync alone: a file put in the folder by hand.
+
+    ``replaces`` is each saved copy's native key and the rule ids of the
+    earlier copies it takes the place of. A version the save made carries them
+    on its SAVED entry and, for a staged language, on its stage row's
+    ``proof['replaces']``; a copy saved unchanged makes no version, so records
+    none.
     """
 
     author: Dict[str, Any]
     fingerprints: Dict[str, str]
+    replaces: Dict[str, List[int]] = field(default_factory=dict)
 
 
 @contextmanager
@@ -294,6 +301,7 @@ def saved_entry(
     version: int,
     record: RuleRecord,
     fp: str,
+    replaces: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """The one trail entry a rule saved through Vigil leaves, per copy and version.
 
@@ -301,7 +309,8 @@ def saved_entry(
     the trail names (the person; for a run no person started, its agent) and
     ``by`` "agent" for a run's tool call, "person" for a signed-in caller
     outside one, "unknown" for neither. ``agent_id`` and ``run_id`` are the
-    run's signed claims, never arguments the model gave.
+    run's signed claims, never arguments the model gave. ``replaces`` names
+    the earlier copies this one was saved to take the place of.
     """
     from core.audit import trail
 
@@ -316,10 +325,16 @@ def saved_entry(
         "version": version,
         "language": record.language,
         "fingerprint": fp,
+        **({"replaces": replaces} if replaces else {}),
     }
 
 
-def _record_saves(session: Any, author: Dict[str, Any], saved: List[tuple]) -> None:
+def _record_saves(
+    session: Any,
+    author: Dict[str, Any],
+    saved: List[tuple],
+    replaces: Dict[str, List[int]],
+) -> None:
     """One entry per saved copy's new version, in the transaction that wrote the version.
 
     Not gated, like the stage rows beside it: a restore's pause must not roll
@@ -330,7 +345,9 @@ def _record_saves(session: Any, author: Dict[str, Any], saved: List[tuple]) -> N
 
     use_trail = trail.in_use(session)
     for rule_id, version, record, fp in saved:
-        entry = saved_entry(author, rule_id, version, record, fp)
+        entry = saved_entry(
+            author, rule_id, version, record, fp, replaces.get(record.native_key)
+        )
         if use_trail:
             trail.append(session, entry, gated=False)
             continue
@@ -343,6 +360,25 @@ def _record_saves(session: Any, author: Dict[str, Any], saved: List[tuple]) -> N
             old_value=None,
             new_value=value,
         )
+
+
+def _link_replaced(
+    stages: List[dict], saved: List[tuple], replaces: Dict[str, List[int]]
+) -> None:
+    """Name, on the stage row of each version a save made, the earlier copies
+    that version replaces (``proof['replaces']``), so each earlier copy can be
+    read forward to it from the stage rows."""
+    links = {
+        (rule_id, version): replaces[record.native_key]
+        for rule_id, version, record, _ in saved
+        if replaces.get(record.native_key)
+    }
+    if not links:
+        return
+    for row in stages:
+        replaced = links.get((row["rule_id"], row["version"]))
+        if replaced:
+            row["proof"] = {**row["proof"], "replaces": replaced}
 
 
 def _lint(record: RuleRecord, now: str) -> Dict[str, Any]:
@@ -793,7 +829,8 @@ def sync_source(
         _record_changes(session, changes, now)
         # Last: the trail lock its entries take is held until commit.
         if saved:
-            _record_saves(session, saves.author, saved)
+            _link_replaced(stages, saved, saves.replaces)
+            _record_saves(session, saves.author, saved, saves.replaces)
         if stages:
             _insert_stages(session, stages, current)
     return report

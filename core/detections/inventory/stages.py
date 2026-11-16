@@ -11,6 +11,11 @@ rollout rules apply again, their shadow days counted from the release. Each
 write is audited in the same transaction as the same ``detections.rule_staged``
 entry Vigil's own moves write, the person as actor (the config audit log where
 the trail is not in use).
+
+A save that replaces earlier staged copies names them on its new version's stage
+row (``proof['replaces']``); the history lists them per row, and lists, for the
+rule read, the rules whose rows name it: its successors. A Sigma copy has no stage
+rows, so its link is on the ``detections.rule_saved`` entry only, not read here.
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ def _row(r: Any) -> Dict[str, Any]:
         "to_stage": r.stage,
         "actor": r.actor,
         "reason": r.reason,
+        "replaces": (r.proof or {}).get("replaces") or [],
         "at": r.at.isoformat() if r.at else None,
     }
 
@@ -68,9 +74,39 @@ def _state(session: Any, rule_id: int) -> Tuple[Optional[Any], Optional[Any]]:
     return rule, rows[0] if rows else None
 
 
+def _replaced_by(session: Any, rule_id: int) -> List[Dict[str, Any]]:
+    """The rules saved to replace this one, each once, first saved first: those
+    with a stage row naming it in ``proof['replaces']``."""
+    rows = session.execute(
+        select(
+            DetectionRuleStage.rule_id,
+            DetectionRuleStage.version,
+            DetectionRuleStage.at,
+            DetectionRule.name,
+            DetectionRule.language,
+        )
+        .join(DetectionRule, DetectionRule.id == DetectionRuleStage.rule_id)
+        .where(DetectionRuleStage.proof.contains({"replaces": [rule_id]}))
+        .order_by(DetectionRuleStage.at, DetectionRuleStage.id)
+    ).all()
+    successors: Dict[int, Dict[str, Any]] = {}
+    for rid, version, at, name, language in rows:
+        successors.setdefault(
+            rid,
+            {
+                "rule_id": rid,
+                "name": name,
+                "language": language,
+                "version": version,
+                "at": at.isoformat() if at else None,
+            },
+        )
+    return list(successors.values())
+
+
 def history(rule_id: int) -> Dict[str, Any]:
-    """The rule's stage rows, newest first, and whether a person's Revert holds
-    it (the same hold rollout reads)."""
+    """The rule's stage rows, newest first, whether a person's Revert holds it
+    (the same hold rollout reads), and the rules saved to replace it."""
     with get_db_manager().session_scope() as session:
         rule = session.get(DetectionRule, rule_id)
         if rule is None:
@@ -78,6 +114,7 @@ def history(rule_id: int) -> Dict[str, Any]:
         return {
             "stages": [_row(r) for r in _rows(session, rule_id)],
             "held": _held(session, rule_id),
+            "replaced_by": _replaced_by(session, rule_id),
         }
 
 
