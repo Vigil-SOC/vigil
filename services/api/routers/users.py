@@ -81,6 +81,7 @@ from core.storage.models import (
     DirectoryPending,
     Principal,
     Role,
+    SecurityKey,
     SsoLink,
     Team,
     User,
@@ -442,6 +443,18 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
             Principal.principal_id.in_(ids), Principal.deleted_at.isnot(None)
         )
     }
+    # Who on this page has a security key. One query: method_types only needs
+    # the boolean, and methods() would also read the trail once per person.
+    keyed: set[str] = set()
+    if ids:
+        keyed = {
+            pid
+            for (pid,) in (
+                session.query(SecurityKey.principal_id)
+                .filter(SecurityKey.principal_id.in_(ids))
+                .distinct()
+            )
+        }
     # Shown before a deactivate or delete, as deactivation tells managers.
     # Restricted cases the caller may not read are counted apart: "N hidden".
     # A CASE, not the bare clause: for a built-in reader the clause is a constant,
@@ -479,6 +492,10 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         # How the account signs in (#4285); never the hash or the subject.
         entry["has_password"] = bool(user.password_hash)
         entry["has_sso"] = user.principal_id in linked
+        # Types only, same decision as the Sign-in methods dialog.
+        entry["mfa_method_types"] = mfa_methods.method_types(
+            user, user.principal_id in keyed
+        )
         # A pushed account nobody used, which Remove frees for the next push.
         entry["unused_sync"] = user.user_id in unused
         entry["status"] = _account_status(user, user.principal_id in deleted)

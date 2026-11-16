@@ -26,6 +26,7 @@ import {
   useUsers,
   type AccountFilter,
   type AccountStatus,
+  type MfaMethodType,
   type Role,
   type RolePayload,
   type RolesMeta,
@@ -44,6 +45,40 @@ const EMPTY_FORM: UserPayload = {
 // mirrors what the backend's Pydantic EmailStr accepts, so this fails fast
 // inline instead of round-tripping to a 422
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function mfaTypeLabel(type: MfaMethodType): string {
+  switch (type) {
+    case 'authenticator_app':
+      return 'Authenticator app'
+    case 'security_key':
+      return 'Security key'
+    case 'recovery_codes':
+      return 'Recovery codes'
+    default: {
+      const unexpected: never = type
+      return unexpected
+    }
+  }
+}
+
+function mfaMarks(u: User) {
+  // An account that signs in only through SSO, with no Vigil method, stays "At provider".
+  if (u.has_sso && !u.has_password && u.mfa_method_types.length === 0) {
+    return (
+      <span className="status dropped" title="Two-step sign-in is up to the SSO provider">
+        At provider
+      </span>
+    )
+  }
+  if (u.mfa_method_types.length === 0) {
+    return <span className="chip">None</span>
+  }
+  return u.mfa_method_types.map((type) => (
+    <span className="chip" key={type}>
+      {mfaTypeLabel(type)}
+    </span>
+  ))
+}
 
 function errText(e: unknown, fallback: string): string {
   const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -407,20 +442,13 @@ function PeopleAndRoles({ notify }: SectionProps) {
                       )}
                     </div>
                   </td>
-                  <td>
-                    <div className="flex items-center gap-1.5">
+                  <td style={{ whiteSpace: 'normal' }}>
+                    <div className="flex flex-wrap items-center gap-1.5 max-w-72">
                       {u.has_sso && <span className="chip sel">SSO</span>}
                       {u.has_password && <span className="chip">Password</span>}
                       {u.principal_kind === 'service_account' && !u.has_password && <span className="chip">Token only</span>}
                       {!u.has_sso && !u.has_password && u.principal_kind !== 'service_account' && <span className="muted">—</span>}
-                      {/* the provider carries the second step for an account that signs in only there */}
-                      {!u.mfa_enabled && u.has_sso && !u.has_password ? (
-                        <span className="status dropped" title="Two-step sign-in is up to the SSO provider">At provider</span>
-                      ) : (
-                        <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`} title={`Two-step sign-in ${u.mfa_enabled ? 'enabled' : 'disabled'}`}>
-                          {u.mfa_enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      )}
+                      {mfaMarks(u)}
                     </div>
                   </td>
                   <td>
