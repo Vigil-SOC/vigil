@@ -21,6 +21,7 @@ import json
 import logging
 import lzma
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -51,12 +52,13 @@ _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
-# Skill folders under the operator root. Each description is in every agent's
-# system prompt, so the count bounds what operators can add to it.
+# Skill folders the skills API may hold under the operator root: a save or
+# upload past it is refused. Each description is in every agent's system
+# prompt. Folders copied in by hand are not capped.
 OPERATOR_SKILLS_MAX = 100
-# Where a skill may sit inside a top-level folder of a skills root: the places
-# the ``npx skills`` CLI (1.8.1) searches in a repo, so a folder copied or
-# cloned in loads what ``npx skills add`` would install from it.
+# The constants below are where a skill may sit inside a top-level folder of a
+# skills root: the places the ``npx skills`` CLI (1.8.1) searches in a repo, so
+# a folder copied or cloned in loads what ``npx skills add`` would install.
 _SKIP_DIRS = frozenset({"node_modules", ".git", "dist", "build", "__pycache__"})
 _SKILLS_DIRS = ("skills", "skills/.curated", "skills/.experimental", "skills/.system")
 _AGENT_SKILL_DIRS = (
@@ -220,64 +222,84 @@ def _subdirs(folder: Path) -> List[Path]:
 
 
 def _inside(base: Path, rel: Any) -> Optional[Path]:
-    """``base/rel`` for a ``./`` path, when that is a real folder reached
-    without a symlink or ``..``; ``./`` is ``base`` itself."""
+    """``base/rel`` for a ``./`` path that stays inside ``base`` once
+    normalized, when that is a real folder reached without a symlink; ``./`` is
+    ``base`` itself. A manifest written by anyone can name it, so any odd path
+    is None rather than an error."""
     if not isinstance(rel, str) or not rel.startswith("./") or "\\" in rel:
         return None
+    norm = posixpath.normpath(rel)
+    if norm == ".." or norm.startswith("../"):
+        return None
     path = base
-    for part in rel.split("/")[1:]:
-        if part in ("", "."):
-            continue
-        path = path / part
-        if part == ".." or path.is_symlink():
-            return None
-    return path if path.is_dir() else None
+    try:
+        for part in [] if norm == "." else norm.split("/"):
+            path = path / part
+            if path.is_symlink():
+                return None
+        return path if path.is_dir() else None
+    except (OSError, ValueError):  # a name too long, or holding a NUL
+        return None
 
 
 def _json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):  # nested past the parser's limit
         return None
 
 
 def _listed_dirs(top: Path) -> tuple[List[Path], List[Path]]:
     """Folders ``top``'s own manifests point at, as ``npx skills`` reads them.
 
-    ``skills.sh.json`` ``paths`` are searched like ``skills/``; a
-    ``.claude-plugin`` ``plugin.json`` or ``marketplace.json`` names each
-    plugin's ``skills``, and its ``skills/`` folder is searched one level.
-    Only ``./`` paths inside ``top`` count.
+    ``skills.sh.json`` ``paths`` are searched like ``skills/``. A
+    ``.claude-plugin`` ``plugin.json`` or ``marketplace.json`` plugin's
+    ``skills`` entries name skill folders, whose parent folder is searched
+    one level, as is the plugin's ``skills/`` folder. Only ``./`` paths that
+    stay inside ``top`` count.
     """
     containers: List[Path] = []
     plugin_dirs: List[Path] = []
     config = _json(top / "skills.sh.json")
     if isinstance(config, dict) and isinstance(config.get("paths"), list):
-        containers += [d for d in map(lambda p: _inside(top, p), config["paths"]) if d]
+        for rel in config["paths"]:
+            folder = _inside(top, rel)
+            if folder and folder != top:  # npx skips a path that is the repo
+                containers.append(folder)
 
-    def plugin(base: Optional[Path], skills: Any) -> None:
+    def add_plugin(base: Optional[Path], skills: Any) -> None:
         if base is None:
             return
         for rel in skills if isinstance(skills, list) else []:
-            if isinstance(rel, str):
-                folder = _inside(base, rel.rsplit("/", 1)[0] + "/")
+            if isinstance(rel, str) and rel.startswith("./"):
+                parent = posixpath.dirname(posixpath.normpath(rel))
+                folder = _inside(base, f"./{parent}")
                 if folder:
                     plugin_dirs.append(folder)
-        plugin_dirs.append(base / "skills")
+        folder = _inside(base, "./skills")
+        if folder:
+            plugin_dirs.append(folder)
 
     market = _json(top / ".claude-plugin" / "marketplace.json")
     if isinstance(market, dict):
         meta = market.get("metadata")
-        root = _inside(
-            top, meta.get("pluginRoot", "./") if isinstance(meta, dict) else "./"
-        )
+        plugin_root = meta.get("pluginRoot", "./") if isinstance(meta, dict) else "./"
+        root = _inside(top, plugin_root)
         for item in market.get("plugins") or []:
             if isinstance(item, dict) and root is not None:
-                plugin(_inside(root, item.get("source", "./")), item.get("skills"))
+                add_plugin(_inside(root, item.get("source", "./")), item.get("skills"))
     manifest = _json(top / ".claude-plugin" / "plugin.json")
     if isinstance(manifest, dict):
-        plugin(top, manifest.get("skills"))
+        add_plugin(top, manifest.get("skills"))
     return containers, plugin_dirs
+
+
+def _parses(folder: Path) -> bool:
+    try:
+        parse_skill(folder)
+    except SkillError:
+        return False
+    return True
 
 
 def _source_skill_dirs(top: Path) -> List[Path]:
@@ -286,38 +308,45 @@ def _source_skill_dirs(top: Path) -> List[Path]:
     Its children; ``skills/`` (with ``.curated``, ``.experimental`` and
     ``.system``), each agent's ``.<agent>/skills`` and any ``skills.sh.json``
     path down to two category folders; folders a plugin manifest names. Only
-    when none of those holds a skill is ``top`` searched down to
+    when none of those holds a valid skill is ``top`` searched down to
     ``_FALLBACK_DEPTH`` folders. ``_SKIP_DIRS`` are never searched, and a skill
     folder's own subfolders are its files, never skills.
     """
     found: List[Path] = []
+    seen: set[Path] = set()
 
     def add(folder: Path) -> bool:
-        if not os.path.lexists(folder / SKILL_FILE):
+        if not (folder / SKILL_FILE).is_file():
             return False
-        if folder not in found:
+        if folder not in seen:
+            seen.add(folder)
             found.append(folder)
         return True
 
-    def walk(folder: Path, max_depth: int, depth: int = 1) -> None:
+    def walk(
+        folder: Path, max_depth: int, depth: int = 1, fallback: bool = False
+    ) -> None:
         for child in _subdirs(folder):
+            if fallback and child.name in _SKIP_DIRS:
+                continue
             if add(child) or depth >= max_depth or child.name in _SKIP_DIRS:
                 continue
-            walk(child, max_depth, depth + 1)
+            walk(child, max_depth, depth + 1, fallback)
 
     walk(top, 1)
-    containers, plugin_dirs = _listed_dirs(top)
+    present = {child.name for child in _subdirs(top)}
     for rel in _SKILLS_DIRS + _AGENT_SKILL_DIRS:
-        folder = _inside(top, "./" + rel)
+        # Probe only what ``top`` holds: this runs for every folder on every load.
+        folder = _inside(top, "./" + rel) if rel.split("/")[0] in present else None
         if folder:
             walk(folder, _CONTAINER_DEPTH)
+    containers, plugin_dirs = _listed_dirs(top)
     for folder in containers:
         walk(folder, _CONTAINER_DEPTH)
     for folder in plugin_dirs:
-        if folder.is_dir() and not folder.is_symlink():
-            walk(folder, 1)
-    if not found:
-        walk(top, _FALLBACK_DEPTH)
+        walk(folder, 1)
+    if not any(_parses(folder) for folder in found):
+        walk(top, _FALLBACK_DEPTH, fallback=True)
     return found
 
 
@@ -556,12 +585,7 @@ def _loaded_dir(root: Path, skill: Skill) -> Path:
         parts = skill.path.relative_to(root).parts
     except ValueError:
         parts = ()
-    if (
-        not parts
-        or parts[-1] != skill.name
-        or parts[0].startswith(".")
-        or ".." in parts
-    ):
+    if not parts or parts[-1] != skill.name or parts[0].startswith("."):
         raise SkillError("refusing to touch a skill outside the operator root")
     parent = Path(os.path.realpath(root))
     for part in parts[:-1]:
@@ -914,8 +938,9 @@ def install_uploaded_skill(
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
     """Remove an operator skill directory. Bundled skills are refused.
 
-    A skill inside a category goes, and so does the category once nothing is
-    left in it: an empty folder would otherwise be logged on every load.
+    A skill inside other folders goes, and so does each folder above it that
+    is left empty, up to the root: an empty top-level folder would otherwise
+    be logged on every load.
     """
     root = _require_operator_root(settings)
     # The resolved root, so a loaded path lines up with it for _loaded_dir.
@@ -933,11 +958,13 @@ def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> Non
     if target == library or target.is_relative_to(library):
         raise SkillError("refusing to delete a bundled skill")
     shutil.rmtree(target)
-    if target.parent != root:
+    parent = target.parent
+    while parent != root:
         try:
-            target.parent.rmdir()  # only succeeds when the category is empty
+            parent.rmdir()  # only succeeds when the folder is empty
         except OSError:
-            pass
+            break
+        parent = parent.parent
 
 
 def _confined(skill_dir: Path, file: str) -> Optional[Path]:

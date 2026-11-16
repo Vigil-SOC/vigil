@@ -149,9 +149,8 @@ class Settings(BaseSettings):
     # and written by the skills API. A top-level folder without its own SKILL.md
     # is searched where `npx skills add` searches a repo, so category folders
     # and whole cloned skills repos load; a skill folder's subfolders are never
-    # skills. Unset (None) is the State
-    # Directory's skills/ folder; empty turns operator skills off, as the Helm
-    # chart does.
+    # skills. Unset (None) is the State Directory's skills/ folder; empty turns
+    # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.
