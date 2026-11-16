@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -79,6 +79,8 @@ class ScanState:
     scanned_at: Optional[datetime] = None
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
+    # The folder content this state is about; what an approval names.
+    digest: Optional[str] = None
 
     @property
     def allowed(self) -> bool:
@@ -207,7 +209,7 @@ def scan_states(
         except Exception:  # noqa: BLE001 - fail closed, the next call asks again
             logger.exception("skill scan verdicts unreadable; holding operator skills")
         for name, digest in digests.items():
-            states[name] = _decide(rows.get(digest))
+            states[name] = replace(_decide(rows.get(digest)), digest=digest)
     return states
 
 
@@ -333,3 +335,55 @@ def sweep(
         if result.status == STATUS_FAILED:
             logger.warning("skill %s scan failed: %s", skill.name, result.error)
     return recorded
+
+
+class ApprovalRefused(Exception):
+    """The approval cannot go ahead; ``status`` is the HTTP code that fits."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+# Said to the person who tried, so each names what to do next.
+_REFUSALS = {
+    BUNDLED: "A bundled skill is not scanned and needs no approval",
+    UNCHECKED: "Skill scanning is off, so every skill is already allowed",
+    SAFE: "The scan found nothing; the skill is already allowed",
+    APPROVED: "This version is already approved",
+    PENDING: "This version has no scan verdict yet; wait for the scan, then approve",
+}
+
+
+def approve(
+    skill: Skill,
+    seen_digest: str,
+    approver: str,
+    session,
+    settings: Optional[Settings] = None,
+) -> ScanState:
+    """Release the skill's current content to agents, in the caller's transaction.
+
+    ``seen_digest`` is the content the approver looked at: if the folder has
+    moved since, nothing is approved, because the verdict they read is not about
+    what is on disk. A failed scan may be approved: the scanner could not read
+    the skill, and a person who reviewed it by hand may release it. The row is
+    locked so two approvers cannot both record themselves.
+    """
+    current = scan_states([skill], settings)[skill.name]
+    if current.state in _REFUSALS:
+        raise ApprovalRefused(409, _REFUSALS[current.state])
+    if current.digest != seen_digest:
+        raise ApprovalRefused(
+            409, "The skill changed since you looked at it; review it again"
+        )
+    row = session.execute(
+        select(SkillScan).where(SkillScan.digest == seen_digest).with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise ApprovalRefused(409, _REFUSALS[PENDING])
+    if row.approved_at is not None:
+        raise ApprovalRefused(409, _REFUSALS[APPROVED])
+    row.approved_by = approver
+    row.approved_at = utcnow()
+    return current

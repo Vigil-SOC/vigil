@@ -431,6 +431,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "detections.proof_key_created": _proof_key,
     "detections.skill_exported": _skill("Exported"),
     "detections.skill_imported": _skill("Imported"),
+    "skills.approved": lambda p: "Approved the skill"
+    + (f" {p['name']!r}" if p.get("name") else "")
+    + " for agents"
+    + (f" despite a {_word(p['state'])} scan" if p.get("state") else ""),
     "detections.skill_import_refused": lambda p: "Refused a Detection Skill import"
     + (f": {p['reason']}" if p.get("reason") else ""),
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
