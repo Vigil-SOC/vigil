@@ -4,8 +4,11 @@ Two reads go straight to the daemon's health port on Medic's network
 (`services/daemon/metrics.py`), every 30 s (epic decision 7):
 
 - `daemon_health` from `/health`: `ok`, `components.<name>` (closed enum,
-  `failed: <Exc>` folded to `failed`), `uptime_seconds`. A 503 is the daemon
-  saying a component died: a result, `ok: false`, with the same values.
+  `failed: <Exc>` folded to `failed`), `uptime_seconds`, and `passes.<name>`
+  for poller, processor, scheduler and orchestrator (work-loop pass counters).
+  The reading's epoch is `started_at`, so a restart is not a counter going
+  backwards. A 503 is the daemon saying a component died: a result,
+  `ok: false`, with the same values.
 - `daemon_status.*` from `/status`: the counters a rule reads, one reading per
   component. Their epoch is the daemon's start time, so a restart isn't read
   as counters going backwards. The Kafka consumer is re-created when it is
@@ -45,6 +48,8 @@ from services.medic.sensors.http_ready import failure
 
 SERVICE = "soc-daemon"
 COMPONENTS = ("poller", "kafka", "processor", "executor", "scheduler", "orchestrator")
+# The four work loops that count passes. Kafka and the executor do not.
+PASS_COMPONENTS = ("poller", "processor", "scheduler", "orchestrator")
 STATES = frozenset({"running", "disabled", "stopped", "not_initialized", "failed"})
 STATUS_SIGNALS = tuple(f"daemon_status.{part}" for part in (*COMPONENTS, "vendors"))
 KAFKA_CALL = GatewayCall("/api/kafka/status")
@@ -251,6 +256,13 @@ class DaemonHealth:
         if error is not None:
             return [Reading("daemon_health", SERVICE, error=error, instance=instance)]
         components = body["components"]
+        passes = body.get("passes")
+        if not isinstance(passes, dict):
+            passes = {}
+        # A sample that carries a counter has to name an epoch. Without
+        # started_at the counters are left off so the component states still
+        # validate.
+        epoch = _epoch(body.get("started_at"))
         values = [
             Value.flag("ok", status == 200),
             Value.enum("result", "healthy" if status == 200 else "unhealthy"),
@@ -259,8 +271,21 @@ class DaemonHealth:
                 for c in COMPONENTS
             ),
             Value.gauge("uptime_seconds", _num(body.get("uptime_seconds"))),
+            *(
+                Value.counter(f"passes.{c}", _int(passes.get(c)))
+                for c in PASS_COMPONENTS
+                if epoch is not None
+            ),
         ]
-        return [Reading("daemon_health", SERVICE, values=values, instance=instance)]
+        return [
+            Reading(
+                "daemon_health",
+                SERVICE,
+                values=values,
+                instance=instance,
+                epoch=epoch,
+            )
+        ]
 
 
 @dataclass

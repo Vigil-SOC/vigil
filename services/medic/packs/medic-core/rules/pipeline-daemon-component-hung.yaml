@@ -1,39 +1,45 @@
-# P-3.a / P-3.b · a soc-daemon component reads "running" but does no work: the
-# processor processes nothing while webhook findings arrive, or the scheduler
-# runs no task for 20 min although health_check runs every 300 s
-# (scheduler.py:117-124). A database outage stalls processing too:
-# suppression.yaml makes this a child of the ingest database rules.
+# P-3.a / P-3.b · a soc-daemon component reads "running" but its work-loop
+# pass counter has not moved for 15 minutes. A pass that blocks for more
+# than 15 minutes reads as a hang. One stuck worker, one stuck source, and
+# a stuck supervision or distil loop are outside this rule (they stay on
+# /status). A database outage stalls processing too: suppression.yaml makes
+# this a child of the ingest database rules.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.daemon-component-hung
 title: A soc-daemon component reports running but does no work
-revision: 1
+revision: 2
 fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b]}
 lane: 3
 detection: absence
 signals:
-  processor: {sample: {signal: daemon_health, key: components.processor}}
-  scheduler: {sample: {signal: daemon_health, key: components.scheduler}}
-  uptime:    {sample: {signal: daemon_health, key: uptime_seconds}}
-  processed: {sample: {signal: daemon_status.processor, key: processed}}
-  arrivals:  {sample: {signal: daemon_status.poller, key: webhook_findings}}
-  tasks_run: {sample: {signal: daemon_status.scheduler, key: tasks_run}}
+  processor:          {sample: {signal: daemon_health, key: components.processor}}
+  poller:             {sample: {signal: daemon_health, key: components.poller}}
+  scheduler:          {sample: {signal: daemon_health, key: components.scheduler}}
+  orchestrator:       {sample: {signal: daemon_health, key: components.orchestrator}}
+  processor_passes:   {sample: {signal: daemon_health, key: passes.processor}}
+  poller_passes:      {sample: {signal: daemon_health, key: passes.poller}}
+  scheduler_passes:   {sample: {signal: daemon_health, key: passes.scheduler}}
+  orchestrator_passes: {sample: {signal: daemon_health, key: passes.orchestrator}}
 when:
-  all:
-    - {fn: latest, signal: uptime, op: ">", value: 1200}
-    - any:
-        - all:
-            - {fn: latest, signal: processor, op: "==", value: running}
-            - {fn: changes, signal: processed, window: 15m, op: "==", value: 0}
-            - {fn: increase, signal: arrivals, window: 15m, op: ">", value: 0}
-        - all:
-            - {fn: latest, signal: scheduler, op: "==", value: running}
-            - {fn: changes, signal: tasks_run, window: 20m, op: "==", value: 0}
+  any:
+    - all:
+        - {fn: latest, signal: processor, op: "==", value: running}
+        - {fn: changes, signal: processor_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: poller, op: "==", value: running}
+        - {fn: changes, signal: poller_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: scheduler, op: "==", value: running}
+        - {fn: changes, signal: scheduler_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: orchestrator, op: "==", value: running}
+        - {fn: changes, signal: orchestrator_passes, window: 15m, op: "==", value: 0}
 for: 5m
 keep_firing_for: 10m
 advice:
-  summary: A soc-daemon component (processor or scheduler) reports running but has done no work for 15 to 20 minutes.
+  summary: A soc-daemon work loop (processor, poller, scheduler or orchestrator) reports running but has not completed a pass for 15 minutes.
   fix: >-
     Report it as a Vigil defect with this incident. Restarting soc-daemon
-    usually restores the component; attach the soc-daemon log from before the
+    usually restores the loop; attach the soc-daemon log from before the
     restart and record that you restarted it.

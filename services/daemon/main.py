@@ -149,6 +149,12 @@ class SOCDaemon:
             "orchestrator"
         )
 
+        tick = self._metrics_server.pass_ticker
+        self._poller.set_pass_ticker(tick("poller"))
+        self._processor.note_pass = tick("processor")
+        self._scheduler.note_pass = tick("scheduler")
+        self._orchestrator.note_pass = tick("orchestrator")
+
         logger.info("All components initialized")
 
     async def run(self):

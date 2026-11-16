@@ -76,6 +76,8 @@ class TaskScheduler:
         self._tasks: List[ScheduledTask] = []
         # The processor's input queue; probes go on it like polled findings.
         self._processor_queue: Optional[asyncio.Queue] = None
+        # Set by the daemon: counts one scheduler-loop pass on /health.
+        self.note_pass: Optional[Callable[[], None]] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -209,8 +211,10 @@ class TaskScheduler:
                     _last_scheduled_at, queued[task.name]
                 )
 
-        # Main scheduling loop
+        # Main scheduling loop. A task that blocks holds the counter.
         while not shutdown_event.is_set():
+            if self.note_pass is not None:
+                self.note_pass()
             now = utcnow()
 
             for task in self._tasks:

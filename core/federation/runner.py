@@ -58,6 +58,8 @@ class FederationRunner:
         self._adapter_tasks: Dict[str, asyncio.Task] = {}
         # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
         self.watch_loop: Optional[Callable[..., None]] = None
+        # Set by the daemon: counts one poll-loop pass on the poller's /health.
+        self.note_pass: Optional[Callable[[], None]] = None
         self._dedup: Dict[str, RedisDedupSet] = {}
         # Sources already warned about as unconfigured, so the warning is
         # logged on the transition rather than every tick.
@@ -92,14 +94,25 @@ class FederationRunner:
                 self.watch_loop(adapter.name, task, shutdown_event)
 
         if not self._adapter_tasks:
-            # No adapters at all — wait for shutdown.
-            await shutdown_event.wait()
+            # No poll loops to tick. Keep passing until shutdown so an idle
+            # poller is not read as hung. DataPoller.run does not tick.
+            while not shutdown_event.is_set():
+                self._tick_pass()
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
+                    break
+                except asyncio.TimeoutError:
+                    pass
             return
 
         try:
             await asyncio.gather(*self._adapter_tasks.values(), return_exceptions=True)
         except asyncio.CancelledError:
             pass
+
+    def _tick_pass(self) -> None:
+        if self.note_pass is not None:
+            self.note_pass()
 
     def is_active_for(self, source_id: str) -> bool:
         """True if federation owns polling for ``source_id`` right now.
@@ -133,6 +146,8 @@ class FederationRunner:
         store_ok = True
 
         while not shutdown_event.is_set():
+            # One pass, including the disabled idle continue below.
+            self._tick_pass()
             # Re-read DB state on every tick. Cheap enough at MVP cadence.
             try:
                 row = store.read_source(source_id) or {}
