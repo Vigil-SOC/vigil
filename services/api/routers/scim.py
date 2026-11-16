@@ -27,6 +27,7 @@ from core.audit.retention import is_erased
 from core.auth import (
     directory_groups,
     directory_sync,
+    invites,
     principals,
     sso,
     sso_settings,
@@ -286,6 +287,10 @@ def _apply_attributes(
             _skip(session, caller, user, "email")
         else:
             user.email = email
+            user.is_verified = True
+            invites.revoke_confirms(
+                session, user.principal_id, caller.principal_id, "sso"
+            )
             changed = True
     if full_name and full_name != user.full_name:
         user.full_name = full_name

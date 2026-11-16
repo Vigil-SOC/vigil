@@ -55,6 +55,7 @@ from core.auth.auth_service import (
     managers,
     password_matches_any,
     raise_if_locked,
+    with_dispute,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.current_user import (
@@ -93,6 +94,7 @@ from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
     bootstrap_rate_key,
+    confirm_email_rate_key,
     invite_rate_key,
     login_rate_key,
     refresh_rate_key,
@@ -625,13 +627,79 @@ def _end_others_after_change(
 
 
 def _tell_person(
-    session: Session, user: User, title: str, message: str, kind: str = "mfa_change"
+    session: Session,
+    user: User,
+    title: str,
+    message: str,
+    kind: str = "mfa_change",
+    fallback: str = "",
 ) -> None:
-    """Tell the person once the change commits. Never a code: notices are emailed."""
+    """Tell the person once the change commits. Never a code: notices are emailed.
+
+    ``fallback`` is the dispute sentence already in ``message``. It is left as
+    written when the person has no other account manager."""
+    message = with_dispute(user.principal_id, message, fallback, session)
     principal = user.principal_id
 
     def send() -> None:
         notify(principal, kind, title, message, link="/settings", priority="high")
+
+    when_committed(session, send)
+
+
+# The dispute sentences already on the notices. Replaced only when the person
+# has another account manager to name.
+_DISPUTE_PASSWORD = "If this wasn't you, change your password and tell an admin."
+_DISPUTE_NOW = "If this wasn't you, tell an admin now."
+_DISPUTE_SHORT = "If this wasn't you, tell an admin."
+_DISPUTE_SIGN_OUT = (
+    "If this wasn't you, sign out everywhere else from your sign-ins in the "
+    "console, change your password and tell an admin."
+)
+_NO_CONFIRM_LINK = (
+    "No confirmation link could be sent. The address stays unconfirmed until "
+    "mail is configured and the install's public address is set."
+)
+
+
+def _confirm_mail_ready() -> bool:
+    """The same test an emailed invite uses: mail, and a public console address."""
+    return bool(mail_is_configured() and get_settings().vigil_frontend_url.strip())
+
+
+def _change_notice(
+    session: Session, user: User, what: str, source: Optional[str]
+) -> str:
+    """What changed, when, and the address the request came from. No link."""
+    at = f"{utcnow():%Y-%m-%d %H:%M} UTC"
+    where = source if source else "an unknown address"
+    return f"{what} at {at} from {where}. {_DISPUTE_SHORT}"
+
+
+def _send_confirm_link(session: Session, user: User, token: str) -> None:
+    """Mail the confirmation link once the change commits. The value is only here."""
+    link = invites.confirm_link(get_settings().vigil_frontend_url.strip(), token)
+    to = user.email
+    name = user.full_name or user.username
+    body = (
+        f"Hello {name},\n\n"
+        "Confirm this address for your Vigil account. Open the link below. "
+        "It is valid for 24 hours and can only be used once.\n\n"
+        f"{link}\n\n"
+        "If you did not change your email, you can ignore this email."
+    )
+
+    def send() -> None:
+        send_email(to=to, subject="Confirm your Vigil email address", body=body)
+
+    when_committed(session, send)
+
+
+def _tell_address(session: Session, address: str, title: str, message: str) -> None:
+    """The same notice, mailed to an address that is no longer on the account."""
+
+    def send() -> None:
+        send_email(to=address, subject=title, body=message)
 
     when_committed(session, send)
 
@@ -657,6 +725,7 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
         "app and remaining recovery codes were removed and your other sign-ins "
         "ended; two-step sign-in has to be set up again. If this wasn't you, "
         "change your password and tell an admin.",
+        fallback=_DISPUTE_PASSWORD,
     )
 
 
@@ -678,6 +747,7 @@ def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> 
         "A recovery code was used to sign in to your account because security keys "
         "are unavailable. The code is spent; nothing else was removed. If this "
         "wasn't you, change your password and tell an admin.",
+        fallback=_DISPUTE_PASSWORD,
     )
     principal, name = user.principal_id, user.username
 
@@ -759,6 +829,7 @@ def _tell_of_eviction(
     where = f"{sign_ins.browser_of(ua)} ({sign_ins.device_of(ua)})"
     if source:
         where += f", address {source}"
+    text = with_dispute(principal, EVICTION_TEXT, _DISPUTE_PASSWORD, session)
 
     def send() -> None:
         try:
@@ -766,11 +837,11 @@ def _tell_of_eviction(
                 principal,
                 SIGN_IN_LIMIT_KIND,
                 "A new sign-in ended your oldest one",
-                EVICTION_TEXT,
+                text,
                 link="/overview?sign_ins=1",
                 priority="high",
                 metadata={"sign_in_id": sid},
-                mail_body=f"{EVICTION_TEXT} It came from {where}.",
+                mail_body=f"{text} It came from {where}.",
             )
         except Exception:  # noqa: BLE001 - the managers are still told
             logger.exception("could not send a sign-in limit notice for %s", name)
@@ -1450,6 +1521,8 @@ def _sso_sign_in(
                 notes["email_conflict"] = True
             else:
                 user.email = email
+                user.is_verified = True
+                invites.revoke_confirms(session, user.principal_id, SYSTEM, "sso")
                 changed.append("email")
         if changed:
             trail_events.record(
@@ -1990,6 +2063,7 @@ def _apply_profile_update(
     change must not depend on the request transaction rolling the name back.
     """
     changing_email = bool(email) and email.casefold() != user.email.casefold()
+    old_email = user.email if changing_email else None
     if changing_email:
         # Password reset is mailed to the address on the account, so a live
         # session is not enough to point that address somewhere else: the strong
@@ -2025,6 +2099,14 @@ def _apply_profile_update(
         invites.revoke_resets(
             session, user.principal_id, user.principal_id, "email_changed"
         )
+        # A confirmation of the previous address must not confirm this one.
+        if _confirm_mail_ready():
+            _, token = invites.issue_confirm(session, user, user.principal_id)
+            _send_confirm_link(session, user, token)
+        else:
+            invites.revoke_confirms(
+                session, user.principal_id, user.principal_id, "email_changed"
+            )
 
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits.
@@ -2040,7 +2122,25 @@ def _apply_profile_update(
             sign_in=sign_in,
             changed=changed,
         )
-    return changing_email, UserSchema.dump(user)
+    payload = UserSchema.dump(user)
+    if changing_email:
+        title = "Your email address was changed"
+        message = _change_notice(
+            session, user, "Your email address was changed", source
+        )
+        _tell_person(
+            session, user, title, message, kind="email_changed", fallback=_DISPUTE_SHORT
+        )
+        if old_email:
+            _tell_address(
+                session,
+                old_email,
+                title,
+                with_dispute(user.principal_id, message, _DISPUTE_SHORT, session),
+            )
+        if not _confirm_mail_ready():
+            payload["message"] = _NO_CONFIRM_LINK
+    return changing_email, payload
 
 
 @router.put("/me")
@@ -2106,6 +2206,85 @@ async def update_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update profile",
         )
+
+
+@router.post("/email-confirmation")
+@limiter.limit("5/minute", key_func=session_rate_key)
+def resend_email_confirmation(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Send another confirmation link for the signed-in person's address.
+
+    Replaces the open one. Mail and the install's public address both have to
+    be set; otherwise the address stays unconfirmed and the response says so.
+    """
+    user = session.get(User, current_user.user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email address is already confirmed",
+        )
+    if not _confirm_mail_ready():
+        return {"message": _NO_CONFIRM_LINK}
+    _, token = invites.issue_confirm(session, user, user.principal_id)
+    _send_confirm_link(session, user, token)
+    return {"message": "A confirmation link has been sent."}
+
+
+class EmailConfirmation(BaseModel):
+    """The value from the confirmation link. Opening the page does not send it."""
+
+    token: str
+
+
+_INVALID_CONFIRM = "This confirmation link isn't valid any more. Ask for a new one."
+
+
+@router.post("/email-confirmation/confirm")
+@limiter.limit("5/hour", key_func=confirm_email_rate_key)
+def confirm_email_address(
+    request: Request,
+    body: EmailConfirmation,
+    session: UnitOfWorkSession,
+):
+    """Confirm the address. The link is used up by this request, not by opening it."""
+    row = invites.find(session, body.token, lock=True, kind=invites.CONFIRM)
+    if not invites.usable(row):
+        if row is not None:
+            invites.note_expired(session, row)
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": _INVALID_CONFIRM},
+        )
+    user = (
+        session.query(User)
+        .filter(User.principal_id == row.principal_id)
+        .with_for_update()
+        .first()
+    )
+    if user is None or not user.is_active:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": _INVALID_CONFIRM},
+        )
+    row.used_at = utcnow()
+    user.is_verified = True
+    trail_events.record(
+        session,
+        "email.confirmed",
+        {"source_ip": client_host(request)},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        link_id=row.link_id,
+    )
+    return {"message": "Email address confirmed."}
 
 
 @router.post("/change-password")
@@ -2176,6 +2355,16 @@ async def change_password(
         )
         if body.suspected_leak:
             _tell_managers_of_leak(session, user)
+        _tell_person(
+            session,
+            user,
+            "Your password was changed",
+            _change_notice(
+                session, user, "Your password was changed", client_host(request)
+            ),
+            kind="password_changed",
+            fallback=_DISPUTE_SHORT,
+        )
 
         # End every sign-in, this one included; the client should re-login.
         # In this transaction: the change does not commit without it.
@@ -2339,7 +2528,13 @@ def verify_mfa(
     _record_mfa(session, request, current_user, "auth.mfa_enabled")
     if adding_app:
         # Adding ends no sign-in; the notice says how to end the others.
-        _tell_person(session, current_user, *_ADDED_APP)
+        _tell_person(
+            session,
+            current_user,
+            _ADDED_APP[0],
+            _ADDED_APP[1],
+            fallback=_DISPUTE_SIGN_OUT,
+        )
     elif again and codes:
         _tell_person(
             session,
@@ -2347,6 +2542,7 @@ def verify_mfa(
             "Two-step sign-in was turned on again",
             "Two-step sign-in was turned on again for your account. If this "
             "wasn't you, change your password and tell an admin.",
+            fallback=_DISPUTE_PASSWORD,
         )
     # Setting it up proved the person holds the factor: the window starts.
     step_up.open_window(session, _session_sid(request))
@@ -2425,6 +2621,19 @@ def regenerate_recovery_codes(
             status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled"
         )
     _record_mfa(session, request, current_user, "auth.recovery_codes_regenerated")
+    _tell_person(
+        session,
+        current_user,
+        "Your recovery codes were regenerated",
+        _change_notice(
+            session,
+            current_user,
+            "Recovery codes for your account were regenerated",
+            client_host(request),
+        ),
+        kind="recovery_codes",
+        fallback=_DISPUTE_SHORT,
+    )
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
     )
@@ -2470,6 +2679,26 @@ def disable_mfa(
     )
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
+    )
+    if keyed:
+        title, what, kind = (
+            "Your authenticator app was removed",
+            "The authenticator app was removed from your account",
+            "authenticator_removed",
+        )
+    else:
+        title, what, kind = (
+            "Two-step sign-in was turned off",
+            "Two-step sign-in was turned off",
+            "mfa_disabled",
+        )
+    _tell_person(
+        session,
+        current_user,
+        title,
+        _change_notice(session, current_user, what, client_host(request)),
+        kind=kind,
+        fallback=_DISPUTE_SHORT,
     )
 
     return {"message": "MFA disabled successfully"}
@@ -2688,7 +2917,13 @@ def register_security_key(
         _record_mfa(session, request, current_user, "auth.mfa_enabled")
     _record_mfa(session, request, current_user, "auth.security_key_added")
     if not first:
-        _tell_person(session, current_user, *_ADDED_KEY)
+        _tell_person(
+            session,
+            current_user,
+            _ADDED_KEY[0],
+            _ADDED_KEY[1],
+            fallback=_DISPUTE_SIGN_OUT,
+        )
     elif again:
         _tell_person(
             session,
@@ -2696,6 +2931,7 @@ def register_security_key(
             "Two-step sign-in was turned on again",
             "Two-step sign-in was turned on again for your account. If this "
             "wasn't you, change your password and tell an admin.",
+            fallback=_DISPUTE_PASSWORD,
         )
     # Registering proved the person holds the key: the window starts.
     step_up.open_window(session, _session_sid(request))
@@ -2743,7 +2979,13 @@ def remove_security_key(
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
     )
-    _tell_person(session, current_user, *_REMOVED_KEY)
+    _tell_person(
+        session,
+        current_user,
+        _REMOVED_KEY[0],
+        _REMOVED_KEY[1],
+        fallback=_DISPUTE_PASSWORD,
+    )
     return {"message": "Security key removed"}
 
 
@@ -2775,7 +3017,7 @@ def password_reset_request(
     # any while single sign-on is required; the answer stays the same.
     if sso.required():
         logger.info("Password reset refused: single sign-on is required")
-    elif user and user.is_active and not _is_service_account(user):
+    elif user and user.is_active and user.is_verified and not _is_service_account(user):
         _, token = invites.issue_reset(session, user, invites.SELF, user.principal_id)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
@@ -2793,6 +3035,14 @@ def password_reset_request(
             session, lambda: send_email(to=to, subject=subject, body=body_text)
         )
         logger.info("Password reset requested for %s", user.user_id)
+    elif (
+        user
+        and user.is_active
+        and not user.is_verified
+        and not _is_service_account(user)
+    ):
+        # Same reply as every other request. The address has not proved itself.
+        logger.info("Password reset skipped; email not confirmed for %s", user.user_id)
     else:
         # Unknown address, inactive user or service account — log for ops visibility but
         # return the same response. Constant-time comparison isn't needed
@@ -2806,7 +3056,10 @@ def _reset_request_message(settings) -> str:
     """What the requester is told. Depends only on how mail is configured,
     never on the account, so the reply still can't enumerate emails."""
     if mail_is_configured():
-        return "If that email matches an active account, a reset link has been sent."
+        return (
+            "If that email matches an active account, a reset link has been sent. "
+            "An address changed but not yet confirmed gets no link — ask an admin."
+        )
     if settings.dev_mode:
         return (
             "Email isn't set up on this server. If that email matches an active "
@@ -2906,6 +3159,7 @@ def password_reset_confirm(
         "Your password was reset through a reset link and your sign-ins ended. "
         "If this wasn't you, tell an admin now.",
         kind="password_reset",
+        fallback=_DISPUTE_NOW,
     )
     logger.info("Password reset completed for user: %s", user.username)
     return {

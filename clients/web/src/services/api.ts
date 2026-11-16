@@ -1969,6 +1969,9 @@ export const authApi = {
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string; recovery_codes_removed?: boolean }>('/auth/password-reset/confirm', payload),
+  // Public. Opening /confirm-email does not send this; the button does.
+  confirmEmail: (token: string) =>
+    api.post<{ message: string }>('/auth/email-confirmation/confirm', { token }),
   /** Revokes every token the user holds and clears the auth cookies, so the
    *  caller is signed out once this resolves. */
   changePassword: (body: Schema<'ChangePasswordRequest'>) =>

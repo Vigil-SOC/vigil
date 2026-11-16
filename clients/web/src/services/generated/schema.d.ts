@@ -924,6 +924,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend Email Confirmation
+         * @description Send another confirmation link for the signed-in person's address.
+         *
+         *     Replaces the open one. Mail and the install's public address both have to
+         *     be set; otherwise the address stays unconfirmed and the response says so.
+         */
+        post: operations["post_api_auth_email-confirmation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-confirmation/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Email Address
+         * @description Confirm the address. The link is used up by this request, not by opening it.
+         */
+        post: operations["post_api_auth_email-confirmation_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/invite": {
         parameters: {
             query?: never;
@@ -12083,6 +12126,14 @@ export interface components {
             sigma: string;
         };
         /**
+         * EmailConfirmation
+         * @description The value from the confirmation link. Opening the page does not send it.
+         */
+        EmailConfirmation: {
+            /** Token */
+            token: string;
+        };
+        /**
          * EndSignInsRequest
          * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
          */
@@ -17686,6 +17737,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfirmedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_email-confirmation_confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

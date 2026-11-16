@@ -43,7 +43,12 @@ from core.auth import (  # noqa: E402
     sso,
     trail_events,
 )
-from core.auth.auth_service import AuthService, clear_lock, managers  # noqa: E402
+from core.auth.auth_service import (  # noqa: E402
+    AuthService,
+    clear_lock,
+    managers,
+    with_dispute,
+)
 from core.auth.deactivation import clear_deactivation  # noqa: E402
 from core.auth.identity import matching_accounts  # noqa: E402
 from core.auth.password_reset import reset_link  # noqa: E402
@@ -156,8 +161,16 @@ def _say_erased(user) -> bool:
     return False
 
 
-def _tell(principal: str, name: str, title: str, to_person: str, to_managers: str):
+def _tell(
+    principal: str,
+    name: str,
+    title: str,
+    to_person: str,
+    to_managers: str,
+    fallback: str = "",
+):
     """After the commit: the person and every holder of users.write."""
+    to_person = with_dispute(principal, to_person, fallback)
     notify(principal, "account_recovery", title, to_person, priority="high")
     for to in managers(principal):
         notify(
@@ -572,10 +585,12 @@ def main(argv=None) -> int:
             "Your two-step sign-in was reset",
             "An administrator on the server removed your two-step sign-in methods "
             "and recovery codes and ended your sign-ins. Set two-step sign-in up "
-            "again when you next sign in. If you didn't ask for this, tell an admin."
-            + extra,
+            "again when you next sign in."
+            + extra
+            + " If you didn't ask for this, tell an admin.",
             f"An administrator on the server reset {name}'s two-step sign-in."
             + managers_extra,
+            "If you didn't ask for this, tell an admin.",
         )
     elif args.reactivate:
         _tell(
@@ -586,6 +601,7 @@ def main(argv=None) -> int:
             "your password and two-step sign-in as before. MCP tokens from before "
             "stay revoked: mint new ones." + extra,
             f"An administrator on the server reactivated {name}." + managers_extra,
+            "",
         )
     elif args.restore:
         _tell(
@@ -597,6 +613,7 @@ def main(argv=None) -> int:
             "before stay revoked." + extra,
             f"An administrator on the server restored {name}'s deleted account."
             + managers_extra,
+            "",
         )
     else:
         _tell(
@@ -604,10 +621,12 @@ def main(argv=None) -> int:
             name,
             "Your password reset link",
             "An administrator on the server made a link to reset your password. "
-            "It works once, for one hour. If you didn't ask for this, tell an admin."
-            + extra,
+            "It works once, for one hour."
+            + extra
+            + " If you didn't ask for this, tell an admin.",
             f"An administrator on the server issued a password reset link for {name}."
             + managers_extra,
+            "If you didn't ask for this, tell an admin.",
         )
     return 0
 

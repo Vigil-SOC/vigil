@@ -124,6 +124,10 @@ If the drift report names something you did not change, or a change you need to 
 
 Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at least six months after the release that introduced `0001_baseline`. From that release on, an install still on 0.7.0 or 0.8.0 must first upgrade through a release that still adopts.
 
+## Email addresses already on file
+
+Revision `0077_email_confirmed` marks every account's email confirmed (`users.is_verified = true`). An address already on the account when you upgrade can be used for a password reset straight away. After the upgrade, only a person changing their own email leaves the new address unconfirmed, until they open the 24-hour link mailed to it. A new account's email, and an email an identity provider sets, counts as confirmed and is not sent that link.
+
 ## What the sign-in changes do on upgrade day
 
 An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.

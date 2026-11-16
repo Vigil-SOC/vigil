@@ -375,6 +375,17 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         }.get(p.get("reason"), "")
     ),
     "reset.expired": "A password reset link expired unused",
+    "email.sent": "Sent an email confirmation link",
+    "email.confirmed": "Confirmed their email address",
+    "email.revoked": lambda p: "Revoked an email confirmation link"
+    + (
+        {
+            "replaced": " (replaced by a new link)",
+            "email_changed": " (the email address changed)",
+            "sso": " (the identity provider set the address)",
+        }.get(p.get("reason"), "")
+    ),
+    "email.expired": "An email confirmation link expired unused",
     "auth.emergency_rotation": "Rotated keys with no overlap, in an emergency",
     "credential.minted": "Issued an API token",
     "credential.rotated": lambda p: "Rotated an API token"
