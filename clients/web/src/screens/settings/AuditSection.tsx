@@ -570,6 +570,8 @@ export function verifyLine(v: AuditVerify): { level: 'good' | 'poor'; text: stri
 /** Feed health off the entries read: whether the trail is leaving the box (#3191). */
 function FeedHealth({ feed }: { feed: AuditFeedHealth | null }) {
   const behind = feed?.behind ?? 0
+  const held = feed?.held ?? 0
+  const heldSince = utcDayClock(feed?.held_since) ?? feed?.held_since
   return (
     <section className="audit-box" aria-label="Feed health">
       <div className="audit-box-head">
@@ -578,6 +580,12 @@ function FeedHealth({ feed }: { feed: AuditFeedHealth | null }) {
       </div>
       {feed && !feed.enabled && (
         <p className="audit-note">No feed is on. The trail has no outside proof unless it is exported or polled.</p>
+      )}
+      {held > 0 && (
+        <p className="audit-note" role="status">
+          {held === 1 ? '1 entry' : `${held} entries`} waiting to be recorded late
+          {heldSince ? `, since ${heldSince} UTC` : ''}.
+        </p>
       )}
       {feed?.enabled && (
         <>
