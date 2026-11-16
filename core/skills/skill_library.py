@@ -678,8 +678,8 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
     return root.resolve()
 
 
-def _require_room(root: Path) -> None:
-    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` skill folders.
+def _require_room(root: Path, adding: int = 1) -> None:
+    """Refuse ``adding`` new skills that would take ``root`` past ``OPERATOR_SKILLS_MAX``.
 
     A skill folder is one holding ``SKILL.md``, at the top or inside a
     category; categories and empty folders do not count. Dot folders are
@@ -690,6 +690,12 @@ def _require_room(root: Path) -> None:
         raise SkillConflict(
             f"There are already {OPERATOR_SKILLS_MAX} custom skills, the most "
             "allowed. Delete one before adding another."
+        )
+    if held + adding > OPERATOR_SKILLS_MAX:
+        raise SkillConflict(
+            f"The upload holds {adding} skills but there is room for "
+            f"{OPERATOR_SKILLS_MAX - held} more (the most allowed is "
+            f"{OPERATOR_SKILLS_MAX}). Nothing was installed."
         )
 
 
@@ -852,26 +858,60 @@ def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
     return kept
 
 
-def _unpack(zf: zipfile.ZipFile) -> tuple[Optional[str], Dict[str, bytes]]:
-    """``(folder, {relative path: bytes})``; ``folder`` is None for a root SKILL.md."""
+def _skill_folders(paths: Iterable[str]) -> List[str]:
+    """The zip folders holding a ``SKILL.md``, ``""`` for the root, sorted.
+
+    Any depth is allowed, so a GitHub "download zip" wrapper and category
+    folders above the skills need no unpacking first. A skill folder inside another one is refused: it would otherwise be stored
+    as a supporting file of the outer skill and never load.
+    """
+    folders = sorted(
+        p[: -len(SKILL_FILE)].rstrip("/")
+        for p in paths
+        if p == SKILL_FILE or p.endswith(f"/{SKILL_FILE}")
+    )
+    if not folders:
+        raise SkillError(f"no {SKILL_FILE} in the zip")
+    for inner in folders:
+        for outer in folders:
+            if inner != outer and (outer == "" or inner.startswith(f"{outer}/")):
+                where = (
+                    f"inside the skill folder {outer!r}"
+                    if outer
+                    else "below a root SKILL.md"
+                )
+                raise SkillError(
+                    f"{inner!r} is a skill folder {where}; a skill cannot hold another skill"
+                )
+    return folders
+
+
+def _unpack(zf: zipfile.ZipFile) -> List[tuple[Optional[str], Dict[str, bytes]]]:
+    """Each skill in the zip as ``(folder, {path within it: bytes})``.
+
+    ``folder`` is the skill folder's own name, or None for a SKILL.md at the
+    zip's root, which takes every file. Files outside any skill folder, such as
+    a README beside several skills, are left out.
+    """
     kept = _zip_files(zf)
-    folder: Optional[str] = None
-    if SKILL_FILE not in kept:
-        tops = {name.split("/")[0] for name in kept}
-        if len(tops) != 1 or f"{next(iter(tops))}/{SKILL_FILE}" not in kept:
-            raise SkillError(f"no {SKILL_FILE} at the root of the zip")
-        folder = tops.pop()
-    prefix = f"{folder}/" if folder else ""
     budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
-    files: Dict[str, bytes] = {}
-    for name, info in kept.items():
-        with zf.open(info) as handle:
-            data = handle.read(budget + 1)
-        budget -= len(data)
-        if budget < 0:
-            raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
-        files[name[len(prefix) :]] = data
-    return folder, files
+    skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
+    for folder in _skill_folders(kept):
+        prefix = f"{folder}/" if folder else ""
+        files: Dict[str, bytes] = {}
+        for name, info in kept.items():
+            if not name.startswith(prefix):
+                continue
+            with zf.open(info) as handle:
+                data = handle.read(budget + 1)
+            budget -= len(data)
+            if budget < 0:
+                raise SkillError(
+                    f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB"
+                )
+            files[name[len(prefix) :]] = data
+        skills.append((folder.rsplit("/", 1)[-1] if folder else None, files))
+    return skills
 
 
 def _declared_name(skill_md: bytes) -> str:
@@ -889,26 +929,65 @@ def _declared_name(skill_md: bytes) -> str:
     return name if ok else "invalid-name"
 
 
-def install_uploaded_skill(
+def _stage_upload(
+    scratch: Path, root: Path, library: set[str], name: str, files: Dict[str, bytes]
+) -> Path:
+    """Write one uploaded skill under ``scratch`` and check it may be installed."""
+    staged = scratch / name
+    try:
+        staged.mkdir()
+        for rel, content in files.items():
+            target = staged / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _write_new_file(target, content)
+    except OSError as exc:
+        raise SkillError(f"could not install {name!r}: {exc}") from exc
+    skill = parse_skill(staged)
+    if skill.name in library:
+        raise SkillConflict(
+            f"name {skill.name!r} belongs to the bundled library; choose another name"
+        )
+    final = _skill_dir(root, skill.name)
+    if os.path.lexists(final) or _operator_skill_dir(root, skill.name) != final:
+        raise SkillConflict(
+            f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
+        )
+    return staged
+
+
+def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
+    """One error for every skill refused; a lone skill keeps its own message."""
+    if total == 1:
+        return failures[0][1]
+    detail = "; ".join(f"{name!r}: {exc}" for name, exc in failures)
+    conflict = all(isinstance(exc, SkillConflict) for _, exc in failures)
+    return (SkillConflict if conflict else SkillError)(
+        f"Nothing was installed: {len(failures)} of the {total} skills in the zip "
+        f"failed. {detail}"
+    )
+
+
+def install_uploaded_skills(
     filename: str, data: bytes, settings: Optional[Settings] = None
-) -> Skill:
-    """Install an uploaded ``SKILL.md`` or skill ``.zip`` under the operator root.
+) -> List[Skill]:
+    """Install an uploaded ``SKILL.md`` or ``.zip`` of skills under the operator root.
 
     A bare file lands in a folder named by its frontmatter ``name``. A zip holds
-    ``SKILL.md`` at its root (named the same way) or inside one top-level folder,
-    whose name must then equal ``name``. Nothing is overwritten: a name the
-    library or the operator root already holds raises :class:`SkillConflict`.
-    The skill is built and validated in a scratch directory under the root and
-    moved into place whole, so a refused upload leaves nothing behind.
+    ``SKILL.md`` at its root (named the same way), or skill folders named for
+    their skills, side by side or below wrapper and category folders. Nothing
+    is overwritten: a name the library or the operator root already holds
+    raises :class:`SkillConflict`. All or nothing: every skill is built and
+    checked in a scratch directory under the root before any moves into place,
+    and a skill already moved is taken out again if a later move fails, so a
+    refused upload leaves nothing behind.
     """
     root = _require_operator_root(settings)
-    _require_room(root)  # an upload never overwrites, so it is always a new skill
     if len(data) > UPLOAD_MAX:
         raise SkillError(f"the file is larger than {UPLOAD_MAX // 1024} KB")
     if filename.lower().endswith(".zip") or data.startswith(b"PK\x03\x04"):
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                folder, files = _unpack(zf)
+                unpacked = _unpack(zf)
         except (
             zipfile.BadZipFile,
             RuntimeError,
@@ -920,38 +999,53 @@ def install_uploaded_skill(
         ) as exc:
             raise SkillError(f"not a readable zip archive: {exc}") from exc
     else:
-        folder, files = None, {SKILL_FILE: data}
-    name = folder or _declared_name(files[SKILL_FILE])
+        unpacked = [(None, {SKILL_FILE: data})]
+    named = [
+        (folder or _declared_name(files[SKILL_FILE]), files)
+        for folder, files in unpacked
+    ]
+    names = [name for name, _ in named]
+    for name in names:
+        if names.count(name) > 1:
+            raise SkillError(f"the zip holds more than one skill folder named {name!r}")
+    _require_room(root, len(named))  # an upload never overwrites, so all are new
     try:
         scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
     except OSError as exc:
         raise SkillError(f"could not write under {root}: {exc}") from exc
-    final: Optional[Path] = None
+    library = _library_names()
+    moved: List[Path] = []
+    installed = False
     try:
-        staged = scratch / name
-        staged.mkdir()
-        for rel, content in files.items():
-            target = staged / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _write_new_file(target, content)
-        skill = parse_skill(staged)
-        if skill.name in _library_names():
-            raise SkillConflict(
-                f"name {skill.name!r} belongs to the bundled library; choose another name"
-            )
-        final = _skill_dir(root, skill.name)
-        if os.path.lexists(final) or _operator_skill_dir(root, skill.name) != final:
-            raise SkillConflict(
-                f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
-            )
-        os.replace(staged, final)
-    except OSError as exc:
-        if final and os.path.lexists(final):  # lost a race for the name
-            raise SkillConflict(f"A skill named {name!r} already exists.") from exc
-        raise SkillError(f"could not install {name!r}: {exc}") from exc
+        staged: List[Path] = []
+        failures: List[tuple[str, SkillError]] = []
+        for name, files in named:
+            try:
+                staged.append(_stage_upload(scratch, root, library, name, files))
+            except SkillError as exc:
+                failures.append((name, exc))
+        if failures:
+            raise _refusal(failures, len(named))
+        for path in staged:
+            final = _skill_dir(root, path.name)
+            try:
+                if os.path.lexists(final):
+                    raise FileExistsError(final)
+                os.replace(path, final)
+            except OSError as exc:
+                if os.path.lexists(final):  # lost a race for the name
+                    raise SkillConflict(
+                        f"A skill named {path.name!r} already exists."
+                    ) from exc
+                raise SkillError(f"could not install {path.name!r}: {exc}") from exc
+            moved.append(final)
+        installed = True
     finally:
+        if not installed:
+            for final in moved:
+                shutil.rmtree(final, ignore_errors=True)
         shutil.rmtree(scratch, ignore_errors=True)
-    return parse_skill(final)
+    return [parse_skill(final) for final in moved]
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
