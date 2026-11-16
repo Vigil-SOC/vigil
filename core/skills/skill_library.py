@@ -50,6 +50,7 @@ _NAME_MAX = 64
 _DESCRIPTION_MAX = 1024
 _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
+_CATEGORY_DEPTH = 2  # folders allowed between a zip's container and a skill folder
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
 # Skill folders the skills API may hold under the operator root: a save or
@@ -858,22 +859,49 @@ def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
     return kept
 
 
-def _skill_folders(paths: Iterable[str]) -> List[str]:
-    """The zip folders holding a ``SKILL.md``, ``""`` for the root, sorted.
+def skipped_note(skipped: int) -> Optional[str]:
+    """One short clause saying how many ``SKILL.md`` a zip upload skipped and why."""
+    if not skipped:
+        return None
+    files = "file was" if skipped == 1 else "files were"
+    return (
+        f"{skipped} {SKILL_FILE} {files} skipped, more than "
+        f"{_CATEGORY_DEPTH} category folders deep"
+    )
 
-    Any depth is allowed, so a GitHub "download zip" wrapper and category
-    folders above the skills need no unpacking first. A skill folder inside
-    another one is refused: it would otherwise be stored as a supporting file
-    of the outer skill and never load.
+
+def _skill_folders(paths: Iterable[str]) -> tuple[List[str], int]:
+    """The zip folders holding a skill, ``""`` for the root, sorted, and how many
+    ``SKILL.md`` lie too deep to count.
+
+    The folder-depth rule of the ``npx skills`` CLI: the container is the zip's
+    root, or its one top-level folder when that is not itself a skill (a GitHub
+    "download zip" wrapper), and a skill folder sits at most
+    ``_CATEGORY_DEPTH`` category folders below it. A deeper ``SKILL.md`` is
+    skipped rather than refused. A skill folder inside another one is refused:
+    it would otherwise be stored as a supporting file of the outer skill and
+    never load.
     """
-    folders = sorted(
+    paths = list(paths)
+    found = sorted(
         p[: -len(SKILL_FILE)].rstrip("/")
         for p in paths
         if p == SKILL_FILE or p.endswith(f"/{SKILL_FILE}")
     )
-    if not folders:
+    if not found:
         raise SkillError(f"no {SKILL_FILE} in the zip")
-    for inner in folders:
+    tops = {p.split("/")[0] for p in paths}
+    wrapper = ""
+    if (
+        len(tops) == 1
+        and all("/" in p for p in paths)
+        and f"{next(iter(tops))}/{SKILL_FILE}" not in paths
+    ):
+        wrapper = f"{tops.pop()}/"
+    folders = [
+        f for f in found if f == "" or f[len(wrapper) :].count("/") <= _CATEGORY_DEPTH
+    ]
+    for inner in found:
         for outer in folders:
             if inner != outer and (outer == "" or inner.startswith(f"{outer}/")):
                 where = (
@@ -884,11 +912,17 @@ def _skill_folders(paths: Iterable[str]) -> List[str]:
                 raise SkillError(
                     f"{inner!r} is a skill folder {where}; a skill cannot hold another skill"
                 )
-    return folders
+    skipped = len(found) - len(folders)
+    if not folders:
+        raise SkillError(f"no skill to install: {skipped_note(skipped)}")
+    return folders, skipped
 
 
-def _unpack(zf: zipfile.ZipFile) -> List[tuple[Optional[str], Dict[str, bytes]]]:
-    """Each skill in the zip as ``(folder, {path within it: bytes})``.
+def _unpack(
+    zf: zipfile.ZipFile,
+) -> tuple[List[tuple[Optional[str], Dict[str, bytes]]], int]:
+    """Each skill in the zip as ``(folder, {path within it: bytes})``, and how
+    many ``SKILL.md`` were skipped as too deep.
 
     ``folder`` is the skill folder's own name, or None for a SKILL.md at the
     zip's root, which takes every file. Files outside any skill folder, such as
@@ -897,7 +931,8 @@ def _unpack(zf: zipfile.ZipFile) -> List[tuple[Optional[str], Dict[str, bytes]]]
     kept = _zip_files(zf)
     budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
     skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
-    for folder in _skill_folders(kept):
+    folders, skipped = _skill_folders(kept)
+    for folder in folders:
         prefix = f"{folder}/" if folder else ""
         files: Dict[str, bytes] = {}
         for name, info in kept.items():
@@ -912,7 +947,7 @@ def _unpack(zf: zipfile.ZipFile) -> List[tuple[Optional[str], Dict[str, bytes]]]
                 )
             files[name[len(prefix) :]] = data
         skills.append((folder.rsplit("/", 1)[-1] if folder else None, files))
-    return skills
+    return skills, skipped
 
 
 def _declared_name(skill_md: bytes) -> str:
@@ -970,12 +1005,14 @@ def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
 
 def install_uploaded_skills(
     filename: str, data: bytes, settings: Optional[Settings] = None
-) -> List[Skill]:
+) -> tuple[List[Skill], int]:
     """Install an uploaded ``SKILL.md`` or ``.zip`` of skills under the operator root.
 
-    A bare file lands in a folder named by its frontmatter ``name``. A zip holds
-    ``SKILL.md`` at its root (named the same way), or skill folders named for
-    their skills, side by side or below wrapper and category folders. Nothing
+    Returns the skills installed and how many ``SKILL.md`` in the zip were
+    skipped as too deep. A bare file lands in a folder named by its
+    frontmatter ``name``. A zip holds ``SKILL.md`` at its root (named the same
+    way), or skill folders named for their skills, side by side or up to two
+    category folders below the zip's root or its one wrapper folder. Nothing
     is overwritten: a name the library or the operator root already holds
     raises :class:`SkillConflict`. All or nothing: every skill is built and
     checked in a scratch directory under the root before any moves into place,
@@ -988,7 +1025,7 @@ def install_uploaded_skills(
     if filename.lower().endswith(".zip") or data.startswith(b"PK\x03\x04"):
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                unpacked = _unpack(zf)
+                unpacked, skipped = _unpack(zf)
         except (
             zipfile.BadZipFile,
             RuntimeError,
@@ -1000,7 +1037,7 @@ def install_uploaded_skills(
         ) as exc:
             raise SkillError(f"not a readable zip archive: {exc}") from exc
     else:
-        unpacked = [(None, {SKILL_FILE: data})]
+        unpacked, skipped = [(None, {SKILL_FILE: data})], 0
     named = [
         (folder or _declared_name(files[SKILL_FILE]), files)
         for folder, files in unpacked
@@ -1046,7 +1083,7 @@ def install_uploaded_skills(
             for final in moved:
                 shutil.rmtree(final, ignore_errors=True)
         shutil.rmtree(scratch, ignore_errors=True)
-    return [parse_skill(final) for final in moved]
+    return [parse_skill(final) for final in moved], skipped
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:

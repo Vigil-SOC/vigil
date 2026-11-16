@@ -18,9 +18,12 @@ export interface ApiSkill {
   agents_7d?: number
 }
 
-/** POST /api/skills/upload: the first skill installed, plus every skill the upload installed. */
+/** POST /api/skills/upload: the first skill installed, plus every skill the upload installed
+ *  and the too-deep SKILL.md files a zip skipped, with a clause saying so. */
 export interface ApiSkillUpload extends ApiSkill {
   skills: ApiSkill[]
+  skipped: number
+  skipped_note?: string | null
 }
 
 /** A file in the skill folder: posix path relative to it, and size in bytes. */

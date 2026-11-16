@@ -6593,7 +6593,8 @@ export interface paths {
          * @description Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
          *
          *     All or nothing: a skill refused refuses the upload, and a name already
-         *     taken is refused (409); nothing is overwritten.
+         *     taken is refused (409); nothing is overwritten. A ``SKILL.md`` more than
+         *     two category folders deep is skipped and counted, not installed.
          */
         post: operations["post_api_skills_upload"];
         delete?: never;
@@ -15141,7 +15142,9 @@ export interface components {
          * SkillUploadResponse
          * @description The first skill installed, as a single upload always returned, plus all of them.
          *
-         *     A zip may hold several skills; ``skills`` lists every skill installed.
+         *     A zip may hold several skills; ``skills`` lists every skill installed, and
+         *     ``skipped`` counts the ``SKILL.md`` left out as too deep, which
+         *     ``skipped_note`` explains.
          */
         SkillUploadResponse: {
             /**
@@ -15164,6 +15167,13 @@ export interface components {
             reads_7d: number;
             /** Skills */
             skills: components["schemas"]["SkillResponse"][];
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Skipped Note */
+            skipped_note?: string | null;
             /** Source Path */
             source_path: string;
         };

@@ -4097,7 +4097,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)
-  // One line under the bar: the import's error, or which skills a zip of several installed.
+  // One line under the bar: the import's error, or which skills a zip of several installed
+  // and how many it skipped.
   const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
@@ -4111,10 +4112,13 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
     setImportNotice(null)
     skillsApi
       .upload(file)
-      .then(({ skills }) => {
+      .then(({ skills, skipped_note }) => {
         reload()
         if (skills.length === 1) setEditName(skills[0].name)
-        else setImportNotice({ text: `Imported ${skills.length} skills: ${skills.map((s) => s.name).join(', ')}`, error: false })
+        if (skills.length > 1 || skipped_note) {
+          const names = `Imported ${skills.length} skill${skills.length === 1 ? '' : 's'}: ${skills.map((s) => s.name).join(', ')}`
+          setImportNotice({ text: skipped_note ? `${names}; ${skipped_note}` : names, error: false })
+        }
       })
       .catch((e) => setImportNotice({ text: e?.response?.data?.detail || e?.message || 'Could not import the skill', error: true }))
       .finally(() => setImporting(false))
