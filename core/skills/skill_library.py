@@ -1190,19 +1190,25 @@ def _confined(skill_dir: Path, file: str) -> Optional[Path]:
 
 
 def read_skill(
-    name: Any, file: Any = None, roots: Optional[Iterable[Path]] = None
+    name: Any,
+    file: Any = None,
+    roots: Optional[Iterable[Path]] = None,
+    skills: Optional[Iterable[Skill]] = None,
 ) -> Dict[str, Any]:
     """The tool body. Without ``file``, the SKILL.md body; with it, that file.
 
     Answers ``{"error": ...}`` rather than raising, as ``_replay_hunt`` does: a
     model that asked for a file the skill does not carry needs to be told so.
     Nothing is executed: a script under ``scripts/`` is returned as text like
-    any other file.
+    any other file. ``skills``, when given, is the whole set that can be read,
+    instead of what ``roots`` loads: the agent tool passes the skills that are
+    not held.
     """
     if not isinstance(name, str) or not name:
         return {"error": "read_skill requires a skill `name`"}
-    skills = {s.name: s for s in load_skills(skill_roots() if roots is None else roots)}
-    skill = skills.get(name)
+    if skills is None:
+        skills = load_skills(skill_roots() if roots is None else roots)
+    skill = {s.name: s for s in skills}.get(name)
     if skill is None:
         return {"error": f"No skill named {name!r}"}
     if file is not None and not isinstance(file, str):

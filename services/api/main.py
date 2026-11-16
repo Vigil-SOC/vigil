@@ -687,6 +687,10 @@ async def _startup(app: FastAPI):
 
         app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
+        from services.api.skill_sweep import run as skill_sweeper
+
+        app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
+
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
@@ -718,11 +722,17 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
+    # Cancelling the task cannot stop the thread a sweep runs in; this does, at
+    # the next skill, so shutdown is not held for the rest of a long sweep.
+    from core.skills import skill_hold
+
+    skill_hold.cancel.set()
     for name in (
         "key_ring_task",
         "key_age_task",
         "setup_code_task",
         "dormancy_task",
+        "skill_sweep_task",
     ):
         task = getattr(app.state, name, None)
         if task is None:

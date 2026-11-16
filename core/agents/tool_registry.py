@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -49,6 +50,7 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 from core.storage.models import Finding
 from core.teams import default_team
@@ -1277,8 +1279,11 @@ async def execute_backend_tool(
             result = await result
         return result, True
 
-    # Agent skills (#925): reads from disk only, never a database.
+    # Agent skills: read from disk, except those the scan holds, which read as
+    # absent so the agent cannot learn their content. The verdicts come from the
+    # database, hence off the event loop.
     if tool_name == READ_SKILL_TOOL:
-        return read_skill(args.get("name"), args.get("file")), True
+        visible = await asyncio.to_thread(agent_skills)
+        return read_skill(args.get("name"), args.get("file"), skills=visible), True
 
     return None, False

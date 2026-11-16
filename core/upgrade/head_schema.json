@@ -715,9 +715,9 @@
   "type": "character varying(50)"
  },
  "column auth_links.team_ids": {
-  "type": "character varying(50)[]",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "character varying(50)[]"
  },
  "column auth_links.token_hash": {
   "default": null,
@@ -904,6 +904,11 @@
   "nullable": true,
   "type": "character varying[]"
  },
+ "column case_closure_info.evidence_opened": {
+  "default": null,
+  "nullable": true,
+  "type": "boolean"
+ },
  "column case_closure_info.executive_summary": {
   "default": null,
   "nullable": true,
@@ -938,6 +943,11 @@
   "default": null,
   "nullable": true,
   "type": "text"
+ },
+ "column case_closure_info.sampled_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
  },
  "column case_comments.attachment_ids": {
   "default": null,
@@ -1750,9 +1760,9 @@
   "type": "character varying[]"
  },
  "column cases.team_id": {
-  "type": "character varying(50)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(50)"
  },
  "column cases.timeline": {
   "default": null,
@@ -2395,6 +2405,71 @@
   "default": "'{}'::text[]",
   "nullable": false,
   "type": "text[]"
+ },
+ "column directory_group_members.group_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_group_members.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column directory_groups.display_name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.external_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.group_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.version": {
+  "default": "1",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column directory_pending.display_name": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column directory_pending.email": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.external_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.pending_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.received_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column directory_pending.username": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
  },
  "column enabled_integrations.config": {
   "default": null,
@@ -3137,119 +3212,119 @@
   "type": "integer"
  },
  "column investigation_replay.abstained": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.agreed": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.agreement_rate": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.agreement_wilson_high": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.agreement_wilson_low": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.cost_usd": {
-  "type": "double precision",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.disagreed": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.false_close": {
-  "type": "jsonb",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "jsonb"
  },
  "column investigation_replay.false_close_rate": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.false_close_wilson_high": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.false_close_wilson_low": {
-  "type": "double precision",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "double precision"
  },
  "column investigation_replay.false_closes": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.id": {
-  "type": "smallint",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "smallint"
  },
  "column investigation_replay.model_id": {
-  "type": "character varying(200)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(200)"
  },
  "column investigation_replay.provider_id": {
-  "type": "character varying(64)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(64)"
  },
  "column investigation_replay.reason": {
-  "type": "text",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "text"
  },
  "column investigation_replay.replayed": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.skipped": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.started_at": {
-  "type": "timestamp without time zone",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "timestamp without time zone"
  },
  "column investigation_replay.started_by": {
-  "type": "character varying(64)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(64)"
  },
  "column investigation_replay.status": {
-  "type": "character varying(16)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(16)"
  },
  "column investigation_replay.total": {
-  "type": "integer",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "integer"
  },
  "column investigation_replay.updated_at": {
-  "type": "timestamp without time zone",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "timestamp without time zone"
  },
  "column investigations.case_id": {
   "default": null,
@@ -3696,6 +3771,31 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column medic_incident_notice.event": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column medic_incident_notice.fix": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column medic_incident_notice.incident_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column medic_incident_notice.reopen_count": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column medic_incident_notice.summary": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column medic_last_seen.failure_kind": {
   "default": null,
   "nullable": true,
@@ -3727,34 +3827,49 @@
   "type": "timestamp without time zone"
  },
  "column medic_watch_state.announced_word": {
-  "type": "text",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "text"
  },
  "column medic_watch_state.confirming_polls": {
-  "type": "integer",
+  "default": "0",
   "nullable": false,
-  "default": "0"
+  "type": "integer"
  },
  "column medic_watch_state.confirming_word": {
-  "type": "text",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "text"
  },
  "column medic_watch_state.counted_updated_at": {
-  "type": "timestamp without time zone",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "timestamp without time zone"
  },
  "column medic_watch_state.id": {
-  "type": "smallint",
+  "default": "1",
   "nullable": false,
-  "default": "1"
+  "type": "smallint"
+ },
+ "column medic_watch_state.open_count": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
+ "column medic_watch_state.open_count_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
  },
  "column medic_watch_state.red_since": {
-  "type": "timestamp without time zone",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "timestamp without time zone"
+ },
+ "column medic_watch_state.summary_started_at": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column principals.created_at": {
   "default": "now()",
@@ -4071,6 +4186,66 @@
   "nullable": false,
   "type": "text"
  },
+ "column skill_scans.approved_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column skill_scans.approved_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_scans.digest": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_scans.error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_scans.findings": {
+  "default": "'[]'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column skill_scans.max_severity": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_scans.recommendation": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_scans.scanned_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column skill_scans.scanner_version": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_scans.score": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
+ "column skill_scans.skill_name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_scans.status": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column sla_policies.business_hours_only": {
   "default": null,
   "nullable": false,
@@ -4141,6 +4316,11 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column sso_links.directory_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column sso_links.issuer": {
   "default": null,
   "nullable": false,
@@ -4150,6 +4330,11 @@
   "default": null,
   "nullable": false,
   "type": "character varying(50)"
+ },
+ "column sso_links.managed": {
+  "default": "false",
+  "nullable": false,
+  "type": "boolean"
  },
  "column sso_links.principal_id": {
   "default": null,
@@ -4197,44 +4382,44 @@
   "type": "jsonb"
  },
  "column team_memberships.created_at": {
-  "type": "timestamp without time zone",
+  "default": "now()",
   "nullable": false,
-  "default": "now()"
+  "type": "timestamp without time zone"
  },
  "column team_memberships.principal_id": {
-  "type": "text",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "text"
  },
  "column team_memberships.team_id": {
-  "type": "character varying(50)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(50)"
  },
  "column teams.archived_at": {
-  "type": "timestamp without time zone",
+  "default": null,
   "nullable": true,
-  "default": null
+  "type": "timestamp without time zone"
  },
  "column teams.created_at": {
-  "type": "timestamp without time zone",
+  "default": "now()",
   "nullable": false,
-  "default": "now()"
+  "type": "timestamp without time zone"
  },
  "column teams.is_default": {
-  "type": "boolean",
+  "default": "false",
   "nullable": false,
-  "default": "false"
+  "type": "boolean"
  },
  "column teams.name": {
-  "type": "text",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "text"
  },
  "column teams.team_id": {
-  "type": "character varying(50)",
+  "default": null,
   "nullable": false,
-  "default": null
+  "type": "character varying(50)"
  },
  "column threat_indicators.collection_id": {
   "default": null,
@@ -4366,6 +4551,16 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column users.deactivated_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column users.deactivation_route": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column users.dormancy_floor": {
   "default": null,
   "nullable": true,
@@ -4480,6 +4675,11 @@
   "default": null,
   "nullable": false,
   "type": "character varying(50)"
+ },
+ "column users.scim_version": {
+  "default": "1",
+  "nullable": false,
+  "type": "integer"
  },
  "column users.service_account": {
   "default": "false",
@@ -4705,7 +4905,7 @@
  "constraint auth_keys.auth_keys_pkey": "PRIMARY KEY (purpose, version)",
  "constraint auth_keys.auth_keys_state_check": "CHECK ((state = ANY (ARRAY['current'::text, 'verify_only'::text, 'decrypt_only'::text, 'retired'::text])))",
  "constraint auth_links.auth_links_invited_by_fkey": "FOREIGN KEY (invited_by) REFERENCES principals(principal_id) ON DELETE RESTRICT",
- "constraint auth_links.auth_links_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['invite'::character varying, 'reset'::character varying])::text[])))",
+ "constraint auth_links.auth_links_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['invite'::character varying, 'reset'::character varying, 'email'::character varying])::text[])))",
  "constraint auth_links.auth_links_pkey": "PRIMARY KEY (link_id)",
  "constraint auth_links.auth_links_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint breached_passwords.breached_passwords_pkey": "PRIMARY KEY (entry)",
@@ -4786,6 +4986,11 @@
  "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
  "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",
  "constraint detection_rules.detection_rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text])))",
+ "constraint directory_group_members.directory_group_members_group_id_fkey": "FOREIGN KEY (group_id) REFERENCES directory_groups(group_id) ON DELETE CASCADE",
+ "constraint directory_group_members.directory_group_members_pkey": "PRIMARY KEY (group_id, principal_id)",
+ "constraint directory_group_members.directory_group_members_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint directory_groups.directory_groups_pkey": "PRIMARY KEY (group_id)",
+ "constraint directory_pending.directory_pending_pkey": "PRIMARY KEY (pending_id)",
  "constraint episodic_distil_failures.episodic_distil_failures_attempts_check": "CHECK ((attempts > 0))",
  "constraint episodic_distil_failures.episodic_distil_failures_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_pkey": "PRIMARY KEY (investigation_kind, failure_key)",
@@ -4845,6 +5050,12 @@
  "constraint mcp_credentials.mcp_credentials_pkey": "PRIMARY KEY (credential_id)",
  "constraint mcp_credentials.mcp_credentials_token_hash_key": "UNIQUE (token_hash)",
  "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE RESTRICT",
+ "constraint medic_incident_notice.medic_incident_notice_event": "CHECK ((event = ANY (ARRAY['opened'::text, 'cleared'::text, 'summary'::text, 'fix_open'::text, 'fix_not_held'::text, 'fix_not_back'::text, 'fix_fixed'::text])))",
+ "constraint medic_incident_notice.medic_incident_notice_fix": "CHECK (((fix IS NULL) OR (char_length(fix) <= 1000)))",
+ "constraint medic_incident_notice.medic_incident_notice_id": "CHECK ((incident_id ~ '^inc_[0-9A-Za-z]{8,32}$'::text))",
+ "constraint medic_incident_notice.medic_incident_notice_pkey": "PRIMARY KEY (incident_id, reopen_count, event)",
+ "constraint medic_incident_notice.medic_incident_notice_reopen": "CHECK ((reopen_count >= 0))",
+ "constraint medic_incident_notice.medic_incident_notice_summary": "CHECK (((summary IS NULL) OR (char_length(summary) <= 200)))",
  "constraint medic_last_seen.medic_last_seen_failure_kind": "CHECK (((failure_kind)::text = ANY ((ARRAY['refused'::character varying, 'timeout'::character varying, '401'::character varying, '5xx'::character varying])::text[])))",
  "constraint medic_last_seen.medic_last_seen_one_row": "CHECK ((id = 1))",
  "constraint medic_last_seen.medic_last_seen_pkey": "PRIMARY KEY (id)",
@@ -4852,8 +5063,10 @@
  "constraint medic_watch_state.medic_watch_state_announced": "CHECK (((announced_word IS NULL) OR (announced_word = ANY (ARRAY['down'::text, 'blind'::text, 'not_recording'::text, 'crash_looping'::text, 'running'::text, 'degraded'::text]))))",
  "constraint medic_watch_state.medic_watch_state_confirming": "CHECK (((confirming_word IS NULL) OR (confirming_word = ANY (ARRAY['down'::text, 'blind'::text, 'not_recording'::text, 'crash_looping'::text, 'running'::text, 'degraded'::text]))))",
  "constraint medic_watch_state.medic_watch_state_one_row": "CHECK ((id = 1))",
+ "constraint medic_watch_state.medic_watch_state_open_count": "CHECK (((open_count IS NULL) OR (open_count >= 0)))",
  "constraint medic_watch_state.medic_watch_state_pkey": "PRIMARY KEY (id)",
  "constraint medic_watch_state.medic_watch_state_polls": "CHECK ((confirming_polls >= 0))",
+ "constraint medic_watch_state.medic_watch_state_summary_start": "CHECK (((summary_started_at IS NULL) OR (char_length(summary_started_at) <= 128)))",
  "constraint principals.principals_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['person'::character varying, 'service_account'::character varying, 'agent'::character varying, 'system'::character varying])::text[])))",
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
@@ -4870,6 +5083,9 @@
  "constraint sketch_mappings.sketch_mappings_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint sketch_mappings.sketch_mappings_pkey": "PRIMARY KEY (id)",
  "constraint skill_reads.skill_reads_pkey": "PRIMARY KEY (id)",
+ "constraint skill_scans.skill_scans_pkey": "PRIMARY KEY (digest)",
+ "constraint skill_scans.skill_scans_recommendation": "CHECK (((recommendation IS NULL) OR (recommendation = ANY (ARRAY['SAFE'::text, 'CAUTION'::text, 'DO_NOT_INSTALL'::text]))))",
+ "constraint skill_scans.skill_scans_status": "CHECK ((status = ANY (ARRAY['scanned'::text, 'failed'::text])))",
  "constraint sla_policies.sla_policies_pkey": "PRIMARY KEY (policy_id)",
  "constraint sso_links.sso_links_pkey": "PRIMARY KEY (link_id)",
  "constraint sso_links.sso_links_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
@@ -4884,6 +5100,7 @@
  "constraint tool_effect_classes.tool_effect_classes_pkey": "PRIMARY KEY (tool_name)",
  "constraint user_preferences.user_preferences_pkey": "PRIMARY KEY (user_id)",
  "constraint users.users_accountable_principal_id_fkey": "FOREIGN KEY (accountable_principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint users.users_deactivation_route_check": "CHECK (((deactivation_route IS NULL) OR (deactivation_route = ANY (ARRAY['sync'::text, 'person'::text, 'dormancy'::text]))))",
  "constraint users.users_email_key": "UNIQUE (email)",
  "constraint users.users_pkey": "PRIMARY KEY (user_id)",
  "constraint users.users_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
@@ -4964,13 +5181,13 @@
   "owner": "owner"
  },
  "function team_membership_person()": {
-  "owner": "owner",
   "acl": [
    "PUBLIC:EXECUTE",
    "app:EXECUTE",
    "owner:EXECUTE"
   ],
-  "definition": "CREATE OR REPLACE FUNCTION public.team_membership_person()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1 FROM public.principals\n        WHERE principal_id = NEW.principal_id\n          AND kind = 'person'\n          AND deleted_at IS NULL\n    ) THEN\n        RAISE EXCEPTION 'team membership is for a person principal only';\n    END IF;\n    RETURN NEW;\nEND;\n$function$\n"
+  "definition": "CREATE OR REPLACE FUNCTION public.team_membership_person()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1 FROM public.principals\n        WHERE principal_id = NEW.principal_id\n          AND kind = 'person'\n          AND deleted_at IS NULL\n    ) THEN\n        RAISE EXCEPTION 'team membership is for a person principal only';\n    END IF;\n    RETURN NEW;\nEND;\n$function$\n",
+  "owner": "owner"
  },
  "function update_ai_model_configs_timestamp()": {
   "acl": [
@@ -5076,6 +5293,9 @@
  "index detection_rule_versions_pkey": "CREATE UNIQUE INDEX detection_rule_versions_pkey ON public.detection_rule_versions USING btree (rule_id, version)",
  "index detection_rules_pkey": "CREATE UNIQUE INDEX detection_rules_pkey ON public.detection_rules USING btree (id)",
  "index detection_rules_source_native_key": "CREATE UNIQUE INDEX detection_rules_source_native_key ON public.detection_rules USING btree (source, native_key)",
+ "index directory_group_members_pkey": "CREATE UNIQUE INDEX directory_group_members_pkey ON public.directory_group_members USING btree (group_id, principal_id)",
+ "index directory_groups_pkey": "CREATE UNIQUE INDEX directory_groups_pkey ON public.directory_groups USING btree (group_id)",
+ "index directory_pending_pkey": "CREATE UNIQUE INDEX directory_pending_pkey ON public.directory_pending USING btree (pending_id)",
  "index episodic_distil_failures_pkey": "CREATE UNIQUE INDEX episodic_distil_failures_pkey ON public.episodic_distil_failures USING btree (investigation_kind, failure_key)",
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
@@ -5186,6 +5406,7 @@
  "index idx_detection_rule_stages_rule": "CREATE INDEX idx_detection_rule_stages_rule ON public.detection_rule_stages USING btree (rule_id, id)",
  "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
+ "index idx_directory_group_members_principal": "CREATE INDEX idx_directory_group_members_principal ON public.directory_group_members USING btree (principal_id)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
@@ -5245,6 +5466,7 @@
  "index idx_sketch_finding_id": "CREATE INDEX idx_sketch_finding_id ON public.sketch_mappings USING btree (finding_id)",
  "index idx_sketch_id": "CREATE INDEX idx_sketch_id ON public.sketch_mappings USING btree (sketch_id)",
  "index idx_skill_reads_skill_time": "CREATE INDEX idx_skill_reads_skill_time ON public.skill_reads USING btree (skill_name, read_at)",
+ "index idx_skill_scans_name": "CREATE INDEX idx_skill_scans_name ON public.skill_scans USING btree (skill_name)",
  "index idx_sla_policy_active": "CREATE INDEX idx_sla_policy_active ON public.sla_policies USING btree (is_active)",
  "index idx_sla_policy_default": "CREATE INDEX idx_sla_policy_default ON public.sla_policies USING btree (is_default)",
  "index idx_sla_policy_priority": "CREATE INDEX idx_sla_policy_priority ON public.sla_policies USING btree (priority_level)",
@@ -5281,6 +5503,7 @@
  "index llm_provider_default_per_type": "CREATE UNIQUE INDEX llm_provider_default_per_type ON public.llm_provider_configs USING btree (provider_type) WHERE (is_default = true)",
  "index mcp_credentials_pkey": "CREATE UNIQUE INDEX mcp_credentials_pkey ON public.mcp_credentials USING btree (credential_id)",
  "index mcp_credentials_token_hash_key": "CREATE UNIQUE INDEX mcp_credentials_token_hash_key ON public.mcp_credentials USING btree (token_hash)",
+ "index medic_incident_notice_pkey": "CREATE UNIQUE INDEX medic_incident_notice_pkey ON public.medic_incident_notice USING btree (incident_id, reopen_count, event)",
  "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
  "index medic_watch_state_pkey": "CREATE UNIQUE INDEX medic_watch_state_pkey ON public.medic_watch_state USING btree (id)",
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
@@ -5292,6 +5515,7 @@
  "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
  "index skill_reads_pkey": "CREATE UNIQUE INDEX skill_reads_pkey ON public.skill_reads USING btree (id)",
+ "index skill_scans_pkey": "CREATE UNIQUE INDEX skill_scans_pkey ON public.skill_scans USING btree (digest)",
  "index sla_policies_pkey": "CREATE UNIQUE INDEX sla_policies_pkey ON public.sla_policies USING btree (policy_id)",
  "index sso_links_pkey": "CREATE UNIQUE INDEX sso_links_pkey ON public.sso_links USING btree (link_id)",
  "index system_config_pkey": "CREATE UNIQUE INDEX system_config_pkey ON public.system_config USING btree (key)",
@@ -5303,11 +5527,15 @@
  "index uniq_findings_source_extid": "CREATE UNIQUE INDEX uniq_findings_source_extid ON public.findings USING btree (data_source, external_id) WHERE ((data_source IS NOT NULL) AND (external_id IS NOT NULL))",
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
+ "index uq_auth_links_open_email": "CREATE UNIQUE INDEX uq_auth_links_open_email ON public.auth_links USING btree (principal_id) WHERE (((kind)::text = 'email'::text) AND (used_at IS NULL) AND (revoked_at IS NULL))",
  "index uq_auth_links_open_invite": "CREATE UNIQUE INDEX uq_auth_links_open_invite ON public.auth_links USING btree (lower(email)) WHERE (((kind)::text = 'invite'::text) AND (used_at IS NULL) AND (revoked_at IS NULL))",
  "index uq_auth_links_token_hash": "CREATE UNIQUE INDEX uq_auth_links_token_hash ON public.auth_links USING btree (token_hash)",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
+ "index uq_directory_groups_external": "CREATE UNIQUE INDEX uq_directory_groups_external ON public.directory_groups USING btree (external_id)",
+ "index uq_directory_pending_external": "CREATE UNIQUE INDEX uq_directory_pending_external ON public.directory_pending USING btree (external_id)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
+ "index uq_sso_links_directory": "CREATE UNIQUE INDEX uq_sso_links_directory ON public.sso_links USING btree (issuer, directory_id) WHERE (directory_id IS NOT NULL)",
  "index uq_sso_links_subject": "CREATE UNIQUE INDEX uq_sso_links_subject ON public.sso_links USING btree (issuer, subject)",
  "index uq_teams_is_default": "CREATE UNIQUE INDEX uq_teams_is_default ON public.teams USING btree (is_default) WHERE is_default",
  "index uq_teams_name": "CREATE UNIQUE INDEX uq_teams_name ON public.teams USING btree (lower(name))",
@@ -6556,6 +6784,72 @@
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
  },
+ "relation directory_group_members": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation directory_groups": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation directory_pending": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
  "relation enabled_integrations": {
   "acl": [
    "app:DELETE",
@@ -7015,13 +7309,6 @@
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
  },
  "relation investigation_replay": {
-  "kind": "r",
-  "row_security": [
-   false,
-   false
-  ],
-  "sequence": null,
-  "owner": "owner",
   "acl": [
    "app:DELETE",
    "app:INSERT",
@@ -7034,7 +7321,14 @@
    "owner:TRIGGER",
    "owner:TRUNCATE",
    "owner:UPDATE"
-  ]
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation investigations": {
   "acl": [
@@ -7162,6 +7456,28 @@
   ],
   "sequence": null
  },
+ "relation medic_incident_notice": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
  "relation medic_last_seen": {
   "acl": [
    "app:DELETE",
@@ -7185,13 +7501,6 @@
   "sequence": null
  },
  "relation medic_watch_state": {
-  "kind": "r",
-  "row_security": [
-   false,
-   false
-  ],
-  "sequence": null,
-  "owner": "owner",
   "acl": [
    "app:DELETE",
    "app:INSERT",
@@ -7204,7 +7513,14 @@
    "owner:TRIGGER",
    "owner:TRUNCATE",
    "owner:UPDATE"
-  ]
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation principals": {
   "acl": [
@@ -7467,6 +7783,28 @@
   ],
   "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
+ "relation skill_scans": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
  "relation sla_policies": {
   "acl": [
    "app:DELETE",
@@ -7534,13 +7872,6 @@
   "sequence": null
  },
  "relation team_memberships": {
-  "kind": "r",
-  "row_security": [
-   false,
-   false
-  ],
-  "sequence": null,
-  "owner": "owner",
   "acl": [
    "app:DELETE",
    "app:INSERT",
@@ -7553,16 +7884,16 @@
    "owner:TRIGGER",
    "owner:TRUNCATE",
    "owner:UPDATE"
-  ]
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation teams": {
-  "kind": "r",
-  "row_security": [
-   false,
-   false
-  ],
-  "sequence": null,
-  "owner": "owner",
   "acl": [
    "app:DELETE",
    "app:INSERT",
@@ -7575,7 +7906,14 @@
    "owner:TRIGGER",
    "owner:TRUNCATE",
    "owner:UPDATE"
-  ]
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation threat_indicators": {
   "acl": [
