@@ -2144,10 +2144,12 @@ export type Factor = { code?: string; assertion?: Record<string, unknown>; chall
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
   // the first method needs the password; a change to one that exists, the password and a code
-  verify: (code: string, password: string) =>
+  // the first method sends the password; adding the app beside a key also sends that key
+  verify: (code: string, password: string, factor: Factor = {}) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
       password,
+      ...factor,
     } satisfies Schema<'MFAVerifyRequest'>),
   regenerateRecoveryCodes: (password: string, factor: Factor) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {

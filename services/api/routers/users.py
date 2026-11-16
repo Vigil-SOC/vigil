@@ -2145,6 +2145,7 @@ def reset_user_mfa(
         current_user,
         sign_ins.open_ids(session, user.principal_id),
         body.reason,
+        sign_ins.MFA_RESET,
     )
     revoked = (
         _revoke_tokens(session, current_user, user) if body.suspected_compromise else 0
