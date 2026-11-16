@@ -363,12 +363,7 @@ def join_default_if_none(session: Session, principal_id: str, *, actor: str) -> 
         or principal.kind != PERSON
     ):
         return
-    held = session.scalar(
-        select(TeamMembership.team_id)
-        .where(TeamMembership.principal_id == principal_id)
-        .limit(1)
-    )
-    if held is None:
+    if not _live_teams(session, principal_id):
         join_default(session, principal_id, actor=actor)
 
 
@@ -445,19 +440,38 @@ def _insert(session: Session, team: Team, principal_id: str, actor: str) -> None
     )
 
 
-def _removal_warning(session: Session, team: Team, principal_id: str) -> Optional[str]:
-    parts: list[str] = []
-    left = session.scalar(
+def _live_teams(session: Session, principal_id: str) -> int:
+    """Teams the person is on that aren't archived, while their account is active."""
+    return session.scalar(
         select(func.count())
         .select_from(TeamMembership)
-        .where(TeamMembership.principal_id == principal_id)
+        .join(Team, Team.team_id == TeamMembership.team_id)
+        .join(User, User.principal_id == TeamMembership.principal_id)
+        .join(Principal, Principal.principal_id == TeamMembership.principal_id)
+        .where(
+            TeamMembership.principal_id == principal_id,
+            Team.archived_at.is_(None),
+            User.is_active.is_(True),
+            Principal.deleted_at.is_(None),
+        )
     )
-    if not left:
+
+
+def _removal_warning(session: Session, team: Team, principal_id: str) -> Optional[str]:
+    parts: list[str] = []
+    if not _live_teams(session, principal_id):
         parts.append("They are on no team, so they can claim nothing.")
+    # Deactivated or deleted members don't keep the team staffed.
     members = session.scalar(
         select(func.count())
         .select_from(TeamMembership)
-        .where(TeamMembership.team_id == team.team_id)
+        .join(User, User.principal_id == TeamMembership.principal_id)
+        .join(Principal, Principal.principal_id == TeamMembership.principal_id)
+        .where(
+            TeamMembership.team_id == team.team_id,
+            User.is_active.is_(True),
+            Principal.deleted_at.is_(None),
+        )
     )
     if not members:
         unowned = session.scalar(
