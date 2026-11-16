@@ -253,7 +253,11 @@ def _record(digest: str, name: str, result) -> None:
             return
         if row.status == STATUS_SCANNED:
             return  # another replica already has a verdict for this content
-        # A failed row is retried in place; approval fields, if any, stay.
+        if row.approved_at is not None:
+            # An approval is final for its digest: a retry that landed on a
+            # different verdict would change what the approver released.
+            return
+        # A failed, unapproved row is retried in place.
         for key, value in values.items():
             setattr(row, key, value)
 
@@ -289,11 +293,14 @@ def sweep(
             logger.warning("skill %s could not be digested: %s", skill.name, exc)
     with unit_of_work() as session:
         known = {
-            d: (status, at)
-            for d, status, at in session.execute(
-                select(SkillScan.digest, SkillScan.status, SkillScan.scanned_at).where(
-                    SkillScan.digest.in_(set(digests.values()))
-                )
+            d: (status, at, approved)
+            for d, status, at, approved in session.execute(
+                select(
+                    SkillScan.digest,
+                    SkillScan.status,
+                    SkillScan.scanned_at,
+                    SkillScan.approved_at,
+                ).where(SkillScan.digest.in_(set(digests.values())))
             )
         }
     now = utcnow()
@@ -306,7 +313,9 @@ def sweep(
             continue
         seen = known.get(digest)
         if seen is not None and (
-            seen[0] == STATUS_SCANNED or now - seen[1] < RETRY_FAILED_AFTER
+            seen[0] == STATUS_SCANNED
+            or seen[2] is not None  # approved: final, never rescanned
+            or now - seen[1] < RETRY_FAILED_AFTER
         ):
             continue
         result = scan_skill(skill.path, settings)
@@ -352,6 +361,7 @@ _REFUSALS = {
     SAFE: "The scan found nothing; the skill is already allowed",
     APPROVED: "This version is already approved",
     PENDING: "This version has no scan verdict yet; wait for the scan, then approve",
+    REFUSED: "A skill that contains a symlink cannot be approved; remove the link",
 }
 
 

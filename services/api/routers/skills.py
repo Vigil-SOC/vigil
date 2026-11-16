@@ -407,21 +407,26 @@ async def approve_skill(
         skill = _loaded(name)
     except SkillError as exc:
         raise _http(exc) from exc
-    with unit_of_work() as session:
-        try:
-            before = approve(skill, req.digest, user.principal_id, session)
-        except ApprovalRefused as exc:
-            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
-        trail_events.record(
-            session,
-            "skills.approved",
-            actor=user.principal_id,
-            name=skill.name,
-            digest=req.digest,
-            state=before.state,
-            recommendation=before.recommendation,
-        )
-    return _response(skill, _state_of(skill))
+
+    def release() -> ScanState:
+        with unit_of_work() as session:
+            try:
+                before = approve(skill, req.digest, user.principal_id, session)
+            except ApprovalRefused as exc:
+                raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+            trail_events.record(
+                session,
+                "skills.approved",
+                actor=user.principal_id,
+                name=skill.name,
+                digest=req.digest,
+                state=before.state,
+                recommendation=before.recommendation,
+            )
+        return _state_of(skill)
+
+    # Digesting, the verdict read and the write are blocking: off the event loop.
+    return _response(skill, await asyncio.to_thread(release))
 
 
 @router.delete("/{name}", dependencies=_SKILLS_WRITE)
