@@ -253,6 +253,7 @@ class MetricsServer:
         health: Dict[str, Any] = {
             "status": "healthy",
             "timestamp": utcnow().isoformat(),
+            "started_at": self._start_time.isoformat(),
             "uptime_seconds": (utcnow() - self._start_time).total_seconds(),
         }
 
