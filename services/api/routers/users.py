@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from core import teams
 from core.audit import retention
 from core.auth import (
+    directory_sync,
     dormancy,
     invites,
     mcp_credential_service,
@@ -44,7 +45,11 @@ from core.auth.auth_service import (
     clear_lock,
     managers,
 )
-from core.auth.deactivation import deactivate_account, when_committed
+from core.auth.deactivation import (
+    clear_deactivation,
+    deactivate_account,
+    when_committed,
+)
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.auth.password_reset import reset_link
 from core.auth.password_validator import USERS_LINK
@@ -462,6 +467,10 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         entry["has_password"] = bool(user.password_hash)
         entry["has_sso"] = user.principal_id in linked
         entry["status"] = _account_status(user, user.principal_id in deleted)
+        entry["deactivation_route"] = user.deactivation_route
+        entry["deactivated_at"] = (
+            user.deactivated_at.isoformat() + "Z" if user.deactivated_at else None
+        )
         entry["open_cases"] = open_cases.get(user.username, 0)
         entry["open_cases_hidden"] = hidden_cases.get(user.username, 0)
         machine = _is_service_account(user)
@@ -1832,6 +1841,16 @@ def create_service_account(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="That name is reserved for Medic's account",
         )
+    if name == directory_sync.USERNAME or role.role_id == directory_sync.ROLE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="That account is directory sync's and can't be created here",
+        )
+    if directory_sync.PERMISSION in _granted(role.permissions):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="directory.sync is held only by directory sync and can't be granted",
+        )
     claim_sign_in_names(session, name, email)
     if identifier_in_use(session, name) or identifier_in_use(session, email):
         raise HTTPException(
@@ -1947,7 +1966,12 @@ def _disable_alone(
     with unit_of_work() as session:
         user = session.get(User, user_id)
         revoked = deactivate_account(
-            session, user, actor=actor, by_person=by_person, record_trail=False
+            session,
+            user,
+            actor=actor,
+            by_person=by_person,
+            record_trail=False,
+            route="person",
         )
         links = invites.revoke_resets(
             session, user.principal_id, actor, "deactivated", record=False
@@ -1987,6 +2011,10 @@ def _apply_user_update(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
             )
+        if role.role_id == directory_sync.ROLE_ID and role.role_id != user.role_id:
+            _refuse_sync_role(role.role_id)
+        if user.role_id == directory_sync.ROLE_ID and role.role_id != user.role_id:
+            _refuse_sync_role(user.role_id)
         _refuse_uncovered(
             current_user, role.permissions, session, "Cannot assign this role"
         )
@@ -2169,7 +2197,9 @@ def deactivate_user(
             )
         session.refresh(user)
     else:
-        deactivate_account(session, user, actor=actor, by_person=by_person)
+        deactivate_account(
+            session, user, actor=actor, by_person=by_person, route="person"
+        )
     logger.info(f"User deactivated by {current_user.username}: {user.username}")
     return _dump_accounts(session, [user])[0]
 
@@ -2199,6 +2229,7 @@ def reactivate_user(
             current_user, session, None, role.permissions if role else {}
         )
     user.is_active = True
+    clear_deactivation(user)
     # Back in use: the idle clock starts again and a lock ends.
     user.dormancy_floor = utcnow()
     clear_lock(user)
@@ -2310,6 +2341,7 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
         user,
         actor=actor,
         by_person=_acts_as_person(current_user, session),
+        route="person",
     )
     # In this transaction: the delete does not happen without its entries.
     trail_events.record(
@@ -2401,7 +2433,9 @@ def _new_permissions_unheld(roles: list[Role]) -> list[str]:
         for key, value in (role.permissions or {}).items():
             if value is True:
                 held.add(key)
-    return sorted(NEW_CAPABILITIES - held)
+    # directory.sync is a new capability no custom role may hold, so it is
+    # not a gap an admin can close.
+    return sorted(NEW_CAPABILITIES - held - {directory_sync.PERMISSION})
 
 
 def _role_entry(role: Role, holders: int) -> dict:
@@ -2412,6 +2446,7 @@ def _role_entry(role: Role, holders: int) -> dict:
         entry.update(kind="builtin", modified=bool(diff), diff=diff)
     else:
         entry["kind"] = "legacy" if role.role_id in LEGACY_ROLE_IDS else "custom"
+    entry["reserved"] = role.role_id == directory_sync.ROLE_ID
     entry["unrecognised"] = sorted(set(role.permissions or {}) - KNOWN_PERMISSIONS)
     entry["holders"] = holders
     return entry
@@ -2422,6 +2457,11 @@ def _require_permission(current_user: User, permission: str, session) -> None:
 
 
 def _known(permissions: dict) -> dict:
+    if directory_sync.PERMISSION in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="directory.sync is held only by directory sync and can't be granted",
+        )
     unknown = sorted(set(permissions) - KNOWN_PERMISSIONS)
     if unknown:
         raise HTTPException(
@@ -2450,6 +2490,14 @@ def _role_name(session: Session, name: str, role_id: Optional[str] = None) -> st
     return name
 
 
+def _refuse_sync_role(role_id: str) -> None:
+    if role_id == directory_sync.ROLE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This role is directory sync's and can't be changed or granted",
+        )
+
+
 def _editable_role(session: Session, role_id: str) -> Role:
     role = session.get(Role, role_id)
     if role is None:
@@ -2460,6 +2508,7 @@ def _editable_role(session: Session, role_id: str) -> Role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=BUILTIN_ROLE_REFUSED
         )
+    _refuse_sync_role(role.role_id)
     return role
 
 

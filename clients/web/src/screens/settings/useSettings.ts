@@ -291,6 +291,8 @@ export interface User {
   locked_from: string | null
   /** when an idle account will be deactivated, once inside the warning window */
   deactivating_at: string | null
+  /** sync, person or dormancy; null when the account was deactivated before this was kept */
+  deactivation_route: 'sync' | 'person' | 'dormancy' | null
   /** person-only keys the role holds; stored, no effect for a non-person */
   no_effect: string[]
 }
@@ -307,6 +309,8 @@ export interface Role {
   diff?: Record<string, { catalog: boolean | null; role: boolean | null }>
   unrecognised: string[]
   holders: number
+  /** directory sync's role: not granted, edited or deleted */
+  reserved?: boolean
 }
 
 export interface RolePreset {

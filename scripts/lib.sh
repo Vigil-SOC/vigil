@@ -101,6 +101,13 @@ _dc_medic() {
         echo "Warning: can't read $settings; Compose runs without Medic's overlay." >&2
         return 0
     fi
+    # The gateway's two credential files are each optional, but Compose won't
+    # start a container whose secret file is missing. An empty 0600 placeholder
+    # reads as absent to the gateway; an existing file is never touched.
+    for f in medic_gateway_token viewer_password; do
+        f="${settings%/*}/$f"
+        [ -e "$f" ] || [ -L "$f" ] || (umask 077 && : > "$f") 2>/dev/null || true
+    done
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in VIGIL_MEDIC_*=*) ;; *) continue ;; esac
         # Override files come from Vigil's own environment, never from compose.env.

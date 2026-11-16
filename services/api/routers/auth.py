@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, object_session
 from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
+    directory_sync,
     invites,
     key_ring,
     mfa_methods,
@@ -1305,17 +1306,36 @@ def _sso_username(session: Session, claims: dict) -> str:
 
 def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[User]:
     """The account this subject signs in as (None: create one), refused when it
-    can't. Nothing is written here, so a refusal leaves no trace but the trail's."""
+    can't. A directory id on an unmanaged link is refreshed here; a refusal
+    rolls that back with the sign-in."""
     email = claims["email"].strip()
+    claim = directory_sync.claim_value(claims, s.directory_id_claim)
+    if claim:
+        notes["directory_claim"] = claim
     link = sso.linked(session, s.issuer, claims["sub"])
     if link is not None:
+        if claim:
+            directory_sync.note_directory_id(session, link, s.issuer, claim)
+        notes["linked_by"] = "subject"
+    elif claim:
+        # Sync on: this is how a push is found. Sync off: a placeholder subject
+        # (still the externalId) is still replaced, so turning sync off does not
+        # strand that person on the email match.
+        link = sso.linked_by_directory(session, s.issuer, claim)
+        if link is not None:
+            directory_sync.adopt_subject(session, link, s.issuer, claims["sub"])
+            notes["linked_by"] = "directory"
+    if link is not None:
+        if link.managed:
+            notes["managed"] = True
         user = (
             session.query(User)
             .filter(User.principal_id == link.principal_id)
             .with_for_update()
             .first()
         )
-        notes["linked_by"] = "subject"
+    elif s.sync_enabled:
+        raise sso.Refused("not_provisioned", sso.NOT_PROVISIONED, attempted=email)
     else:
         claim_sign_in_names(session, email)
         matches = (
@@ -1419,7 +1439,7 @@ def _sso_sign_in(
             provider=s.issuer,
             group=match[1] if match else None,
         )
-    else:
+    elif not notes.get("managed"):
         changed = []
         if name and name != user.full_name:
             user.full_name = name
@@ -1473,8 +1493,11 @@ def _sso_sign_in(
                 user.role_id = role.role_id
                 # The new sign-in starts after this, so every open one ends.
                 _end_others_after_change(session, user, None, source)
-    if notes.get("linked_by") != "subject":
-        sso.link(session, user.principal_id, s.issuer, claims["sub"])
+    if notes.get("linked_by") not in ("subject", "directory"):
+        created = sso.link(session, user.principal_id, s.issuer, claims["sub"])
+        claim = notes.get("directory_claim")
+        if isinstance(claim, str):
+            directory_sync.note_directory_id(session, created, s.issuer, claim)
     session.flush()
 
     ua = request.headers.get("user-agent")

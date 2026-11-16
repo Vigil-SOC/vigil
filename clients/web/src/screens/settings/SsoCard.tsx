@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import api, { ssoApi, type SsoSettings, type SsoSettingsBody } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
+import api, {
+  directorySyncApi,
+  ssoApi,
+  type DirectorySync,
+  type SsoSettings,
+  type SsoSettingsBody,
+} from '../../services/api'
 import { errorText } from '../../shared/errorText'
 import { Icon } from '../../shared/icons'
-import { Field, PasswordInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import { ConfirmDialog, Field, PasswordInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import type { Role } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -43,15 +50,34 @@ export default function SsoCard({ notify }: SectionProps) {
   const [replacing, setReplacing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const { hasPermission } = useAuth()
+  const canSync =
+    hasPermission('roles.manage') && hasPermission('users.write') && hasPermission('teams.manage')
+  const [sync, setSync] = useState<DirectorySync | null>(null)
+  const [claim, setClaim] = useState('sub')
+  const [confirmOn, setConfirmOn] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [minted, setMinted] = useState<string | null>(null)
+
+  const loadSync = useCallback(() => {
+    directorySyncApi
+      .get()
+      .then((res) => {
+        setSync(res.data)
+        setClaim(res.data.directory_id_claim || 'sub')
+      })
+      .catch(() => setSync(null))
+  }, [])
 
   const load = useCallback(() => {
     setFailed(null)
     ssoApi.get()
       .then((res) => { setSaved(res.data); setForm(toForm(res.data)); setReplacing(false); setProblem(null) })
       .catch((e) => setFailed(errorText(e, 'Could not load the single sign-on settings.')))
+    loadSync()
     // Every role, custom ones too; without users.read the selects show only the ids saved.
     api.get('/users/roles/list').then((res) => setRoles(res.data?.roles ?? [])).catch(() => setRoles([]))
-  }, [])
+  }, [loadSync])
   useEffect(load, [load])
 
   if (failed) {
@@ -86,7 +112,13 @@ export default function SsoCard({ notify }: SectionProps) {
   const reached = !!saved.issuer
   // While required, the provider and SSO itself stay as saved: turn Require off first.
   const locked = !!saved.require_sso
+  const syncOn = !!(sync?.sync_enabled || saved.sync_enabled)
+  // Directory sync keeps the provider it was turned on against.
+  const providerLocked = locked || syncOn
   const lockedTitle = locked ? 'Turn off Require single sign-on first' : undefined
+  const providerLockTitle = syncOn
+    ? 'Directory sync is on. Turn it off on the host before changing the provider or turning single sign-on off.'
+    : lockedTitle
   const blockers = saved.require_blockers ?? []
   const dirty = !same(form, toForm(saved))
   const valid = form.group_roles.every((g) => g.group.trim()) && !!form.groups_claim.trim()
@@ -130,6 +162,26 @@ export default function SsoCard({ notify }: SectionProps) {
     })
   }
 
+  const pushSync = async (mint: boolean) => {
+    setSyncBusy(true)
+    setProblem(null)
+    try {
+      const res = await directorySyncApi.save(claim.trim() || 'sub', mint)
+      setSync(res.data)
+      setClaim(res.data.directory_id_claim || 'sub')
+      if (res.data.token) setMinted(res.data.token)
+      setConfirmOn(false)
+      notify('ok', res.data.sync_enabled ? 'Directory sync is on.' : 'Directory sync saved.')
+    } catch (e) {
+      setProblem(errorText(e, 'Directory sync was not changed.'))
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
+  const when = (value: string | null) =>
+    value ? new Date(value).toLocaleString() : 'None yet'
+
   return (
     <SettingsCard
       wide
@@ -141,8 +193,8 @@ export default function SsoCard({ notify }: SectionProps) {
           <Toggle
             checked={form.enabled}
             label="Single sign-on"
-            title={lockedTitle ?? (reached ? undefined : 'Save settings that reach the provider first')}
-            disabled={busy || locked || (!reached && !form.enabled)}
+            title={providerLockTitle ?? (reached ? undefined : 'Save settings that reach the provider first')}
+            disabled={busy || providerLocked || (!reached && !form.enabled)}
             onChange={(v) => set({ enabled: v })}
           />
         </span>
@@ -162,8 +214,8 @@ export default function SsoCard({ notify }: SectionProps) {
             className="mono"
             placeholder="https://your-provider/.well-known/openid-configuration"
             value={form.discovery_url}
-            disabled={busy || locked}
-            title={lockedTitle}
+            disabled={busy || providerLocked}
+            title={providerLockTitle}
             spellCheck={false}
             onChange={(e) => set({ discovery_url: e.target.value })}
           />
@@ -175,7 +227,7 @@ export default function SsoCard({ notify }: SectionProps) {
         </div>
         <div className="sso-pair">
           <Field label="Client ID">
-            <TextInput className="mono" value={form.client_id} disabled={busy || locked} title={lockedTitle} spellCheck={false} onChange={(e) => set({ client_id: e.target.value })} />
+            <TextInput className="mono" value={form.client_id} disabled={busy || providerLocked} title={providerLockTitle} spellCheck={false} onChange={(e) => set({ client_id: e.target.value })} />
           </Field>
           {saved.client_secret_set && !replacing ? (
             <Field label="Client secret" hint="Saved. It is never shown again.">
@@ -334,6 +386,113 @@ export default function SsoCard({ notify }: SectionProps) {
           </>
         )}
 
+        <hr className="sso-rule" />
+        <div className="sso-sub">
+          <h4>Directory sync</h4>
+          <p>
+            The provider pushes people here. New people sign in only after a push, and a managed account stops taking its
+            name, email and role from sign-in. Microsoft Entra ID and Okta are unverified until an operator runs them.
+          </p>
+        </div>
+        {minted && (
+          <div className="mcp-callout" role="alert">
+            <strong>Copy this token now. It is shown once and cannot be recovered.</strong>
+            <pre className="mcp-token">{minted}</pre>
+            <button type="button" className="btn" onClick={() => setMinted(null)}>
+              I have copied it
+            </button>
+          </div>
+        )}
+        <Field
+          label="Directory id claim"
+          hint="The sign-in value the provider also sends as externalId. Microsoft Entra's sign-in subject is per application, so that install sets this to oid and sends the same value as externalId."
+        >
+          <TextInput
+            className="mono"
+            value={claim}
+            disabled={syncBusy}
+            spellCheck={false}
+            aria-label="Directory id claim"
+            onChange={(e) => setClaim(e.target.value)}
+          />
+        </Field>
+        {syncOn && sync && (
+          <dl className="sso-status">
+            <div>
+              <dt>Sync</dt>
+              <dd>On</dd>
+            </div>
+            <div>
+              <dt>Last push</dt>
+              <dd>{when(sync.last_push)}</dd>
+            </div>
+            <div>
+              <dt>Token expires</dt>
+              <dd>{sync.token_expires_at ? when(sync.token_expires_at) : 'No token'}</dd>
+            </div>
+            <div>
+              <dt>Failed authentications</dt>
+              <dd>{sync.failed_authentications}</dd>
+            </div>
+            <div>
+              <dt>Endpoint</dt>
+              <dd className="font-mono">{sync.scim_path}</dd>
+            </div>
+          </dl>
+        )}
+        {syncOn && sync && sync.last_manager_refusals.length > 0 && (
+          <div className="settings-banner warn" role="status">
+            <Icon name="alert" size={14} />
+            <span>
+              A push could not deactivate the last person who can manage roles:{' '}
+              {sync.last_manager_refusals.join(', ')}.
+            </span>
+          </div>
+        )}
+        <p className="text-xs text-tx-3">
+          The provider has to reach this API at {sync?.scim_path ?? '/scim/v2'}. An install nothing can reach disables
+          leavers by hand. Turn sync off on the host with{' '}
+          <code>python -m core.auth.directory_sync_off</code>.
+        </p>
+        <span className="sso-line">
+          {!syncOn ? (
+            <button
+              type="button"
+              className="btn primary"
+              disabled={syncBusy || !canSync || !saved.enabled}
+              title={
+                !saved.enabled
+                  ? 'Turn single sign-on on first'
+                  : !canSync
+                    ? 'Needs roles.manage, users.write and teams.manage'
+                    : undefined
+              }
+              onClick={() => setConfirmOn(true)}
+            >
+              Turn on directory sync
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn"
+                disabled={syncBusy || !canSync || claim.trim() === (sync?.directory_id_claim ?? '')}
+                onClick={() => void pushSync(false)}
+              >
+                Save claim
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={syncBusy || !canSync}
+                onClick={() => void pushSync(true)}
+              >
+                Mint a new token
+              </button>
+            </>
+          )}
+        </span>
+
         <div className="sso-foot">
           <span className="text-xs text-tx-3">
             {reached
@@ -351,6 +510,28 @@ export default function SsoCard({ notify }: SectionProps) {
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmOn}
+        title="Turn on directory sync?"
+        danger={false}
+        busy={syncBusy}
+        confirmLabel="Turn on"
+        onClose={() => !syncBusy && setConfirmOn(false)}
+        onConfirm={() => void pushSync(false)}
+        width={520}
+        body={
+          <>
+            <p>
+              New people sign in only after a push. Managed accounts stop taking a name, email and role from sign-in.
+              The claim must be the same value the provider sends as externalId.
+            </p>
+            <p className="mt-2">
+              Microsoft Entra's sign-in subject is per application, so that install sets the claim to oid and sends
+              the same value as externalId.
+            </p>
+          </>
+        }
+      />
     </SettingsCard>
   )
 }

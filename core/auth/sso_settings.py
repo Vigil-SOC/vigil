@@ -56,6 +56,10 @@ class SsoSettings(BaseModel):
     # When the discovery URL or client ID last changed; None: before this was kept,
     # which no sign-in qualifies against until the next such save.
     provider_changed_at: Optional[datetime] = None
+    # Directory sync (#4423). Off until someone turns it on. The claim is the
+    # sign-in value the provider also sends as SCIM externalId.
+    sync_enabled: bool = False
+    directory_id_claim: str = Field("sub", min_length=1, max_length=128)
 
 
 class Stored(NamedTuple):
