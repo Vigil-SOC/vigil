@@ -15,9 +15,11 @@ with no such entry was first seen by the sync alone: a file put in the folder.
 A redraft saved under a new id is a new rule. When the daily gaps run raised the
 gap a save answers again, the save's copies replace the ones Vigil drafted for
 that gap's technique before (``proposals.replaced_copies``): each copy's new
-version names the earlier copies of its language on its stage row
-(``proof['replaces']``) and its ``detections.rule_saved`` entry, so a replaced
-copy can be read forward to its successor. Code makes the link, never the model.
+version names the earlier copies of its language on its ``detections.rule_saved``
+entry and, for a staged copy (Splunk, Elastic, Wazuh), on its stage row
+(``proof['replaces']``), so a replaced staged copy can be read forward to its
+successor. A Sigma copy has no stage rows: its link is on the trail entry only.
+Code makes the link, never the model.
 
 Evidence passed with the save is replayed on the Sigma form before anything is
 written (#3755); the result lands as ``checks.replay`` on the Sigma version.

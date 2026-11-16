@@ -26,9 +26,9 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
@@ -913,42 +913,95 @@ def _answers(copy: Mapping[str, Any], technique: Optional[str]) -> bool:
     return technique in {str(t).strip().upper() for t in copy.get("techniques") or ()}
 
 
+def _gap_drafts(session: Session, rule_ids: Sequence[int]) -> Set[int]:
+    """The overlay copies among ``rule_ids`` a gaps run drafted: those whose first
+    version was first seen after the earliest gap proposal that attached them was
+    opened. A rule that was there before, such as a person's own the run re-saved
+    under its id to answer the gap, is not one."""
+    if not rule_ids:
+        return set()
+    seen = dict(
+        session.execute(
+            select(DetectionRuleVersion.rule_id, DetectionRuleVersion.first_seen)
+            .join(DetectionRule, DetectionRule.id == DetectionRuleVersion.rule_id)
+            .where(
+                DetectionRuleVersion.rule_id.in_(list(rule_ids)),
+                DetectionRuleVersion.version == 1,
+                DetectionRule.source == OVERLAY_SOURCE,
+            )
+        ).all()
+    )
+    drafts: Set[int] = set()
+    for rule_id, first_seen in seen.items():
+        opened = session.scalar(
+            select(func.min(DetectionProposal.created_at))
+            .join(
+                DetectionProposalEvent,
+                DetectionProposalEvent.proposal_id == DetectionProposal.proposal_id,
+            )
+            .where(
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+                DetectionProposalEvent.evidence.contains(
+                    {"step": "attach", "rule_ids": [rule_id]}
+                ),
+            )
+        )
+        if opened is not None and opened <= first_seen:
+            drafts.add(rule_id)
+    return drafts
+
+
 def _earlier_copies(
     session: Session, proposal: DetectionProposal, run_ids: Sequence[str]
-) -> List[Dict[str, Any]]:
-    """The copies attached to the gaps run's latest earlier proposal for the same
-    technique that had any: ``{rule_id, language, native_key}`` each.
+) -> Dict[int, Tuple[str, str]]:
+    """The copies the gaps run drafted for the same technique before ``proposal`` that
+    a new copy would replace, per language: those attached to the latest earlier
+    proposal that attached one of that language. ``{rule_id: (language, native_key)}``.
 
     Earlier is opened before ``proposal`` and not handed to the same run. One whose run
-    saved nothing is passed over for the one before it; one a person rejected after
-    its run saved is not, as its copies are still the drafts Vigil made for the gap.
+    saved nothing in a language is passed over, for that language, for the one before
+    it; one a person rejected after its run saved is not, as its copies are still the
+    drafts Vigil made for the gap. Of the chosen copies only the gap drafts count
+    (``_gap_drafts``): a person's own rule the run re-saved stays nobody's predecessor.
     """
-    attached = exists().where(
-        DetectionProposalEvent.proposal_id == DetectionProposal.proposal_id,
-        DetectionProposalEvent.evidence["step"].astext == "attach",
-    )
-    earlier = session.scalar(
-        select(DetectionProposal.proposal_id)
+    rows = session.execute(
+        select(DetectionProposalEvent.proposal_id, DetectionProposalEvent.evidence)
+        .join(
+            DetectionProposal,
+            DetectionProposal.proposal_id == DetectionProposalEvent.proposal_id,
+        )
         .where(
             DetectionProposal.origin["source"].astext == GAPS_RUN,
             DetectionProposal.technique == proposal.technique,
             DetectionProposal.created_at < proposal.created_at,
             DetectionProposal.proposal_id.notin_(list(run_ids)),
-            attached,
+            DetectionProposalEvent.evidence["step"].astext == "attach",
         )
         .order_by(
-            DetectionProposal.created_at.desc(), DetectionProposal.proposal_id.desc()
+            DetectionProposal.created_at.desc(),
+            DetectionProposal.proposal_id.desc(),
+            DetectionProposalEvent.id,
         )
-        .limit(1)
-    )
-    if earlier is None:
-        return []
-    copies: Dict[int, Dict[str, Any]] = {}
-    for evidence in _link_steps(session, [earlier]).get(earlier, ()):
+    ).all()
+    latest: Dict[str, str] = {}
+    chosen: Set[int] = set()
+    for proposal_id, evidence in rows:
         for c in evidence.get("copies") or ():
-            if isinstance(c, dict) and isinstance(c.get("rule_id"), int):
-                copies.setdefault(c["rule_id"], c)
-    return list(copies.values())
+            if not isinstance(c, dict) or not isinstance(c.get("rule_id"), int):
+                continue
+            if latest.setdefault(str(c.get("language")), proposal_id) == proposal_id:
+                chosen.add(c["rule_id"])
+    drafts = _gap_drafts(session, sorted(chosen))
+    if not drafts:
+        return {}
+    return {
+        rid: (language, key)
+        for rid, language, key in session.execute(
+            select(
+                DetectionRule.id, DetectionRule.language, DetectionRule.native_key
+            ).where(DetectionRule.id.in_(sorted(drafts)))
+        ).all()
+    }
 
 
 def replaced_copies(
@@ -957,12 +1010,13 @@ def replaced_copies(
     """Each copy a run is saving and the earlier copies it replaces, by native key.
 
     A copy that will attach to one of the run's gap proposals (``attach_saved``'s
-    match) replaces the copies of its language attached to the latest earlier gap
-    proposal for that technique (``_earlier_copies``): the gap was raised again, so
-    this draft takes their place, whether they were switched off, removed, or are
-    still in shadow or live. Only copies a gap proposal attached count, never a
-    person's own rule, and never a copy under one of this save's native keys (saved
-    under its own id, it is a new version of that rule). Each copy is
+    match) replaces the earlier copies of its language the gaps run drafted for that
+    technique (``_earlier_copies``): the gap was raised again, so this draft takes
+    their place, whether they were switched off, removed, or are still in shadow or
+    live. Only copies a gaps run drafted count, never a person's own rule, and never a
+    copy under one of this save's native keys (saved under its own id, it is a new
+    version of that rule). Two drafts one run saves are not linked to each other: a
+    second rule for the same gap may as well stand beside the first. Each copy is
     ``{language, native_key, techniques}``; a run the gaps run did not queue gets none.
     """
     links: Dict[str, List[int]] = {}
@@ -975,24 +1029,9 @@ def replaced_copies(
             if not matched:
                 continue
             earlier = _earlier_copies(session, proposal, run_ids)
-            if not earlier:
-                continue
-            rows = {
-                rid: (language, key)
-                for rid, language, key in session.execute(
-                    select(
-                        DetectionRule.id,
-                        DetectionRule.language,
-                        DetectionRule.native_key,
-                    ).where(
-                        DetectionRule.id.in_([c["rule_id"] for c in earlier]),
-                        DetectionRule.source == OVERLAY_SOURCE,
-                    )
-                ).all()
-            }
             for copy in matched:
                 replaced = links.setdefault(copy["native_key"], [])
-                for rid, (language, key) in sorted(rows.items()):
+                for rid, (language, key) in sorted(earlier.items()):
                     if (
                         language == copy["language"]
                         and key not in keys

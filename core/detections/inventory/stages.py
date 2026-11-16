@@ -10,9 +10,10 @@ write is audited in the same transaction as the same ``detections.rule_staged``
 entry Vigil's own moves write, the person as actor (the config audit log where
 the trail is not in use).
 
-A save that replaces earlier copies names them on its new version's stage row
-(``proof['replaces']``); the history lists them per row, and lists, for the
-rule read, the rules whose rows name it: its successors.
+A save that replaces earlier staged copies names them on its new version's stage
+row (``proof['replaces']``); the history lists them per row, and lists, for the
+rule read, the rules whose rows name it: its successors. A Sigma copy has no stage
+rows, so its link is on the ``detections.rule_saved`` entry only, not read here.
 """
 
 from __future__ import annotations

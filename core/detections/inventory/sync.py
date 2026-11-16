@@ -157,8 +157,9 @@ class Saves:
 
     ``replaces`` is each saved copy's native key and the rule ids of the
     earlier copies it takes the place of. A version the save made carries them
-    on its stage row's ``proof['replaces']`` and on its SAVED entry; a copy
-    saved unchanged makes no version, so records none.
+    on its SAVED entry and, for a staged language, on its stage row's
+    ``proof['replaces']``; a copy saved unchanged makes no version, so records
+    none.
     """
 
     author: Dict[str, Any]
