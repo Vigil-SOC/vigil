@@ -1,8 +1,9 @@
-"""Join 0074_approval_held and 0075_directory_groups into one head.
+"""Join the approval-held and directory-group revisions into one head.
 
-#4468 (held outside actions) and the directory-sync revisions were both
-written against 0073, leaving two heads, and the API refuses to start on more
-than one. Neither touches the other's tables, so there is nothing to run here.
+#4431 (hold approved actions across a stop) and #4424 (directory groups)
+landed side by side, leaving two heads, and the API refuses to start on
+more than one. Neither touches the other's tables, so there is nothing
+to run here.
 """
 
 revision = "0076_merge_0075_heads"

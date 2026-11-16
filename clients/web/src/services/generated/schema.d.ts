@@ -10019,6 +10019,10 @@ export interface components {
             behind?: number | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Held */
+            held?: number | null;
+            /** Held Since */
+            held_since?: string | null;
             /** Last Delivered At */
             last_delivered_at?: string | null;
             /** Last Delivered Seq */

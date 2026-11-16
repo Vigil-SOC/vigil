@@ -1506,6 +1506,10 @@ export interface AuditFeedHealth {
   unconfirmed: number | null
   /** New entries are refused until the push carries it, for up to 30 seconds. */
   paused: boolean
+  /** Entries waiting to be recorded late. Open collapse windows are not counted. */
+  held: number | null
+  /** When the oldest waiting entry happened. Null when none is waiting. */
+  held_since: string | null
 }
 
 export interface AuditVerify {

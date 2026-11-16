@@ -692,6 +692,7 @@ def health(session) -> dict:
     tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
     delivered = row["last_delivered_seq"] if row else None
     behind = max(0, tip.seq - (delivered or 0))
+    held, held_since = trail.held_waiting(session)
     return {
         "enabled": dest.enabled,
         "host": dest.host,
@@ -705,6 +706,8 @@ def health(session) -> dict:
         "tip_seq": tip.seq,
         "unconfirmed": unconfirmed,
         "paused": paused,
+        "held": held,
+        "held_since": _iso(held_since),
     }
 
 

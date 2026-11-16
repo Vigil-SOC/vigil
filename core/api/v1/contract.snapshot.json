@@ -238,6 +238,28 @@
             ],
             "title": "Enabled"
           },
+          "held": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held"
+          },
+          "held_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held Since"
+          },
           "last_delivered_at": {
             "anyOf": [
               {

@@ -320,6 +320,26 @@ def drain_late(session, limit: int = 100) -> int:
     return recorded
 
 
+def held_waiting(session) -> tuple[int, Optional[datetime]]:
+    """How many entries are waiting to be recorded late, and the oldest time.
+
+    The same predicate as ``drain_late``: a row with a ``window_key`` is an
+    open collapse window or an expiry marker, not a held entry. ``(0, None)``
+    when the table is not there yet.
+    """
+    if (
+        session.execute(text("SELECT to_regclass('public.audit_trail_held')")).scalar()
+        is None
+    ):
+        return 0, None
+    count, since = session.execute(text("""
+            SELECT count(*), min(occurred_at)
+            FROM public.audit_trail_held
+            WHERE window_key IS NULL
+        """)).one()
+    return int(count), since
+
+
 def failure_key(source_ip: Optional[str], attempted_name: Optional[str]) -> str:
     """Collapse key for an unauthenticated failure."""
     name = (attempted_name or "")[:ATTEMPTED_NAME_MAX]
