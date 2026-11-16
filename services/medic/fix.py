@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -27,7 +28,7 @@ from services.medic.api.decisions import Problem
 from services.medic.engine.suppress import selects
 from services.medic.sensors.containers import Containers
 from services.medic.sensors.daemon import DaemonHealth
-from services.medic.store import open_reader
+from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import utc_now
 
 log = logging.getLogger("services.medic")
@@ -304,9 +305,7 @@ class Fixer:
             record = self.medic.writer.append(
                 {"v": 1, "at": utc_now(), "type": "fix_run", "body": body}
             )
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 — the click answers, the loop keeps going
+        except (StoreError, sqlite3.Error) as exc:
             log.warning("fix_run not stored: %s", type(exc).__name__)
             return Problem(503, "busy")
         log.info("fix %s %s", incident_id, result)
@@ -362,7 +361,7 @@ class Fixer:
                     {"v": 1, "at": utc_now(), "type": "fix_verified", "body": body}
                 )
                 return True
-            except Exception as exc:  # noqa: BLE001
+            except (StoreError, sqlite3.Error) as exc:
                 log.warning("fix_verified not stored: %s", type(exc).__name__)
                 time.sleep(0.2)
         return False
@@ -450,7 +449,7 @@ def _records(data_dir) -> list[dict]:
     try:
         with open_reader(data_dir) as conn:
             rows = conn.execute(_FIXES).fetchall()
-    except Exception:  # noqa: BLE001 — a store we can't read refuses the click
+    except (StoreError, sqlite3.Error, json.JSONDecodeError):
         return []
     return [json.loads(row[0]) for row in rows]
 
@@ -459,7 +458,7 @@ def _opened(data_dir, incident_id: str) -> dict | None:
     try:
         with open_reader(data_dir) as conn:
             row = conn.execute(_OPENED, (incident_id,)).fetchone()
-    except Exception:  # noqa: BLE001
+    except (StoreError, sqlite3.Error, json.JSONDecodeError):
         return None
     return json.loads(row[0]) if row else None
 
