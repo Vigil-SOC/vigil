@@ -27,6 +27,7 @@ because that route loads every investigation twice. The orchestrator's
 counters come from the daemon's `/status` only: the route's `stats` are the API
 process's own orchestrator.
 
+`queue_depth` is the processor's input queue (`qsize`, a gauge; it goes down).
 `federation`, `llm_queue_depth` and `agent_runs_depth` aren't emitted: no rule
 reads them. Where the daemon reports `false`/`0` for a component it doesn't
 have (`auto_triage_enabled`, `free_slots`), the value is absent instead.
@@ -175,6 +176,7 @@ def _processor(part: Mapping[str, Any]) -> list[Value]:
             "auto_triage_enabled",
             _flag(part.get("auto_triage_enabled")) if has_own else None,
         ),
+        Value.gauge("queue_depth", _int(part.get("queue_depth")) if has_own else None),
     ]
 
 

@@ -12,7 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-ESCALATE_AFTER_FAILURES = 2  # Phase 1 1C5: two failed attempts escalate to lane 3
+ESCALATE_AFTER_FAILURES = 2  # two failed attempts; the lane does not change
+# Same id as router.NO_ESCALATION: that runbook is executed, not simulated.
+_NO_ESCALATION = frozenset({"restart-soc-daemon"})
 ROUTING_HOLD_S = 300  # E3 6.2
 OUTLIVE_S = 600  # E3 6.3
 
@@ -137,8 +139,11 @@ def run_vector(vector: dict[str, Any]) -> dict[str, Any]:
         routed_at, suppressed_by = route(inc, incidents, parents_of, until)
         wh = would_have(inc, lane["value"])
         escalation = None
-        # R6: only a fix L2 would have run can "fail".
-        if routed_at is not None and wh["L2"]["action"] == "run_runbook":
+        runbook_id = inc.runbook.get("id") if inc.runbook else None
+        # R6: only a fix L2 would have run can "fail". One this path runs is not simulated.
+        if runbook_id in _NO_ESCALATION:
+            pass
+        elif routed_at is not None and wh["L2"]["action"] == "run_runbook":
             assert inc.runbook is not None
             at = routed_at + ESCALATE_AFTER_FAILURES * inc.runbook["verify_after_s"]
             end = until if inc.resolved_at is None else inc.resolved_at

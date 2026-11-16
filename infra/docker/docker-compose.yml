@@ -500,6 +500,8 @@ services:
       upgrade:
         condition: service_completed_successfully
     restart: unless-stopped
+    # At least the daemon's SHUTDOWN_GRACE_SECONDS (45) so a restart can drain.
+    stop_grace_period: 50s
     # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -858,6 +860,8 @@ services:
     pids_limit: 32
     environment:
       VIGIL_MEDIC_DOCKERPROXY_BIND: medic-dockerproxy:8472
+      # Same switch as Medic. Off: the proxy refuses POST /containers/{id}/restart.
+      VIGIL_MEDIC_ENABLED: ${VIGIL_MEDIC_ENABLED:-false}
     volumes:
       # Long form: if the socket isn't there (rootless Docker: set the variable),
       # fail rather than let Docker create a directory in its place.

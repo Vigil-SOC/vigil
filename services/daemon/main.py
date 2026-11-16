@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Under the daemon StatefulSet's terminationGracePeriodSeconds (60), leaving
 # room for the telemetry flush after the components stop.
+# Compose stop_grace_period is at least this, so a restart drains before SIGKILL.
 SHUTDOWN_GRACE_SECONDS = 45
 
 

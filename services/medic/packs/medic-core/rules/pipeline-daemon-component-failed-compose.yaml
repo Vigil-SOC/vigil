@@ -1,0 +1,35 @@
+# P-3.a / P-3.b on Compose, lane 1. Same signals and condition as
+# pipeline.daemon-component-failed. Helm restarts a dead component through
+# liveness, so this copy is compose only. The lane-3 rule stays.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.daemon-component-failed-compose
+title: A soc-daemon component has stopped
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b]}
+lane: 1
+detection: event
+shapes: [compose]
+signals:
+  processor:    {sample: {signal: daemon_health, key: components.processor}}
+  scheduler:    {sample: {signal: daemon_health, key: components.scheduler}}
+  orchestrator: {sample: {signal: daemon_health, key: components.orchestrator}}
+  poller:       {sample: {signal: daemon_health, key: components.poller}}
+when:
+  any:
+    - {fn: latest, signal: processor, op: "==", value: failed}
+    - {fn: latest, signal: processor, op: "==", value: stopped}
+    - {fn: latest, signal: scheduler, op: "==", value: failed}
+    - {fn: latest, signal: scheduler, op: "==", value: stopped}
+    - {fn: latest, signal: orchestrator, op: "==", value: failed}
+    - {fn: latest, signal: orchestrator, op: "==", value: stopped}
+    - {fn: latest, signal: poller, op: "==", value: failed}
+    - {fn: latest, signal: poller, op: "==", value: stopped}
+for: 2m
+keep_firing_for: 5m
+advice:
+  summary: A soc-daemon component (processor, scheduler, orchestrator or poller) has stopped while the daemon keeps running.
+  fix: >-
+    Restart soc-daemon. The component starts again with it. A medic.admin can
+    run that restart from Medic. Keep the soc-daemon log from before the
+    restart: it names the component and the error.

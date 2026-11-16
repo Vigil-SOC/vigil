@@ -16,6 +16,8 @@ MAX_IMPORT_BODY = 4 * 1024 * 1024  # a pack file: pack_check.MAX_PACK_BYTES
 # A pack write waits for Medic's main loop (up to its 20 s snapshot age), so it
 # outlasts the default upstream timeout.
 PACK_WRITE_TIMEOUT = 25.0
+# A soc-daemon restart waits out its stop drain before the container is back.
+FIX_TIMEOUT = 90.0
 # No '%', '+', ';', '#', '\\', '.', ' ' or non-ASCII in a path; no '%', '+', ';',
 # '/', '?' in a query. '.' is allowed in a query only for timestamps.
 PATH_RE = re.compile(r"/[A-Za-z0-9_\-/]*")
@@ -94,7 +96,7 @@ CURSOR = ("[A-Za-z0-9_-]{1,256}", 1)
 BOOL = ("true|false", 1)
 TYPES = (
     "incident_opened|incident_updated|incident_resolved|feedback|anchor"
-    "|store_reset|pack_event|gap"
+    "|store_reset|pack_event|gap|fix_run|fix_verified"
 )
 INBOUND = [
     Route("GET", "/v1/status"),
@@ -115,6 +117,12 @@ INBOUND = [
     ),
     Route("GET", "/v1/incidents/{incident_id}", segs={"incident_id": INC}),
     Route("POST", "/v1/incidents/{incident_id}/feedback", segs={"incident_id": INC}),
+    Route(
+        "POST",
+        "/v1/incidents/{incident_id}/fix",
+        segs={"incident_id": INC},
+        timeout=FIX_TIMEOUT,
+    ),
     Route(
         "GET",
         "/v1/decisions",

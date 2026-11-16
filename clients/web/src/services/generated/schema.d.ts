@@ -5426,6 +5426,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/medic/incidents/{incident_id}/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Fix
+         * @description Restart soc-daemon for this incident. The admin is the session.
+         */
+        post: operations["post_api_medic_incidents_incident_id_fix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/pack": {
         parameters: {
             query?: never;
@@ -25165,6 +25185,39 @@ export interface operations {
         };
     };
     post_api_medic_incidents_incident_id_feedback: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_incidents_incident_id_fix: {
         parameters: {
             query?: never;
             header?: {

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 
+from tests.medic_eval import medic_api
 from tests.medic_eval.inject.config_cells import (
     ELASTIC,
     ELASTIC_STUB,
@@ -254,11 +255,12 @@ def p2c_verify(s: Stack, faulted: bool) -> None:
         _eventually(s, lambda: _free_slots(s) > 0, True, "orchestrator free_slots > 0")
 
 
-# ---- P-3.a: the scheduler task is cancelled ---------------------------------
-# The daemon has no endpoint or signal that stops a component, so compose.eval.yml
-# mounts sitecustomize.py, which cancels the task named "scheduler" on SIGUSR1.
-# /health then reads components.scheduler "stopped" and answers 503; recreating the
-# daemon starts it again.
+# ---- P-3.a: the scheduler task fails ----------------------------------------
+# The daemon has no endpoint that stops a component, so compose.eval.yml mounts
+# sitecustomize.py, which raises in the scheduler task on SIGUSR1. /health then
+# reads components.scheduler "failed: RuntimeError" and answers 503. The fault
+# is held until the lane-1 rule can fire, then cleared by Medic's run-fix
+# (the shipped pack's restart-soc-daemon), never by recreating the container.
 
 
 def _health(s: Stack) -> tuple[int, str]:
@@ -270,23 +272,49 @@ def _health(s: Stack) -> tuple[int, str]:
         return status, ""
 
 
+def _failed(state: str) -> bool:
+    return state == "failed" or state.startswith("failed:")
+
+
 def p3a_inject(s: Stack) -> None:
-    if _health(s)[1] == "stopped":
+    if _failed(_health(s)[1]):
         return
     s.compose("kill", "-s", "SIGUSR1", "soc-daemon")  # PID 1 is the daemon's python
-    _eventually(s, lambda: _health(s)[1], "stopped", "components.scheduler")
+    _eventually(s, lambda: _failed(_health(s)[1]), True, "components.scheduler failed")
 
 
 def p3a_revert(s: Stack) -> None:
     if _health(s) == (200, "running"):
         return
-    s.recreate("soc-daemon")
-    s.wait_daemon()
+    deadline = time.monotonic() + 180
+    incident = None
+    while time.monotonic() < deadline and incident is None:
+        page = medic_api.get(s, "/v1/incidents?state=open&limit=200") or {}
+        for item in page.get("items") or []:
+            rule = item.get("rule") or {}
+            if (
+                rule.get("id") == "pipeline.daemon-component-failed-compose"
+                and item.get("state") == "firing"
+            ):
+                incident = item["incident_id"]
+                break
+        if incident is None:
+            time.sleep(5)
+    if incident is None:
+        raise AssertionError("lane-1 soc-daemon incident did not open")
+    status, body = medic_api.post(s, f"/v1/incidents/{incident}/fix", "{}")
+    if status == 409 and json.loads(body).get("reason") == "fix_running":
+        pass  # a second revert: the first click is still in its restart
+    elif status != 201:
+        raise AssertionError(f"run-fix answered {status}: {body[:300]}")
+    s.wait(lambda: _health(s), lambda got: got == (200, "running"), timeout=180)
 
 
 def p3a_verify(s: Stack, faulted: bool) -> None:
-    want = (503, "stopped") if faulted else (200, "running")
-    _eventually(s, lambda: _health(s), want, "GET :9091/health (status, scheduler)")
+    if faulted:
+        _eventually(s, lambda: (_health(s)[0], _failed(_health(s)[1])), (503, True), "GET :9091/health failed")
+    else:
+        _eventually(s, lambda: _health(s), (200, "running"), "GET :9091/health (status, scheduler)")
 
 
 CELLS = (
@@ -343,11 +371,11 @@ CELLS = (
     Cell(
         "P-3.a",
         3,
-        120,
+        180,
         p3a_inject,
         p3a_verify,
         p3a_revert,
-        ("docker compose kill -s SIGUSR1 soc-daemon (cancels the scheduler task)",),
-        ("docker compose up -d --force-recreate soc-daemon",),
+        ("docker compose kill -s SIGUSR1 soc-daemon (scheduler task raises)",),
+        ("POST /v1/incidents/{id}/fix (restart soc-daemon)",),
     ),
 )

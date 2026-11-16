@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Medic API
-  version: "2.0.0"
-  summary: "Medic's API: reads, plus admin writes (decision feedback and the content pack)."
+  version: "2.1.0"
+  summary: "Medic's API: reads, plus admin writes (decision feedback, a Compose restart, and the content pack)."
   description: |
     Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
     proxy) is its only caller. ADR: outputs/X2-medic-api-adr.md.
@@ -363,6 +363,7 @@ components:
         input, and the console maps `code` (and `reason`) to its own words. Each code has one
         status: unauthorized 401 · not_found 404 · method_not_allowed 405 · invalid_parameter 400 ·
         invalid_cursor 400 · invalid_body 422 · missing_admin_identity 422 · not_rateable 409 ·
+        fix_refused 409 ·
         pack_refused 422 · pack_conflict 409 · pack_unavailable 409 · payload_too_large 413 ·
         unsupported_media_type 415 · busy 503 · store_not_recording 503 · internal 500.
       type: object
@@ -388,6 +389,7 @@ components:
             - invalid_body
             - missing_admin_identity
             - not_rateable
+            - fix_refused
             - pack_refused
             - pack_conflict
             - pack_unavailable
@@ -403,9 +405,24 @@ components:
           pattern: "^[A-Za-z0-9_/.-]{1,64}$"
           x-medic-type: id
         reason:
-          description: For not_rateable only. A pack refusal carries `pack_code` instead.
+          description: |
+            For not_rateable: why feedback was refused. For fix_refused: the check that
+            failed, and nothing was restarted.
           type: string
-          enum: [suppressed, closed_quietly, not_routed, value_not_offered]
+          enum:
+            - suppressed
+            - closed_quietly
+            - not_routed
+            - value_not_offered
+            - not_open
+            - not_firing
+            - no_runbook
+            - upgrade_window
+            - no_container
+            - container_restarted
+            - fix_running
+            - not_compose
+            - restart_failed
           x-medic-type: enum
         pack_code:
           description: |
@@ -1140,6 +1157,66 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422": { $ref: "#/components/responses/InvalidBody" }
         "503": { $ref: "#/components/responses/NotRecording" }
+
+  /v1/incidents/{incident_id}/fix:
+    post:
+      operationId: runFix
+      tags: [incidents]
+      summary: Restart soc-daemon for an open component-failed incident (Compose)
+      description: |
+        One click. Medic checks the incident is open and its rule is firing, that no
+        upgrade window is open, that this container has not restarted since the incident
+        opened except by a recorded fix, and that no fix is awaiting verify. Then it
+        restarts that container. A failed check is 409 `fix_refused` with `reason`, and
+        nothing is restarted. Either way a `fix_run` is appended. Verification is a later
+        `fix_verified`, after the runbook's wait.
+      x-medic-permission: admin
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      requestBody:
+        required: true
+        description: An empty JSON object. At most 4 KB.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+            examples:
+              empty:
+                value: {}
+      responses:
+        "201":
+          description: The stored fix_run, exactly as written. The restart has been issued.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedbackAccepted" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A check failed. `reason` names it. Nothing was restarted.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                upgrade:
+                  value:
+                    type: "urn:medic:error:fix_refused"
+                    status: 409
+                    code: fix_refused
+                    reason: upgrade_window
+                    request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidBody" }
+        "503": { $ref: "#/components/responses/Busy" }
 
   /v1/decisions:
     get:

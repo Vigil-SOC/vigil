@@ -56,7 +56,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # Empty is the I-5.a fault: the daemon then refuses every push with 503.
       DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
-      # sitecustomize.py (below): SIGUSR1 cancels the scheduler task (P-3.a).
+      # sitecustomize.py (below): SIGUSR1 fails the scheduler task (P-3.a).
       PYTHONPATH: /app:/eval-site
     volumes:
       - ${MEDIC_EVAL_SITE:?}:/eval-site/sitecustomize.py:ro
