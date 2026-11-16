@@ -243,6 +243,51 @@ def _release(action_id: str, holder: str) -> None:
             row.execution_result = None
 
 
+def withdraw_promotions(
+    session: Any, rule_id: int, who: Tuple[str, str], reason: str
+) -> int:
+    """Decline, in ``session``, every promotion of ``rule_id`` still waiting for a
+    person: a person switched the rule off, so the request has nothing left to
+    promote. Each is closed as declined by that person and audited; returns how
+    many were closed."""
+    from core.detections.inventory.sync import trail_actor
+
+    username, principal = who
+    rows = (
+        session.execute(
+            select(ApprovalActionRow)
+            .where(ApprovalActionRow.action_type == ActionType.PROMOTE_RULE.value)
+            .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+            .where(ApprovalActionRow.target == str(rule_id))
+            .with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        row.status = ActionStatus.REJECTED.value
+        row.approved_at = utcnow()
+        row.approved_by = username
+        row.approved_by_principal_id = principal
+        row.rejection_reason = f"Switched off: {reason}"
+        write_config_audit(
+            session,
+            config_type=AUDIT_TYPE,
+            config_key=AUDIT_KEY,
+            action="decline",
+            old_value=None,
+            new_value={
+                "rule_id": rule_id,
+                "action_id": row.action_id,
+                "kind": ActionType.PROMOTE_RULE.value,
+                "event": "switch_off",
+            },
+            changed_by=trail_actor(principal),
+            change_reason=reason,
+        )
+    return len(rows)
+
+
 def _close(row: Any, status: ActionStatus, result: Dict[str, Any]) -> None:
     row.status = status.value
     row.executed_at = utcnow()
