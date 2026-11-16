@@ -85,7 +85,8 @@ def setup_needed(
     has no MFA, or it is covered by require_phishing_resistant, holds no key and
     keys are available (unavailable, the app still counts: a step-down). The one
     check behind the gate and the console's setup screen. A sign-in through single
-    sign-on is never held: the provider carries the MFA."""
+    sign-on, or a break-glass one (``via_sso`` covers both), is never held: the
+    provider or the code carried the MFA."""
     if via_sso:
         return None
     machine = user.service_account is True
@@ -233,7 +234,7 @@ def _check_sign_in(
             None
             if setup_route
             else setup_needed(
-                db, user, held, current, via_sso=row.auth_method == sign_ins.SSO
+                db, user, held, current, via_sso=row.auth_method in sign_ins.NOT_HELD
             )
         )
         if needed:

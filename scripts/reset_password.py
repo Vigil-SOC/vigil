@@ -595,6 +595,7 @@ def mark(session, who: str):
     codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
     user.mfa_enabled = True
     user.break_glass_at = user.break_glass_at or utcnow()
+    clear_lock(user)  # a lock from before the mark may last until unlocked
     ended = sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, session)
     _record(
         session,
@@ -634,10 +635,13 @@ def unmark(session, who: str):
         print(f"{who!r} is not marked break-glass.", file=sys.stderr)
         return None
     user.break_glass_at = None
-    _record(session, "user.break_glass_unmarked", user, op)
+    # Its break-glass sign-ins skip "Confirm it's you": they end with the mark.
+    ended = sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, session)
+    _record(session, "user.break_glass_unmarked", user, op, sign_ins_ended=ended)
     shown = (
-        f"{user.username}: no longer break-glass. Its password and recovery codes "
-        "are unchanged; under required single sign-on it can't sign in with them."
+        f"{user.username}: no longer break-glass, {ended} sign-in"
+        f"{'' if ended == 1 else 's'} ended. Its password and recovery codes are "
+        "unchanged; under required single sign-on it can't sign in with them."
     )
     return user.principal_id, user.username, shown
 

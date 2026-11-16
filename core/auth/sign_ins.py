@@ -55,6 +55,9 @@ SSO = "sso"
 # passes for the life of the sign-in.
 BREAK_GLASS = "break_glass"
 WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO, BREAK_GLASS)
+# Never held at MFA or key setup: the provider carries the MFA, or the
+# break-glass code did, and a hold would strand the custodian mid-incident.
+NOT_HELD = (SSO, BREAK_GLASS)
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"

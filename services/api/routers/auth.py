@@ -507,7 +507,7 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
             user,
             [name for name, on in payload["permissions"].items() if on],
             session_policy.policy(),
-            via_sso=row is not None and row.auth_method == sign_ins.SSO,
+            via_sso=row is not None and row.auth_method in sign_ins.NOT_HELD,
         )
     )
     # Whether this install has security keys, and why not when it has none.
