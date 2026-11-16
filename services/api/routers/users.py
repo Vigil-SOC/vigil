@@ -45,6 +45,7 @@ from core.auth.auth_service import (
     _account_is_locked,
     clear_lock,
     managers,
+    with_dispute,
 )
 from core.auth.deactivation import (
     clear_deactivation,
@@ -1924,8 +1925,13 @@ def unlock_user(
         current_user,
         user,
         "Your account was unlocked",
-        f"{who} unlocked your account and ended your sign-ins. "
-        "If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} unlocked your account and ended your sign-ins. "
+            "If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} unlocked {user.username}'s account and ended their sign-ins.",
     )
     return _dump_accounts(session, [user])[0]
@@ -1988,10 +1994,17 @@ def issue_reset_link(
                 detail=f"Email isn't available: set {' and '.join(missing)}, "
                 "or copy the link instead.",
             )
-        if body.channel == invites.COPY and not body.identity_confirmed_by:
+        if (
+            body.channel == invites.COPY or not user.is_verified
+        ) and not body.identity_confirmed_by:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Say how you confirmed it is them before copying a link",
+                detail=(
+                    "Say how you confirmed it is them before copying a link"
+                    if body.channel == invites.COPY
+                    else "A verification method is needed before emailing a "
+                    "reset link to an address that isn't confirmed yet"
+                ),
             )
     row, token = invites.issue_reset(
         session,
@@ -2016,6 +2029,12 @@ def issue_reset_link(
     who = current_user.full_name or current_user.username
     if body.channel == invites.EMAIL:
         link, to = reset_link(base, token), user.email
+        mailed = with_dispute(
+            user.principal_id,
+            "If you weren't expecting this, tell an administrator.",
+            "If you weren't expecting this, tell an administrator.",
+            session,
+        )
         when_committed(
             session,
             lambda: send_email(
@@ -2025,7 +2044,7 @@ def issue_reset_link(
                     f"{who} sent you a link to choose a new password.\n\n"
                     "It is valid for one hour and can only be used once.\n\n"
                     f"{link}\n\n"
-                    "If you weren't expecting this, tell an administrator."
+                    f"{mailed}"
                 ),
             ),
         )
@@ -2035,8 +2054,13 @@ def issue_reset_link(
         current_user,
         user,
         "Your password reset link",
-        f"{who} {how} a link to reset your password and ended your sign-ins. "
-        "It works once, for one hour. If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} {how} a link to reset your password and ended your sign-ins. "
+            "It works once, for one hour. If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} issued a password reset link for {user.username} and ended their "
         f"sign-ins{' and revoked their API tokens' if revoked else ''}.",
     )
@@ -2138,9 +2162,14 @@ def reset_user_mfa(
         current_user,
         user,
         "Your two-step sign-in was reset",
-        f"{who} removed your two-step sign-in methods and recovery codes, and "
-        "ended your sign-ins. Set two-step sign-in up again when you next sign "
-        "in. If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} removed your two-step sign-in methods and recovery codes, and "
+            "ended your sign-ins. Set two-step sign-in up again when you next sign "
+            "in. If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} reset {user.username}'s two-step sign-in and ended their sign-ins"
         f"{' and revoked their API tokens' if revoked else ''}.",
     )
@@ -2643,8 +2672,13 @@ def reactivate_user(
         user,
         "account_reactivated",
         "Your account was reactivated",
-        f"{who} reactivated your account. Sign in with your password and two-step "
-        "sign-in as before. MCP tokens from before stay revoked: mint new ones.",
+        with_dispute(
+            user.principal_id,
+            f"{who} reactivated your account. Sign in with your password and two-step "
+            "sign-in as before. MCP tokens from before stay revoked: mint new ones.",
+            "",
+            session,
+        ),
     )
     logger.info(f"User reactivated by {current_user.username}: {user.username}")
     entry = _dump_accounts(session, [user])[0]
@@ -2706,8 +2740,13 @@ def restore_user(
         user,
         "account_restored",
         "Your account was restored",
-        f"{who} restored your deleted account. It stays deactivated until an "
-        "administrator reactivates it; MCP tokens from before stay revoked.",
+        with_dispute(
+            user.principal_id,
+            f"{who} restored your deleted account. It stays deactivated until an "
+            "administrator reactivates it; MCP tokens from before stay revoked.",
+            "",
+            session,
+        ),
     )
     logger.info(f"User restored by {current_user.username}: {user.username}")
     return _dump_accounts(session, [user])[0]

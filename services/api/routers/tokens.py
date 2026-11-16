@@ -17,7 +17,7 @@ from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
-from core.auth.auth_service import _is_service_account
+from core.auth.auth_service import _is_service_account, with_dispute
 from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
 from core.platform.notices import notify
@@ -77,6 +77,10 @@ def _tell(holder: User, title: str, message: str, priority: str = "normal") -> N
     )
     if to is None:
         return
+    try:
+        message = with_dispute(to, message, "")
+    except Exception:  # noqa: BLE001 - the notice still goes, in today's wording
+        logger.exception("could not name the managers on a token notice")
     try:
         notify(
             to,

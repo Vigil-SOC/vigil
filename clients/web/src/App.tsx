@@ -11,6 +11,7 @@ import Loader from './routing/Loader'
 const SocConsole = lazy(() => import('./shell/SocConsole'))
 const SocLogin = lazy(() => import('./screens/login/LoginScreen'))
 const ResetPassword = lazy(() => import('./screens/login/ResetPasswordScreen'))
+const ConfirmEmail = lazy(() => import('./screens/login/ConfirmEmailScreen'))
 const AcceptInvite = lazy(() => import('./screens/login/AcceptInviteScreen'))
 const SetupScreen = lazy(() => import('./screens/setup/SetupScreen'))
 
@@ -28,6 +29,8 @@ function App() {
           <Route path="/login" element={<SocLogin />} />
           {/* Public — the emailed password-reset link lands here. */}
           <Route path="/reset-password" element={<ResetPassword />} />
+          {/* Public — the emailed address-confirmation link lands here. */}
+          <Route path="/confirm-email" element={<ConfirmEmail />} />
           {/* Public — the invite link lands here; the person sets up their own account. */}
           <Route path="/accept-invite" element={<AcceptInvite />} />
 
