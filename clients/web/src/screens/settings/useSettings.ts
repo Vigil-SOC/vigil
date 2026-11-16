@@ -320,6 +320,10 @@ export interface RolesMeta {
   presets: RolePreset[]
   permissions: string[]
   platform_equivalent: string[]
+  /** person-only keys: no effect for a service account */
+  person_only: string[]
+  /** new-capability permissions no custom or legacy role holds */
+  new_permissions_unheld: string[]
   nobody_can_manage_roles: boolean
 }
 
@@ -333,6 +337,8 @@ const EMPTY_ROLES_META: RolesMeta = {
   presets: [],
   permissions: [],
   platform_equivalent: [],
+  person_only: [],
+  new_permissions_unheld: [],
   nobody_can_manage_roles: false,
 }
 
@@ -384,6 +390,8 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
           presets: d.presets ?? [],
           permissions: d.permissions ?? [],
           platform_equivalent: d.platform_equivalent ?? [],
+          person_only: d.person_only ?? [],
+          new_permissions_unheld: d.new_permissions_unheld ?? [],
           nobody_can_manage_roles: !!d.nobody_can_manage_roles,
         })
         setPhase('ready')
