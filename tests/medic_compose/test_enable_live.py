@@ -11,7 +11,7 @@ Opt-in (it builds the backend image and runs a stack for a few minutes):
    (`medic-v1`, or VIGIL_MEDIC_COMPOSE_PROJECT_V1).
 3. The account exists (random name, Viewer, service account), the backend says
    ``unknown`` (V2 adds running/down), Medic's `check` exits 0, and the gateway
-   logs in to the real backend with the generated password and serves a read.
+   reads the real backend with the token the script minted and serves a read.
 4. Failed logins past the lockout threshold don't lock it out.
 5. Canary: neither generated secret appears in the script's output, the
    rendered config, compose.env or any container's logs.
@@ -327,7 +327,8 @@ def test_medic_is_running(stack, enabled) -> None:
 def test_gateway_logs_in_and_serves_a_read(stack, enabled) -> None:
     out = json.loads(stack.py("medic", GATEWAY_READ, medic=True))
     assert out["read"][0] == 200, out
-    assert json.loads(out["status"][1])["state"] == "ok", out
+    status = json.loads(out["status"][1])
+    assert (status["state"], status["credential"]) == ("ok", "token"), out
 
 
 def test_failed_logins_do_not_lock_the_service_account(stack, enabled) -> None:
@@ -370,14 +371,16 @@ def test_rerun_is_idempotent(stack, enabled) -> None:
 
 
 def test_canary_no_secret_in_output_config_or_logs(stack, enabled) -> None:
-    password, api_key = stack.secret("viewer_password"), stack.secret("api_key")
+    token, api_key = stack.secret("medic_gateway_token"), stack.secret("api_key")
+    # A fresh enable makes no password: an empty placeholder only (#4429).
+    assert stack.secret("viewer_password") == ""
+    assert re.fullmatch(r"vgl_api_[A-Za-z0-9_-]+", token)
     # V2: the API key is X2's X-Medic-Key (32 bytes, base64url), not hex.
-    assert re.fullmatch(r"[0-9a-f]{64}", password)
     assert re.fullmatch(r"[A-Za-z0-9_-]{43}", api_key)
     config = stack.compose("config", medic=True).stdout
     logs = stack.compose("logs", "--no-color", medic=True).stdout
     settings = (stack.secrets_dir / "compose.env").read_text()
-    for value in (password, api_key):
+    for value in (token, api_key):
         for where, text in [
             ("script stdout", enabled.stdout),
             ("script stderr", enabled.stderr),
