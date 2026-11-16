@@ -872,6 +872,7 @@ def skipped_note(skipped: int) -> Optional[str]:
 
 
 _MANIFESTS = ("skills.sh.json", "plugin.json", "marketplace.json")
+_OUTLINE_READ = 64 * 1024  # of each SKILL.md and manifest, for the outline
 
 
 def _skill_folders(
@@ -885,7 +886,8 @@ def _skill_folders(
     itself a skill (a GitHub "download zip" wrapper). A ``SKILL.md`` at that
     root is the one skill. Of two skill folders with one name the first found
     wins. The search runs on an outline of the zip on disk: its paths as empty
-    files, and the manifests that point at skills.
+    files, except each ``SKILL.md`` (the fallback search needs to know whether
+    one is valid) and the manifests that point at skills.
     A skill folder inside another one is refused: it would otherwise be stored
     as a supporting file of the outer skill and never load.
     """
@@ -903,9 +905,9 @@ def _skill_folders(
                 path = tree / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
-                if path.name in _MANIFESTS and info.file_size <= 64 * 1024:
+                if path.name == SKILL_FILE or path.name in _MANIFESTS:
                     with zf.open(info) as handle:
-                        path.write_bytes(handle.read(64 * 1024))
+                        path.write_bytes(handle.read(_OUTLINE_READ))
         except OSError as exc:  # a path used as both a file and a folder
             raise SkillError("the zip has a file and a folder at one path") from exc
         top = tree
