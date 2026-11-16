@@ -248,11 +248,20 @@ def revoke_resets(
 
 
 def issue_reset(
-    session: Session, user, channel: str, actor: str, **trail: object
+    session: Session,
+    user,
+    channel: str,
+    actor: str,
+    *,
+    beside: Optional[dict] = None,
+    **trail: object,
 ) -> tuple[AuthLink, str]:
     """A one-hour reset link for ``user``. Returns the row and the value, which
     is not kept anywhere. It replaces the open ones, except that the account's
-    own request (or sign-in's) never cancels a link an administrator issued."""
+    own request (or sign-in's) never cancels a link an administrator issued.
+
+    ``beside`` is the columns erasure can blank (a host recovery's operator
+    name and the reason). ``trail`` is hashed, so it stays free of those strings."""
     own = (SELF, SIGNIN)
     revoke_resets(
         session,
@@ -279,6 +288,7 @@ def issue_reset(
     trail_events.record(
         session,
         "reset.sent",
+        beside,
         actor=actor,
         principal=user.principal_id,
         link_id=row.link_id,
