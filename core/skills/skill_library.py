@@ -50,7 +50,6 @@ _NAME_MAX = 64
 _DESCRIPTION_MAX = 1024
 _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
-_CATEGORY_DEPTH = 2  # folders allowed between a zip's container and a skill folder
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
 # Skill folders the skills API may hold under the operator root: a save or
@@ -825,7 +824,9 @@ def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
     """The regular files to install, by path, judged from the entry list alone.
 
     An unsafe entry refuses the whole zip, even one that would be skipped.
-    Directories, dotfiles and ``__MACOSX`` are dropped.
+    Directories, ``.git`` and ``__MACOSX`` are dropped. Other dot paths are
+    kept for finding skills (``.claude/skills``, ``.claude-plugin``); a
+    skill's own dotfiles are dropped when it is unpacked.
     """
     kept: Dict[str, zipfile.ZipInfo] = {}
     for info in zf.infolist():
@@ -847,7 +848,7 @@ def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
             continue
         if stat.S_IFMT(mode) not in (0, stat.S_IFREG):
             raise SkillError(f"the zip has a non-regular file: {name!r}")
-        if any(p.startswith(".") or p == "__MACOSX" for p in parts):
+        if any(p in (".git", "__MACOSX") for p in parts):
             continue
         if name in kept:
             raise SkillError(f"the zip lists {name!r} twice")
@@ -865,43 +866,67 @@ def skipped_note(skipped: int) -> Optional[str]:
         return None
     files = "file was" if skipped == 1 else "files were"
     return (
-        f"{skipped} {SKILL_FILE} {files} skipped, more than "
-        f"{_CATEGORY_DEPTH} category folders deep"
+        f"{skipped} {SKILL_FILE} {files} skipped: not where npx skills looks, "
+        "or a skill name already taken in the zip"
     )
 
 
-def _skill_folders(paths: Iterable[str]) -> tuple[List[str], int]:
-    """The zip folders holding a skill, ``""`` for the root, sorted, and how many
-    ``SKILL.md`` lie too deep to count.
+_MANIFESTS = ("skills.sh.json", "plugin.json", "marketplace.json")
 
-    The folder-depth rule of the ``npx skills`` CLI: the container is the zip's
-    root, or its one top-level folder when that is not itself a skill (a GitHub
-    "download zip" wrapper), and a skill folder sits at most
-    ``_CATEGORY_DEPTH`` category folders below it. A deeper ``SKILL.md`` is
-    skipped rather than refused. A skill folder inside another one is refused:
-    it would otherwise be stored as a supporting file of the outer skill and
-    never load.
+
+def _skill_folders(
+    zf: zipfile.ZipFile, kept: Dict[str, zipfile.ZipInfo]
+) -> tuple[List[str], int]:
+    """The zip folders holding a skill, ``""`` for the root, and how many
+    ``SKILL.md`` were skipped.
+
+    Found as ``npx skills`` finds skills in a repo (``_source_skill_dirs``),
+    the repo being the zip's root, or its one top-level folder when that is not
+    itself a skill (a GitHub "download zip" wrapper). A ``SKILL.md`` at that
+    root is the one skill. Of two skill folders with one name the first found
+    wins. The search runs on an outline of the zip on disk: its paths as empty
+    files, and the manifests that point at skills.
+    A skill folder inside another one is refused: it would otherwise be stored
+    as a supporting file of the outer skill and never load.
     """
-    paths = list(paths)
-    found = sorted(
+    every = [
         p[: -len(SKILL_FILE)].rstrip("/")
-        for p in paths
+        for p in kept
         if p == SKILL_FILE or p.endswith(f"/{SKILL_FILE}")
-    )
-    if not found:
-        raise SkillError(f"no {SKILL_FILE} in the zip")
-    tops = {p.split("/")[0] for p in paths}
-    wrapper = ""
-    if (
-        len(tops) == 1
-        and all("/" in p for p in paths)
-        and f"{next(iter(tops))}/{SKILL_FILE}" not in paths
-    ):
-        wrapper = f"{tops.pop()}/"
-    folders = [
-        f for f in found if f == "" or f[len(wrapper) :].count("/") <= _CATEGORY_DEPTH
     ]
-    for inner in found:
+    if not every:
+        raise SkillError(f"no {SKILL_FILE} in the zip")
+    with tempfile.TemporaryDirectory(prefix="vigil-zip-") as tmp:
+        tree = Path(tmp)
+        try:
+            for name, info in kept.items():
+                path = tree / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+                if path.name in _MANIFESTS and info.file_size <= 64 * 1024:
+                    with zf.open(info) as handle:
+                        path.write_bytes(handle.read(64 * 1024))
+        except OSError as exc:  # a path used as both a file and a folder
+            raise SkillError("the zip has a file and a folder at one path") from exc
+        top = tree
+        children = list(tree.iterdir())
+        if (
+            len(children) == 1
+            and children[0].is_dir()
+            and not (children[0] / SKILL_FILE).exists()
+        ):
+            top = children[0]
+        if (top / SKILL_FILE).exists():
+            dirs = [top]
+        else:
+            dirs = _source_skill_dirs(top)
+        folders: List[str] = []
+        for d in dirs:
+            rel = d.relative_to(tree).as_posix()
+            rel = "" if rel == "." else rel
+            if all(rel.rsplit("/", 1)[-1] != f.rsplit("/", 1)[-1] for f in folders):
+                folders.append(rel)
+    for inner in every:
         for outer in folders:
             if inner != outer and (outer == "" or inner.startswith(f"{outer}/")):
                 where = (
@@ -912,7 +937,7 @@ def _skill_folders(paths: Iterable[str]) -> tuple[List[str], int]:
                 raise SkillError(
                     f"{inner!r} is a skill folder {where}; a skill cannot hold another skill"
                 )
-    skipped = len(found) - len(folders)
+    skipped = len(every) - len(folders)
     if not folders:
         raise SkillError(f"no skill to install: {skipped_note(skipped)}")
     return folders, skipped
@@ -922,21 +947,24 @@ def _unpack(
     zf: zipfile.ZipFile,
 ) -> tuple[List[tuple[Optional[str], Dict[str, bytes]]], int]:
     """Each skill in the zip as ``(folder, {path within it: bytes})``, and how
-    many ``SKILL.md`` were skipped as too deep.
+    many ``SKILL.md`` were skipped.
 
     ``folder`` is the skill folder's own name, or None for a SKILL.md at the
     zip's root, which takes every file. Files outside any skill folder, such as
-    a README beside several skills, are left out.
+    a README beside several skills, and a skill's own dotfiles are left out.
     """
     kept = _zip_files(zf)
     budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
     skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
-    folders, skipped = _skill_folders(kept)
+    folders, skipped = _skill_folders(zf, kept)
     for folder in folders:
         prefix = f"{folder}/" if folder else ""
         files: Dict[str, bytes] = {}
         for name, info in kept.items():
-            if not name.startswith(prefix):
+            rel = name[len(prefix) :]
+            if not name.startswith(prefix) or any(
+                part.startswith(".") for part in rel.split("/")
+            ):
                 continue
             with zf.open(info) as handle:
                 data = handle.read(budget + 1)
@@ -945,7 +973,7 @@ def _unpack(
                 raise SkillError(
                     f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB"
                 )
-            files[name[len(prefix) :]] = data
+            files[rel] = data
         skills.append((folder.rsplit("/", 1)[-1] if folder else None, files))
     return skills, skipped
 
@@ -1009,10 +1037,10 @@ def install_uploaded_skills(
     """Install an uploaded ``SKILL.md`` or ``.zip`` of skills under the operator root.
 
     Returns the skills installed and how many ``SKILL.md`` in the zip were
-    skipped as too deep. A bare file lands in a folder named by its
-    frontmatter ``name``. A zip holds ``SKILL.md`` at its root (named the same
-    way), or skill folders named for their skills, side by side or up to two
-    category folders below the zip's root or its one wrapper folder. Nothing
+    skipped. A bare file lands in a folder named by its frontmatter ``name``.
+    A zip holds ``SKILL.md`` at its root (named the same way), or skill
+    folders named for their skills, found where ``npx skills`` looks in a repo
+    (``_skill_folders``). Nothing
     is overwritten: a name the library or the operator root already holds
     raises :class:`SkillConflict`. All or nothing: every skill is built and
     checked in a scratch directory under the root before any moves into place,
