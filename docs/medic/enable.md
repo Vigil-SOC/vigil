@@ -9,11 +9,13 @@ With the switch on, one backend process asks Medic for its status once a minute,
 On Compose and Helm, Medic reads the backend only through its own read-only gateway. The gateway reads as a **service account**:
 
 - a Viewer named `medic-` plus 12 random characters (`a-z0-9`), so the name can't be guessed;
-- on Compose, an API token that only the gateway holds, minted from the host by `python -m core.auth.service_account token <name>`; on Helm, and on a Compose site enabled before tokens that hasn't re-run the script, a random 64-character password;
+- an API token that only the gateway holds, minted from the host by `python -m core.auth.service_account token <name>`, with no password at all; a site enabled before tokens that hasn't moved yet (below) still reads on a random 64-character password;
 - never locked out by failed logins. A lock would let anyone who learns the name blind Medic. Failed logins are still counted and logged.
-- The users API won't give it any role except Viewer, and its token is minted from the host only, never from the console. Other service accounts are made on Settings › System › Users, are token-only and have an accountable person; none of them is Medic's.
+- The users API won't give it any role except Viewer, and no one can mint it a token through the console or the API: only the host command below can. Other service accounts are made on Settings › System › Users, are token-only and have an accountable person; none of them is Medic's.
 
-On Compose the account is created by `token` (below). On Helm it is created by `python -m core.auth.service_account ensure <name>`, which refuses (exit 77) once the account has a token. It runs in the backend's environment and reads the password from stdin. Running it again with the same password changes nothing. Running it with a new password rotates the password and clears any failed-login count. Any other active Medic service account is deleted (its principal is marked deleted and the audit trail records each one), so an old name can't keep working. The command never reactivates an account: if Medic's account was deactivated, say during an incident, it refuses with exit code 77 (`<name> is deactivated; reactivate it on Team & access`) and changes nothing, and it never acts on a deleted one. It refuses to convert an existing account that belongs to a person.
+On Compose and Helm the account is created by `token` (below). The older password form, `python -m core.auth.service_account ensure <name>`, refuses (exit 77) once the account has a token. It runs in the backend's environment and reads the password from stdin. Running it again with the same password changes nothing. Running it with a new password rotates the password and clears any failed-login count. Any other active Medic service account is deleted (its principal is marked deleted and the audit trail records each one), so an old name can't keep working. The command never reactivates an account: if Medic's account was deactivated, say during an incident, it refuses with exit code 77 (`<name> is deactivated; reactivate it on Team & access`) and changes nothing, and it never acts on a deleted one. It refuses to convert an existing account that belongs to a person.
+
+`python -m core.auth.service_account token <name>` is the token-only form. It creates the account with no password if it is missing, refuses on the same grounds as `ensure`, rotates the account's token (the old one keeps working for 24 hours) or mints one, and prints only the token on stdout. A password the account still has stops working the first time the backend accepts the token, and `ensure` refuses an account that has ever had a token.
 
 ## Docker Compose
 
@@ -60,35 +62,32 @@ The chart needs a cluster whose network plugin **enforces NetworkPolicy** (Calic
 
 The chart mints Medic's API key at install into the Secret `<release>-medic-api-key` and keeps it across upgrades; Medic and the backend mount it as a file. The backend polls `http://<release>-medic-gateway-in:8470` once a minute and shows **Down** after 270 seconds without an answer. Where Helm can't read the cluster when it renders (`helm template`, Argo CD, Flux), create the Secret yourself (key `api_key`, 32 random bytes base64url) and set `medic.apiKey.existingSecret`; otherwise every render mints a new key. For the same reason `helm diff` and a client-side `helm upgrade --dry-run` always show the key as changed; a real `helm upgrade` keeps it.
 
-1. Before you install or upgrade, create the gateway's password Secret and choose the name. The password is written to a file and never appears on a command line.
+The gateway reads its API token from the Secret `<release>-medic-gateway-token` (key `token`; set `medic.gateway.tokenSecret.name` and `.key` to use another). The chart mounts it as a file but never creates, fills or overwrites it, so `helm upgrade` keeps what you put there. Until the Secret exists the gateway runs and reports `no_credential` on its `/_gw/status`.
 
-   ```bash
-   umask 077
-   openssl rand -hex 32 > medic-viewer-password
-   kubectl -n vigil create secret generic medic-viewer --from-file=password=medic-viewer-password
-   rm medic-viewer-password
-   NAME="medic-$(head -c 512 /dev/urandom | LC_ALL=C tr -dc a-z0-9 | cut -c1-12)"
-   ```
-
-2. Install or upgrade with these values:
+1. Install or upgrade with these values. No Secret needs to exist first.
 
    ```
    medic.enabled=true
-   medic.gateway.viewer.username=$NAME
-   medic.gateway.viewer.passwordSecret.name=medic-viewer
-   medic.gateway.viewer.passwordSecret.key=password
+   medic.gateway.viewer.username=medic-<12 of a-z0-9>
    ```
 
-   `medic.enabled` also sets `VIGIL_MEDIC_ENABLED` on the backend.
+   Choose the name once and keep it, for example `NAME="medic-$(head -c 512 /dev/urandom | LC_ALL=C tr -dc a-z0-9 | cut -c1-12)"`. `medic.enabled` also sets `VIGIL_MEDIC_ENABLED` on the backend.
 
-3. Create the account. The chart's NOTES print this command with your release's names:
+2. Once the backend is up, mint the token and store it. The chart's NOTES print this command with your release's names:
 
    ```bash
-   kubectl -n vigil get secret medic-viewer -o jsonpath='{.data.password}' | base64 -d \
-     | kubectl -n vigil exec -i deploy/<release>-backend -- python -m core.auth.service_account ensure "$NAME"
+   kubectl -n vigil exec deploy/<release>-backend -- python -m core.auth.service_account token "$NAME" \
+     | kubectl -n vigil create secret generic <release>-medic-gateway-token --from-file=token=/dev/stdin --dry-run=client -o yaml \
+     | kubectl -n vigil apply -f -
    ```
 
-   To rotate, replace the Secret's value, run step 3 again, and restart the gateway Deployment.
+   The command creates the account if it is missing. The token travels on a pipe, never on a command line. The kubelet refreshes the mounted file within about a minute, and the gateway picks it up on its next request with no restart; its `/_gw/status` then shows `credential: token`.
+
+   To renew the token (the console warns before it expires), run the same command again. The old token keeps working for 24 hours, so the gateway never goes dark while the file catches up.
+
+**GitOps and external secret stores.** Argo CD, Flux, External Secrets or Sealed Secrets can fill the Secret their own way: run `python -m core.auth.service_account token <name>` in the backend once, put its output in your store, and have it sync to the Secret above (or name yours with `medic.gateway.tokenSecret.name`). Don't make the chart's release own it.
+
+**A site set up before tokens.** An earlier chart required `medic.gateway.viewer.passwordSecret` and a password set with `ensure`. Upgrade with the same values: the password Secret is still mounted (now optional), and the gateway keeps reading on the password while no token is there. Then run the command in step 2. The gateway moves to the token on its next request, and the account's password stops working once the backend first accepts the token. You can then drop `medic.gateway.viewer.passwordSecret` from your values and delete that Secret.
 
 ## Host-native (`start.sh`)
 

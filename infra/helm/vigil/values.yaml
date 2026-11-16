@@ -1168,9 +1168,16 @@ medic:
       limits:
         cpu: 500m
         memory: 128Mi
-    # The Viewer account the gateway logs in as. Required when medic.enabled.
-    # The password comes from an existing Secret, mounted as a file; it is
-    # never put in this file or in any pod's environment.
+    # The gateway's API token, from a Secret mounted as a file (never env).
+    # The chart never renders or fills it, so an upgrade can't overwrite it:
+    # the command NOTES prints mints the token and creates the Secret. Until
+    # then the gateway reports no_credential. name "" → <release>-medic-gateway-token.
+    tokenSecret:
+      name: ""
+      key: token
+    # The Viewer service account the token belongs to. Required when
+    # medic.enabled. passwordSecret is optional: only a site set up before
+    # tokens has one, and its password works until the token is first used.
     viewer:
       username: ""
       passwordSecret:
