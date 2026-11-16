@@ -737,7 +737,8 @@ secrets:
   # the agent tables and nothing else. Materialized as POSTGRES_AGENT_PASSWORD;
   # must differ from vigilAppPassword and postgresPassword. With existingSecret
   # or externalSecret, that Secret must contain the key POSTGRES_AGENT_PASSWORD.
-  # Unset, the chart derives it one way (SHA-256) from vigilAppPassword.
+  # Unset, the chart generates one and keeps it across upgrades with lookup;
+  # set it under helm template or a GitOps controller, where lookup sees nothing.
   # Generate with:
   #   openssl rand -hex 24
   vigilAgentPassword: ""

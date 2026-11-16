@@ -26,8 +26,9 @@ and directives, and receive only this password; `POSTGRES_APP_PASSWORD` is
 blanked in their environment. The upgrade Jobs set it beside `vigil_app`'s.
 
 None has a default, except that an unset `secrets.vigilAgentPassword` is
-derived one way (SHA-256) from `secrets.vigilAppPassword`. Set all three
-(`openssl rand -hex 24`). With
+generated once and kept across upgrades with `lookup` (set it under
+`helm template` or a GitOps controller, where `lookup` sees nothing). Set all
+three (`openssl rand -hex 24`). With
 `secrets.existingSecret` or `secrets.externalSecret`, that Secret must contain
 `POSTGRES_APP_PASSWORD` and `POSTGRES_AGENT_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
 (or `postgresql.external.existingSecret`) rather than in the application Secret.

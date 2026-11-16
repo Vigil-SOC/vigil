@@ -17,7 +17,6 @@ The Kubernetes API is plain HTTPS with the pod's token: no client package.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import ssl
@@ -296,13 +295,10 @@ def set_app_password() -> None:
         raise RuntimeError(
             "POSTGRES_APP_PASSWORD must differ from the database owner password"
         )
-    # Unset: the chart's default (templates/secret.yaml), derived one way from
-    # vigil_app's so the agent pods cannot recover it.
-    agent_pw = (
-        os.environ.get("POSTGRES_AGENT_PASSWORD")
-        or hashlib.sha256(f"vigil_agent:{app_pw}".encode()).hexdigest()
-    )
-    if agent_pw in (app_pw, os.environ.get("POSTGRES_PASSWORD")):
+    # The chart always supplies it. Unset (the script run outside the chart),
+    # vigil_agent keeps whatever it has: a role with no password cannot log in.
+    agent_pw = os.environ.get("POSTGRES_AGENT_PASSWORD", "")
+    if agent_pw and agent_pw in (app_pw, os.environ.get("POSTGRES_PASSWORD")):
         raise RuntimeError(
             "POSTGRES_AGENT_PASSWORD must differ from the vigil_app and owner passwords"
         )
@@ -310,14 +306,19 @@ def set_app_password() -> None:
     try:
         with conn, conn.cursor() as cur:
             cur.execute("ALTER ROLE vigil_app PASSWORD %s", (app_pw,))
-            cur.execute("ALTER ROLE vigil_agent PASSWORD %s", (agent_pw,))
+            if agent_pw:
+                cur.execute("ALTER ROLE vigil_agent PASSWORD %s", (agent_pw,))
             cur.execute(
                 "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.alembic_version FROM vigil_app"
             )
             cur.execute("GRANT SELECT ON TABLE public.alembic_version TO vigil_app")
     finally:
         conn.close()
-    say("set vigil_app and vigil_agent passwords")
+    say(
+        "set vigil_app and vigil_agent passwords"
+        if agent_pw
+        else "set vigil_app password; POSTGRES_AGENT_PASSWORD unset, vigil_agent left as it was"
+    )
 
 
 def upgrade() -> int:
