@@ -213,10 +213,34 @@ def issue(
     return row, token
 
 
+def cancel_pending(session: Session, email: str, reason: str) -> None:
+    """An account is being created for ``email`` by a route other than accepting
+    its invite. The pending invite is moot, and its sender is told once that
+    commits — a refusal rolls the cancellation back and tells no one."""
+    if row := open_for(session, email, lock=True):
+        inviter, address = row.invited_by, row.email
+        revoke(session, row, SYSTEM, reason)
+        if inviter and address:
+            # deactivation imports this module at load, so these cannot be
+            # top-level: that cycle leaves when_committed undefined.
+            from core.auth.deactivation import when_committed
+            from core.platform.notices import notify
+
+            when_committed(
+                session,
+                lambda: notify(
+                    inviter,
+                    "invite_cancelled",
+                    "Invite cancelled",
+                    f"{address} now has an account.",
+                    link="/settings",
+                ),
+            )
+
+
 def revoke_for_sso(session: Session, email: str) -> None:
     """The address signed in through single sign-on: its pending invite is moot."""
-    if row := open_for(session, email, lock=True):
-        revoke(session, row, SYSTEM, "sso")
+    cancel_pending(session, email, "sso")
 
 
 # --- resets (#4227) ------------------------------------------------------------
