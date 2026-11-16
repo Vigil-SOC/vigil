@@ -33,6 +33,10 @@ TOKEN_REUSE = "token_reuse"
 UPGRADE = "upgrade"
 # Role, password or email changed, or a password reset: sign in again.
 ACCOUNT_CHANGED = "account_changed"
+# A recovery code at sign-in removed the methods and ended the other sign-ins.
+RECOVERY = "recovery"
+# An admin, or the host script, reset two-step sign-in and ended the sign-ins.
+MFA_RESET = "mfa_reset"
 DEACTIVATED = "deactivated"
 ERASED = "erased"
 # Ended from the sign-in list or the person's detail (#4172).
@@ -64,6 +68,8 @@ STOPS_RUNS = frozenset(
     {
         TOKEN_REUSE,
         ACCOUNT_CHANGED,
+        RECOVERY,
+        MFA_RESET,
         DEACTIVATED,
         ERASED,
         ENDED_BY_PERSON,
@@ -85,6 +91,8 @@ REASON_WORDS = {
     TOKEN_REUSE: "Token reuse",
     UPGRADE: "Ended by an upgrade",
     ACCOUNT_CHANGED: "Role, password, email or methods changed",
+    RECOVERY: "Signed in with a recovery code",
+    MFA_RESET: "Two-step sign-in was reset",
     DEACTIVATED: "Account deactivated or deleted",
     ERASED: "The person's details were erased",
     ENDED_BY_PERSON: "Ended by the person",

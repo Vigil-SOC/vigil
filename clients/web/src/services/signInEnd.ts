@@ -51,6 +51,8 @@ const REASON_TEXT: Record<string, string> = {
   expiry: 'You were signed out because the sign-in ran out.',
   sign_in_limit: 'You were signed out because a newer sign-in took its place under the account’s sign-in limit.',
   account_changed: 'You were signed out because your role, password, email or sign-in methods changed.',
+  recovery: 'You were signed out because you signed in with a recovery code.',
+  mfa_reset: 'You were signed out because two-step sign-in was reset.',
   ended_by_person: 'You were signed out because this sign-in was ended from the sign-in list.',
   ended_by_admin: 'You were signed out because an admin ended this sign-in.',
   everyone_signed_out: 'You were signed out because every sign-in was ended.',

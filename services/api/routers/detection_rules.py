@@ -20,7 +20,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth import trail_events
+from core.auth import step_up, trail_events
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -188,7 +188,13 @@ def add_source(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/sources/{source_id}", dependencies=_SETTINGS_WRITE)
+@router.delete(
+    "/sources/{source_id}",
+    dependencies=[
+        *_SETTINGS_WRITE,
+        step_up.gate("detections.write", "remove a detection source"),
+    ],
+)
 def remove_source(
     source_id: str,
     background: BackgroundTasks,
@@ -483,7 +489,13 @@ def _stage_change(change, rule_id: int, body: StageChangeRequest, user: User):
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@router.post("/rules/{rule_id}/revert", dependencies=_SETTINGS_WRITE)
+@router.post(
+    "/rules/{rule_id}/revert",
+    dependencies=[
+        *_SETTINGS_WRITE,
+        step_up.gate("detections.write", "revert a detection"),
+    ],
+)
 def revert_rule(
     rule_id: int,
     body: StageChangeRequest,
