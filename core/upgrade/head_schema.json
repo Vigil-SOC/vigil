@@ -2406,6 +2406,71 @@
   "nullable": false,
   "type": "text[]"
  },
+ "column directory_group_members.group_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_group_members.principal_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.created_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column directory_groups.display_name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.external_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.group_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_groups.version": {
+  "default": "1",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column directory_pending.display_name": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column directory_pending.email": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.external_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.pending_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column directory_pending.received_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column directory_pending.username": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column enabled_integrations.config": {
   "default": null,
   "nullable": true,
@@ -4840,7 +4905,7 @@
  "constraint auth_keys.auth_keys_pkey": "PRIMARY KEY (purpose, version)",
  "constraint auth_keys.auth_keys_state_check": "CHECK ((state = ANY (ARRAY['current'::text, 'verify_only'::text, 'decrypt_only'::text, 'retired'::text])))",
  "constraint auth_links.auth_links_invited_by_fkey": "FOREIGN KEY (invited_by) REFERENCES principals(principal_id) ON DELETE RESTRICT",
- "constraint auth_links.auth_links_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['invite'::character varying, 'reset'::character varying])::text[])))",
+ "constraint auth_links.auth_links_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['invite'::character varying, 'reset'::character varying, 'email'::character varying])::text[])))",
  "constraint auth_links.auth_links_pkey": "PRIMARY KEY (link_id)",
  "constraint auth_links.auth_links_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint breached_passwords.breached_passwords_pkey": "PRIMARY KEY (entry)",
@@ -4921,6 +4986,11 @@
  "constraint detection_rules.detection_rules_pkey": "PRIMARY KEY (id)",
  "constraint detection_rules.detection_rules_source_native_key": "UNIQUE (source, native_key)",
  "constraint detection_rules.detection_rules_status_check": "CHECK ((status = ANY (ARRAY['active'::text, 'disabled'::text, 'removed'::text])))",
+ "constraint directory_group_members.directory_group_members_group_id_fkey": "FOREIGN KEY (group_id) REFERENCES directory_groups(group_id) ON DELETE CASCADE",
+ "constraint directory_group_members.directory_group_members_pkey": "PRIMARY KEY (group_id, principal_id)",
+ "constraint directory_group_members.directory_group_members_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint directory_groups.directory_groups_pkey": "PRIMARY KEY (group_id)",
+ "constraint directory_pending.directory_pending_pkey": "PRIMARY KEY (pending_id)",
  "constraint episodic_distil_failures.episodic_distil_failures_attempts_check": "CHECK ((attempts > 0))",
  "constraint episodic_distil_failures.episodic_distil_failures_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_pkey": "PRIMARY KEY (investigation_kind, failure_key)",
@@ -5223,6 +5293,9 @@
  "index detection_rule_versions_pkey": "CREATE UNIQUE INDEX detection_rule_versions_pkey ON public.detection_rule_versions USING btree (rule_id, version)",
  "index detection_rules_pkey": "CREATE UNIQUE INDEX detection_rules_pkey ON public.detection_rules USING btree (id)",
  "index detection_rules_source_native_key": "CREATE UNIQUE INDEX detection_rules_source_native_key ON public.detection_rules USING btree (source, native_key)",
+ "index directory_group_members_pkey": "CREATE UNIQUE INDEX directory_group_members_pkey ON public.directory_group_members USING btree (group_id, principal_id)",
+ "index directory_groups_pkey": "CREATE UNIQUE INDEX directory_groups_pkey ON public.directory_groups USING btree (group_id)",
+ "index directory_pending_pkey": "CREATE UNIQUE INDEX directory_pending_pkey ON public.directory_pending USING btree (pending_id)",
  "index episodic_distil_failures_pkey": "CREATE UNIQUE INDEX episodic_distil_failures_pkey ON public.episodic_distil_failures USING btree (investigation_kind, failure_key)",
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
@@ -5333,6 +5406,7 @@
  "index idx_detection_rule_stages_rule": "CREATE INDEX idx_detection_rule_stages_rule ON public.detection_rule_stages USING btree (rule_id, id)",
  "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
+ "index idx_directory_group_members_principal": "CREATE INDEX idx_directory_group_members_principal ON public.directory_group_members USING btree (principal_id)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
@@ -5453,9 +5527,12 @@
  "index uniq_findings_source_extid": "CREATE UNIQUE INDEX uniq_findings_source_extid ON public.findings USING btree (data_source, external_id) WHERE ((data_source IS NOT NULL) AND (external_id IS NOT NULL))",
  "index uniq_ip_exclusions_active_ip": "CREATE UNIQUE INDEX uniq_ip_exclusions_active_ip ON public.ip_exclusions USING btree (ip) WHERE (removed_at IS NULL)",
  "index uq_approval_actions_idempotency_key": "CREATE UNIQUE INDEX uq_approval_actions_idempotency_key ON public.approval_actions USING btree (idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND ((status)::text <> 'failed'::text))",
+ "index uq_auth_links_open_email": "CREATE UNIQUE INDEX uq_auth_links_open_email ON public.auth_links USING btree (principal_id) WHERE (((kind)::text = 'email'::text) AND (used_at IS NULL) AND (revoked_at IS NULL))",
  "index uq_auth_links_open_invite": "CREATE UNIQUE INDEX uq_auth_links_open_invite ON public.auth_links USING btree (lower(email)) WHERE (((kind)::text = 'invite'::text) AND (used_at IS NULL) AND (revoked_at IS NULL))",
  "index uq_auth_links_token_hash": "CREATE UNIQUE INDEX uq_auth_links_token_hash ON public.auth_links USING btree (token_hash)",
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
+ "index uq_directory_groups_external": "CREATE UNIQUE INDEX uq_directory_groups_external ON public.directory_groups USING btree (external_id)",
+ "index uq_directory_pending_external": "CREATE UNIQUE INDEX uq_directory_pending_external ON public.directory_pending USING btree (external_id)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
  "index uq_sso_links_directory": "CREATE UNIQUE INDEX uq_sso_links_directory ON public.sso_links USING btree (issuer, directory_id) WHERE (directory_id IS NOT NULL)",
@@ -6706,6 +6783,72 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation directory_group_members": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation directory_groups": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation directory_pending": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation enabled_integrations": {
   "acl": [
