@@ -1,14 +1,15 @@
 """What the daily detection gaps run raises: the gaps in identify_gaps' report over a
 rolling window, counting only evidence no earlier run raised, at or above a floor,
-not on a technique one of its own proposals is still working, ranked by count. Plain
-code over the report; the agent the run queues reads the full report again itself.
+not on a technique a rule is already proposed or in shadow for, ranked by count.
+Plain code over the report; the agent the run queues reads the full report again
+itself.
 
 The run remembers what it raised, not when it last ran: each missed run and each
-alert it raised (or held back because a proposal is working its technique), by id,
-and each blind spot. A
-window re-read each day catches what a time marker would skip for good: evidence
-committed after a run started, an alert labelled after it was stored, and sightings
-that reach the floor only over several days."""
+alert it raised (or held back because a rule for its technique is already being
+worked), by id, and each blind spot. A window re-read each day catches what a time
+marker would skip for good: evidence committed after a run started, an alert
+labelled after it was stored, and sightings that reach the floor only over several
+days."""
 
 import logging
 from dataclasses import dataclass, field
@@ -254,7 +255,7 @@ def to_raise(
     window_start: Optional[datetime] = None,
 ) -> Tuple[List[Gap], List[Gap]]:
     """(the gaps to raise, biggest first; the technique gaps held back).
-    ``covered`` is the techniques a gaps-run proposal is still working
+    ``covered`` is the techniques a rule is already proposed or in shadow for
     (proposals.worked_techniques): a gap on one is held back, its evidence kept.
     A technique is raised at or above the floor of new evidence (or one new
     confirmed run); a blind spot when no run raised it while it stayed open."""
@@ -285,9 +286,9 @@ def after_run(
     held: Iterable[Gap],
 ) -> Raised:
     """What is remembered once the run succeeds: the evidence it raised, and what it
-    held back (a proposal is already working that technique), at ``started``; what was raised
-    before the window drops out (its evidence is older, so the window can't hold it
-    again); a blind spot stays while it is still open."""
+    held back (a rule for that technique is already being worked), at ``started``;
+    what was raised before the window drops out (its evidence is older, so the window
+    can't hold it again); a blind spot stays while it is still open."""
     at = started.isoformat()
     start = window_start.isoformat()
     runs = {k: v for k, v in raised.runs.items() if v >= start}

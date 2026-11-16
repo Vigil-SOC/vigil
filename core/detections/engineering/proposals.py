@@ -20,8 +20,9 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
 - the daily gaps run opens one proposal per gap a rule can answer, recording the gap and
   its evidence, and the copies its agent run saves are attached to it (``for_gaps``,
   ``attach_saved``). Those copies keep the automatic rollout every agent draft has: the
-  proposal records them, it does not own them. While one of those proposals is still
-  being worked, the gaps run holds its technique back (``worked_techniques``).
+  proposal records them, it does not own them. While one of those runs is still working,
+  or a rule for the technique is in shadow, the gaps run holds the technique back
+  (``worked_techniques``).
 """
 
 from __future__ import annotations
@@ -54,7 +55,10 @@ from core.storage.models.detection_proposal import (
     InvalidProposalMove,
     ProposalState,
 )
-from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
+from core.storage.models.workflow import (
+    LIVE_INVESTIGATION_STATUSES,
+    PARKED_INVESTIGATION_STATUSES,
+)
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -977,9 +981,16 @@ def attach_saved(
         return attached
 
 
+# A gaps run still working: queued, or launched and running. One parked on a person
+# (waiting on an approval, or paused) may never resume, so it holds nothing.
+_RUNNING_INVESTIGATION_STATUSES = tuple(
+    s for s in LIVE_INVESTIGATION_STATUSES if s not in PARKED_INVESTIGATION_STATUSES
+)
+
+
 def _unfinished_gap_runs(session: Session) -> Set[str]:
-    """The gaps-run proposals whose run has not finished: the intake row that carries
-    them is still queued, or the investigation it launched is still live."""
+    """The gaps-run proposals whose run is still working: the intake row that carries
+    them is still queued, or the investigation it launched is assigned or executing."""
     payloads: Iterable[Optional[Dict[str, Any]]] = session.scalars(
         select(IntakeTrigger.payload)
         .outerjoin(
@@ -993,7 +1004,7 @@ def _unfinished_gap_runs(session: Session) -> Set[str]:
                 IntakeTrigger.state == "queued",
                 and_(
                     IntakeTrigger.state == "launched",
-                    Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+                    Investigation.status.in_(_RUNNING_INVESTIGATION_STATUSES),
                 ),
             ),
         )
@@ -1006,61 +1017,60 @@ def _unfinished_gap_runs(session: Session) -> Set[str]:
     }
 
 
-def _running_copies(session: Session, rule_ids: Set[int]) -> Set[int]:
-    """The rules among ``rule_ids`` still running: an active SIEM copy whose latest
-    stage is not off. A copy the sync has not staged yet counts, as does a Wazuh copy,
-    which has no stage; the Sigma form runs nowhere, so it never does."""
-    if not rule_ids:
-        return set()
+def _shadow_copies(session: Session) -> Dict[int, List[str]]:
+    """Each active Splunk, Elastic or Wazuh copy whose latest stage is shadow, with the
+    techniques it names. A live copy is not here, nor one off, nor one never staged
+    (only Vigil's own copies are); the Sigma form runs nowhere."""
     s = DetectionRuleStage
     latest = (
         select(s.rule_id, s.stage)
-        .where(s.rule_id.in_(rule_ids))
         .distinct(s.rule_id)
         .order_by(s.rule_id, s.at.desc(), s.id.desc())
         .subquery()
     )
-    return set(
-        session.scalars(
-            select(DetectionRule.id)
-            .outerjoin(latest, latest.c.rule_id == DetectionRule.id)
+    return {
+        rule_id: list(techniques or ())
+        for rule_id, techniques in session.execute(
+            select(DetectionRule.id, DetectionRule.techniques)
+            .join(latest, latest.c.rule_id == DetectionRule.id)
             .where(
-                DetectionRule.id.in_(rule_ids),
                 DetectionRule.status == "active",
                 DetectionRule.language.in_(COPY_LANGUAGES),
-                or_(latest.c.stage.is_(None), latest.c.stage != "off"),
+                latest.c.stage == "shadow",
             )
         )
-    )
+    }
 
 
 def worked_techniques() -> Set[str]:
-    """The techniques a gaps-run proposal is still working, which the gaps run does
-    not raise again.
+    """The techniques a rule is already proposed or in shadow for, which the gaps run
+    does not raise again:
 
-    A proposal works its technique until a person rejects it (or the gaps run
-    withdraws it), and only while its run has not finished or a rule it was given
-    still runs. So a run that ended without saving a rule frees the technique, and so
-    does switching off or removing every rule attached to it."""
+    - a gaps-run proposal not rejected (or withdrawn) whose run is still working;
+    - a copy in shadow, whatever drafted it: the techniques it names, and for a copy
+      attached to a gaps-run proposal, that proposal's technique too, rejected or
+      not (a reject does not stop the copies' rollout).
+
+    So a run that ended (or parked) without saving a rule frees the technique, and so
+    does switching off or removing every copy in shadow. A live copy holds nothing: a
+    gap that still shows once its rule is live is that rule missing it."""
     with unit_of_work() as session:
+        shadow = _shadow_copies(session)
+        worked = {
+            t.strip().upper() for techniques in shadow.values() for t in techniques if t
+        }
         rows = session.scalars(
             select(DetectionProposal).where(
                 DetectionProposal.origin["source"].astext == GAPS_RUN,
-                DetectionProposal.state != ProposalState.REJECTED,
                 DetectionProposal.technique.isnot(None),
             )
         ).all()
-        if not rows:
-            return set()
         steps = _link_steps(session, [p.proposal_id for p in rows])
-        attached: Dict[str, Set[int]] = {
-            p.proposal_id: set(_links(p, steps.get(p.proposal_id, ()))["rule_ids"])
-            for p in rows
-        }
-        running = _running_copies(session, set().union(*attached.values()))
         unfinished = _unfinished_gap_runs(session)
-        return {
-            (p.technique or "").strip().upper()
-            for p in rows
-            if p.proposal_id in unfinished or attached[p.proposal_id] & running
-        }
+        for p in rows:
+            attached = _links(p, steps.get(p.proposal_id, ()))["rule_ids"]
+            if any(r in shadow for r in attached) or (
+                p.proposal_id in unfinished and p.state != ProposalState.REJECTED
+            ):
+                worked.add((p.technique or "").strip().upper())
+        return worked

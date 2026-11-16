@@ -280,7 +280,7 @@ class TaskScheduler:
     async def _run_detection_gaps(self):
         """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
         WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
-        floor and not on a technique one of its earlier proposals is still working
+        floor and not on a technique a rule is already proposed or in shadow for
         (proposals.worked_techniques), biggest first; none when there are none.
         With OpenCTI configured, the techniques its newest intrusion sets and
         reports name are checked here too, in code, and each one with no proven rule
