@@ -246,8 +246,11 @@ class Stack:
         out = self.wait(
             lambda: self.logs("backend"), lambda out: SETUP_CODE_LOG_MARK in out
         )
-        line = [ln for ln in out.splitlines() if SETUP_CODE_LOG_MARK in ln][-1]
-        code = line.split(SETUP_CODE_LOG_MARK, 1)[1].strip()
+        # The line is JSON by default (message and msg_template both contain the
+        # mark). Take the hex value, which is what a text line has too.
+        found = re.findall(r"First-run setup code:\s*([0-9a-fA-F]{32})", out)
+        assert found, "the setup code was not in the backend log"
+        code = found[-1]
         status, body = self.api(
             "POST",
             "/api/auth/bootstrap",
