@@ -12,7 +12,8 @@ import {
   TextInput,
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
-import { signInsApi } from '../../services/api'
+import { directoryPushesApi, signInsApi } from '../../services/api'
+import DirectoryPushesCard from './DirectoryPushesCard'
 import InvitesCard from './InvitesCard'
 import TeamsCard from './TeamsCard'
 import { CONFIRMED_BY, CompromiseBox, ResetLinkDialog } from './RecoveryDialogs'
@@ -113,6 +114,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const [dialogError, setDialogError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<User | null>(null)
+  const [removeOf, setRemoveOf] = useState<User | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [signInsOf, setSignInsOf] = useState<User | null>(null)
   const [methodsOf, setMethodsOf] = useState<User | null>(null)
@@ -295,6 +297,21 @@ function PeopleAndRoles({ notify }: SectionProps) {
     }
   }
 
+  const handleRemove = async () => {
+    if (!removeOf) return
+    setDeleting(true)
+    try {
+      await directoryPushesApi.removeUnused(removeOf.user_id)
+      notify('ok', `Removed ${removeOf.username}. Its username and email are free for the next push.`)
+      setRemoveOf(null)
+      reload()
+    } catch (e) {
+      notify('err', errText(e, 'Failed to remove'))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <>
       <SettingsCard
@@ -455,6 +472,10 @@ function PeopleAndRoles({ notify }: SectionProps) {
                         items.push({ label: 'Restore', icon: 'refresh', onSelect: () => setStatusAct({ user: u, act: 'restore' }) })
                       }
                       if (canDelete && (live(u) || u.status === 'deactivated')) items.push({ label: 'Delete', icon: 'trash', onSelect: () => setConfirmDelete(u) })
+                      // a pushed account nobody used: its names go back to the provider
+                      if (canDelete && u.unused_sync && covers(u.role_id) && (live(u) || u.status === 'deactivated')) {
+                        items.push({ label: 'Remove unused account', icon: 'close', onSelect: () => setRemoveOf(u) })
+                      }
                       return (
                         <div className="inline-flex gap-1.5">
                           {canWrite && (live(u) || u.status === 'deactivated') && (
@@ -673,7 +694,25 @@ function PeopleAndRoles({ notify }: SectionProps) {
           onConfirm={handleDelete}
           onClose={() => setConfirmDelete(null)}
         />
+
+        <ConfirmDialog
+          open={!!removeOf}
+          title={removeOf ? `Remove ${removeOf.username}?` : ''}
+          body={
+            <span>
+              Directory sync created this account and nobody has used it. Removing it can’t be undone: its username and
+              email are freed, its link to the provider goes, and it is deactivated. The provider’s next push of this
+              person creates a new account.
+            </span>
+          }
+          confirmLabel="Remove"
+          busy={deleting}
+          onConfirm={handleRemove}
+          onClose={() => !deleting && setRemoveOf(null)}
+        />
       </SettingsCard>
+
+      {canWrite && <DirectoryPushesCard notify={notify} onChanged={reload} />}
 
       <TeamsCard notify={notify} />
 
