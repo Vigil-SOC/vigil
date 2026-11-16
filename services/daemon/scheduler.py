@@ -280,10 +280,11 @@ class TaskScheduler:
     async def _run_detection_gaps(self):
         """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
         WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
-        floor and not already carried by an open Case, biggest first; none when there
-        are none. With OpenCTI configured, the techniques its newest intrusion sets
-        and reports name are checked here too, in code, and each one with no proven
-        rule is a gap raised once.
+        floor and not on a technique a rule is already proposed or in shadow for
+        (proposals.worked_techniques), biggest first; none when there are none.
+        With OpenCTI configured, the techniques its newest intrusion sets and
+        reports name are checked here too, in code, and each one with no proven rule
+        is a gap raised once.
 
         A schedule intake with no case_id mints a Case, so a day with no new gaps
         queues nothing. What was raised is remembered only once the run has queued,
@@ -300,6 +301,7 @@ class TaskScheduler:
             )
             return
         from core.detections import gap_run
+        from core.detections.engineering import proposals
         from core.detections.tools import get_security_detection_tools
 
         started = datetime.now(timezone.utc)
@@ -317,9 +319,8 @@ class TaskScheduler:
         )
         alerts = await asyncio.to_thread(gap_run.alert_ids, window_start)
         gaps = gap_run.gaps_in(report, alerts, before, intel)
-        raised, held = gap_run.to_raise(
-            gaps, before, gap_run.open_case_techniques(), window_start=window_start
-        )
+        worked = await asyncio.to_thread(proposals.worked_techniques)
+        raised, held = gap_run.to_raise(gaps, before, worked, window_start=window_start)
         after = gap_run.after_run(before, started, window_start, gaps, raised, held)
         if not raised:
             logger.info(
@@ -334,7 +335,6 @@ class TaskScheduler:
             "rule drafts, so each real gap is tracked and has a rule in shadow."
         )
         hypothesis += " New gaps, biggest first: " + "; ".join(g.line() for g in raised)
-        from core.detections.engineering import proposals
         from services.daemon.orchestrator import insert_intake_trigger
 
         # Each gap a rule can answer, with its evidence, as a proposal the run's saves
@@ -354,7 +354,7 @@ class TaskScheduler:
                     "trigger_type": "scheduled",
                     "finding_ids": [],
                     "hypothesis": hypothesis,
-                    # The minted Case carries them, so the next run sees them covered.
+                    # The techniques the minted Case carries.
                     "case_techniques": gap_run.case_techniques(raised),
                     # Read off the run's trigger_context when it saves a rule.
                     "gap_proposal_ids": proposal_ids,
