@@ -22,6 +22,7 @@ from tests.medic_eval.inject.config_cells import (
 )
 from tests.medic_eval.inject.contract import Cell
 from tests.medic_eval.inject.stack import Stack, docker_api
+from tests.medic_eval.inject.survival_checks import restore
 
 # ---- I-3: federation polling Elastic ----------------------------------------
 # Federation (global and the "elastic" source) is enabled, elastic-siem points at
@@ -563,6 +564,9 @@ def p3d_inject(s: Stack) -> None:
         "started": _daemon_started(s),
         "fixes": tuple(_fix_seqs(s)),
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # compose.eval.yml sets restart: no, so a service that exits while
+        # Postgres is down stays down. Remember what was already down.
+        "down": tuple(s.not_running()),
     }
     s.marks["p3d"] = 1
     s.compose("stop", "postgres")
@@ -580,6 +584,8 @@ def p3d_revert(s: Stack) -> None:
         assert tuple(_fix_seqs(s)) == held.get("fixes", ()), "a fix_run was recorded"
         assert _daemon_started(s) == held.get("started"), "State.StartedAt changed"
     finally:
+        _source_pack(s, False)
+        s.marks.pop("p3d", None)
         if "postgres" in s.not_running():
             s.compose("start", "postgres")
             s.wait(
@@ -587,8 +593,7 @@ def p3d_revert(s: Stack) -> None:
                 lambda o: '"healthy"' in o,
                 timeout=180,
             )
-        _source_pack(s, False)
-        s.marks.pop("p3d", None)
+        restore(s, set(getattr(s, "p3d", {}).get("down", ())))
 
 
 def p3d_verify(s: Stack, faulted: bool) -> None:
