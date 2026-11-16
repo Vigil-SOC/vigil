@@ -15144,8 +15144,8 @@ export interface components {
          * @description The first skill installed, as a single upload always returned, plus all of them.
          *
          *     A zip may hold several skills; ``skills`` lists every skill installed, and
-         *     ``skipped`` counts the ``SKILL.md`` left out, which
-         *     ``skipped_note`` explains.
+         *     ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+         *     explains.
          */
         SkillUploadResponse: {
             /**

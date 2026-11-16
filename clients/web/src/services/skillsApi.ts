@@ -19,7 +19,7 @@ export interface ApiSkill {
 }
 
 /** POST /api/skills/upload: the first skill installed, plus every skill the upload installed
- *  and the too-deep SKILL.md files a zip skipped, with a clause saying so. */
+ *  and the SKILL.md files a zip skipped, with a clause saying why. */
 export interface ApiSkillUpload extends ApiSkill {
   skills: ApiSkill[]
   skipped: number

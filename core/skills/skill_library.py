@@ -16,6 +16,7 @@ directory cannot take the library down with it.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import logging
@@ -821,42 +822,47 @@ def _install_copy(root: Path, origin: Skill, name: str, content: str) -> None:
 
 
 def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
-    """The regular files to install, by path, judged from the entry list alone.
+    """The zip's regular files, by path, judged from the entry list alone.
 
     An unsafe entry refuses the whole zip, even one that would be skipped.
+    ``.`` path parts, as tar-to-zip tools write them, are dropped from names.
     Directories, ``.git`` and ``__MACOSX`` are dropped. Other dot paths are
     kept for finding skills (``.claude/skills``, ``.claude-plugin``); a
-    skill's own dotfiles are dropped when it is unpacked.
+    skill's own dotfiles are dropped when it is unpacked. The file count and
+    size caps apply to the skills installed (``_unpack``), so a repo's docs
+    beside them do not count; ``_ZIP_ENTRIES_MAX`` bounds the search.
     """
     kept: Dict[str, zipfile.ZipInfo] = {}
     for info in zf.infolist():
-        name = info.filename
-        parts = name.rstrip("/").split("/")
+        raw = info.filename
+        parts = [p for p in raw.rstrip("/").split("/") if p != "."]
+        name = "/".join(parts)
+        if not parts and info.is_dir():  # "./" itself
+            continue
         if (
-            "\\" in name
-            or "\0" in name
-            or name.startswith("/")
-            or re.match(r"^[A-Za-z]:", name)
+            not parts
+            or "\\" in raw
+            or "\0" in raw
+            or raw.startswith("/")
+            or re.match(r"^[A-Za-z]:", raw)
             or ".." in parts
             or "" in parts  # "a//x" would rejoin as the absolute "/x"
         ):
-            raise SkillError(f"the zip has an unsafe path: {name!r}")
+            raise SkillError(f"the zip has an unsafe path: {raw!r}")
         mode = info.external_attr >> 16
         if stat.S_ISLNK(mode):
-            raise SkillError(f"the zip has a symlink: {name!r}")
+            raise SkillError(f"the zip has a symlink: {raw!r}")
         if info.is_dir():
             continue
         if stat.S_IFMT(mode) not in (0, stat.S_IFREG):
-            raise SkillError(f"the zip has a non-regular file: {name!r}")
+            raise SkillError(f"the zip has a non-regular file: {raw!r}")
         if any(p in (".git", "__MACOSX") for p in parts):
             continue
         if name in kept:
             raise SkillError(f"the zip lists {name!r} twice")
         kept[name] = info
-    if len(kept) > _FILES_MAX:
-        raise SkillError(f"the zip has more than {_FILES_MAX} files")
-    if sum(i.file_size for i in kept.values()) > _UNPACKED_MAX:
-        raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
+        if len(kept) > _ZIP_ENTRIES_MAX:
+            raise SkillError(f"the zip has more than {_ZIP_ENTRIES_MAX} files")
     return kept
 
 
@@ -873,6 +879,7 @@ def skipped_note(skipped: int) -> Optional[str]:
 
 _MANIFESTS = ("skills.sh.json", "plugin.json", "marketplace.json")
 _OUTLINE_READ = 64 * 1024  # of each SKILL.md and manifest, for the outline
+_ZIP_ENTRIES_MAX = 5000  # files in a zip at all; each is an empty file in the outline
 
 
 def _skill_folders(
@@ -898,7 +905,11 @@ def _skill_folders(
     ]
     if not every:
         raise SkillError(f"no {SKILL_FILE} in the zip")
-    with tempfile.TemporaryDirectory(prefix="vigil-zip-") as tmp:
+    try:
+        outline = tempfile.TemporaryDirectory(prefix="vigil-zip-")
+    except OSError as exc:
+        raise SkillError(f"could not search the zip: {exc.strerror}") from exc
+    with outline as tmp:
         tree = Path(tmp)
         try:
             for name, info in kept.items():
@@ -908,8 +919,10 @@ def _skill_folders(
                 if path.name == SKILL_FILE or path.name in _MANIFESTS:
                     with zf.open(info) as handle:
                         path.write_bytes(handle.read(_OUTLINE_READ))
-        except OSError as exc:  # a path used as both a file and a folder
-            raise SkillError("the zip has a file and a folder at one path") from exc
+        except OSError as exc:
+            if exc.errno in (errno.EEXIST, errno.ENOTDIR, errno.EISDIR):
+                raise SkillError("the zip has a file and a folder at one path") from exc
+            raise SkillError(f"could not search the zip: {exc.strerror}") from exc
         top = tree
         children = list(tree.iterdir())
         if (
@@ -956,18 +969,27 @@ def _unpack(
     a README beside several skills, and a skill's own dotfiles are left out.
     """
     kept = _zip_files(zf)
-    budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
-    skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
     folders, skipped = _skill_folders(zf, kept)
+    chosen: List[tuple[Optional[str], Dict[str, zipfile.ZipInfo]]] = []
     for folder in folders:
         prefix = f"{folder}/" if folder else ""
+        infos = {
+            name[len(prefix) :]: info
+            for name, info in kept.items()
+            if name.startswith(prefix)
+            and not any(p.startswith(".") for p in name[len(prefix) :].split("/"))
+        }
+        chosen.append((folder.rsplit("/", 1)[-1] if folder else None, infos))
+    count = sum(len(infos) for _, infos in chosen)
+    if count > _FILES_MAX:
+        raise SkillError(f"the skills in the zip hold more than {_FILES_MAX} files")
+    if sum(i.file_size for _, infos in chosen for i in infos.values()) > _UNPACKED_MAX:
+        raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
+    budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
+    skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
+    for skill_folder, infos in chosen:
         files: Dict[str, bytes] = {}
-        for name, info in kept.items():
-            rel = name[len(prefix) :]
-            if not name.startswith(prefix) or any(
-                part.startswith(".") for part in rel.split("/")
-            ):
-                continue
+        for rel, info in infos.items():
             with zf.open(info) as handle:
                 data = handle.read(budget + 1)
             budget -= len(data)
@@ -976,7 +998,7 @@ def _unpack(
                     f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB"
                 )
             files[rel] = data
-        skills.append((folder.rsplit("/", 1)[-1] if folder else None, files))
+        skills.append((skill_folder, files))
     return skills, skipped
 
 
@@ -1025,7 +1047,9 @@ def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
     """One error for every skill refused; a lone skill keeps its own message."""
     if total == 1:
         return failures[0][1]
-    detail = "; ".join(f"{name!r}: {exc}" for name, exc in failures)
+    detail = "; ".join(f"{name!r}: {exc}" for name, exc in failures[:5])
+    if len(failures) > 5:
+        detail += f"; and {len(failures) - 5} more"
     conflict = all(isinstance(exc, SkillConflict) for _, exc in failures)
     return (SkillConflict if conflict else SkillError)(
         f"Nothing was installed: {len(failures)} of the {total} skills in the zip "
@@ -1042,12 +1066,11 @@ def install_uploaded_skills(
     skipped. A bare file lands in a folder named by its frontmatter ``name``.
     A zip holds ``SKILL.md`` at its root (named the same way), or skill
     folders named for their skills, found where ``npx skills`` looks in a repo
-    (``_skill_folders``). Nothing
-    is overwritten: a name the library or the operator root already holds
-    raises :class:`SkillConflict`. All or nothing: every skill is built and
-    checked in a scratch directory under the root before any moves into place,
-    and a skill already moved is taken out again if a later move fails, so a
-    refused upload leaves nothing behind.
+    (``_skill_folders``). Nothing is overwritten: a name the library or the
+    operator root already holds raises :class:`SkillConflict`. All or nothing:
+    every skill is built and checked in a scratch directory under the root
+    before any moves into place, and a skill already moved is taken out again
+    if a later move fails, so a refused upload leaves nothing behind.
     """
     root = _require_operator_root(settings)
     if len(data) > UPLOAD_MAX:
@@ -1095,6 +1118,7 @@ def install_uploaded_skills(
         if failures:
             raise _refusal(failures, len(named))
         for path in staged:
+            # The staged folder's name is the skill's: parse_skill refuses others.
             final = _skill_dir(root, path.name)
             try:
                 if os.path.lexists(final):
