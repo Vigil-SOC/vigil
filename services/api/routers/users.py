@@ -956,6 +956,8 @@ class TeamOut(BaseModel):
     name: str
     is_default: bool
     archived: bool
+    # Derived from the directory mapping. No column.
+    synced: bool = False
 
 
 class TeamMemberOut(BaseModel):
@@ -981,18 +983,19 @@ class TeamMemberRemoved(BaseModel):
     warning: Optional[str] = None
 
 
-def _team_out(team) -> TeamOut:
+def _team_out(team, synced: set[str]) -> TeamOut:
     return TeamOut(
         id=team.team_id,
         name=team.name,
         is_default=team.is_default,
         archived=team.archived_at is not None,
+        synced=team.team_id in synced,
     )
 
 
-def _team_detail(session: Session, team) -> TeamDetail:
+def _team_detail(session: Session, team, synced: set[str]) -> TeamDetail:
     return TeamDetail(
-        **_team_out(team).model_dump(),
+        **_team_out(team, synced).model_dump(),
         members=[
             TeamMemberOut(
                 user_id=user.user_id,
@@ -1012,7 +1015,8 @@ def list_teams(
     """Every team, archived included (users.read)."""
     with _denials(current_user, "team.list"):
         deny_unless(current_user.user_id, "users.read")
-    return [_team_out(team) for team in teams.list_teams(session)]
+    synced = teams.mapped_team_ids(session)
+    return [_team_out(team, synced) for team in teams.list_teams(session)]
 
 
 @router.post("/teams", response_model=TeamOut, status_code=status.HTTP_201_CREATED)
@@ -1025,7 +1029,8 @@ def create_team(
     with _denials(current_user, "team.create"):
         deny_unless(current_user.user_id, "teams.manage")
     return _team_out(
-        teams.create_team(session, body.name, actor=current_user.principal_id)
+        teams.create_team(session, body.name, actor=current_user.principal_id),
+        teams.mapped_team_ids(session),
     )
 
 
@@ -1043,7 +1048,7 @@ def get_team(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Team not found"
         )
-    return _team_detail(session, team)
+    return _team_detail(session, team, teams.mapped_team_ids(session))
 
 
 @router.post("/teams/{team_id}/rename", response_model=TeamOut)
@@ -1057,7 +1062,8 @@ def rename_team(
     with _denials(current_user, "team.rename"):
         deny_unless(current_user.user_id, "teams.manage")
     return _team_out(
-        teams.rename_team(session, team_id, body.name, actor=current_user.principal_id)
+        teams.rename_team(session, team_id, body.name, actor=current_user.principal_id),
+        teams.mapped_team_ids(session),
     )
 
 
@@ -1071,7 +1077,8 @@ def archive_team(
     with _denials(current_user, "team.archive"):
         deny_unless(current_user.user_id, "teams.manage")
     return _team_out(
-        teams.archive_team(session, team_id, actor=current_user.principal_id)
+        teams.archive_team(session, team_id, actor=current_user.principal_id),
+        teams.mapped_team_ids(session),
     )
 
 
@@ -1085,7 +1092,8 @@ def unarchive_team(
     with _denials(current_user, "team.unarchive"):
         deny_unless(current_user.user_id, "teams.manage")
     return _team_out(
-        teams.unarchive_team(session, team_id, actor=current_user.principal_id)
+        teams.unarchive_team(session, team_id, actor=current_user.principal_id),
+        teams.mapped_team_ids(session),
     )
 
 
@@ -1110,7 +1118,9 @@ def add_team_member(
         actor=current_user.principal_id,
         direct=_person_direct(session, current_user),
     )
-    return _team_detail(session, session.get(Team, team_id))
+    return _team_detail(
+        session, session.get(Team, team_id), teams.mapped_team_ids(session)
+    )
 
 
 @router.delete("/teams/{team_id}/members/{user_id}", response_model=TeamMemberRemoved)

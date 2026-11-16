@@ -474,6 +474,27 @@ def _drop_notices(session, principal_id: str) -> None:
         )
 
 
+def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:
+    """Drop synced-team membership. A hand remove of that team is refused."""
+    if not _table(session, "team_memberships"):
+        return
+    # Imported here: teams pulls auth, and auth imports this module.
+    from core import teams
+
+    mapped = teams.mapped_team_ids(session)
+    if not mapped:
+        return
+    held = session.execute(
+        text("SELECT team_id FROM public.team_memberships WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).scalars()
+    for team_id in list(held):
+        if team_id in mapped:
+            teams.remove_member(
+                session, team_id, user_id, actor=trail.SYSTEM, by_mapping=True
+            )
+
+
 def _revoke(session, principal_id: str) -> None:
     """Deactivate the account, free its username and email, revoke MCP credentials
     and end sign-ins, and keep those rows.
@@ -496,7 +517,10 @@ def _revoke(session, principal_id: str) -> None:
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
     sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
-    for table in ("security_keys", "sso_links"):
+    # A synced team refuses a hand remove. Leave it here, while the user row
+    # still answers remove_member, before the group rows that named them are gone.
+    _leave_mapped_teams(session, principal_id, user_id)
+    for table in ("security_keys", "sso_links", "directory_group_members"):
         if _table(session, table):
             # {table} is one of the fixed names above.
             session.execute(
