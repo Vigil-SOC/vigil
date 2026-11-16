@@ -786,6 +786,13 @@ def reject(
         raise Refused("Say why this proposal is rejected: it stays on the record.")
     with unit_of_work() as session:
         proposal = _locked(session, proposal_id)
+        # A gap draft whose run is still working: the run's save would attach to it, and a
+        # rejected draft frees the gap for the next gaps run, which raises it again.
+        gap_draft = (proposal.origin or {}).get("source") == GAPS_RUN
+        if gap_draft and proposal_id in _unfinished_gap_runs(session):
+            raise Refused(
+                "Its run is still working on this gap: reject it once the run ends."
+            )
         proposal.move_to(
             ProposalState.REJECTED,
             actor=actor,

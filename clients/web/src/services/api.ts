@@ -1227,6 +1227,10 @@ export const detectionEngineeringApi = {
   proposals: () => api.get<{ proposals: ProposalRow[] }>('/detection-engineering/proposals'),
 
   proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
+
+  /** Rejects a proposal; the reason is required and stays on its record. */
+  reject: (proposalId: string, reason: string) =>
+    api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
 }
 
 /** The signed-in person's notices and live conditions (the bell's second source). */
