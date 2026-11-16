@@ -34,7 +34,7 @@ import { useToast } from '../../shell/toast'
 import { inputCls } from './CaseSections'
 import { CasePage } from './CasePage'
 import { MoveCaseDialog, type MoveTeam } from './MoveCaseDialog'
-import { ReaderPicker, RestrictCaseDialog, RestrictHelp, RestrictedMark, useReaderNames } from './RestrictCase'
+import { ReaderPicker, RestrictCaseDialog, RestrictHelp, RestrictedMark, useNamedTeams, useReaderNames } from './RestrictCase'
 import { caseConflicts, errorDetail, OWNER_CANNOT_READ_NOTE, STALE_OWNER_NOTE } from './caseFormat'
 import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
@@ -308,14 +308,25 @@ function CasesTable({
   const { names: readerNames } = useReaderNames()
   const myTeams = people.find((person) => person.username === me)?.teams ?? []
   const mineKey = myTeams.map((team) => team.id).join('\n')
-  const [everyone, setEveryone] = useState(false)
+  // 'mine' is My teams (the whole queue for someone on no team), 'all' Everyone's, else one team's id.
+  const [teamPick, setTeamPick] = useState('mine')
+  // Teams this person can name: the teams list with users.read, else the teams on the people payload.
+  const listedTeams = useNamedTeams()
+  const teamChoices = useMemo(() => {
+    const byId = new Map<string, string>()
+    if (listedTeams) listedTeams.forEach((team) => byId.set(team.id, team.name))
+    else people.forEach((person) => person.teams.forEach((team) => byId.set(team.id, team.name)))
+    return [...byId].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [listedTeams, people])
   // null until the directory answers, so a person on a team does not flash the whole queue.
   // A failed read cannot name their teams, so the list stays every readable case.
   const teamIds = useMemo(() => {
     if (!peopleLoaded) return null
-    if (everyone || peopleFailed || !mineKey) return []
+    if (teamPick === 'all') return []
+    if (teamPick !== 'mine') return [teamPick]
+    if (peopleFailed || !mineKey) return []
     return mineKey.split('\n')
-  }, [peopleLoaded, everyone, peopleFailed, mineKey])
+  }, [peopleLoaded, teamPick, peopleFailed, mineKey])
   const { rows, total, hidden, strip, phase, error, reload } = useCases(filters, teamIds)
   const [overall, setOverall] = useState<AgreementTally | undefined>()
   const [rateReady, setRateReady] = useState(false)
@@ -536,12 +547,17 @@ function CasesTable({
         </StatCards>
         <div className="filter-row" role="group" aria-label="Filters">
           <div className="filter-row-picks">
-            {myTeams.length > 0 && (
+            {(myTeams.length > 0 || teamChoices.length > 0) && (
               <Select
                 name="Team"
-                value={everyone ? 'all' : 'mine'}
-                options={[{ value: 'mine', label: 'My teams' }, { value: 'all', label: 'Everyone’s' }]}
-                onSelect={(value) => { setEveryone(value === 'all'); setFilters({}) }}
+                searchable={teamChoices.length > 8}
+                value={teamPick === 'mine' && myTeams.length === 0 ? 'all' : teamPick}
+                options={[
+                  ...(myTeams.length > 0 ? [{ value: 'mine', label: 'My teams' }] : []),
+                  { value: 'all', label: 'Everyone’s' },
+                  ...teamChoices.map((team) => ({ value: team.id, label: team.name })),
+                ]}
+                onSelect={(value) => { setTeamPick(value); setFilters({}) }}
               />
             )}
             <Select name="State" value={stateValue} options={stateOptions} onSelect={pickState} />
