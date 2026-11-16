@@ -43,7 +43,7 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       {{- include "vigil.imagePullSecrets" . | nindent 6 }}
-      # uid/gid 10002 (S5-3); fsGroup so the mounted password file is readable.
+      # uid/gid 10002 (S5-3); fsGroup so the mounted credential files are readable.
       securityContext:
         runAsNonRoot: true
         runAsUser: 10002
@@ -81,6 +81,8 @@ spec:
               value: {{ $v.viewer.username | quote }}
             - name: VIGIL_MEDIC_GATEWAY_VIEWER_PASSWORD_FILE
               value: /run/secrets/medic_viewer_password
+            - name: VIGIL_MEDIC_GATEWAY_TOKEN_FILE
+              value: /run/secrets/medic_gateway_token
             - name: VIGIL_CONTEXT_PATH
               value: {{ .Values.config.VIGIL_CONTEXT_PATH | default "" | quote }}
           ports:
@@ -91,7 +93,7 @@ spec:
               containerPort: {{ include "vigil.medicGateway.inPort" . }}
               protocol: TCP
           volumeMounts:
-            - name: viewer-password
+            - name: credentials
               mountPath: /run/secrets
               readOnly: true
           livenessProbe:
@@ -110,14 +112,27 @@ spec:
           resources:
             {{- toYaml $v.resources | nindent 12 }}
       volumes:
-        # One key of an existing Secret, as a file: never env, never envFrom (R6).
-        - name: viewer-password
-          secret:
-            secretName: {{ $v.viewer.passwordSecret.name }}
+        # One key of each Secret, as files: never env, never envFrom (R6).
+        # Both optional and no subPath, so the pod starts without them
+        # (no_credential) and a Secret filled later reaches it in about a minute.
+        - name: credentials
+          projected:
             defaultMode: 0440
-            items:
-              - key: {{ $v.viewer.passwordSecret.key }}
-                path: medic_viewer_password
+            sources:
+              - secret:
+                  name: {{ include "vigil.medicGateway.tokenSecret" . }}
+                  optional: true
+                  items:
+                    - key: {{ $v.tokenSecret.key }}
+                      path: medic_gateway_token
+              {{- if $v.viewer.passwordSecret.name }}
+              - secret:
+                  name: {{ $v.viewer.passwordSecret.name }}
+                  optional: true
+                  items:
+                    - key: {{ $v.viewer.passwordSecret.key }}
+                      path: medic_viewer_password
+              {{- end }}
       {{- with $v.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
