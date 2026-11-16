@@ -1515,6 +1515,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/held/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Held
+         * @description Clear the hold on every held action this person may decide.
+         *
+         *     Executes nothing. Each released row writes one trail entry.
+         */
+        post: operations["post_api_autonomy_held_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/held/{action_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Action
+         * @description Clear the hold on one action. The next executor pass runs it.
+         *
+         *     Executes nothing itself.
+         */
+        post: operations["post_api_autonomy_held_action_id_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/resume": {
         parameters: {
             query?: never;
@@ -7948,6 +7992,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/autonomy/held/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Held
+         * @description Clear the hold on every held action this person may decide.
+         *
+         *     Executes nothing. Each released row writes one trail entry.
+         */
+        post: operations["post_api_v1_autonomy_held_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/held/{action_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Action
+         * @description Clear the hold on one action. The next executor pass runs it.
+         *
+         *     Executes nothing itself.
+         */
+        post: operations["post_api_v1_autonomy_held_action_id_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/autonomy/resume": {
         parameters: {
             query?: never;
@@ -11340,12 +11428,23 @@ export interface components {
             environment_locked: boolean;
             /** Four Eyes */
             four_eyes: boolean;
+            /**
+             * Held
+             * @default []
+             */
+            held: components["schemas"]["HeldAction"][];
             /** Propose */
             propose: boolean;
             /** Read */
             read: boolean;
             /** Stopped */
             stopped: boolean;
+            /** Stopped At */
+            stopped_at?: string | null;
+            /** Stopped By */
+            stopped_by?: string | null;
+            /** Stopped By Label */
+            stopped_by_label?: string | null;
             /**
              * Workflows
              * @default {}
@@ -12269,6 +12368,38 @@ export interface components {
             all: boolean;
             /** Change Ids */
             change_ids?: number[] | null;
+        };
+        /**
+         * HeldAction
+         * @description One approved outside action a stop is still holding.
+         */
+        HeldAction: {
+            /** Action Id */
+            action_id: string;
+            /**
+             * Action Type
+             * @default
+             */
+            action_type: string;
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /**
+             * Restricted
+             * @default false
+             */
+            restricted: boolean;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
         };
         /**
          * HuntCoverageRequest
@@ -18295,6 +18426,70 @@ export interface operations {
                 "application/json": components["schemas"]["CeilingBody"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_held_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_held_action_id_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -30016,6 +30211,70 @@ export interface operations {
                 "application/json": components["schemas"]["CeilingBody"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_held_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_held_action_id_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
