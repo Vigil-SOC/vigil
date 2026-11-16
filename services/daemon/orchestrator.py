@@ -486,6 +486,16 @@ def insert_intake_trigger(
         return None
 
 
+def _note_gap_run(proposal_ids: List[str], run_id: str) -> None:
+    """Record on the gaps run's proposals the run they were handed to."""
+    from core.detections.engineering import proposals
+
+    try:
+        proposals.gap_run_started(proposal_ids, run_id)
+    except Exception as exc:  # noqa: BLE001 -- the run starts without the record
+        logger.warning("could not record run %s on its gap proposals: %s", run_id, exc)
+
+
 def insert_not_offered(*, finding_id: str, priority: str, reason: str) -> None:
     """Put the gate's no on the ledger. The row is never queued, so nothing drains it.
 
@@ -545,6 +555,8 @@ def _human_ask_case_title(
 # rather than by a column. A uuid5 of the suffixed id rather than a suffixed uuid:
 # agent_events.run_id is a uuid column and would refuse the string.
 SHADOW_HYPOTHESIS_FILE = "shadow_hypothesis.txt"
+# The detection proposals the daily gaps run opened for the run it queued.
+GAP_PROPOSALS_FILE = "gap_proposals.json"
 
 
 def shadow_run_id_for(investigation_id: str) -> str:
@@ -1105,6 +1117,9 @@ class Orchestrator:
             item["priority"] = row.get("priority") or item.get("priority") or "medium"
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
+            else:
+                # Only the daily gaps run hands a run its gap proposals.
+                item.pop("gap_proposal_ids", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1190,6 +1205,7 @@ class Orchestrator:
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
             document=item.get("document"),
+            gap_proposal_ids=item.get("gap_proposal_ids"),
         )
 
     async def _create_investigation(
@@ -1205,6 +1221,7 @@ class Orchestrator:
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
         document: Optional[str] = None,
+        gap_proposal_ids: Optional[List[str]] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -1248,6 +1265,12 @@ class Orchestrator:
         if hypothesis and hypothesis_subjects:
             self.workdir.write_file(
                 inv_id, "hypothesis_subjects.json", json.dumps(hypothesis_subjects)
+            )
+        # The daily gaps run's proposals, read back at enqueue onto the run's
+        # trigger_context, where a rule the run saves finds the gap it answers.
+        if gap_proposal_ids:
+            self.workdir.write_file(
+                inv_id, GAP_PROPOSALS_FILE, json.dumps(list(gap_proposal_ids))
             )
         # The shadow run's one hypothesis, derived here where the finding is in
         # hand and read back at enqueue, which sees only ids. Only a detection
@@ -1541,6 +1564,12 @@ class Orchestrator:
         declared = self._read_sidecar_json(inv_id, "hypothesis_subjects.json")
         return {} if declared is None else kept_subjects(declared, stated)
 
+    def _gap_proposal_ids(self, inv_id: str) -> List[str]:
+        held = self._read_sidecar_json(inv_id, GAP_PROPOSALS_FILE)
+        if not isinstance(held, list):
+            return []
+        return [i for i in held if isinstance(i, str) and i]
+
     # normalise_keys carries the absent, the non-list and the unusable to the same
     # empty answer, which is what a run that recalls nothing is.
     def _recall_keys(self, inv_id: str) -> List[str]:
@@ -1624,6 +1653,9 @@ class Orchestrator:
                     case_id = inv_record.get("case_id")
                     if case_id:
                         context["case_id"] = case_id
+                    gap_proposal_ids = self._gap_proposal_ids(inv_id)
+                    if gap_proposal_ids:
+                        context["gap_proposal_ids"] = gap_proposal_ids
                     _stamp_phases(context, inv_record["workflow_id"], self._workflows)
                     row = runs.begin_run(
                         run_id=run_id,
@@ -1640,6 +1672,8 @@ class Orchestrator:
                     )
                     if row is None:
                         logger.warning("no workflow_runs row for %s", run_id)
+                    elif gap_proposal_ids:
+                        _note_gap_run(gap_proposal_ids, run_id)
                 else:
                     logger.info("run %s already recorded; not rewriting", run_id)
             except Exception as exc:  # noqa: BLE001 — a refused row still enqueues
