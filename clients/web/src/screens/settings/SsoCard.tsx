@@ -12,7 +12,7 @@ import { Icon } from '../../shared/icons'
 import { ConfirmDialog, Field, PasswordInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import DirectoryMapping from './DirectoryMapping'
 import type { Role } from './useSettings'
-import type { SectionProps } from './types'
+import { DIRECTORY_PUSHES_ID, type SectionProps } from './types'
 
 type Mapping = { group: string; role_id: string }
 type Form = {
@@ -460,6 +460,28 @@ export default function SsoCard({ notify }: SectionProps) {
               <dd>{sync.skipped_joins}</dd>
             </div>
             <div>
+              <dt>Waiting for a link</dt>
+              <dd>
+                {!sync.pending_links ? (
+                  'None'
+                ) : hasPermission('users.write') ? (
+                  // the list is further down this screen, on Team & access
+                  <a
+                    className="underline"
+                    href={`#${DIRECTORY_PUSHES_ID}`}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById(DIRECTORY_PUSHES_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }}
+                  >
+                    {pushes(sync.pending_links)}
+                  </a>
+                ) : (
+                  pushes(sync.pending_links)
+                )}
+              </dd>
+            </div>
+            <div>
               <dt>Endpoint</dt>
               <dd className="font-mono">{sync.scim_path}</dd>
             </div>
@@ -589,3 +611,5 @@ export default function SsoCard({ notify }: SectionProps) {
     </SettingsCard>
   )
 }
+
+const pushes = (n: number) => `${n} push${n === 1 ? ' waits' : 'es wait'} for a link`

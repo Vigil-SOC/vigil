@@ -191,10 +191,10 @@ class SsoLink(Base):
 
 
 class AuthLink(Base):
-    """A single-use link that reaches a public screen: an invite (#4226) or, for
-    the recovery sibling, a reset. Only the SHA-256 of the random value is kept;
-    the value itself is shown once and never stored. ``core/auth/invites.py``
-    owns it.
+    """A single-use link that reaches a public screen: an invite (#4226), a
+    password reset, or a confirmation of an address the person changed. Only
+    the SHA-256 of the random value is kept; the value itself is shown once
+    and never stored. ``core/auth/invites.py`` owns it.
     """
 
     __tablename__ = "auth_links"
@@ -233,7 +233,9 @@ class AuthLink(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("kind IN ('invite', 'reset')", name="auth_links_kind_check"),
+        CheckConstraint(
+            "kind IN ('invite', 'reset', 'email')", name="auth_links_kind_check"
+        ),
         Index("uq_auth_links_token_hash", "token_hash", unique=True),
         # One open invite per address, whatever its expiry: replacing closes it.
         Index(
@@ -242,6 +244,15 @@ class AuthLink(Base):
             unique=True,
             postgresql_where=text(
                 "kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL"
+            ),
+        ),
+        # One open email-confirmation link per account: a new one closes the last.
+        Index(
+            "uq_auth_links_open_email",
+            "principal_id",
+            unique=True,
+            postgresql_where=text(
+                "kind = 'email' AND used_at IS NULL AND revoked_at IS NULL"
             ),
         ),
     )

@@ -1506,6 +1506,10 @@ export interface AuditFeedHealth {
   unconfirmed: number | null
   /** New entries are refused until the push carries it, for up to 30 seconds. */
   paused: boolean
+  /** Entries waiting to be recorded late. Open collapse windows are not counted. */
+  held: number | null
+  /** When the oldest waiting entry happened. Null when none is waiting. */
+  held_since: string | null
 }
 
 export interface AuditVerify {
@@ -1936,6 +1940,18 @@ export const invitesApi = {
   accept: (body: Schema<'AcceptInvite'>) => api.post<{ message: string }>('/auth/accept-invite', body),
 }
 
+// Directory pushes that wait for a link, and undoing a window of sync deactivations (#4507).
+export const directoryPushesApi = {
+  pending: () => api.get<Schema<'PendingPushes'>>('/users/sync/pending'),
+  link: (pendingId: string, userId: string) =>
+    api.post(`/users/sync/pending/${encodeURIComponent(pendingId)}/link`, { user_id: userId } satisfies Schema<'LinkRequest'>),
+  countWindow: (since: string, until: string) =>
+    api.get<Schema<'SyncWindowCount'>>('/users/sync/window', { params: { since, until } }),
+  reactivateWindow: (since: string, until: string) =>
+    api.post<Schema<'SyncWindowResult'>>('/users/sync/window', { since, until } satisfies Schema<'SyncWindow'>),
+  removeUnused: (userId: string) => api.post(`/users/${encodeURIComponent(userId)}/remove-unused`),
+}
+
 // Teams on Team & access. Reads need users.read; changes need teams.manage.
 export const teamsApi = {
   list: () => api.get<Schema<'TeamOut'>[]>('/users/teams'),
@@ -1965,6 +1981,9 @@ export const authApi = {
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string; recovery_codes_removed?: boolean }>('/auth/password-reset/confirm', payload),
+  // Public. Opening /confirm-email does not send this; the button does.
+  confirmEmail: (token: string) =>
+    api.post<{ message: string }>('/auth/email-confirmation/confirm', { token }),
   /** Revokes every token the user holds and clears the auth cookies, so the
    *  caller is signed out once this resolves. */
   changePassword: (body: Schema<'ChangePasswordRequest'>) =>
@@ -1998,12 +2017,13 @@ export const signInsApi = {
     api.post<Schema<'EndedSignIns'>>(`/users/${encodeURIComponent(userId)}/sign-ins/end`, {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
-  // End a lock; how the manager confirmed the person's identity goes to the audit trail.
-  unlock: (userId: string, identityConfirmedBy: string, suspectedCompromise = false) =>
+  // End a lock and the person's sign-ins. The reason and how they were confirmed go to the trail.
+  unlock: (userId: string, identityConfirmedBy: string, reason: string, suspectedCompromise = false) =>
     api.post(`/users/${encodeURIComponent(userId)}/unlock`, {
       identity_confirmed_by: identityConfirmedBy as Schema<'UnlockRequest'>['identity_confirmed_by'],
+      reason,
       suspected_compromise: suspectedCompromise,
-    }),
+    } satisfies Schema<'UnlockRequest'>),
   // Recovery: a reset link (emailed, or copied once) and a reset of two-step sign-in.
   resetLink: (userId: string) => api.get<Schema<'ResetLinkState'>>(`/users/${encodeURIComponent(userId)}/reset-link`),
   issueResetLink: (userId: string, body: Schema<'ResetLinkRequest'>) =>
@@ -2059,6 +2079,8 @@ export type DirectorySync = {
   failed_authentications: number
   last_manager_refusals: string[]
   skipped_joins: number
+  /** pushes refused for a username or email in use, waiting for a link on Team & access */
+  pending_links: number
   broken_lines: { external_id: string; on: string }[]
   mapping_note: string | null
   role_refusals: string[]

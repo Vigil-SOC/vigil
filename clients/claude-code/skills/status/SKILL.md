@@ -13,7 +13,7 @@ Make one cheap read, such as `list_findings` with a limit of 1. If it answers, s
 
 A refusal or an error is the answer, not something to work around. Report it as given. The usual causes:
 
-- the `vigil` server is missing from `/mcp`: the plugin's Vigil address or credential is unset (`/plugin` → vigil → configure);
+- the `vigil` server is missing from `/mcp`: the plugin's Vigil address or credential is unset (`/plugin` → vigil-soc → configure);
 - 404: the operator has not opened the MCP surface;
 - 401: the credential is wrong, expired or revoked; mint a new one;
 - a permission refusal: the credential's person lacks that role.
