@@ -124,6 +124,10 @@ If the drift report names something you did not change, or a change you need to 
 
 Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at least six months after the release that introduced `0001_baseline`. From that release on, an install still on 0.7.0 or 0.8.0 must first upgrade through a release that still adopts.
 
+## Email addresses already on file
+
+Revision `0077_email_confirmed` marks every account's email confirmed (`users.is_verified = true`). An address already on the account when you upgrade can be used for a password reset straight away. After the upgrade, only a person changing their own email leaves the new address unconfirmed, until they open the 24-hour link mailed to it. A new account's email, and an email an identity provider sets, counts as confirmed and is not sent that link.
+
 ## What the sign-in changes do on upgrade day
 
 An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.
@@ -133,6 +137,8 @@ An upgrade from a database older than these changes does the following. Everythi
 **Dormancy clocks start at the upgrade.** Revision `0048_dormancy` sets every account's `dormancy_floor` to the time it ran. An account's idle time is counted from the latest of its last sign-in, its credentials' last use, its creation and that floor, so nobody is deactivated for time that passed before the rule existed. The first account can be deactivated once the session policy's `dormancy_days` (default 35) have passed since the upgrade. `null` turns the sweep off.
 
 **Failure counts reset.** Revision `0047_lockout_policy` sets every account's failed-login count to 0. Locks are the session policy's now (`auth.session_policy`).
+
+**A saved lockout count outside 3–10 moves to the nearest bound.** Revision `0079_lockout_threshold` sets a saved `lockout_threshold` of 1 or 2 to 3, and of 11 through 20 to 10, and increments that policy's version. `updated_by` is left as it was. The audit trail records the move once, as the upgrade's act (`session_policy.changed`, actor `system`), with the old and the new value. A value already from 3 to 10, no saved policy, and a value outside 1–20 stay as they are, and no entry is written. From then on the setting is 3–10.
 
 **The first sign-in of each person, in order:**
 

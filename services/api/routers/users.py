@@ -45,6 +45,7 @@ from core.auth.auth_service import (
     _account_is_locked,
     clear_lock,
     managers,
+    with_dispute,
 )
 from core.auth.deactivation import (
     clear_deactivation,
@@ -81,6 +82,7 @@ from core.storage.models import (
     DirectoryPending,
     Principal,
     Role,
+    SecurityKey,
     SsoLink,
     Team,
     User,
@@ -442,6 +444,18 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
             Principal.principal_id.in_(ids), Principal.deleted_at.isnot(None)
         )
     }
+    # Who on this page has a security key. One query: method_types only needs
+    # the boolean, and methods() would also read the trail once per person.
+    keyed: set[str] = set()
+    if ids:
+        keyed = {
+            pid
+            for (pid,) in (
+                session.query(SecurityKey.principal_id)
+                .filter(SecurityKey.principal_id.in_(ids))
+                .distinct()
+            )
+        }
     # Shown before a deactivate or delete, as deactivation tells managers.
     # Restricted cases the caller may not read are counted apart: "N hidden".
     # A CASE, not the bare clause: for a built-in reader the clause is a constant,
@@ -479,6 +493,10 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         # How the account signs in (#4285); never the hash or the subject.
         entry["has_password"] = bool(user.password_hash)
         entry["has_sso"] = user.principal_id in linked
+        # Types only, same decision as the Sign-in methods dialog.
+        entry["mfa_method_types"] = mfa_methods.method_types(
+            user, user.principal_id in keyed
+        )
         # A pushed account nobody used, which Remove frees for the next push.
         entry["unused_sync"] = user.user_id in unused
         entry["status"] = _account_status(user, user.principal_id in deleted)
@@ -1907,8 +1925,13 @@ def unlock_user(
         current_user,
         user,
         "Your account was unlocked",
-        f"{who} unlocked your account and ended your sign-ins. "
-        "If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} unlocked your account and ended your sign-ins. "
+            "If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} unlocked {user.username}'s account and ended their sign-ins.",
     )
     return _dump_accounts(session, [user])[0]
@@ -1971,10 +1994,17 @@ def issue_reset_link(
                 detail=f"Email isn't available: set {' and '.join(missing)}, "
                 "or copy the link instead.",
             )
-        if body.channel == invites.COPY and not body.identity_confirmed_by:
+        if (
+            body.channel == invites.COPY or not user.is_verified
+        ) and not body.identity_confirmed_by:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Say how you confirmed it is them before copying a link",
+                detail=(
+                    "Say how you confirmed it is them before copying a link"
+                    if body.channel == invites.COPY
+                    else "A verification method is needed before emailing a "
+                    "reset link to an address that isn't confirmed yet"
+                ),
             )
     row, token = invites.issue_reset(
         session,
@@ -1999,6 +2029,12 @@ def issue_reset_link(
     who = current_user.full_name or current_user.username
     if body.channel == invites.EMAIL:
         link, to = reset_link(base, token), user.email
+        mailed = with_dispute(
+            user.principal_id,
+            "If you weren't expecting this, tell an administrator.",
+            "If you weren't expecting this, tell an administrator.",
+            session,
+        )
         when_committed(
             session,
             lambda: send_email(
@@ -2008,7 +2044,7 @@ def issue_reset_link(
                     f"{who} sent you a link to choose a new password.\n\n"
                     "It is valid for one hour and can only be used once.\n\n"
                     f"{link}\n\n"
-                    "If you weren't expecting this, tell an administrator."
+                    f"{mailed}"
                 ),
             ),
         )
@@ -2018,8 +2054,13 @@ def issue_reset_link(
         current_user,
         user,
         "Your password reset link",
-        f"{who} {how} a link to reset your password and ended your sign-ins. "
-        "It works once, for one hour. If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} {how} a link to reset your password and ended your sign-ins. "
+            "It works once, for one hour. If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} issued a password reset link for {user.username} and ended their "
         f"sign-ins{' and revoked their API tokens' if revoked else ''}.",
     )
@@ -2121,9 +2162,14 @@ def reset_user_mfa(
         current_user,
         user,
         "Your two-step sign-in was reset",
-        f"{who} removed your two-step sign-in methods and recovery codes, and "
-        "ended your sign-ins. Set two-step sign-in up again when you next sign "
-        "in. If you didn't ask for this, tell an admin now.",
+        with_dispute(
+            user.principal_id,
+            f"{who} removed your two-step sign-in methods and recovery codes, and "
+            "ended your sign-ins. Set two-step sign-in up again when you next sign "
+            "in. If you didn't ask for this, tell an admin now.",
+            "If you didn't ask for this, tell an admin now.",
+            session,
+        ),
         f"{who} reset {user.username}'s two-step sign-in and ended their sign-ins"
         f"{' and revoked their API tokens' if revoked else ''}.",
     )
@@ -2626,8 +2672,13 @@ def reactivate_user(
         user,
         "account_reactivated",
         "Your account was reactivated",
-        f"{who} reactivated your account. Sign in with your password and two-step "
-        "sign-in as before. MCP tokens from before stay revoked: mint new ones.",
+        with_dispute(
+            user.principal_id,
+            f"{who} reactivated your account. Sign in with your password and two-step "
+            "sign-in as before. MCP tokens from before stay revoked: mint new ones.",
+            "",
+            session,
+        ),
     )
     logger.info(f"User reactivated by {current_user.username}: {user.username}")
     entry = _dump_accounts(session, [user])[0]
@@ -2689,8 +2740,13 @@ def restore_user(
         user,
         "account_restored",
         "Your account was restored",
-        f"{who} restored your deleted account. It stays deactivated until an "
-        "administrator reactivates it; MCP tokens from before stay revoked.",
+        with_dispute(
+            user.principal_id,
+            f"{who} restored your deleted account. It stays deactivated until an "
+            "administrator reactivates it; MCP tokens from before stay revoked.",
+            "",
+            session,
+        ),
     )
     logger.info(f"User restored by {current_user.username}: {user.username}")
     return _dump_accounts(session, [user])[0]
