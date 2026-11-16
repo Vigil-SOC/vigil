@@ -47,6 +47,8 @@ SESSION_STATES = (
     "backend_unreachable",
     "login_error",
     "no_password",
+    "unauthorized",
+    "no_credential",
 )
 _STATES = frozenset(SESSION_STATES)
 _STATUS_PATH = "/_gw/status"
