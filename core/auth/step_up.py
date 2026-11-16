@@ -147,6 +147,9 @@ def check(request: Request, user_id: str, action: str) -> None:
             .filter(SignIn.sign_in_id == sid)
             .first()
         ) or (None, None)
+    # A break-glass sign-in spent a code to get in; asking again would spend more.
+    if method == sign_ins.BREAK_GLASS:
+        return
     via_provider = _via_provider(mfa, password, method)
     if not mfa and not via_provider:
         raise _refusal(

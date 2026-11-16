@@ -249,6 +249,8 @@ class LoginRequest(BaseModel):
     # challenge the first call's 401 carried.
     webauthn: Optional[dict] = None
     webauthn_challenge: Optional[str] = None
+    # A break-glass account's reason, sent with its code (#4532).
+    reason: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -777,8 +779,47 @@ def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> 
     when_committed(session, tell_managers)
 
 
+def _break_glass_used(
+    session: Session, user: User, reason: str, source: Optional[str], factor: str
+) -> None:
+    """A break-glass account's second factor was accepted: on the trail with its
+    reason, and one notice to each manager once committed."""
+    trail_events.record(
+        session,
+        "auth.break_glass_used",
+        {"source_ip": source, "personal": {"reason": reason}},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        factor=factor,
+    )
+    principal, name = user.principal_id, user.username
+    left = len(user.mfa_recovery_codes or [])
+    where = source or "an unknown address"
+    message = (
+        f"{name}, a break-glass account, signed in from {where}. "
+        f"Reason given: {reason}. "
+        f"{left} recovery code{'' if left == 1 else 's'} left."
+    )
+
+    def tell_managers() -> None:
+        for to in managers(principal):
+            try:
+                notify(
+                    to,
+                    "break_glass_used",
+                    f"Break-glass sign-in: {name}",
+                    message,
+                    USERS_LINK,
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - the rest are still told
+                logger.exception("could not send a break-glass notice for %s", name)
+
+    when_committed(session, tell_managers)
+
+
 def _mfa_required(
-    session: Session, user: User, key_required: bool = False
+    session: Session, user: User, key_required: bool = False, marked: bool = False
 ) -> JSONResponse:
     """The first login call's 401 for a person with MFA: ``X-MFA-Required`` as
     ever, and with security keys the request options and signed challenge for the
@@ -802,7 +843,13 @@ def _mfa_required(
             detail = str(exc) if methods == ["security_key"] else detail
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": detail, "methods": methods, "security_key": challenge},
+        content={
+            "detail": detail,
+            "methods": methods,
+            "security_key": challenge,
+            # The console asks for a code and a reason together.
+            "break_glass": marked,
+        },
         headers={"X-MFA-Required": "true"},
     )
 
@@ -915,10 +962,12 @@ def login(
     # counts toward a lock nor tells a right password from a wrong one. Only a
     # service account goes on, and not from a browser, where it is refused anyway:
     # there every name, known or not, gets the same answer.
+    # A break-glass account goes on to its password, from anywhere (#4532).
     if sso.required():
         matches = matching_accounts(session, payload.username_or_email)
         machine = len(matches) == 1 and _is_service_account(matches[0])
-        if not machine or _is_browser_request(request):
+        marked = len(matches) == 1 and matches[0].break_glass_at is not None
+        if not marked and (not machine or _is_browser_request(request)):
             if len(matches) == 1:
                 refusal["principal"] = matches[0].principal_id
             failed("sso_required")
@@ -969,6 +1018,8 @@ def login(
         raise _invalid_credentials()
 
     service_account = _is_service_account(user)
+    # The host never marks a service account; the check keeps it that way here.
+    marked = user.break_glass_at is not None and not service_account
     if service_account and _is_browser_request(request):
         # Exactly a wrong password, so the console can't tell the account apart.
         # Not a login either: drop authenticate_user's pending last_login /
@@ -997,10 +1048,21 @@ def login(
     # Whether the account had MFA when the password was given: a recovery below
     # clears it, and the length rule must still be the one the account signed in under.
     had_mfa = user.mfa_enabled
-    # Check MFA if enabled (a method of any kind: app, recovery codes or a key)
-    if user.mfa_enabled:
+    reason = (payload.reason or "").strip()
+    # Check MFA if enabled (a method of any kind: app, recovery codes or a key).
+    # A break-glass account always reaches it, even with two-step turned off.
+    if user.mfa_enabled or marked:
         if not payload.mfa_code and not payload.webauthn:
-            return _mfa_required(session, user, key_required)
+            return _mfa_required(session, user, key_required, marked)
+        if marked and not reason:
+            # Before the code is checked, so nothing is spent or counted.
+            if user in session:
+                session.expire(user)
+            failed("break_glass_no_reason")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Give a reason for using this break-glass account.",
+            )
 
         # authenticate_user clears the lockout counter on this session before
         # the code is checked. verify_mfa_code opens a savepoint, and
@@ -1066,7 +1128,19 @@ def login(
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
         key_only = keyed and not mfa_methods.has_app(user, keyed)
-        if accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
+        if marked:
+            # A break-glass factor: a code is spent and nothing else changes; the
+            # host's codes are never replaced here.
+            _break_glass_used(
+                session,
+                user,
+                reason,
+                source,
+                {CODE_APP: "authenticator_app", CODE_KEY: "security_key"}.get(
+                    accepted, "recovery_code"
+                ),
+            )
+        elif accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
             # The one exception to recovery: with keys unavailable the code is
             # spent and nothing else changes, so the person can add the app.
             step_down = "recovery_code"
@@ -1078,7 +1152,8 @@ def login(
             _recover(session, user, source)
             recovered = True
         # Whether TOTP or an old code got in, an old-scheme set ends here.
-        new_recovery_codes = AuthService.upgrade_recovery_codes(user)
+        if not marked:
+            new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # The password and any MFA code are good; the password may have joined the
     # breached list since it was set, be too short for one factor, or be past the
@@ -1089,7 +1164,8 @@ def login(
     if not service_account:
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
-            check_not_expired(user)
+            if not marked:  # a break-glass password never expires
+                check_not_expired(user)
             if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
                 raise PasswordPolicyError(
                     f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
@@ -1134,6 +1210,8 @@ def login(
             if step_down == "app"
             else sign_ins.RECOVERY_STEP_DOWN
         )
+    if marked:
+        auth_method = sign_ins.BREAK_GLASS
     sign_ins.start(
         session,
         sid,
@@ -3093,6 +3171,18 @@ def _reset_request_message(settings) -> str:
     )
 
 
+def _break_glass_link(session: Session, row) -> bool:
+    """A reset link the host issued, or a sign-in's forced change, for a marked account."""
+    if row is None or row.channel not in (invites.HOST, invites.SIGNIN):
+        return False
+    marked = (
+        session.query(User.break_glass_at)
+        .filter(User.principal_id == row.principal_id)
+        .scalar()
+    )
+    return marked is not None
+
+
 @router.post("/password-reset/confirm")
 @limiter.limit("5/hour", key_func=reset_confirm_rate_key)
 def password_reset_confirm(
@@ -3106,12 +3196,13 @@ def password_reset_confirm(
     policy and reuse check, uses the link up, closes every other open one, and
     ends the account's sign-ins. A rejected password leaves the link usable.
     """
-    # A link issued before single sign-on was required is not honoured now.
-    if sso.required():
+    row = invites.find(session, body.token, lock=True, kind=invites.RESET)
+    # A link issued before single sign-on was required is not honoured now. A
+    # break-glass account's host link or its own forced-change token still is.
+    if sso.required() and not _break_glass_link(session, row):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
         )
-    row = invites.find(session, body.token, lock=True, kind=invites.RESET)
     if not invites.usable(row):
         if row is not None:
             invites.note_expired(session, row)

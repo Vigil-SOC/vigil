@@ -340,6 +340,12 @@ class User(Base):
         DateTime, nullable=True
     )
 
+    # Break-glass (#4532): when the host marked this account. Set and cleared only
+    # by scripts/reset_password.py. A marked account signs in under Require SSO
+    # with its password, a code and a reason; its lock is always timed, and it is
+    # left out of dormancy and password expiry.
+    break_glass_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.
     password_history: Mapped[List[str]] = mapped_column(

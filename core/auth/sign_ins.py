@@ -51,7 +51,10 @@ MFA_STEP_DOWN = "mfa_step_down"
 RECOVERY_STEP_DOWN = "recovery_step_down"
 # Through the single sign-on provider, which carries its own MFA (#4284).
 SSO = "sso"
-WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO)
+# A break-glass account's password, code and reason (#4532): "Confirm it's you"
+# passes for the life of the sign-in.
+BREAK_GLASS = "break_glass"
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO, BREAK_GLASS)
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
