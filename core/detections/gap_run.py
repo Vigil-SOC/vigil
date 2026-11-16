@@ -306,6 +306,7 @@ def after_run(
     return Raised(runs, alerts, frozenset(blind), intel)
 
 
-def case_techniques(raised: Iterable[Gap]) -> List[str]:
-    """The techniques the run's Case carries."""
-    return sorted({g.subject.upper() for g in raised if g.kind != BLIND})
+def rule_gaps(raised: Iterable[Gap]) -> List[Gap]:
+    """The raised gaps the run is handed, in order: all but blind spots. A blind spot
+    is a missing data source no rule answers; the Detections page shows it."""
+    return [g for g in raised if g.kind != BLIND]

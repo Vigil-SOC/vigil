@@ -335,6 +335,37 @@ def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
     return username, principal
 
 
+def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
+    """What the daily gaps run's intake handed the investigation it launched: no
+    Case, and its gap proposals. None for any other run, or when the row is gone.
+
+    A restart of a gaps run queues it as one, so it opens no Case and the rules it
+    saves still attach to the gaps it was handed.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    with get_db_manager().session_scope() as session:
+        row = (
+            session.query(IntakeTrigger)
+            .filter(
+                IntakeTrigger.investigation_id == investigation_id,
+                IntakeTrigger.kind == "schedule",
+            )
+            .order_by(IntakeTrigger.id.desc())
+            .first()
+        )
+        payload = row.payload if row is not None else None
+    if not isinstance(payload, dict) or not payload.get("no_case"):
+        return None
+    return {
+        "no_case": True,
+        "gap_proposal_ids": [
+            i for i in payload.get("gap_proposal_ids") or () if isinstance(i, str) and i
+        ],
+    }
+
+
 def _stamp_phases(context: Dict[str, Any], workflow_id: str, workflows) -> None:
     """The phase agents as the definition names them now, stored on the run."""
     from core.agents.attribution import phase_actors
@@ -532,7 +563,6 @@ class CaseSpec:
     finding_ids: List[str]
     priority: str
     case_id: Optional[str] = None
-    mitre_techniques: Optional[List[str]] = None
 
 
 def _new_case_id() -> str:
@@ -609,7 +639,6 @@ def _mint_case(session, spec: CaseSpec) -> str:
         status="open",
         priority=spec.priority,
         timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
-        mitre_techniques=spec.mitre_techniques or None,
         finding_ids=spec.finding_ids,
     )
     return case.case_id
@@ -1118,8 +1147,10 @@ class Orchestrator:
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
             else:
-                # Only the daily gaps run hands a run its gap proposals.
+                # Only the daily gaps run hands a run its gap proposals, and only it
+                # runs with no Case.
                 item.pop("gap_proposal_ids", None)
+                item.pop("no_case", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1183,13 +1214,13 @@ class Orchestrator:
         findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
-        if not case_id:
+        # The daily gaps run keeps its record on the run and its detection
+        # proposals; every other intake with no case_id gets a Case of its own.
+        if not case_id and not item.get("no_case"):
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
                 finding_ids=list(finding_ids),
                 priority=item.get("priority") or "medium",
-                # The daily gaps run names the techniques its Case is about.
-                mitre_techniques=list(item.get("case_techniques") or []) or None,
             )
 
         await self._create_investigation(
