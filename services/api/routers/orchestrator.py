@@ -378,6 +378,7 @@ def wake_investigation(
     A run's id is derived from its investigation id and its ledger is terminal
     once finished, so the same investigation cannot run twice. The failure stays
     on record; the restart is a fresh Human Ask over the same workflow and findings.
+    A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
     """
     orch = _get_orchestrator()
     if not orch:
@@ -395,20 +396,26 @@ def wake_investigation(
             detail=f"Cannot restart investigation in status '{inv.get('status')}'",
         )
 
-    from services.daemon.orchestrator import insert_intake_trigger
+    from services.daemon.orchestrator import gaps_run_of, insert_intake_trigger
 
     case_id = inv.get("case_id")
+    payload = {
+        "workflow_id": inv["workflow_id"],
+        "case_id": case_id,
+        "finding_ids": inv.get("trigger_ids") or [],
+        "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
+        or None,
+        **_person(user, tool_principal.sid_of(http_request)),
+    }
+    # A Human Ask with no case_id gets a Case; only a schedule intake keeps no_case
+    # and the gap proposals.
+    gaps_run = None if case_id else gaps_run_of(investigation_id)
+    if gaps_run is not None:
+        payload.update(gaps_run, trigger_type="manual")
     insert_intake_trigger(
-        kind="human_ask",
+        kind="human_ask" if gaps_run is None else "schedule",
         priority=inv.get("priority") or "medium",
-        payload={
-            "workflow_id": inv["workflow_id"],
-            "case_id": case_id,
-            "finding_ids": inv.get("trigger_ids") or [],
-            "hypothesis": orch.workdir.read_file(investigation_id, "hypotheses.txt")
-            or None,
-            **_person(user, tool_principal.sid_of(http_request)),
-        },
+        payload=payload,
     )
 
     return {
