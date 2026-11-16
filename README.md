@@ -362,6 +362,7 @@ Guides live at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**:
 | [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
 | [Security keys](docs/security-keys.md) | The hostname and HTTPS rule, an internal CA for air-gapped consoles, and what "keys unavailable" means |
 | [Operator endpoints](docs/operator-endpoints.md) | API routes with no console screen: secrets backend status, dotenv → encrypted migration |
+| [Audit trail](docs/audit-trail.md) | What the trail keeps and does not rewrite, what a backup or a forwarded copy still holds, and that an account has no set end date |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure |
 | [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
 | [Adoption figures](docs/metrics.md) | Daily views, clones, stars, forks, and contributor history, published unaltered at [Vigil-SOC/metrics](https://github.com/Vigil-SOC/metrics) |

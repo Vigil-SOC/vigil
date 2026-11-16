@@ -1,0 +1,48 @@
+# Audit trail
+
+The audit trail is one hash-chained table of what happened on this install: who did it, for whom, and what came of it. Settings › Audit reads it. This page states what that record does and does not keep.
+
+## Rows already written stay as written
+
+A row in the trail is not rewritten. The application may insert a row, and it may update only the columns that sit beside the hashed content: source address, the actor text, the operator text, the attempted name, and personal details. The sequence, the time, the late flag, the payload and the hashes are assigned when the row is inserted and are not updated afterwards.
+
+Erasure blanks those beside-columns for a principal, and blanks the same details on a row that is still waiting to be recorded. A name or any other detail already inside the hashed payload of an older row stays there. The chain still verifies after the beside-columns are blanked.
+
+Once a retention period is in force, entries older than that period are removed from the oldest end of the trail, as a prefix, and the chain's anchor moves to the last removed entry. That removes rows. It does not rewrite a row that remains. The period is at least 365 days and takes effect 7 days after it is set.
+
+The agent ledger (`agent_events`), one chain per run, is separate. The application may read it and insert into it. It may not update or delete a ledger row. Erasure and trail retention do not change it.
+
+## Backups keep what erasure removed until they age out
+
+Erasure changes the live database. A backup taken before that still holds the details erasure removed, until that backup ages out under its own retention.
+
+A scheduled backup to a local restic repository keeps the last `keep_last` snapshots tagged manual or scheduled (14 if that is not set) and forgets the older ones with those tags. A pre-upgrade snapshot is separate: the newest is always kept, and an older one is dropped only after a later upgrade has been applied. A repository on S3, Google Cloud Storage or Azure is not forgotten by Vigil; that bucket's own lifecycle rules decide how long a snapshot stays. The dump directories written by `scripts/vigil-backup.sh` keep the last 14 runs unless `--keep` says otherwise. An off-site copy of those dumps is kept wherever it was copied.
+
+After a restore, Vigil applies its list of erased principals again. It unions the list stored with the snapshot and the list kept outside the database, then blanks each of those principals on the restored database. A snapshot that names erased principals cannot be restored until that outside list is set, so the restore does not come up with the blanking undone.
+
+## A copy that has left the box is yours to govern
+
+Vigil's retention and erasure reach the live database. They do not reach a copy that has already left:
+
+- the syslog feed's destination;
+- the webhook's destination;
+- an export;
+- a poll.
+
+Those copies keep what they received. A later erasure, or a prefix removed for retention, does not blank or delete them. Whoever runs the destination, the export file or the system that polled governs that copy, including how long it is kept.
+
+## Nothing runs through the API while the database is down
+
+Every API request that acts, a safety action included, reads or writes the database. Signing in, deactivating an account, ending sign-ins and the rest of those actions are rows in that database. While the database itself is down, the request cannot complete, so the action does not run. There is no queue that performs it later.
+
+## An entry the trail cannot take is held, then recorded late
+
+Some actions go ahead even when the trail refuses the entry (a check that rejects the insert, for example, while the database is still up). The entry is then held in `audit_trail_held`, a table in the same database, in its own transaction. That row survives a restart and is visible to every replica. The leader writes it into the trail with its original time and the late flag, which the Audit screen shows as "Recorded late". Settings › Audit and the feed health say how many entries are waiting and the time of the oldest. An open collapse window, and a marker that only records that an expired credential was already noted, are not waiting entries and are not counted.
+
+If the hold also fails, the application log is the only record of that entry. Vigil does not spool it to disk.
+
+## Accounts do not end on a date
+
+Vigil has no emergency account, and no account with a set end date. An account made for temporary access stays active until someone deactivates or deletes it, or until the dormancy rule deactivates it.
+
+Dormancy is `dormancy_days` on the session policy. It defaults to 35 and can be turned off. While it is on, a person's account is deactivated after that many days with no newer activity. Activity is the latest of the last sign-in, the last use of a personal MCP token, the account's creation, and a floor. The floor is when the upgrade that added dormancy ran, for an account that already existed, or the account's last reactivation. A failed sign-in does not count as activity. A service account is not deactivated for being idle. The sweep warns the account's holder and the managers first, then deactivates once that warning has been out for the warning window (7 days, or less when the period is shorter). For 7 days after a restore settles, the sweep warns and deactivates nobody. The last person who can manage roles is not deactivated for dormancy; the managers are told instead. A password's maximum age, and a token's lifetime, end that password or that token. They do not end the account.
