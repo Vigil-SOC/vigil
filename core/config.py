@@ -146,9 +146,10 @@ class Settings(BaseSettings):
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
     # One extra root of SKILL.md directories, read alongside core/skills/library
-    # and written by the skills API. A folder without its own SKILL.md is a
-    # category, read up to two levels deep (<cat>/<cat>/<name>/SKILL.md); a
-    # skill folder's subfolders are never skills. Unset (None) is the State
+    # and written by the skills API. A top-level folder without its own SKILL.md
+    # is searched where `npx skills add` searches a repo, so category folders
+    # and whole cloned skills repos load; a skill folder's subfolders are never
+    # skills. Unset (None) is the State
     # Directory's skills/ folder; empty turns operator skills off, as the Helm
     # chart does.
     vigil_skills_path: Optional[str] = None

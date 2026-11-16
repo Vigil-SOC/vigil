@@ -4,11 +4,10 @@ A skill is ``<root>/<name>/SKILL.md`` conforming to the public Agent Skills
 spec (agentskills.io/specification): YAML frontmatter naming the skill and a
 Markdown body telling the agent how to do the thing. Roots are the bundled
 ``core/skills/library/`` plus the operator root: ``VIGIL_SKILLS_PATH``, else
-the State Directory's ``skills/`` folder. Published libraries often group
-skills into category folders, so a folder with no ``SKILL.md`` of its own is
-read deeper, up to two category levels as the ``npx skills`` CLI does:
-``<root>/<category>/[<category>/]<name>/SKILL.md``. A ``SKILL.md`` higher up
-wins: a skill folder's subfolders are never skills.
+the State Directory's ``skills/`` folder. A top-level folder without its own
+``SKILL.md`` is searched where the ``npx skills`` CLI searches a repo, so a
+library grouped in category folders, or a whole cloned skills repo, loads
+as-is. A skill folder's subfolders are never skills.
 
 No database, no module state: ``load_skills`` takes its roots so tests can
 point it at ``tmp_path``. An invalid skill is logged and skipped so one bad
@@ -28,7 +27,6 @@ import stat
 import tempfile
 import zipfile
 import zlib
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, Iterable, List, Optional
@@ -56,13 +54,75 @@ _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
 # Skill folders under the operator root. Each description is in every agent's
 # system prompt, so the count bounds what operators can add to it.
 OPERATOR_SKILLS_MAX = 100
-# Category folders allowed between a skills root and a skill folder, the depth
-# the ``npx skills`` CLI reads: ``<root>/<cat>/<cat>/<name>/SKILL.md``.
-CATEGORY_DEPTH = 2
-# Folders opened past that depth, per top-level folder, only to report a
-# SKILL.md placed too deep. Dependency and cache folders are not opened for it.
-DEEP_SEARCH_MAX = 256
-_UNSEARCHED = frozenset({"node_modules", "__pycache__", "venv"})
+# Where a skill may sit inside a top-level folder of a skills root: the places
+# the ``npx skills`` CLI (1.8.1) searches in a repo, so a folder copied or
+# cloned in loads what ``npx skills add`` would install from it.
+_SKIP_DIRS = frozenset({"node_modules", ".git", "dist", "build", "__pycache__"})
+_SKILLS_DIRS = ("skills", "skills/.curated", "skills/.experimental", "skills/.system")
+_AGENT_SKILL_DIRS = (
+    ".adal/skills",
+    ".agents/skills",
+    ".aider-desk/skills",
+    ".augment/skills",
+    ".autohand/skills",
+    ".bob/skills",
+    ".claude/skills",
+    ".cline/skills",
+    ".codeartsdoer/skills",
+    ".codebuddy/skills",
+    ".codemaker/skills",
+    ".codestudio/skills",
+    ".codex/skills",
+    ".commandcode/skills",
+    ".continue/skills",
+    ".cortex/skills",
+    ".crush/skills",
+    ".devin/skills",
+    ".factory/skills",
+    ".forge/skills",
+    ".github/skills",
+    ".goose/skills",
+    ".grok/skills",
+    ".hermes/skills",
+    ".iflow/skills",
+    ".inferencesh/skills",
+    ".jazz/skills",
+    ".junie/skills",
+    ".kilo/skills",
+    ".kilocode/skills",
+    ".kimchi/skills",
+    ".kiro/skills",
+    ".kode/skills",
+    ".lingma/skills",
+    ".mcpjam/skills",
+    ".minimax/skills",
+    ".moxby/skills",
+    ".mux/skills",
+    ".neovate/skills",
+    ".ona/skills",
+    ".opencode/skills",
+    ".openhands/skills",
+    ".pi/skills",
+    ".pochi/skills",
+    ".posit/assistant/skills",
+    ".qoder/skills",
+    ".qwen/skills",
+    ".reasonix/skills",
+    ".roo/skills",
+    ".rovodev/skills",
+    ".tabnine/agent/skills",
+    ".terramind/skills",
+    ".tinycloud/skills",
+    ".trae/skills",
+    ".vibe/skills",
+    ".windsurf/skills",
+    ".zcode/skills",
+    ".zencoder/skills",
+    "agent/skills",
+    "data/skills",
+)
+_CONTAINER_DEPTH = 3  # skills/<category>/<category>/<name>/SKILL.md
+_FALLBACK_DEPTH = 5  # how deep a folder with none of those places is searched
 
 
 @dataclass(frozen=True)
@@ -149,120 +209,143 @@ def as_user_turn(user_input: Any) -> str:
     )
 
 
-def _deep_skill_dirs(folder: Path, budget: List[int]) -> tuple[List[Path], bool]:
-    """The folders under ``folder`` holding ``SKILL.md``, and whether all were searched.
+def _subdirs(folder: Path) -> List[Path]:
+    """``folder``'s real subfolders, sorted. Symlinks are not followed: one could
+    reach outside the root that writes and deletes are confined to."""
+    try:
+        with os.scandir(folder) as it:
+            return sorted(Path(e.path) for e in it if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
 
-    Found only to be logged, so the search is cheap: shallowest first, links
-    not followed, dot folders, ``_UNSEARCHED`` folders and a skill folder's
-    insides left out, and at most ``budget[0]`` folders opened, shared across
-    the top-level folder. A copied project's ``node_modules`` would otherwise
-    be walked on every load.
+
+def _inside(base: Path, rel: Any) -> Optional[Path]:
+    """``base/rel`` for a ``./`` path, when that is a real folder reached
+    without a symlink or ``..``; ``./`` is ``base`` itself."""
+    if not isinstance(rel, str) or not rel.startswith("./") or "\\" in rel:
+        return None
+    path = base
+    for part in rel.split("/")[1:]:
+        if part in ("", "."):
+            continue
+        path = path / part
+        if part == ".." or path.is_symlink():
+            return None
+    return path if path.is_dir() else None
+
+
+def _json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _listed_dirs(top: Path) -> tuple[List[Path], List[Path]]:
+    """Folders ``top``'s own manifests point at, as ``npx skills`` reads them.
+
+    ``skills.sh.json`` ``paths`` are searched like ``skills/``; a
+    ``.claude-plugin`` ``plugin.json`` or ``marketplace.json`` names each
+    plugin's ``skills``, and its ``skills/`` folder is searched one level.
+    Only ``./`` paths inside ``top`` count.
+    """
+    containers: List[Path] = []
+    plugin_dirs: List[Path] = []
+    config = _json(top / "skills.sh.json")
+    if isinstance(config, dict) and isinstance(config.get("paths"), list):
+        containers += [d for d in map(lambda p: _inside(top, p), config["paths"]) if d]
+
+    def plugin(base: Optional[Path], skills: Any) -> None:
+        if base is None:
+            return
+        for rel in skills if isinstance(skills, list) else []:
+            if isinstance(rel, str):
+                folder = _inside(base, rel.rsplit("/", 1)[0] + "/")
+                if folder:
+                    plugin_dirs.append(folder)
+        plugin_dirs.append(base / "skills")
+
+    market = _json(top / ".claude-plugin" / "marketplace.json")
+    if isinstance(market, dict):
+        meta = market.get("metadata")
+        root = _inside(
+            top, meta.get("pluginRoot", "./") if isinstance(meta, dict) else "./"
+        )
+        for item in market.get("plugins") or []:
+            if isinstance(item, dict) and root is not None:
+                plugin(_inside(root, item.get("source", "./")), item.get("skills"))
+    manifest = _json(top / ".claude-plugin" / "plugin.json")
+    if isinstance(manifest, dict):
+        plugin(top, manifest.get("skills"))
+    return containers, plugin_dirs
+
+
+def _source_skill_dirs(top: Path) -> List[Path]:
+    """The skill folders ``npx skills`` would find in ``top`` taken as a repo.
+
+    Its children; ``skills/`` (with ``.curated``, ``.experimental`` and
+    ``.system``), each agent's ``.<agent>/skills`` and any ``skills.sh.json``
+    path down to two category folders; folders a plugin manifest names. Only
+    when none of those holds a skill is ``top`` searched down to
+    ``_FALLBACK_DEPTH`` folders. ``_SKIP_DIRS`` are never searched, and a skill
+    folder's own subfolders are its files, never skills.
     """
     found: List[Path] = []
-    queue = deque([str(folder)])
-    complete = True
-    while queue:
-        if budget[0] <= 0:
-            return found, False
-        budget[0] -= 1
-        path = queue.popleft()
-        try:
-            with os.scandir(path) as it:
-                entries = sorted(it, key=lambda e: e.name)
-        except OSError:
-            continue
-        if any(e.name == SKILL_FILE for e in entries):
-            found.append(Path(path))
-            continue
-        for e in entries:
-            if e.name.startswith(".") or e.name in _UNSEARCHED:
-                continue
-            if not e.is_dir(follow_symlinks=False):
-                continue
-            if len(queue) >= budget[0]:
-                complete = False  # never opened, so no need to hold it
-                break
-            queue.append(e.path)
-    return found, complete
 
+    def add(folder: Path) -> bool:
+        if not os.path.lexists(folder / SKILL_FILE):
+            return False
+        if folder not in found:
+            found.append(folder)
+        return True
 
-def _walk(
-    folder: Path,
-    depth: int,
-    found: List[Path],
-    skipped: List[tuple[Path, str]],
-    budget: Optional[List[int]] = None,
-) -> bool:
-    """Add the skill folders under ``folder`` to ``found``; whether any were.
-
-    ``depth`` counts the category folders between the root and ``folder``. A
-    child holding ``SKILL.md`` is a skill and is not searched further. Any other
-    child is a category while ``depth`` allows; past that, a ``SKILL.md`` under
-    it is skipped and reported, as far as ``budget`` searches: each top-level
-    folder gets its own, and ``_UNSEARCHED`` folders are not searched for it.
-    Dot folders are left out, and a symlinked category, or a symlinked skill inside one, is not
-    opened: it could reach outside the root that writes and deletes are
-    confined to.
-    """
-    try:
-        children = sorted(p for p in folder.iterdir() if p.is_dir())
-    except OSError as exc:
-        if not depth:
-            raise
-        skipped.append((folder, str(exc)))
-        return False
-    if budget is None:
-        budget = [DEEP_SEARCH_MAX]
-    hit = False
-    for child in children:
-        if child.name.startswith("."):
-            continue
-        if os.path.lexists(child / SKILL_FILE):
-            if depth and child.is_symlink():
-                skipped.append((child, "a symlink in a category"))
+    def walk(folder: Path, max_depth: int, depth: int = 1) -> None:
+        for child in _subdirs(folder):
+            if add(child) or depth >= max_depth or child.name in _SKIP_DIRS:
                 continue
-            found.append(child)
-            hit = True
-        elif child.is_symlink():
-            skipped.append((child, "a symlinked category"))
-        elif depth < CATEGORY_DEPTH:
-            before = len(skipped)
-            sub = [DEEP_SEARCH_MAX] if not depth else budget
-            if child.name in _UNSEARCHED:
-                sub = [-1]
-            if _walk(child, depth + 1, found, skipped, sub):
-                hit = True
-            elif not depth and len(skipped) == before:
-                skipped.append((child, f"no {SKILL_FILE}"))
-        elif budget[0] >= 0 and child.name not in _UNSEARCHED:
-            deep, complete = _deep_skill_dirs(child, budget)
-            for path in deep:
-                skipped.append(
-                    (path, f"more than {CATEGORY_DEPTH} category folders deep")
-                )
-            if not complete:
-                skipped.append(
-                    (
-                        child,
-                        f"more than {CATEGORY_DEPTH} category folders deep; the "
-                        f"search for a {SKILL_FILE} that deep stopped here",
-                    )
-                )
-                budget[0] = -1  # said once per top-level folder
-    return hit
+            walk(child, max_depth, depth + 1)
+
+    walk(top, 1)
+    containers, plugin_dirs = _listed_dirs(top)
+    for rel in _SKILLS_DIRS + _AGENT_SKILL_DIRS:
+        folder = _inside(top, "./" + rel)
+        if folder:
+            walk(folder, _CONTAINER_DEPTH)
+    for folder in containers:
+        walk(folder, _CONTAINER_DEPTH)
+    for folder in plugin_dirs:
+        if folder.is_dir() and not folder.is_symlink():
+            walk(folder, 1)
+    if not found:
+        walk(top, _FALLBACK_DEPTH)
+    return found
 
 
 def _skill_dirs(root: Path) -> tuple[List[Path], List[tuple[Path, str]]]:
     """The folders under ``root`` holding ``SKILL.md``, in load order, and those skipped.
 
-    A skill sits at ``root/<name>`` or under up to ``CATEGORY_DEPTH`` category
-    folders, and everything under a skill folder is its own files. Nothing is
-    logged here, so the writes that walk the root to find or count skills stay
-    quiet; ``load_skills`` logs the skipped list once.
+    A top-level folder holding ``SKILL.md`` is a skill; any other is searched
+    as ``npx skills`` searches a repo (``_source_skill_dirs``), so a library
+    grouped in category folders, or a whole cloned skills repo, loads as-is.
+    Dot folders at the top are a write's scratch copies and are left out. A
+    raise means ``root`` itself could not be read. Nothing is logged here, so
+    the writes that walk the root stay quiet; ``load_skills`` logs once.
     """
     found: List[Path] = []
     skipped: List[tuple[Path, str]] = []
-    _walk(root, 0, found, skipped)
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        if child.name.startswith("."):
+            continue
+        if os.path.lexists(child / SKILL_FILE):
+            found.append(child)
+        elif child.is_symlink():
+            skipped.append((child, "a symlinked folder"))
+        else:
+            inner = _source_skill_dirs(child)
+            if inner:
+                found += inner
+            else:
+                skipped.append((child, f"no {SKILL_FILE} where npx skills would look"))
     return found, skipped
 
 
@@ -463,11 +546,11 @@ def _skill_dir(root: Path, name: str) -> Path:
 
 
 def _loaded_dir(root: Path, skill: Skill) -> Path:
-    """A loaded operator skill's real folder: ``root/[<category>/...]name``.
+    """A loaded operator skill's real folder: ``root/[<folder>/...]name``.
 
-    Refused when the folder or a category on the way is a symlink, a dot
-    folder, deeper than ``CATEGORY_DEPTH`` or would resolve outside ``root``, so
-    an edit or delete acts only inside the operator root.
+    Refused when a folder on the way is a symlink, the top one is a dot folder,
+    or it would resolve outside ``root``, so an edit or delete acts only inside
+    the operator root.
     """
     try:
         parts = skill.path.relative_to(root).parts
@@ -475,9 +558,9 @@ def _loaded_dir(root: Path, skill: Skill) -> Path:
         parts = ()
     if (
         not parts
-        or len(parts) > CATEGORY_DEPTH + 1
         or parts[-1] != skill.name
-        or any(part.startswith(".") for part in parts[:-1])
+        or parts[0].startswith(".")
+        or ".." in parts
     ):
         raise SkillError("refusing to touch a skill outside the operator root")
     parent = Path(os.path.realpath(root))
@@ -507,7 +590,11 @@ def _operator_skill_dir(root: Path, name: str) -> Path:
         except SkillError:
             continue
         return _loaded_dir(root, skill)
-    if top.is_dir() and not os.path.lexists(top / SKILL_FILE) and _walk(top, 1, [], []):
+    if (
+        top.is_dir()
+        and not os.path.lexists(top / SKILL_FILE)
+        and _source_skill_dirs(top)
+    ):
         raise SkillConflict(f"{name} is a folder of skills, not a skill.")
     return top
 
