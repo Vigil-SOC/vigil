@@ -294,6 +294,7 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "rule_id": proposal.rule_id,
         **links,
         "run_status": _run_statuses(session, [links["run_id"]]).get(links["run_id"]),
+        "run_working": proposal.proposal_id in _unfinished_gap_runs(session),
         "created_by": proposal.created_by,
         "created_at": proposal.created_at.isoformat(),
         "updated_at": proposal.updated_at.isoformat(),
@@ -330,6 +331,7 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
             p.proposal_id: _links(p, steps.get(p.proposal_id, ())) for p in proposals
         }
         statuses = _run_statuses(session, (link["run_id"] for link in links.values()))
+        unfinished = _unfinished_gap_runs(session)
         return [
             {
                 "proposal_id": p.proposal_id,
@@ -346,6 +348,9 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
                 "rule_id": p.rule_id,
                 **links[p.proposal_id],
                 "run_status": statuses.get(links[p.proposal_id]["run_id"]),
+                # Still working as the gaps run counts it, which can outlast run_status:
+                # the investigation the run's intake row launched settles later.
+                "run_working": p.proposal_id in unfinished,
             }
             for p in proposals
         ]
@@ -791,7 +796,7 @@ def reject(
         gap_draft = (proposal.origin or {}).get("source") == GAPS_RUN
         if gap_draft and proposal_id in _unfinished_gap_runs(session):
             raise Refused(
-                "Its run is still working on this gap: reject it once the run ends."
+                "Its run is still working on this gap: try again once the run ends."
             )
         proposal.move_to(
             ProposalState.REJECTED,

@@ -1199,6 +1199,8 @@ export interface ProposalRow {
   rule_id: number | null
   /** Its run's status: running, paused, completed, failed or cancelled. */
   run_status: string | null
+  /** Its run still working as the backend counts it, which can outlast ``run_status``. */
+  run_working: boolean
 }
 
 export interface ProposalEvent {

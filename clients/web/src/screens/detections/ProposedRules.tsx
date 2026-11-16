@@ -53,8 +53,10 @@ function mainRule(p: ProposalRow, listed: Map<number, Listed>): Listed | null {
   return rows.find((r) => r.language !== 'sigma') ?? rows[0] ?? null
 }
 
-/** A run that ended without saving a rule for the proposal: how it ended, else null. */
-const endedBare = (p: ProposalRow) => (!p.rule_ids.length && p.run_id && p.run_status ? RUN_ENDED[p.run_status] ?? null : null)
+/** A run that ended without saving a rule for the proposal: how it ended, else null. One
+ * the backend still counts as working (its investigation not settled yet) has not ended. */
+const endedBare = (p: ProposalRow) =>
+  !p.rule_ids.length && p.run_id && p.run_status && !p.run_working ? RUN_ENDED[p.run_status] ?? null : null
 
 /** Where a proposal stands, in the rule list's own health pill. */
 function standing(p: ProposalRow, listed: Map<number, Listed> | null): { label: string; tone: string; gone?: boolean } {
@@ -88,6 +90,8 @@ export default function ProposedRules() {
   const [listed, setListed] = useState<Map<number, Listed> | null>(null)
   const [rulesError, setRulesError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Whether Vigil ever proposed one: an empty list after a dismiss is not "none yet".
+  const [proposedAny, setProposedAny] = useState(false)
 
   // Only the copies the proposals follow, a share at a time: the listing caps its rows.
   const readRules = useCallback((props: ProposalRow[]) => {
@@ -108,8 +112,11 @@ export default function ProposedRules() {
     detectionEngineeringApi.proposals()
       .then((res) => {
         if (!live) return
-        // Vigil's own drafts after a gap; one a person or Vigil rejected is off the list.
-        const mine = res.data.proposals.filter((p) => p.origin?.source === GAPS_RUN && p.state !== 'rejected')
+        // Vigil's own drafts after a gap; one a person or Vigil rejected is off the list, unless
+        // a rule is attached to it: a reject does not stop that rule's rollout.
+        const gaps = res.data.proposals.filter((p) => p.origin?.source === GAPS_RUN)
+        const mine = gaps.filter((p) => p.state !== 'rejected' || p.rule_ids.length > 0)
+        setProposedAny(gaps.length > 0)
         setRows(mine)
         setError(null)
         readRules(mine)
@@ -121,6 +128,13 @@ export default function ProposedRules() {
   if (error) return <Failure>{error}</Failure>
   if (!rows) return <p className="x1-muted de-note">Reading proposed rules…</p>
   if (!rows.length) {
+    if (proposedAny) {
+      return (
+        <Empty title="No proposed rule is open">
+          Every rule Vigil proposed was dismissed or rejected. The daily gaps run drafts a new one here when a proven attack, alerts on a paper-only technique or recent threat intel show a technique no rule catches.
+        </Empty>
+      )
+    }
     return (
       <Empty title="Vigil has not proposed a rule yet">
         The daily gaps run drafts one here when a proven attack, alerts on a paper-only technique or recent threat intel show a technique no rule catches.
@@ -421,7 +435,7 @@ function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy 
         <b>{proposal.run_id ? short(proposal.run_id) : '—'}</b>
         <span className="de-rollout-line">
           {proposal.run_id
-            ? `Vigil handed the gap to an agent run to draft a rule${proposal.run_status ? ` (${RUN_ENDED[proposal.run_status] ?? proposal.run_status})` : ''}`
+            ? `Vigil handed the gap to an agent run to draft a rule${proposal.run_working ? ' (still working)' : proposal.run_status ? ` (${RUN_ENDED[proposal.run_status] ?? proposal.run_status})` : ''}`
             : 'Not handed to a run yet'}
         </span>
         {proposal.run_id && (
@@ -547,7 +561,7 @@ function refusal(err: unknown, fallback: string): string {
 }
 
 /** Switch off (shadow), Revert to shadow (live) or Dismiss (a proposal whose run ended with
- * no rule): the reason is required, and what follows waits for a person. */
+ * no rule): the reason is required and stays on the record; ``ASK`` says what follows each. */
 function Decide({ action, act, onDone }: { action: Decision; act: (reason: string) => Promise<unknown>; onDone: (changed: boolean) => void }) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
