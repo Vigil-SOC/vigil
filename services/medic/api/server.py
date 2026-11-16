@@ -34,6 +34,7 @@ from services.medic.api.feedback import post_feedback
 from services.medic.api.incidents import get_incident, list_incidents
 from services.medic.api.pack import OPS as PACK_OPS
 from services.medic.api.pack import PackBridge, post_pack
+from services.medic.api.run import post_fix
 from services.medic.api.status import API_VERSION, serve_view
 from services.medic.app.config import API_KEY_FILE_VAR
 
@@ -135,6 +136,7 @@ class Handler(BaseHTTPRequestHandler):
     data_dir: Path | None = None
     writer: Any = None  # the main loop's DecisionWriter, for the feedback POST
     bridge: PackBridge | None = None  # to the main loop, for the pack writes
+    fixer: Any = None  # the Compose restart (fix.py); None when it isn't wired
 
     def log_message(self, *args: Any) -> None:  # the access log would print targets
         pass
@@ -250,12 +252,26 @@ class Handler(BaseHTTPRequestHandler):
         parent, _, incident_id = head.rpartition("/")
         if parent == "/v1/incidents" and incident_id and tail == "feedback":
             return "POST", lambda: self._feedback(incident_id, query)
+        if parent == "/v1/incidents" and incident_id and tail == "fix":
+            return "POST", lambda: self._fix(incident_id, query)
         return None
 
     def _feedback(self, incident_id: str, query: str) -> None:
         result = post_feedback(
             self.data_dir,
             self.writer,
+            incident_id,
+            query,
+            content_type=self.headers.get("Content-Type"),
+            length=self.headers.get("Content-Length"),
+            admins=self.headers.get_all("X-Medic-Admin") or [],
+            read_body=self.rfile.read,
+        )
+        self._finish(result, status=201)
+
+    def _fix(self, incident_id: str, query: str) -> None:
+        result = post_fix(
+            self.fixer,
             incident_id,
             query,
             content_type=self.headers.get("Content-Type"),
@@ -371,6 +387,7 @@ def make_server(
     data_dir: Path | None = None,
     writer: Any = None,
     bridge: PackBridge | None = None,
+    fixer: Any = None,
 ) -> ThreadingHTTPServer:
     attrs = {
         "key_file": key_file,
@@ -379,6 +396,7 @@ def make_server(
         "data_dir": data_dir,
         "writer": writer,
         "bridge": bridge,
+        "fixer": fixer,
     }
     return _Server(bind, type("MedicApiHandler", (Handler,), attrs))
 
@@ -403,11 +421,13 @@ class Api:
         data_dir: Path | None = None,
         writer: Any = None,
         bridge: PackBridge | None = None,
+        fixer: Any = None,
         bind_peer: str | None = None,
         retry_s: float = RETRY_MAX_S,
     ) -> None:
         self.bind, self.key_file, self.board = bind, key_file, board
         self.data_dir, self.writer, self.bridge = data_dir, writer, bridge
+        self.fixer = fixer
         self.bind_peer = bind_peer
         self._wall, self._monotonic, self._retry_s = wall, monotonic, retry_s
         self._next_try: float | None = None
@@ -479,6 +499,7 @@ class Api:
                 data_dir=self.data_dir,
                 writer=self.writer,
                 bridge=self.bridge,
+                fixer=self.fixer,
             )
         except OSError as exc:
             self._say_once(

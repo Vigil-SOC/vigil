@@ -47,6 +47,8 @@ ROUTER_META = RouterMeta(
 )
 
 _TIMEOUT_S = 5.0
+# A restart waits out soc-daemon's stop drain before Medic answers.
+_FIX_TIMEOUT_S = 90.0
 # A pack write waits for Medic's next cycle (up to SNAPSHOT_MAX_AGE_S, 20 s): wait past it
 _PACK_TIMEOUT_S = 30.0
 _MAX_BODY = 4 * 1024 * 1024  # a page of 100 records of up to 16 KB, with room
@@ -79,6 +81,7 @@ _CODES = frozenset(
         "invalid_body",
         "missing_admin_identity",
         "not_rateable",
+        "fix_refused",
         "payload_too_large",
         "unsupported_media_type",
         "busy",
@@ -158,6 +161,7 @@ async def _call(
     extra_headers: Optional[dict[str, str]] = None,
     content: Optional[bytes] = None,
     pack: bool = False,
+    timeout: Optional[float] = None,
 ) -> tuple[Optional[httpx.Response], Optional[Response]]:
     """One request to Medic: (its response, None) or (None, the error to return).
 
@@ -171,7 +175,8 @@ async def _call(
     headers = {"X-Medic-Key": key, **(extra_headers or {})}
     try:
         async with httpx.AsyncClient(
-            timeout=_PACK_TIMEOUT_S if pack and method == "POST" else _TIMEOUT_S,
+            timeout=timeout
+            or (_PACK_TIMEOUT_S if pack and method == "POST" else _TIMEOUT_S),
             follow_redirects=False,
             trust_env=False,
         ) as client:
@@ -186,6 +191,8 @@ async def _call(
         code = _medic_code(r) if r.status_code >= 500 else None
         return None, _problem(503, code or "medic_unavailable")
     if pack and r.status_code in (409, 422) and _pack_refusal(r):
+        return None, _passthrough(r)
+    if r.status_code == 409 and _medic_code(r) == "fix_refused":
         return None, _passthrough(r)
     if r.status_code >= 400:
         return None, _problem(r.status_code, _medic_code(r) or "internal")
@@ -342,6 +349,26 @@ async def post_feedback(
         f"/v1/incidents/{incident_id}/feedback",
         extra_headers={"X-Medic-Admin": admin, "Content-Type": "application/json"},
         content=body,
+    )
+    return err or _passthrough(r)
+
+
+@router.post("/incidents/{incident_id}/fix")
+async def post_fix(
+    incident_id: str = Path(pattern=_INCIDENT_ID),
+    user: User = Depends(require_person_permission(MEDIC_ADMIN_PERMISSION)),
+) -> Response:
+    """Restart soc-daemon for this incident. The admin is the session."""
+    admin = f"user:{user.user_id}"
+    if not _ADMIN_LABEL.fullmatch(admin):
+        return _problem(422, "missing_admin_identity")
+    body = b"{}"
+    r, err = await _call(
+        "POST",
+        f"/v1/incidents/{incident_id}/fix",
+        extra_headers={"X-Medic-Admin": admin, "Content-Type": "application/json"},
+        content=body,
+        timeout=_FIX_TIMEOUT_S,
     )
     return err or _passthrough(r)
 

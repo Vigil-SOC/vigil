@@ -2,12 +2,14 @@
 
 A window opens when the `version` signal changes, or when restart markers for two or
 more Vigil services fall within 5 min of each other (a counter epoch change, a
-`…started_at` change, an `…uptime_seconds` drop). It lasts 15 min after the last
-such marker, but a chain of windows (each marker before the window it extends has
-closed) holds for at most 60 min after the chain's first marker, sensor-blind
-included (⚑ S4b2-6). Everything here is persisted state: the last value of each
-marker series, each service's newest restart, the window's end and its chain's
-start.
+`…started_at` change, an `…uptime_seconds` drop). A restart Medic recorded is not a
+marker: `note_recorded` covers that service for the next 5 min, and an epoch that
+starts with `medic-restart:` is the same fact on a vector. A `version` change still
+opens a window. The window lasts 15 min after the last such marker, but a chain of
+windows (each marker before the window it extends has closed) holds for at most 60
+min after the chain's first marker, sensor-blind included (⚑ S4b2-6). Everything
+here is persisted state: the last value of each marker series, each service's newest
+restart, the window's end and its chain's start, and a recorded restart's time.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ WINDOW_S = 900  # 15 min after the last restart (§7, ⚑ 4)
 CAP_S = 3600  # a chain of windows holds no longer than this after its first marker
 TOGETHER_S = 300  # restarts of 2+ services within 5 min of each other
 NOT_VIGIL = {"medic", "medic-gateway", "host"}  # their restarts aren't an upgrade
+# A vector stamps this on the epoch of a restart Medic recorded.
+MEDIC_EPOCH = "medic-restart:"
 
 
 class UpgradeWatch:
@@ -29,18 +33,36 @@ class UpgradeWatch:
             self.since = self.until - WINDOW_S
         self.marks: dict[str, list] = state.get("marks", {})  # series -> [t, value]
         self.restarts: dict[str, float] = state.get("restarts", {})  # service -> t
+        # service -> when Medic recorded a restart; markers until +TOGETHER_S don't count
+        self.excused: dict[str, float] = state.get("excused", {})
 
     def state(self) -> dict:
+        # Copy `excused`: note_recorded replaces the dict from the API thread.
         return {"until": self.until, "since": self.since} | {
             "marks": self.marks,
             "restarts": self.restarts,
+            "excused": dict(self.excused),
         }
+
+    def note_recorded(self, service: str, t: float) -> None:
+        """A restart Medic just recorded is not a marker (§7)."""
+        self.excused = {**self.excused, service: t}
+
+    def restore_excuse(self, service: str, previous: float | None) -> None:
+        """Drop an excuse for a restart that did not happen."""
+        nxt = dict(self.excused)
+        if previous is None:
+            nxt.pop(service, None)
+        else:
+            nxt[service] = previous
+        self.excused = nxt
 
     def prune(self, now: float) -> None:
         """Drop marks not read for RETIRE_S: churning label values (container ids)
         would otherwise grow them forever. Not the rule horizon: a sensor blind for
         longer but under RETIRE_S must still see its new value open a window."""
         self.marks = {s: m for s, m in self.marks.items() if m[0] >= now - RETIRE_S}
+        self.excused = {s: t for s, t in self.excused.items() if now - t <= TOGETHER_S}
 
     @property
     def end(self) -> float | None:
@@ -75,8 +97,16 @@ class UpgradeWatch:
             elif v["key"].endswith("uptime_seconds") and _number(value):
                 before = self.marks.get(series)
                 restarted |= self._changed(series, t, value) and value < before[1]
-        if restarted and obs["target"]["service"] not in NOT_VIGIL:
-            self._restart(obs["target"]["service"], t)
+        service = obs["target"]["service"]
+        medic = str(obs.get("epoch") or "").startswith(MEDIC_EPOCH)
+        noted = self.excused.get(service)
+        if (
+            restarted
+            and not medic
+            and service not in NOT_VIGIL
+            and not (noted is not None and 0 <= t - noted <= TOGETHER_S)
+        ):
+            self._restart(service, t)
 
     def _changed(self, series: str, t: float, value) -> bool:
         """Record the newest value; a late read (older than the newest) is ignored."""

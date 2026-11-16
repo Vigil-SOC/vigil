@@ -1,0 +1,126 @@
+id: v34-medic-restart-not-upgrade
+title: A restart Medic recorded is not an upgrade marker, so one other service restart opens no window
+covers:
+- §7 upgrade windows
+start: '2026-10-07T10:00:00Z'
+end: +20m
+rules:
+- inline:
+    apiVersion: medic.rules/v1
+    kind: Rule
+    id: ingest.kafka-disconnected
+    title: Vector rule ingest.kafka-disconnected
+    revision: 1
+    fault:
+      class: ingest
+      mode: I-2
+      causes:
+      - I-2.a
+    lane: 3
+    signals:
+      connected:
+        sample:
+          signal: daemon_status.kafka
+          key: connected
+    when:
+      fn: latest
+      signal: connected
+      op: ==
+      value: false
+    for: 2m
+    advice:
+      summary: Test rule for an evaluation vector.
+      fix: 'No action: this rule exists only in a test vector.'
+sensors:
+- id: http.daemon
+  covers:
+  - daemon_health
+  - daemon_status.kafka
+  interval: 15s
+  service: soc-daemon
+  states:
+  - - +0s
+    - ok
+- id: http.backend
+  covers:
+  - containers
+  interval: 15s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  daemon_health:
+    uptime_seconds: gauge
+    passes.processor: counter
+  daemon_status.kafka:
+    connected: bool
+  containers:
+    restart_count: counter
+    started_at: timestamp
+series:
+- signal: daemon_health
+  key: uptime_seconds
+  steps:
+  - - +0s
+    - 3600
+  - - +10m
+    - 5
+- signal: daemon_health
+  key: passes.processor
+  steps:
+  - - +0s
+    - 1
+  - - +10m
+    - 2
+  epochs:
+  - - +0s
+    - e1
+  - - +10m
+    - medic-restart:e2
+- signal: daemon_status.kafka
+  key: connected
+  steps:
+  - - +0s
+    - true
+  - - +10m
+    - false
+- signal: containers
+  key: restart_count
+  steps:
+  - - +0s
+    - 0
+  - - +10m
+    - 1
+  epochs:
+  - - +0s
+    - e1
+  - - +10m
+    - e2
+- signal: containers
+  key: started_at
+  steps:
+  - - +0s
+    - '2026-10-07T09:00:00Z'
+  - - +10m
+    - '2026-10-07T10:10:00Z'
+expect:
+- at: +11m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: pending
+  note: for has not elapsed, and no window is open
+- at: +12m
+  rule: ingest.kafka-disconnected
+  eval: true
+  state: firing
+  incident: A
+  note: soc-daemon's medic-restart epoch did not pair with backend's restart
+incidents:
+  A:
+    rule: ingest.kafka-disconnected
+    active_since: +10m
+    opened_at: +12m
+    resolving_since: null
+    resolved_at: null
+    routed_at: +12m
