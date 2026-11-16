@@ -1199,6 +1199,8 @@ export interface ProposalRow {
   rule_id: number | null
   /** Its run's status: running, paused, completed, failed or cancelled. */
   run_status: string | null
+  /** Its run still working as the backend counts it, which can outlast ``run_status``. */
+  run_working: boolean
 }
 
 export interface ProposalEvent {
@@ -1227,6 +1229,10 @@ export const detectionEngineeringApi = {
   proposals: () => api.get<{ proposals: ProposalRow[] }>('/detection-engineering/proposals'),
 
   proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
+
+  /** Rejects a proposal; the reason is required and stays on its record. */
+  reject: (proposalId: string, reason: string) =>
+    api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
 }
 
 /** The signed-in person's notices and live conditions (the bell's second source). */
