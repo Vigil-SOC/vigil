@@ -1021,7 +1021,7 @@ function RolesCard({
         </div>
       )}
       {meta.new_permissions_unheld.length > 0 && (
-        <div className="settings-banner info mb-3">
+        <div className="settings-banner info items-start mb-3">
           <Icon name="info" size={14} />
           <span className="min-w-0">
             New permissions no custom role holds yet:{' '}
@@ -1145,8 +1145,16 @@ function RolesCard({
           <div>
             <div className="field-label mb-1.5">Permissions</div>
             <div
-              className="grid grid-cols-2 gap-x-4 gap-y-2"
-              style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: 10 }}
+              className="grid gap-x-4 gap-y-2"
+              style={{
+                maxHeight: 300,
+                overflowY: 'auto',
+                border: '1px solid var(--line)',
+                borderRadius: 6,
+                padding: 10,
+                // One column when the dialog is narrow, two once a name and its tag fit.
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+              }}
             >
               {byArea(meta.permissions).map(([area, keys]) => (
                 <div key={area} className="flex flex-col min-w-0">
