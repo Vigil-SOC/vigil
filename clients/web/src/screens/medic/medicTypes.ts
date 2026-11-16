@@ -60,6 +60,8 @@ export interface IncidentOpened {
   evidence?: EvidenceItem[]
   advice?: { summary: string; fix: string } | null
   would_have?: { L0: string; L1: string; L2: { action: string; not_eligible?: string } }
+  /** Present only when this install can run the restart. Null means there is no runbook. */
+  runbook?: { id: string; verify_after_s: number } | null
 }
 
 export interface IncidentDetail {
