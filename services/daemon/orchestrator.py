@@ -749,6 +749,8 @@ class Orchestrator:
         self._shutdown_event: Optional[asyncio.Event] = None
         # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
         self.watch_loop: Optional[Callable[..., None]] = None
+        # Set by the daemon: counts one intake-loop pass on /health.
+        self.note_pass: Optional[Callable[[], None]] = None
         self._approvals = approvals or ApprovalService()
         # Read for the run_kind a definition declares; the file cache needs no DB.
         self._workflows = workflows or WorkflowsService()
@@ -860,6 +862,10 @@ class Orchestrator:
     async def _intake_loop(self, shutdown_event: asyncio.Event):
         """Drain queued trigger rows and create new investigations."""
         while not shutdown_event.is_set():
+            # Intake only. The bookkeeping loop in run, and supervision and
+            # distil, do not count as this component making progress.
+            if self.note_pass is not None:
+                self.note_pass()
             try:
                 await self._drain_intake(shutdown_event)
                 if self._enabled:
