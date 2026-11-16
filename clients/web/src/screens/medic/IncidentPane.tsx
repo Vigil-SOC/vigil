@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
@@ -40,6 +40,9 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
   const [stored, setStored] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [fixNote, setFixNote] = useState('')
+  // the incident on screen; a restart still in flight must not write into the next one
+  const shown = useRef(id)
+  shown.current = id
   useEffect(() => { setPick(null); setLane(null); setComment(''); setFailed(''); setStored(null); setFixNote(''); setRunning(false) }, [id])
 
   const view = useMemo(() => {
@@ -82,16 +85,19 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
   }
 
   const runFix = async () => {
+    const target = id
     setRunning(true)
     setFixNote('')
     try {
-      await postFix(id)
+      await postFix(target)
+      if (shown.current !== target) return
       await reload()
     } catch (e) {
+      if (shown.current !== target) return
       setFixNote(fixClickError(problemCode(e), problemReason(e)))
       await reload()
     } finally {
-      setRunning(false)
+      if (shown.current === target) setRunning(false)
     }
   }
 
