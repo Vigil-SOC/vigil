@@ -20,7 +20,8 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
 - the daily gaps run opens one proposal per gap a rule can answer, recording the gap and
   its evidence, and the copies its agent run saves are attached to it (``for_gaps``,
   ``attach_saved``). Those copies keep the automatic rollout every agent draft has: the
-  proposal records them, it does not own them.
+  proposal records them, it does not own them. While one of those proposals is still
+  being worked, the gaps run holds its technique back (``worked_techniques``).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
-from sqlalchemy import exists, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
@@ -43,6 +44,8 @@ from core.storage.models import (
     DetectionRule,
     DetectionRuleStage,
     DetectionRuleVersion,
+    IntakeTrigger,
+    Investigation,
     WorkflowRun,
 )
 from core.storage.models.detection_proposal import (
@@ -51,6 +54,7 @@ from core.storage.models.detection_proposal import (
     InvalidProposalMove,
     ProposalState,
 )
+from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
@@ -971,3 +975,92 @@ def attach_saved(
             )
             attached.append(proposal.proposal_id)
         return attached
+
+
+def _unfinished_gap_runs(session: Session) -> Set[str]:
+    """The gaps-run proposals whose run has not finished: the intake row that carries
+    them is still queued, or the investigation it launched is still live."""
+    payloads: Iterable[Optional[Dict[str, Any]]] = session.scalars(
+        select(IntakeTrigger.payload)
+        .outerjoin(
+            Investigation,
+            Investigation.investigation_id == IntakeTrigger.investigation_id,
+        )
+        .where(
+            IntakeTrigger.kind == "schedule",
+            IntakeTrigger.payload.has_key("gap_proposal_ids"),
+            or_(
+                IntakeTrigger.state == "queued",
+                and_(
+                    IntakeTrigger.state == "launched",
+                    Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+                ),
+            ),
+        )
+    )
+    return {
+        i
+        for payload in payloads
+        for i in (payload or {}).get("gap_proposal_ids") or ()
+        if isinstance(i, str)
+    }
+
+
+def _running_copies(session: Session, rule_ids: Set[int]) -> Set[int]:
+    """The rules among ``rule_ids`` still running: an active SIEM copy whose latest
+    stage is not off. A copy the sync has not staged yet counts, as does a Wazuh copy,
+    which has no stage; the Sigma form runs nowhere, so it never does."""
+    if not rule_ids:
+        return set()
+    s = DetectionRuleStage
+    latest = (
+        select(s.rule_id, s.stage)
+        .where(s.rule_id.in_(rule_ids))
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        .subquery()
+    )
+    return set(
+        session.scalars(
+            select(DetectionRule.id)
+            .outerjoin(latest, latest.c.rule_id == DetectionRule.id)
+            .where(
+                DetectionRule.id.in_(rule_ids),
+                DetectionRule.status == "active",
+                DetectionRule.language.in_(COPY_LANGUAGES),
+                or_(latest.c.stage.is_(None), latest.c.stage != "off"),
+            )
+        )
+    )
+
+
+def worked_techniques() -> Set[str]:
+    """The techniques a gaps-run proposal is still working, which the gaps run does
+    not raise again.
+
+    A proposal works its technique until a person rejects it (or the gaps run
+    withdraws it), and only while its run has not finished or a rule it was given
+    still runs. So a run that ended without saving a rule frees the technique, and so
+    does switching off or removing every rule attached to it."""
+    with unit_of_work() as session:
+        rows = session.scalars(
+            select(DetectionProposal).where(
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+                DetectionProposal.state != ProposalState.REJECTED,
+                DetectionProposal.technique.isnot(None),
+            )
+        ).all()
+        if not rows:
+            return set()
+        steps = _link_steps(session, [p.proposal_id for p in rows])
+        attached: Dict[str, Set[int]] = {
+            p.proposal_id: set(_links(p, steps.get(p.proposal_id, ()))["rule_ids"])
+            for p in rows
+        }
+        running = _running_copies(session, set().union(*attached.values()))
+        unfinished = _unfinished_gap_runs(session)
+        return {
+            (p.technique or "").strip().upper()
+            for p in rows
+            if p.proposal_id in unfinished or attached[p.proposal_id] & running
+        }
