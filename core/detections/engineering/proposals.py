@@ -16,17 +16,23 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
   parsed and linted as the overlay will save them, in place of pySigma conversion;
 - each step names who took it: a signed-in person, an agent run, or Vigil itself;
 - shadow and live come in a later change (#4157 step 4), and drafting with the model is
-  not here.
+  not here;
+- the daily gaps run opens one proposal per gap a rule can answer, recording the gap and
+  its evidence, and the copies its agent run saves are attached to it (``for_gaps``,
+  ``attach_saved``). Those copies keep the automatic rollout every agent draft has: the
+  proposal records them, it does not own them.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+import logging
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
+from core.detections import gap_run
 from core.detections.engineering import lint as lint_mod
 from core.detections.engineering import siem_replay, sigma_text
 from core.detections.overlay import Refused
@@ -37,6 +43,7 @@ from core.storage.models import (
     DetectionRule,
     DetectionRuleStage,
     DetectionRuleVersion,
+    WorkflowRun,
 )
 from core.storage.models.detection_proposal import (
     ACTOR_KINDS,
@@ -46,9 +53,19 @@ from core.storage.models.detection_proposal import (
 )
 from core.storage.unit_of_work import unit_of_work
 
-PERSON, AGENT = "person", "agent"
+logger = logging.getLogger(__name__)
+
+PERSON, AGENT, SYSTEM = "person", "agent", "system"
 # The SIEMs a person can paste a native copy for, as the overlay saves them.
 COPY_LANGUAGES = ("splunk", "elastic", "wazuh")
+
+# A proposal the daily gaps run opened. Its rollout stays automatic: the copies its run
+# saves go to shadow and promote on the exit criteria like any agent draft's, so a
+# proposal of this origin never owns its copies' rollout.
+GAPS_RUN = "gaps run"
+AUTOMATIC_ROLLOUT = "automatic"
+# The gaps a rule can answer. A blind spot is a missing data source: no rule is drafted.
+_DRAFTABLE_GAPS = (gap_run.MISSED, gap_run.PAPER, gap_run.INTEL)
 
 
 class NotFound(LookupError):
@@ -159,8 +176,75 @@ def _stage_view(session: Session, rule_ids: List[int]) -> List[Dict[str, Any]]:
     ]
 
 
+def _links(
+    proposal: DetectionProposal, evidence: Iterable[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """The run a proposal was handed to and the rules attached to it, from its record."""
+    run_id: Optional[str] = None
+    rule_ids: List[int] = []
+    for item in evidence:
+        if item.get("step") not in ("run", "attach"):
+            continue
+        run_id = item.get("run_id") or run_id
+        rule_ids += [r for r in item.get("rule_ids") or () if r not in rule_ids]
+    if proposal.rule_id is not None and proposal.rule_id not in rule_ids:
+        rule_ids.append(proposal.rule_id)
+    return {"run_id": run_id, "rule_ids": rule_ids}
+
+
+def _link_steps(session: Session, ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    rows = session.execute(
+        select(DetectionProposalEvent.proposal_id, DetectionProposalEvent.evidence)
+        .where(
+            DetectionProposalEvent.proposal_id.in_(ids),
+            DetectionProposalEvent.evidence["step"].astext.in_(("run", "attach")),
+        )
+        .order_by(DetectionProposalEvent.id)
+    ).all()
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for proposal_id, evidence in rows:
+        out.setdefault(proposal_id, []).append(evidence)
+    return out
+
+
+def _gap_case_ids(origins: Iterable[Optional[Dict[str, Any]]]) -> Set[str]:
+    return {
+        key.partition(":")[2]
+        for origin in origins
+        for key in ((origin or {}).get("gap") or {}).get("runs") or ()
+        if key.startswith("case:")
+    }
+
+
+def _readable_cases(session: Session, case_ids: Set[str]) -> Set[str]:
+    if not case_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(Case.case_id).where(Case.case_id.in_(case_ids), case_read_clause())
+        )
+    )
+
+
+def _origin_shown(origin: Dict[str, Any], readable: Set[str]) -> Dict[str, Any]:
+    """A gaps run's evidence without the Cases this reader can't read."""
+    gap = (origin or {}).get("gap")
+    if not isinstance(gap, dict):
+        return origin
+    runs = list(gap.get("runs") or ())
+    kept = [
+        k for k in runs if not k.startswith("case:") or k.partition(":")[2] in readable
+    ]
+    if len(kept) == len(runs):
+        return origin
+    withheld = len(runs) - len(kept)
+    return {**origin, "gap": {**gap, "runs": kept, "runs_withheld": withheld}}
+
+
 def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
     events = _events(session, proposal)
+    links = _links(proposal, (e.evidence for e in events))
+    readable = _readable_cases(session, _gap_case_ids([proposal.origin]))
     latest: Dict[str, Any] = {}
     for step in (
         "draft",
@@ -179,18 +263,21 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "title": proposal.title,
         "technique": proposal.technique,
         "case_id": proposal.case_id,
-        "origin": proposal.origin,
+        "origin": _origin_shown(proposal.origin, readable),
         "sigma": proposal.sigma,
         "copies": proposal.copies,
         "state": proposal.state.value,
         "rule_id": proposal.rule_id,
+        **links,
         "created_by": proposal.created_by,
         "created_at": proposal.created_at.isoformat(),
         "updated_at": proposal.updated_at.isoformat(),
         "allowed": sorted(s.value for s in TRANSITIONS[proposal.state]),
         "latest": latest,
         "events": [_event_view(e, proposal.sigma) for e in events],
-        "stages": _stage_view(session, [proposal.rule_id]) if proposal.rule_id else [],
+        "stages": (
+            _stage_view(session, links["rule_ids"]) if links["rule_ids"] else []
+        ),
     }
 
 
@@ -210,7 +297,10 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
         if state:
             statement = statement.where(DetectionProposal.state == ProposalState(state))
         proposals = session.scalars(statement).all()
-        replays = _latest_replays(session, [p.proposal_id for p in proposals])
+        ids = [p.proposal_id for p in proposals]
+        replays = _latest_replays(session, ids)
+        steps = _link_steps(session, ids)
+        readable = _readable_cases(session, _gap_case_ids(p.origin for p in proposals))
         return [
             {
                 "proposal_id": p.proposal_id,
@@ -218,11 +308,12 @@ def listing(state: Optional[str] = None) -> List[Dict[str, Any]]:
                 "technique": p.technique,
                 "case_id": p.case_id,
                 "state": p.state.value,
-                "origin": p.origin,
+                "origin": _origin_shown(p.origin, readable),
                 "created_by": p.created_by,
                 "created_at": p.created_at.isoformat(),
                 "updated_at": p.updated_at.isoformat(),
                 "replay": replays.get(p.proposal_id),
+                **_links(p, steps.get(p.proposal_id, ())),
             }
             for p in proposals
         ]
@@ -267,6 +358,7 @@ def shown_to(
     """A proposal as this reader may see it. Rows of logs and findings need findings.read, and
     which case a rule came from needs cases.read."""
     case_id = view.get("case_id")
+    view = _gap_shown_to(view, reads_findings=reads_findings, reads_cases=reads_cases)
     if not reads_findings:
         view = _without_finding_content(view)
     if case_id and not reads_cases:
@@ -274,6 +366,26 @@ def shown_to(
         if isinstance(view.get("origin"), dict):
             view["origin"] = {**view["origin"], "case_id": None}
     return view
+
+
+def _gap_shown_to(
+    view: Dict[str, Any], *, reads_findings: bool, reads_cases: bool
+) -> Dict[str, Any]:
+    """A gaps run's alerts are Findings, and its ``case:`` runs are Cases."""
+    origin = view.get("origin")
+    gap = origin.get("gap") if isinstance(origin, dict) else None
+    if not isinstance(gap, dict):
+        return view
+    gap = dict(gap)
+    if not reads_findings and gap.get("alerts"):
+        gap["alerts"], gap["alerts_withheld"] = [], True
+    if not reads_cases:
+        runs = list(gap.get("runs") or ())
+        kept = [k for k in runs if not k.startswith("case:")]
+        if len(kept) != len(runs):
+            gap["runs"] = kept
+            gap["runs_withheld"] = gap.get("runs_withheld", 0) + len(runs) - len(kept)
+    return {**view, "origin": {**origin, "gap": gap}}
 
 
 def case_of(proposal_id: str) -> Optional[str]:
@@ -687,3 +799,175 @@ def from_rule(rule_id: int, actor: str, kind: str = PERSON) -> Dict[str, Any]:
         origin={"source": "inventory", "rule_id": rule_id, "rule_version": version},
         evidence={"source": "inventory", "rule_id": rule_id, "rule_version": version},
     )
+
+
+def _gap_record(gap: gap_run.Gap, technique: str) -> Dict[str, Any]:
+    return {
+        "kind": gap.kind,
+        "technique": technique,
+        "count": gap.count,
+        "confirmed": gap.confirmed,
+        # The missed runs by run key ("hunt:<id>", "case:<id>"), the alerts on a
+        # paper-only technique by finding id, and the intrusion sets and reports that
+        # name an intel gap's technique.
+        "runs": list(gap.evidence) if gap.kind == gap_run.MISSED else [],
+        "alerts": list(gap.evidence) if gap.kind == gap_run.PAPER else [],
+        "sources": list(gap.sources),
+    }
+
+
+def for_gaps(gaps: Iterable[gap_run.Gap]) -> List[str]:
+    """One draft per raised gap a rule can answer, holding the gap and its evidence; a
+    blind spot gets none. A draft has no text until its run saves a rule for it."""
+    ids: List[str] = []
+    with unit_of_work() as session:
+        for gap in gaps:
+            if gap.kind not in _DRAFTABLE_GAPS:
+                continue
+            technique = gap.subject.strip().upper()
+            if not sigma_text.TECHNIQUE_ID.match(technique):
+                logger.warning("gaps run: %r is not a technique id", gap.subject)
+                continue
+            record = _gap_record(gap, technique)
+            proposal = DetectionProposal.draft(
+                title=gap.line(),
+                sigma="",
+                actor=SYSTEM,
+                actor_kind=SYSTEM,
+                # The ids stay on the origin alone, where a reader's view withholds the
+                # Cases and Findings they can't read; the event log is shown as written.
+                evidence={
+                    "step": "draft",
+                    "source": f"raised by the {GAPS_RUN}",
+                    "gap": {
+                        k: record[k]
+                        for k in ("kind", "technique", "count", "confirmed")
+                    },
+                },
+                technique=technique,
+                origin={
+                    "source": GAPS_RUN,
+                    "rollout": AUTOMATIC_ROLLOUT,
+                    "gap": record,
+                },
+            )
+            session.add(proposal)
+            session.flush()
+            ids.append(proposal.proposal_id)
+    return ids
+
+
+def _gap_proposals(session: Session, ids: Sequence[str]) -> List[DetectionProposal]:
+    """The gaps run's own proposals among ``ids``, locked: a save and a person can race."""
+    if not ids:
+        return []
+    return list(
+        session.scalars(
+            select(DetectionProposal)
+            .where(
+                DetectionProposal.proposal_id.in_(list(ids)),
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+            )
+            .order_by(DetectionProposal.proposal_id)
+            .with_for_update()
+        )
+    )
+
+
+def withdraw_gaps(proposal_ids: Sequence[str], reason: str) -> None:
+    """Reject the drafts of a gaps run that was never queued; the next run raises them again."""
+    with unit_of_work() as session:
+        for proposal in _gap_proposals(session, proposal_ids):
+            if ProposalState.REJECTED in TRANSITIONS[proposal.state]:
+                proposal.move_to(
+                    ProposalState.REJECTED,
+                    actor=SYSTEM,
+                    actor_kind=SYSTEM,
+                    evidence={"step": "reject"},
+                    reason=reason,
+                )
+
+
+def gap_run_started(proposal_ids: Sequence[str], run_id: str) -> None:
+    """Record the run the gaps run's drafts were handed to."""
+    with unit_of_work() as session:
+        for proposal in _gap_proposals(session, proposal_ids):
+            _note(proposal, SYSTEM, SYSTEM, {"step": "run", "run_id": run_id})
+
+
+def attach_saved(
+    run_id: str, actor: str, saved: Sequence[Mapping[str, Any]]
+) -> List[str]:
+    """Attach the copies a run saved to the gaps it was handed, by ATT&CK technique.
+
+    ``run_id`` comes from the save's signed claims, and the proposals are the ones the
+    gaps run put on that run's ``trigger_context``, never ones the model named. Each
+    copy is ``{rule_id, language, native_key, techniques, text}``; one attaches to a
+    proposal whose technique it carries exactly (a parent or subtechnique only touches
+    it, as identify_gaps counts). Returns the proposals attached to: none for a run
+    the gaps run did not queue, and none for a child run, which has a run id of its
+    own (the gaps run's built-in agent run starts none).
+    """
+    with unit_of_work() as session:
+        context = session.scalar(
+            select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
+        )
+        ids = [
+            i
+            for i in (context or {}).get("gap_proposal_ids") or ()
+            if isinstance(i, str)
+        ]
+        attached: List[str] = []
+        for proposal in _gap_proposals(session, ids):
+            matched = [
+                c
+                for c in saved
+                if proposal.technique
+                in {str(t).strip().upper() for t in c.get("techniques") or ()}
+            ]
+            if not matched:
+                continue
+            rule_ids = [c["rule_id"] for c in matched]
+            # Only a draft takes the saved copies and text on. One a person converted or
+            # rejected keeps the copies checked against its text: the save is recorded.
+            applied = proposal.state is ProposalState.DRAFT
+            sigma: Optional[str] = None
+            if applied:
+                proposal.copies = {
+                    **proposal.copies,
+                    **{
+                        c["language"]: c["text"]
+                        for c in matched
+                        if c["language"] in COPY_LANGUAGES
+                    },
+                }
+                # The copy the stages follow: a SIEM's, else the Sigma form.
+                proposal.rule_id = next(
+                    (c["rule_id"] for c in matched if c["language"] != "sigma"),
+                    rule_ids[0],
+                )
+                # The saved Sigma form is the draft's text, so lint and replay judge it.
+                sigma = next(
+                    (c["text"] for c in matched if c["language"] == "sigma"), None
+                )
+            evidence = {
+                "step": "attach",
+                "run_id": run_id,
+                "rule_ids": rule_ids,
+                "copies": [
+                    {k: c[k] for k in ("rule_id", "language", "native_key")}
+                    for c in matched
+                ],
+                "applied": applied,
+                "rollout": AUTOMATIC_ROLLOUT,
+            }
+            _note(
+                proposal,
+                actor,
+                AGENT,
+                evidence,
+                reason="saved by the run the gaps run queued",
+                sigma=sigma,
+            )
+            attached.append(proposal.proposal_id)
+        return attached

@@ -265,7 +265,7 @@ def staged_entry(
 ) -> Dict[str, Any]:
     """The one trail entry every stage move writes, Vigil's or a person's.
 
-    ``hold`` is what the move did to a person's hold: True a Revert set it,
+    ``hold`` is what the move did to a person's hold: True a Revert or a switch off set it,
     False a release lifted it, None it left it as it was (every move Vigil makes).
     """
     from core.audit import trail

@@ -522,6 +522,40 @@ def _author() -> Dict[str, Any]:
     }
 
 
+def _answer_gaps(
+    author: Dict[str, Any],
+    prepared: List[Tuple[str, str, RuleRecord]],
+    saved: List[Dict[str, Any]],
+) -> List[str]:
+    """Attach the saved copies to the gaps the daily gaps run handed this run, if any.
+
+    The rules are saved already: a record that fails is logged, not the save's answer.
+    """
+    from core.detections.engineering import proposals
+
+    rule_ids = {row["id"]: row["rule_id"] for row in saved}
+    copies = [
+        {
+            "rule_id": rule_ids[record.native_key],
+            "language": language,
+            "native_key": record.native_key,
+            "techniques": list(record.techniques),
+            "text": text,
+        }
+        for language, text, record in prepared
+        if record.native_key in rule_ids
+    ]
+    try:
+        return proposals.attach_saved(
+            author["run_id"],
+            author["agent_id"] or author["actor"] or author["run_id"],
+            copies,
+        )
+    except Exception:  # noqa: BLE001 -- the save stands without the record
+        logger.exception("Overlay save: recording the gaps run's rule failed")
+        return []
+
+
 def save_rule(
     splunk_yaml: Optional[str] = None,
     elastic_toml: Optional[str] = None,
@@ -603,8 +637,9 @@ def save_rule(
                 )
                 _write(root, rel, text)
             source = service.overlay_source()  # recounted with the new files
+            author = _author()
             saves = sync.Saves(
-                _author(),
+                author,
                 {record.native_key: fingerprint(record) for _, _, record in prepared},
             )
             report = sync._sync_one(service, source, saves)
@@ -623,9 +658,14 @@ def save_rule(
             undone, removed = _undo(service, root, before, keys)
             reason = exc.args[0] if isinstance(exc, NotSaved) else type(exc).__name__
             raise NotSaved(reason, undone=undone, removed=removed) from exc
-    result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
+    saved = _saved(keys)
+    result: Dict[str, Any] = {"saved": saved, "sync": asdict(report)}
     if added:
         result["exceptions"] = added
+    if author["run_id"] and saved and not report.error:
+        answered = _answer_gaps(author, prepared, saved)
+        if answered:
+            result["gap_proposals"] = answered
     if report.error:
         result["error"] = f"written, but the overlay sync failed: {report.error}"
     return result
