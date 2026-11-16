@@ -12,6 +12,13 @@ without one gets a fresh uuid. The sync appends the 'shadow' stage rows, and for
 transaction. A copy saved unchanged makes no version and no entry. A version
 with no such entry was first seen by the sync alone: a file put in the folder.
 
+A redraft saved under a new id is a new rule. When the daily gaps run raised the
+gap a save answers again, the save's copies replace the ones Vigil drafted for
+that gap's technique before (``proposals.replaced_copies``): each copy's new
+version names the earlier copies of its language on its stage row
+(``proof['replaces']``) and its ``detections.rule_saved`` entry, so a replaced
+copy can be read forward to its successor. Code makes the link, never the model.
+
 Evidence passed with the save is replayed on the Sigma form before anything is
 written (#3755); the result lands as ``checks.replay`` on the Sigma version.
 Events named by id are read from the SIEM instead, and each Splunk and Elastic
@@ -522,6 +529,34 @@ def _author() -> Dict[str, Any]:
     }
 
 
+def _replaced(
+    author: Dict[str, Any], prepared: List[Tuple[str, str, RuleRecord]]
+) -> Dict[str, List[int]]:
+    """Each copy's native key and the earlier gap drafts' copies it replaces.
+
+    Only a record: a lookup that fails is logged and the save goes ahead unlinked.
+    """
+    if not author["run_id"]:
+        return {}
+    from core.detections.engineering import proposals
+
+    try:
+        return proposals.replaced_copies(
+            author["run_id"],
+            [
+                {
+                    "language": language,
+                    "native_key": record.native_key,
+                    "techniques": list(record.techniques),
+                }
+                for language, _, record in prepared
+            ],
+        )
+    except Exception:  # noqa: BLE001 -- the save stands without the link
+        logger.exception("Overlay save: finding the drafts this one replaces failed")
+        return {}
+
+
 def _answer_gaps(
     author: Dict[str, Any],
     prepared: List[Tuple[str, str, RuleRecord]],
@@ -641,6 +676,7 @@ def save_rule(
             saves = sync.Saves(
                 author,
                 {record.native_key: fingerprint(record) for _, _, record in prepared},
+                _replaced(author, prepared),
             )
             report = sync._sync_one(service, source, saves)
             if report.error and all_or_nothing:

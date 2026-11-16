@@ -35,6 +35,7 @@ from core.auth.permissions import case_read_clause, may_read_case
 from core.detections import gap_run
 from core.detections.engineering import lint as lint_mod
 from core.detections.engineering import siem_replay, sigma_text
+from core.detections.inventory.readers import OVERLAY_SOURCE
 from core.detections.overlay import Refused
 from core.storage.models import (
     Case,
@@ -857,21 +858,22 @@ def for_gaps(gaps: Iterable[gap_run.Gap]) -> List[str]:
     return ids
 
 
-def _gap_proposals(session: Session, ids: Sequence[str]) -> List[DetectionProposal]:
-    """The gaps run's own proposals among ``ids``, locked: a save and a person can race."""
+def _gap_proposals(
+    session: Session, ids: Sequence[str], *, lock: bool = True
+) -> List[DetectionProposal]:
+    """The gaps run's own proposals among ``ids``, locked unless only read: a save and a
+    person can race."""
     if not ids:
         return []
-    return list(
-        session.scalars(
-            select(DetectionProposal)
-            .where(
-                DetectionProposal.proposal_id.in_(list(ids)),
-                DetectionProposal.origin["source"].astext == GAPS_RUN,
-            )
-            .order_by(DetectionProposal.proposal_id)
-            .with_for_update()
+    query = (
+        select(DetectionProposal)
+        .where(
+            DetectionProposal.proposal_id.in_(list(ids)),
+            DetectionProposal.origin["source"].astext == GAPS_RUN,
         )
+        .order_by(DetectionProposal.proposal_id)
     )
+    return list(session.scalars(query.with_for_update() if lock else query))
 
 
 def withdraw_gaps(proposal_ids: Sequence[str], reason: str) -> None:
@@ -895,6 +897,111 @@ def gap_run_started(proposal_ids: Sequence[str], run_id: str) -> None:
             _note(proposal, SYSTEM, SYSTEM, {"step": "run", "run_id": run_id})
 
 
+def _run_gap_ids(session: Session, run_id: str) -> List[str]:
+    """The proposals the gaps run put on the run's ``trigger_context``."""
+    context = session.scalar(
+        select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
+    )
+    return [
+        i for i in (context or {}).get("gap_proposal_ids") or () if isinstance(i, str)
+    ]
+
+
+def _answers(copy: Mapping[str, Any], technique: Optional[str]) -> bool:
+    """A copy answers a gap whose technique it carries exactly (a parent or
+    subtechnique only touches it, as identify_gaps counts)."""
+    return technique in {str(t).strip().upper() for t in copy.get("techniques") or ()}
+
+
+def _earlier_copies(
+    session: Session, proposal: DetectionProposal, run_ids: Sequence[str]
+) -> List[Dict[str, Any]]:
+    """The copies attached to the gaps run's latest earlier proposal for the same
+    technique that had any: ``{rule_id, language, native_key}`` each.
+
+    Earlier is opened before ``proposal`` and not handed to the same run. One whose run
+    saved nothing is passed over for the one before it; one a person rejected after
+    its run saved is not, as its copies are still the drafts Vigil made for the gap.
+    """
+    attached = exists().where(
+        DetectionProposalEvent.proposal_id == DetectionProposal.proposal_id,
+        DetectionProposalEvent.evidence["step"].astext == "attach",
+    )
+    earlier = session.scalar(
+        select(DetectionProposal.proposal_id)
+        .where(
+            DetectionProposal.origin["source"].astext == GAPS_RUN,
+            DetectionProposal.technique == proposal.technique,
+            DetectionProposal.created_at < proposal.created_at,
+            DetectionProposal.proposal_id.notin_(list(run_ids)),
+            attached,
+        )
+        .order_by(
+            DetectionProposal.created_at.desc(), DetectionProposal.proposal_id.desc()
+        )
+        .limit(1)
+    )
+    if earlier is None:
+        return []
+    copies: Dict[int, Dict[str, Any]] = {}
+    for evidence in _link_steps(session, [earlier]).get(earlier, ()):
+        for c in evidence.get("copies") or ():
+            if isinstance(c, dict) and isinstance(c.get("rule_id"), int):
+                copies.setdefault(c["rule_id"], c)
+    return list(copies.values())
+
+
+def replaced_copies(
+    run_id: str, saving: Sequence[Mapping[str, Any]]
+) -> Dict[str, List[int]]:
+    """Each copy a run is saving and the earlier copies it replaces, by native key.
+
+    A copy that will attach to one of the run's gap proposals (``attach_saved``'s
+    match) replaces the copies of its language attached to the latest earlier gap
+    proposal for that technique (``_earlier_copies``): the gap was raised again, so
+    this draft takes their place, whether they were switched off, removed, or are
+    still in shadow or live. Only copies a gap proposal attached count, never a
+    person's own rule, and never a copy under one of this save's native keys (saved
+    under its own id, it is a new version of that rule). Each copy is
+    ``{language, native_key, techniques}``; a run the gaps run did not queue gets none.
+    """
+    links: Dict[str, List[int]] = {}
+    with unit_of_work() as session:
+        run_ids = _run_gap_ids(session, run_id)
+        proposals = _gap_proposals(session, run_ids, lock=False)
+        keys = {c["native_key"] for c in saving}
+        for proposal in proposals:
+            matched = [c for c in saving if _answers(c, proposal.technique)]
+            if not matched:
+                continue
+            earlier = _earlier_copies(session, proposal, run_ids)
+            if not earlier:
+                continue
+            rows = {
+                rid: (language, key)
+                for rid, language, key in session.execute(
+                    select(
+                        DetectionRule.id,
+                        DetectionRule.language,
+                        DetectionRule.native_key,
+                    ).where(
+                        DetectionRule.id.in_([c["rule_id"] for c in earlier]),
+                        DetectionRule.source == OVERLAY_SOURCE,
+                    )
+                ).all()
+            }
+            for copy in matched:
+                replaced = links.setdefault(copy["native_key"], [])
+                for rid, (language, key) in sorted(rows.items()):
+                    if (
+                        language == copy["language"]
+                        and key not in keys
+                        and rid not in replaced
+                    ):
+                        replaced.append(rid)
+    return {key: ids for key, ids in links.items() if ids}
+
+
 def attach_saved(
     run_id: str, actor: str, saved: Sequence[Mapping[str, Any]]
 ) -> List[str]:
@@ -909,22 +1016,9 @@ def attach_saved(
     own (the gaps run's built-in agent run starts none).
     """
     with unit_of_work() as session:
-        context = session.scalar(
-            select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
-        )
-        ids = [
-            i
-            for i in (context or {}).get("gap_proposal_ids") or ()
-            if isinstance(i, str)
-        ]
         attached: List[str] = []
-        for proposal in _gap_proposals(session, ids):
-            matched = [
-                c
-                for c in saved
-                if proposal.technique
-                in {str(t).strip().upper() for t in c.get("techniques") or ()}
-            ]
+        for proposal in _gap_proposals(session, _run_gap_ids(session, run_id)):
+            matched = [c for c in saved if _answers(c, proposal.technique)]
             if not matched:
                 continue
             rule_ids = [c["rule_id"] for c in matched]

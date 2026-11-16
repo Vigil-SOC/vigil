@@ -450,8 +450,9 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/rules/{rule_id}/stages")
 def get_rule_stages(rule_id: int):
     """A rule's stage rows, newest first: version, from and to stage, actor,
-    reason and time; and ``held``, whether a person's Revert holds it in shadow.
-    Read-only."""
+    reason, the earlier copies that version was saved to replace, and time;
+    ``held``, whether a person's Revert holds it in shadow; and ``replaced_by``,
+    the rules saved to replace it. Read-only."""
     try:
         return {"rule_id": rule_id, **stages.history(rule_id)}
     except LookupError as e:
