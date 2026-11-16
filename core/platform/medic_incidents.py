@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 _AFTER = timedelta(minutes=15)
 _CAP = timedelta(minutes=75)
 _KIND = "medic_incident"
+# A fix Medic can run. Its own kind, so a #4338 row is never also this one.
+_FIX_KIND = "medic_fix"
+_FIX_OPEN = "fix_open"
+_FIX_NOT_HELD = "fix_not_held"
+_FIX_NOT_BACK = "fix_not_back"
+_FIX_FIXED = "fix_fixed"
 _MEDIC = "/medic"
 _BUNDLE = "sh scripts/vigil-support/vigil-support.sh"
 _NO_FIX = "No fix text for this incident; open it in Medic"
@@ -66,6 +72,25 @@ _HOW = {
 _CONFIRM = 2
 _GATE = "A fix rule didn't pass Medic's safety check, so no fix was offered."
 _UNKNOWN = "Medic saw a signature it does not recognise, so no fix was offered."
+# What the log holds when the opening is first sent. A later click does not
+# send a second opening. Words are ours; a result outside this list is not echoed.
+_REFUSAL = {
+    "not_open": "the incident is not open",
+    "not_firing": "the incident is not firing",
+    "no_runbook": "there is no runbook",
+    "upgrade_window": "an upgrade window is open",
+    "no_container": "soc-daemon has no container",
+    "container_restarted": "soc-daemon was already restarted",
+    "fix_running": "a fix is already running",
+    "not_compose": "this install is not Compose",
+    "restart_failed": "the restart failed",
+}
+_CLICK_WAITING = "A click is waiting."
+_RESTARTED = "Medic restarted soc-daemon."
+_REFUSED = "Medic refused."
+_NOT_HELD = "The fix did not hold."
+_NOT_BACK = "The daemon did not come back."
+_FIXED_WORD = "Fixed."
 
 Fetch = Any  # (path) -> (status or None, body)
 
@@ -92,6 +117,7 @@ class _Note:
     link: Optional[str]
     incident_id: Optional[str] = None
     reopen: Optional[int] = None
+    kind: str = _KIND
 
 
 @dataclass
@@ -425,6 +451,139 @@ def _detail_summary(detail: Any) -> Optional[dict]:
     return summary if isinstance(summary, dict) else None
 
 
+def _run_matches(body: dict, incident_id: str) -> bool:
+    """The clicked incident, or one a click covered. The id filter alone misses the second."""
+    if body.get("incident_id") == incident_id:
+        return True
+    covered = body.get("covered")
+    return isinstance(covered, list) and incident_id in covered
+
+
+def _latest_run(records: list, incident_id: str) -> Optional[tuple[str, dict]]:
+    """The newest fix_run for this incident, as ``(at, body)``. Level is not read."""
+    found: list[tuple[str, int, dict]] = []
+    for index, rec in enumerate(records):
+        if not isinstance(rec, dict) or rec.get("type") != "fix_run":
+            continue
+        body = rec.get("body")
+        if not isinstance(body, dict) or not _run_matches(body, incident_id):
+            continue
+        at = rec.get("at") if isinstance(rec.get("at"), str) else ""
+        seq = rec.get("seq") if type(rec.get("seq")) is int else index
+        found.append((at, seq, body))
+    if not found:
+        return None
+    at, _seq, body = max(found)
+    return at, body
+
+
+def _opening_sentence(run: Optional[tuple[str, dict]]) -> str:
+    if run is None:
+        return _CLICK_WAITING
+    checks = run[1].get("checks")
+    result = checks.get("result") if isinstance(checks, dict) else None
+    if result == "passed":
+        return _RESTARTED
+    words = _REFUSAL.get(result) if isinstance(result, str) else None
+    if not words:
+        return _REFUSED
+    return f"Medic refused: {words}."
+
+
+def _verified(records: list, incident_id: str, run_at: str, result: str) -> bool:
+    """A fix_verified for this incident after that run. ``not_verified`` is never asked."""
+    for rec in records:
+        if not isinstance(rec, dict) or rec.get("type") != "fix_verified":
+            continue
+        body = rec.get("body")
+        if not isinstance(body, dict):
+            continue
+        if body.get("incident_id") != incident_id or body.get("result") != result:
+            continue
+        at = rec.get("at")
+        if isinstance(at, str) and at >= run_at:
+            return True
+    return False
+
+
+def _fix_note(
+    event: str, sentence: str, incident_id: str, reopen: int, frontend: str
+) -> _Note:
+    sentence = _clip(sentence, 200, one_line=True) or "Medic fix"
+    link = _link(incident_id)
+    lines = [sentence]
+    if link:
+        lines += ["", f"Open it at {link}"]
+    message, mail = _finish("\n".join(lines), link, frontend)
+    return _Note(event, sentence, message, mail, link, incident_id, reopen, _FIX_KIND)
+
+
+def _add_fix_notices(
+    plan: IncidentPlan,
+    items: list[_Item],
+    details: dict[str, Any],
+    sent: set[tuple[str, int, str]],
+    decisions: list,
+    frontend: str,
+) -> None:
+    """One opening, then each later outcome once. Held and suppressed get nothing.
+
+    A fix incident is lane 1 whose L1 would-have is ``propose_runbook``.
+    ``notify_admin`` (including llm.worker-wedged) stays on the other path.
+    These are not held for the first-start summary and are not part of it.
+    """
+    told = set(sent)
+    by_id: dict[str, _Item] = {}
+    for item in items:
+        by_id.setdefault(item.id, item)
+
+    def emit(incident_id: str, reopen: int, event: str, sentence: str) -> None:
+        key = (incident_id, reopen, event)
+        if key in told:
+            return
+        told.add(key)
+        plan.notices.append(_fix_note(event, sentence, incident_id, reopen, frontend))
+        plan.rows.append(_Row(incident_id, reopen, event, None, None))
+
+    for item in items:
+        if item.state not in _ROUTED:
+            continue
+        if (item.id, item.reopen, _FIX_OPEN) in told:
+            continue
+        if item.lane != 1 or _l1(details.get(item.id)) != "propose_runbook":
+            continue
+        emit(
+            item.id,
+            item.reopen,
+            _FIX_OPEN,
+            _opening_sentence(_latest_run(decisions, item.id)),
+        )
+
+    openings = [(iid, reopen) for iid, reopen, event in told if event == _FIX_OPEN]
+    for iid, reopen in openings:
+        item = by_id.get(iid)
+        summary = None if item is not None else _detail_summary(details.get(iid))
+        if item is not None:
+            if item.state not in _ROUTED or item.reopen != reopen:
+                continue
+        elif summary is None or summary.get("reopen_count") != reopen:
+            continue
+        latest = _latest_run(decisions, iid)
+        if latest is not None and latest[0]:
+            if _verified(decisions, iid, latest[0], "not_cleared"):
+                emit(iid, reopen, _FIX_NOT_HELD, _NOT_HELD)
+            if _verified(decisions, iid, latest[0], "not_back"):
+                emit(iid, reopen, _FIX_NOT_BACK, _NOT_BACK)
+        if summary is None:
+            continue
+        if (
+            summary.get("state") != "resolved"
+            or summary.get("resolved_how") != "cleared"
+        ):
+            continue
+        emit(iid, reopen, _FIX_FIXED, _FIXED_WORD)
+
+
 def plan_incident_notices(
     items: list[_Item],
     details: dict[str, Any],
@@ -437,6 +596,7 @@ def plan_incident_notices(
     announced_word: Optional[str],
     summary_started_at: Optional[str],
     frontend_url: str,
+    decisions: Optional[list] = None,
 ) -> IncidentPlan:
     """What this pass writes. ``details`` values are bodies, or None if that fetch did not finish."""
     sent = set(sent_text)
@@ -569,6 +729,9 @@ def plan_incident_notices(
             continue
         plan.notices.append(_clear_note(iid, reopen, how, summary, fix, frontend_url))
         plan.rows.append(_Row(iid, reopen, "cleared", summary, fix))
+    # A decisions read that did not finish leaves the plan above as it is.
+    if decisions is not None:
+        _add_fix_notices(plan, items, details, sent, decisions, frontend_url)
     return plan
 
 
@@ -611,6 +774,18 @@ def _one(
         return 200, response.json()
     except ValueError:
         return 200, None
+
+
+def _fix_gone(items: list[_Item], sent: set[tuple[str, int, str]]) -> list[str]:
+    """Fix incidents that have left the open list and may now be resolved."""
+    open_ids = {item.id for item in items}
+    ids: list[str] = []
+    for iid, reopen, event in sent:
+        if event != _FIX_OPEN or (iid, reopen, _FIX_FIXED) in sent:
+            continue
+        if iid not in open_ids:
+            ids.append(iid)
+    return ids
 
 
 def _wanted(items: list[_Item], sent: set[tuple[str, int, str]]) -> list[str]:
@@ -661,8 +836,39 @@ def _read_sent() -> tuple[
         )
 
 
-def _fetch(url: str, key: str) -> Optional[tuple[list[_Item], dict[str, Any]]]:
-    """Open pages, then the details this pass may tell. None if a page did not come back 200."""
+def _decisions(client: httpx.Client, url: str, key: str) -> Optional[list]:
+    """fix_run and fix_verified, every page. None if a page did not come back."""
+    items: list = []
+    cursor: Optional[str] = None
+    seen: set[str] = set()
+    for _ in range(_PAGES):
+        path = "/v1/decisions?type=fix_run&type=fix_verified&limit=100"
+        if cursor:
+            path += "&cursor=" + quote(cursor, safe="")
+        status, body = _one(client, url, key, path)
+        if status != 200 or not isinstance(body, dict):
+            return None
+        page, nxt = body.get("items"), body.get("next_cursor")
+        if not isinstance(page, list) or "next_cursor" not in body:
+            return None
+        items.extend(page)
+        if nxt is None:
+            return items
+        if not isinstance(nxt, str) or nxt in seen or len(nxt) > 512:
+            return None
+        seen.add(nxt)
+        cursor = nxt
+    return None
+
+
+def _fetch(
+    url: str, key: str
+) -> Optional[tuple[list[_Item], dict[str, Any], Optional[list]]]:
+    """Open pages, the details this pass may tell, and the fix log.
+
+    None if an incident page did not come back 200. A decisions read that
+    did not finish is None in the third place: fix notices wait, the rest do not.
+    """
     timeout = httpx.Timeout(medic_last_seen.REQUEST_TIMEOUT_S)
     with httpx.Client(
         timeout=timeout, follow_redirects=False, trust_env=False
@@ -676,21 +882,27 @@ def _fetch(url: str, key: str) -> Optional[tuple[list[_Item], dict[str, Any]]]:
                 by_id.setdefault(item.id, item)
         items = list(by_id.values())
         sent, *_ = _read_sent()
+        known = set(sent)
         details: dict[str, Any] = {}
-        for iid in _wanted(items, set(sent)):
+        for iid in dict.fromkeys(_wanted(items, known) + _fix_gone(items, known)):
             status, body = _one(
                 client, url, key, f"/v1/incidents/{quote(iid, safe='')}"
             )
             details[iid] = body if status == 200 and isinstance(body, dict) else None
-        return items, details
+        decisions = _decisions(client, url, key)
+        if decisions is None:
+            logger.info("Medic fix notices skipped: the decisions read did not finish")
+        return items, details, decisions
 
 
-def _mark_opened(session, principal: str, incident_id: str, reopen: int) -> None:
+def _mark_opened(
+    session, principal: str, incident_id: str, reopen: int, event: str = "opened"
+) -> None:
     session.query(CaseNotification).filter(
         CaseNotification.user_id == principal,
         CaseNotification.case_id.is_(None),
         CaseNotification.is_read.is_(False),
-        CaseNotification.notification_metadata["event"].astext == "opened",
+        CaseNotification.notification_metadata["event"].astext == event,
         CaseNotification.notification_metadata["incident_id"].astext == incident_id,
         CaseNotification.notification_metadata["reopen_count"].astext == str(reopen),
     ).update({"is_read": True, "read_at": utcnow()}, synchronize_session=False)
@@ -711,12 +923,15 @@ def watch_incidents(settings: Optional[Settings] = None) -> list[int]:
     fetched = _fetch(url, key)
     if fetched is None:
         return []
-    items, details = fetched
-    return _commit(settings, items, details)
+    items, details, decisions = fetched
+    return _commit(settings, items, details, decisions)
 
 
 def _commit(
-    settings: Settings, items: list[_Item], details: dict[str, Any]
+    settings: Settings,
+    items: list[_Item],
+    details: dict[str, Any],
+    decisions: Optional[list],
 ) -> list[int]:
     with get_db_session() as session, session.begin():
         locked = session.execute(
@@ -752,6 +967,7 @@ def _commit(
             announced_word=state.announced_word,
             summary_started_at=state.summary_started_at,
             frontend_url=settings.vigil_frontend_url,
+            decisions=decisions,
         )
         state.open_count = plan.count
         state.open_count_at = now
@@ -781,7 +997,7 @@ def _commit(
                 ids.append(
                     notices.notify(
                         principal,
-                        _KIND,
+                        note.kind,
                         note.title,
                         note.message,
                         link=note.link,
@@ -792,6 +1008,14 @@ def _commit(
                 )
                 if note.event == "cleared" and note.incident_id is not None:
                     _mark_opened(session, principal, note.incident_id, note.reopen or 0)
+                if note.event == _FIX_FIXED and note.incident_id is not None:
+                    _mark_opened(
+                        session,
+                        principal,
+                        note.incident_id,
+                        note.reopen or 0,
+                        _FIX_OPEN,
+                    )
         logger.info(
             "Medic incident notices: %s to %s holder(s); %s open",
             len(plan.notices),
