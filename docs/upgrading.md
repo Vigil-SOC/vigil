@@ -138,6 +138,8 @@ An upgrade from a database older than these changes does the following. Everythi
 
 **Failure counts reset.** Revision `0047_lockout_policy` sets every account's failed-login count to 0. Locks are the session policy's now (`auth.session_policy`).
 
+**A saved lockout count outside 3–10 moves to the nearest bound.** Revision `0079_lockout_threshold` sets a saved `lockout_threshold` of 1 or 2 to 3, and of 11 through 20 to 10, and increments that policy's version. `updated_by` is left as it was. The audit trail records the move once, as the upgrade's act (`session_policy.changed`, actor `system`), with the old and the new value. A value already from 3 to 10, no saved policy, and a value outside 1–20 stay as they are, and no entry is written. From then on the setting is 3–10.
+
 **The first sign-in of each person, in order:**
 
 1. The password is checked. A lock refuses it even when it is right. A good password stored as a bcrypt hash is replaced by a PBKDF2 hash at once; the password itself and `password_changed_at` do not change.
