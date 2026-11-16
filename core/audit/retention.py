@@ -504,6 +504,20 @@ def _revoke(session, principal_id: str) -> None:
     """
     if not _table(session, "users"):
         return
+    # Pushes waiting for a link to this account carry its names: read them first.
+    names = session.execute(
+        text("SELECT username, email FROM public.users WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).first()
+    if names and _table(session, "directory_pending"):
+        session.execute(
+            text("""
+                DELETE FROM public.directory_pending
+                WHERE lower(username) IN (lower(:u), lower(:e))
+                   OR lower(email) IN (lower(:u), lower(:e))
+                """),
+            {"u": names.username, "e": names.email},
+        )
     free_identifiers(session, principal_id)
     user_id = session.execute(
         text(

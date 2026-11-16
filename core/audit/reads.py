@@ -32,6 +32,8 @@ FEED_FIELDS = (
     "last_error",
     "unconfirmed",
     "paused",
+    "held",
+    "held_since",
 )
 
 
@@ -74,7 +76,15 @@ def feed_health(session) -> dict:
     try:
         health = feed.health(session)
     except feed.FeedUnavailable:
-        health = {"enabled": False, "behind": 0, "paused": False}
+        # The feed table can be absent while entries are still waiting.
+        count, since = trail.held_waiting(session)
+        health = {
+            "enabled": False,
+            "behind": 0,
+            "paused": False,
+            "held": count,
+            "held_since": feed._iso(since),
+        }
     return {key: health.get(key) for key in FEED_FIELDS}
 
 

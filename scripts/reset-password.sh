@@ -1,6 +1,8 @@
 #!/bin/bash
-# Issue a password reset link on a native install, for when no mail backend is
-# set up. Usage: scripts/reset-password.sh --list | <username|email> [--base-url URL]
+# Recover an account on a native install, for when no mail backend is set up.
+# Usage: scripts/reset-password.sh --list
+#        scripts/reset-password.sh <username|email> [--base-url URL] [--suspected-compromise]
+#        scripts/reset-password.sh --reset-mfa|--reactivate|--restore USER [--suspected-compromise]
 source "$(dirname "$0")/lib.sh"
 
 load_env

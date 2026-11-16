@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "vigil",
+      "name": "vigil-soc",
       "source": "./clients/claude-code",
       "description": "Work your own Vigil SOC from Claude Code over its /mcp surface.",
       "license": "Apache-2.0",
