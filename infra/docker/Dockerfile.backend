@@ -56,7 +56,8 @@ RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
 # ---------------------------------------------------------------------------
 # Its own venv, run as a separate program: it pulls LangChain, boto3 and
 # yara-python, which must not mix with the backend's pinned requirements. It is
-# not on PyPI, so it is installed from git at a pinned commit (2.12.0). git and
+# not on PyPI, so it is installed from git at a pinned commit (2.12.0), its
+# dependencies held to skillspector-constraints.txt. git and
 # the compilers exist only in this stage; the venv alone is copied forward.
 # The venv is built at its final path so its scripts' shebangs stay valid.
 FROM python:${PYTHON_VERSION}-slim AS skillspector
@@ -66,8 +67,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
     && rm -rf /var/lib/apt/lists/*
 
+COPY infra/docker/skillspector-constraints.txt /tmp/skillspector-constraints.txt
 RUN python -m venv /opt/skillspector \
     && /opt/skillspector/bin/pip install --no-cache-dir \
+      -c /tmp/skillspector-constraints.txt \
       "git+https://github.com/NVIDIA/skillspector.git@c81615007d40e86051a302a3cf897f8a05264928"
 
 # ---------------------------------------------------------------------------
