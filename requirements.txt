@@ -110,7 +110,7 @@ opentelemetry-exporter-prometheus>=0.66b1
 opentelemetry-instrumentation-fastapi>=0.66b1
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
 opentelemetry-instrumentation-redis>=0.66b0
-opentelemetry-instrumentation-logging>=0.46b0
+opentelemetry-instrumentation-logging>=0.66b2
 opentelemetry-semantic-conventions-ai>=0.5.1
 
 # Password strength (maintained package; same `from zxcvbn import zxcvbn` API)
