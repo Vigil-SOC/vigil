@@ -2002,12 +2002,13 @@ export const signInsApi = {
     api.post<Schema<'EndedSignIns'>>(`/users/${encodeURIComponent(userId)}/sign-ins/end`, {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
-  // End a lock; how the manager confirmed the person's identity goes to the audit trail.
-  unlock: (userId: string, identityConfirmedBy: string, suspectedCompromise = false) =>
+  // End a lock and the person's sign-ins. The reason and how they were confirmed go to the trail.
+  unlock: (userId: string, identityConfirmedBy: string, reason: string, suspectedCompromise = false) =>
     api.post(`/users/${encodeURIComponent(userId)}/unlock`, {
       identity_confirmed_by: identityConfirmedBy as Schema<'UnlockRequest'>['identity_confirmed_by'],
+      reason,
       suspected_compromise: suspectedCompromise,
-    }),
+    } satisfies Schema<'UnlockRequest'>),
   // Recovery: a reset link (emailed, or copied once) and a reset of two-step sign-in.
   resetLink: (userId: string) => api.get<Schema<'ResetLinkState'>>(`/users/${encodeURIComponent(userId)}/reset-link`),
   issueResetLink: (userId: string, body: Schema<'ResetLinkRequest'>) =>

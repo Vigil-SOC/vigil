@@ -121,6 +121,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const [signingOut, setSigningOut] = useState(false)
   const [unlockOf, setUnlockOf] = useState<User | null>(null)
   const [confirmedBy, setConfirmedBy] = useState('')
+  const [unlockReason, setUnlockReason] = useState('')
   const [unlocking, setUnlocking] = useState(false)
   const [unlockCompromise, setUnlockCompromise] = useState(false)
   const [resetOf, setResetOf] = useState<User | null>(null)
@@ -195,13 +196,14 @@ function PeopleAndRoles({ notify }: SectionProps) {
   }
 
   const handleUnlock = async () => {
-    if (!unlockOf || !confirmedBy) return
+    if (!unlockOf || !confirmedBy || !unlockReason.trim()) return
     setUnlocking(true)
     try {
-      await signInsApi.unlock(unlockOf.user_id, confirmedBy, unlockCompromise)
+      await signInsApi.unlock(unlockOf.user_id, confirmedBy, unlockReason.trim(), unlockCompromise)
       notify('ok', `Unlocked ${unlockOf.username}.${unlockCompromise ? ' Their API tokens were revoked.' : ''}`)
       setUnlockOf(null)
       setConfirmedBy('')
+      setUnlockReason('')
       setUnlockCompromise(false)
       reload()
     } catch (e) {
@@ -599,8 +601,16 @@ function PeopleAndRoles({ notify }: SectionProps) {
             <div className="flex flex-col gap-3.5">
               <span>
                 {unlockOf?.username} {unlockOf?.locked_at ? lockedFrom(unlockOf) : 'is locked.'} Unlocking lets them
-                sign in again and starts their failure count over. Confirm it is them first.
+                sign in again, starts their failure count over, and ends their open sign-ins. Confirm it is them first.
               </span>
+              <Field label="Reason" hint="Kept in the audit trail.">
+                <TextInput
+                  maxLength={500}
+                  value={unlockReason}
+                  disabled={unlocking}
+                  onChange={(e) => setUnlockReason(e.target.value)}
+                />
+              </Field>
               <Field label="How you confirmed it is them" hint="Kept in the audit trail.">
                 <Select
                   value={confirmedBy}
@@ -615,11 +625,13 @@ function PeopleAndRoles({ notify }: SectionProps) {
           }
           confirmLabel="Unlock"
           busy={unlocking}
-          confirmDisabled={!confirmedBy}
+          confirmDisabled={!confirmedBy || !unlockReason.trim()}
           onConfirm={handleUnlock}
           onClose={() => {
             if (unlocking) return
             setUnlockOf(null)
+            setConfirmedBy('')
+            setUnlockReason('')
             setUnlockCompromise(false)
           }}
         />
