@@ -102,6 +102,9 @@ class AuditFeedHealth(BaseModel):
     last_error: Optional[str] = None
     unconfirmed: Optional[int] = None
     paused: Optional[bool] = None
+    # Waiting to be recorded late, and the oldest one's time. Open windows are not counted.
+    held: Optional[int] = None
+    held_since: Optional[str] = None
 
 
 class AuditPage(BaseModel):

@@ -34,7 +34,7 @@ from core.auth.permissions import deny_unless, require_permission
 from core.config import get_settings
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, secret_write_failure_detail, set_secret
-from core.storage.models import Role, SignIn, SystemConfig, User
+from core.storage.models import DirectoryPending, Role, SignIn, SystemConfig, User
 from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
 from services.api import group_mapping
@@ -354,6 +354,8 @@ class SyncOut(BaseModel):
     failed_authentications: int
     last_manager_refusals: list[str]
     skipped_joins: int = 0
+    # Pushes refused for a username or email in use, waiting for a link.
+    pending_links: int = 0
     broken_lines: list[BrokenLine] = []
     # Set until a mapping is saved, and again when that person is gone or inactive.
     mapping_note: Optional[str] = None
@@ -394,6 +396,7 @@ def _sync_out(session, token: Optional[str] = None) -> SyncOut:
         failed_authentications=directory_sync.failed_authentications(session),
         last_manager_refusals=refusals,
         skipped_joins=group_mapping.skipped_joins(session),
+        pending_links=session.query(DirectoryPending).count(),
         broken_lines=[
             BrokenLine(**line) for line in group_mapping.broken_lines(session, settings)
         ],

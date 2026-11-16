@@ -803,6 +803,10 @@ config:
 
   # Secrets / auth policy
   ENABLE_KEYRING: "false"
+  # Key rotation period in whole days. Empty is 12 months (365), the longest
+  # Vigil allows. 1 to 365 is used. Anything longer, or not a whole number of
+  # days, is ignored: 12 months still applies and the API logs that once at start.
+  KEY_ROTATION_DAYS: ""
   # Ingress / load-balancer addresses allowed to set X-Forwarded-For.
   # Empty trusts the TCP peer. Set the ingress controller's pod CIDR when
   # ingress terminates TLS. "*" is ignored by the API.

@@ -177,6 +177,44 @@ def _when(value) -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Keys a host recovery writes into ``personal``. Other actions keep an email
+# there, and that must not leave on this path.
+_HOST_CEF = (
+    ("reason", "reason", None),
+    ("identity_confirmed_by", "cs3", "verification"),
+    ("verification_note", "cs4", "verificationNote"),
+    ("os_user", "cs5", "osUser"),
+    ("invoking_user", "cs6", "invokingUser"),
+    ("host", "shost", None),
+)
+
+
+def _personal_dict(row: dict) -> dict:
+    raw = row.get("personal")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _host_recovery(row: dict) -> list[str]:
+    """The host-recovery strings in ``personal``, as CEF extension fields."""
+    personal = _personal_dict(row)
+    if "os_user" not in personal and "identity_confirmed_by" not in personal:
+        return []
+    parts: list[str] = []
+    for key, field, label in _HOST_CEF:
+        value = personal.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        parts.append(f"{field}={_esc(value)}")
+        if label:
+            parts.append(f"{field}Label={label}")
+    return parts
+
+
 def cef(row: dict) -> bytes:
     """One RFC 5424 syslog message whose MSG is a CEF record of ``row``."""
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
@@ -207,6 +245,8 @@ def cef(row: dict) -> bytes:
     if row.get("operator_text"):
         parts.append(f"cs2={_esc(str(row['operator_text']))}")
         parts.append("cs2Label=operatorText")
+    # Host recovery keeps the reason beside the hash, not in the payload.
+    parts.extend(_host_recovery(row))
     msg = json.dumps(payload, separators=(",", ":"), default=str)
     if len(msg) > _MSG_MAX:
         msg = msg[: _MSG_MAX - 1] + "…"
@@ -692,6 +732,7 @@ def health(session) -> dict:
     tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
     delivered = row["last_delivered_seq"] if row else None
     behind = max(0, tip.seq - (delivered or 0))
+    held, held_since = trail.held_waiting(session)
     return {
         "enabled": dest.enabled,
         "host": dest.host,
@@ -705,6 +746,8 @@ def health(session) -> dict:
         "tip_seq": tip.seq,
         "unconfirmed": unconfirmed,
         "paused": paused,
+        "held": held,
+        "held_since": _iso(held_since),
     }
 
 

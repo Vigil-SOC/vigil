@@ -5,6 +5,7 @@ grant nothing: roles and teams are applied from the mapping, not from here.
 """
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -50,3 +51,25 @@ class DirectoryGroupMember(Base):
     )
 
     __table_args__ = (Index("idx_directory_group_members_principal", "principal_id"),)
+
+
+class DirectoryPending(Base):
+    """A pushed person whose username or email an existing account holds (#4507).
+
+    Kept until an admin links it to that account, or a later create succeeds.
+    """
+
+    __tablename__ = "directory_pending"
+
+    pending_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("uq_directory_pending_external", "external_id", unique=True),
+    )
