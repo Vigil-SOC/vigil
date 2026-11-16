@@ -4,7 +4,9 @@ A skill is ``<root>/<name>/SKILL.md`` conforming to the public Agent Skills
 spec (agentskills.io/specification): YAML frontmatter naming the skill and a
 Markdown body telling the agent how to do the thing. Roots are the bundled
 ``core/skills/library/`` plus the operator root: ``VIGIL_SKILLS_PATH``, else
-the State Directory's ``skills/`` folder.
+the State Directory's ``skills/`` folder. Published libraries often group
+skills into category folders, so a folder with no ``SKILL.md`` of its own is
+read one level deeper: ``<root>/<category>/<name>/SKILL.md``.
 
 No database, no module state: ``load_skills`` takes its roots so tests can
 point it at ``tmp_path``. An invalid skill is logged and skipped so one bad
@@ -137,12 +139,60 @@ def as_user_turn(user_input: Any) -> str:
     )
 
 
+def _category_skills(category: Path) -> List[Path]:
+    """The child folders of ``category`` holding ``SKILL.md``, sorted.
+
+    Dot folders are left out, and so is a symlinked child, logged: a skill
+    reached through a link could sit outside the root that writes and deletes
+    are confined to.
+    """
+    found: List[Path] = []
+    try:
+        children = sorted(p for p in category.iterdir() if p.is_dir())
+    except OSError as exc:
+        logger.warning("Skipping category at %s: %s", category, exc)
+        return found
+    for child in children:
+        if child.name.startswith(".") or not os.path.lexists(child / SKILL_FILE):
+            continue
+        if child.is_symlink():
+            logger.warning("Skipping skill at %s: a symlink in a category", child)
+            continue
+        found.append(child)
+    return found
+
+
+def _skill_dirs(root: Path) -> List[Path]:
+    """The folders under ``root`` to load as skills, in load order.
+
+    A folder holding ``SKILL.md`` is a skill, and everything under it is its
+    own files. A folder without one is a category, and each child holding
+    ``SKILL.md`` is a skill; categories do not nest. A category with no skill
+    in it comes back itself, so the loader still logs it as it always has. Dot
+    folders (a write's scratch copy, a ``.git``) are skipped, and a symlinked
+    category is not opened.
+    """
+    found: List[Path] = []
+    for top in sorted(p for p in root.iterdir() if p.is_dir()):
+        if top.name.startswith("."):
+            continue
+        if os.path.lexists(top / SKILL_FILE):
+            found.append(top)
+            continue
+        if top.is_symlink():
+            logger.warning("Skipping folder at %s: a symlinked category", top)
+            continue
+        found.extend(_category_skills(top) or [top])
+    return found
+
+
 def load_skills(roots: Iterable[Path]) -> List[Skill]:
-    """Every valid skill under ``roots``, in root then name order.
+    """Every valid skill under ``roots``, in root then folder order.
 
     Roots earlier in the list win a name clash, so the bundled library cannot be
-    shadowed by the setting root. A missing root is not an error: the bundled
-    directory may be empty and the setting root is optional.
+    shadowed by the setting root; within a root the first folder wins. A missing
+    root is not an error: the bundled directory may be empty and the setting
+    root is optional.
     """
     loaded: Dict[str, Skill] = {}
     for root in roots:
@@ -150,7 +200,7 @@ def load_skills(roots: Iterable[Path]) -> List[Skill]:
         if not root.is_dir():
             logger.debug("Skills root %s is not a directory; skipping", root)
             continue
-        for skill_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        for skill_dir in _skill_dirs(root):
             try:
                 skill = parse_skill(skill_dir)
             except SkillError as exc:
@@ -329,6 +379,43 @@ def _skill_dir(root: Path, name: str) -> Path:
     return candidate
 
 
+def _loaded_dir(root: Path, skill: Skill) -> Path:
+    """A loaded operator skill's real folder: ``root/name`` or ``root/<category>/name``.
+
+    Refused when the folder or its category is a symlink or would resolve
+    outside ``root``, so an edit or delete acts only inside the operator root.
+    """
+    try:
+        parts = skill.path.relative_to(root).parts
+    except ValueError:
+        parts = ()
+    if parts == (skill.name,):
+        return _skill_dir(root, skill.name)
+    if len(parts) != 2 or parts[1] != skill.name or parts[0].startswith("."):
+        raise SkillError("refusing to touch a skill outside the operator root")
+    category = Path(os.path.realpath(root)) / parts[0]
+    if category.is_symlink() or not category.is_dir():
+        raise SkillError("refusing to follow a symlink")
+    return _skill_dir(category, skill.name)
+
+
+def _operator_skill_dir(root: Path, name: str) -> Path:
+    """Where operator skill ``name`` lives, else ``root/name`` for a new one.
+
+    An existing skill is found where it loaded from, so editing one inside a
+    category writes to that folder rather than starting a second copy at the
+    top. A category folder of the same name is refused: a ``SKILL.md`` written
+    into it would hide every skill under it.
+    """
+    top = _skill_dir(root, name)
+    for skill in load_skills([root]):
+        if skill.name == name:
+            return _loaded_dir(root, skill)
+    if top.is_dir() and not os.path.lexists(top / SKILL_FILE) and _category_skills(top):
+        raise SkillConflict(f"{name} is a folder of skills, not a skill.")
+    return top
+
+
 def _write_new_file(path: Path, data: bytes) -> None:
     """Create ``path`` as a new regular file. A symlink is left untouched."""
     if path.is_symlink():
@@ -367,12 +454,12 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
 
 
 def _require_room(root: Path) -> None:
-    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` folders.
+    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` skill folders.
 
-    Dot folders are skipped: they are the scratch copies a write leaves only
-    while it runs.
+    Skills inside categories count; the categories do not. Dot folders are
+    skipped: they are the scratch copies a write leaves only while it runs.
     """
-    held = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    held = len(_skill_dirs(root))
     if held >= OPERATOR_SKILLS_MAX:
         raise SkillConflict(
             f"There are already {OPERATOR_SKILLS_MAX} custom skills, the most "
@@ -420,8 +507,9 @@ def write_operator_skill(
 
     A name the bundled library already owns is refused: ``load_skills`` would
     skip the operator copy, so the file would be invisible. An existing
-    operator skill is overwritten in place: only SKILL.md changes, its other
-    frontmatter keys carry over and ``metadata.version`` goes up by one.
+    operator skill, top-level or in a category, is overwritten in its own
+    folder: only SKILL.md changes, its other frontmatter keys carry over and
+    ``metadata.version`` goes up by one.
     With ``source`` (a loaded skill's name) and no skill of this name yet, the
     source's whole folder is copied first and the copy starts at version 1.
     An overwrite must send the ``expected_version`` it opened: a folder that
@@ -430,7 +518,7 @@ def write_operator_skill(
     atomic. ``expected_version`` is ignored when copying.
     """
     root = _require_operator_root(settings)
-    skill_dir = _skill_dir(root, name)
+    skill_dir = _operator_skill_dir(root, name)
     if name in _library_names():
         raise SkillError(
             f"name {name!r} belongs to the bundled library; save it under a new name"
@@ -625,7 +713,7 @@ def install_uploaded_skill(
                 f"name {skill.name!r} belongs to the bundled library; choose another name"
             )
         final = _skill_dir(root, skill.name)
-        if os.path.lexists(final):
+        if os.path.lexists(final) or _operator_skill_dir(root, skill.name) != final:
             raise SkillConflict(
                 f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
             )
@@ -640,21 +728,21 @@ def install_uploaded_skill(
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
-    """Remove an operator skill directory. Bundled skills are refused."""
+    """Remove an operator skill directory. Bundled skills are refused.
+
+    A skill inside a category goes; the category folder stays.
+    """
     root = _require_operator_root(settings)
-    skill = {item.name: item for item in load_skills(skill_roots(settings))}.get(name)
+    # The resolved root, so a loaded path lines up with it for _loaded_dir.
+    skill = {item.name: item for item in load_skills([LIBRARY_ROOT, root])}.get(name)
     if skill is None:
         raise SkillNotFound(f"No skill named {name!r}")
     if is_bundled(skill):
         raise SkillError("bundled skills cannot be deleted")
     if skill.path.is_symlink():
         raise SkillError("refusing to follow a symlink")
-    target = skill.path.resolve()
-    if (
-        target.parent != root
-        or target.name != skill.name
-        or not _contained(root, target)
-    ):
+    target = _loaded_dir(root, skill)
+    if not _contained(root, target):
         raise SkillError("refusing to delete a skill outside the operator root")
     library = LIBRARY_ROOT.resolve()
     if target == library or target.is_relative_to(library):
