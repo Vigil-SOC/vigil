@@ -14,7 +14,14 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from core.agents.attribution import TrailWriteError, note_directive, trail_writable
+from core.agents.attribution import (
+    TrailWriteError,
+    _directive_entry,
+    note_directive,
+    note_directive_later,
+    trail_writable,
+)
+from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
 
@@ -258,25 +265,56 @@ def enqueue_directive(
     directive = build_directive(kind, body, actor, fields)
     if actor_principal_id:
         directive["actor_principal_id"] = actor_principal_id
-    _wake(session, run_id)
-    _insert_directive(session, run_id, directive, actor_principal_id)
-    try:
-        note_directive(
-            session,
+    # A refused trail insert used to roll the directive back with it. An abort
+    # that records (a principal, or the system actor a sign-in ending uses)
+    # commits the row first, then appends or holds the entry. Every other kind
+    # still refuses. An abort with nothing to record (the console's cancel: a
+    # username and no principal) stays in the caller's transaction.
+    records = _directive_entry(
+        run_id=run_id,
+        directive_id=directive["directive_id"],
+        kind=directive["kind"],
+        actor=actor,
+        actor_principal_id=actor_principal_id,
+    )
+    if kind == "abort" and records is not None and trail_writable(session):
+        with unit_of_work() as own:
+            _wake(own, run_id)
+            _insert_directive(own, run_id, directive, actor_principal_id)
+        note_directive_later(
             run_id=run_id,
             directive_id=directive["directive_id"],
             kind=directive["kind"],
             actor=actor,
             actor_principal_id=actor_principal_id,
         )
-    except TrailWriteError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - a trail that is up must take the row
-        if trail_writable(session):
-            raise TrailWriteError(str(exc)) from exc
-        logger.warning(
-            "directive %s was queued without a trail entry", directive["directive_id"]
-        )
+    else:
+        _wake(session, run_id)
+        _insert_directive(session, run_id, directive, actor_principal_id)
+        try:
+            note_directive(
+                session,
+                run_id=run_id,
+                directive_id=directive["directive_id"],
+                kind=directive["kind"],
+                actor=actor,
+                actor_principal_id=actor_principal_id,
+            )
+        except TrailWriteError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a trail that is up must take the row
+            # A refused insert aborts the transaction, so asking again whether
+            # the trail is writable fails too. The append only ran because it is.
+            try:
+                writable = trail_writable(session)
+            except Exception:
+                writable = True
+            if writable:
+                raise TrailWriteError(str(exc)) from exc
+            logger.warning(
+                "directive %s was queued without a trail entry",
+                directive["directive_id"],
+            )
     logger.info(
         "queued %s directive %s for run %s", kind, directive["directive_id"], run_id
     )

@@ -22,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Optional
 
 from sqlalchemy import Connection, text
@@ -62,21 +64,52 @@ def personal(user) -> dict:
     return {"username": user.username, "email": user.email, "full_name": user.full_name}
 
 
+# ``record`` calls collected by ``capture``, written with ``safety`` once the
+# action has committed. None whenever a call is not inside ``capture``.
+_captured: ContextVar[Optional[list]] = ContextVar("audit_trail_captured", default=None)
+
+
+@contextmanager
+def capture():
+    """Collect ``record`` calls instead of joining the surrounding transaction.
+
+    A delete writes several entries (the delete, each revoked credential, each
+    reset link). They are held back and passed to ``safety`` after the delete
+    commits, so a refused insert cannot roll the delete back.
+    """
+    found: list = []
+    token = _captured.set(found)
+    try:
+        yield found
+    finally:
+        _captured.reset(token)
+
+
 def record(session, action: str, beside: Optional[dict] = None, **fields: Any):
-    """Append in the caller's transaction."""
+    """Append in the caller's transaction, or collect while ``capture`` is open."""
+    captured = _captured.get()
+    if captured is not None:
+        captured.append((action, beside, fields))
+        return
     if ready(session):
         trail.append(session, payload(action, **fields), **_beside(beside))
 
 
-def safety(action: str, beside: Optional[dict] = None, **fields: Any) -> None:
-    """After a safety action has happened: appended, or held to record late."""
+def safety(
+    action: str, beside: Optional[dict] = None, **fields: Any
+) -> Optional[trail.Entry]:
+    """After a safety action has happened: appended, or held to record late.
+
+    Returns the entry when it was appended. None when it was held, logged, or
+    the trail is not in use.
+    """
     try:
         if not ready():
-            return
+            return None
     except Exception:  # noqa: BLE001 - nowhere to hold it either; the action stands
         logger.exception("audit trail unreachable; %s not recorded", action)
-        return
-    trail.append_or_hold(payload(action, **fields), **_beside(beside))
+        return None
+    return trail.append_or_hold(payload(action, **fields), **_beside(beside))
 
 
 def refused(action: str, beside: Optional[dict] = None, **fields: Any) -> None:
