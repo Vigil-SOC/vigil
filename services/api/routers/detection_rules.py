@@ -453,6 +453,18 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
     raise HTTPException(status_code=status, detail=error)
 
 
+@router.get("/rules/{rule_id}")
+def get_rule(rule_id: int):
+    """One listed rule copy: its latest version's query, parsed content and
+    description, and that version's stored checks (lint, replay, runs, shadow
+    and the rest); an overlay copy also carries its stage rows with their proof.
+    Read-only."""
+    rule = catalog.rule_detail(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"No detection rule {rule_id}")
+    return rule
+
+
 @router.get("/rules/{rule_id}/stages")
 def get_rule_stages(rule_id: int):
     """A rule's stage rows, newest first: version, from and to stage, actor,
