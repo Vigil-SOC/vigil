@@ -1440,6 +1440,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sso/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mapping
+         * @description Pushed groups and the role and team lines. The version is the settings version.
+         */
+        get: operations["get_api_auth_sso_mapping"];
+        put?: never;
+        /**
+         * Post Mapping
+         * @description Save the group mapping, or count what saving it would change.
+         *
+         *     ``dry_run`` writes nothing. The real save is the one that sets
+         *     ``mapping_author`` and applies roles and team membership. Needs
+         *     roles.manage, users.write and teams.manage, and one step-up.
+         */
+        post: operations["post_api_auth_sso_mapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sso/settings": {
         parameters: {
             query?: never;
@@ -9440,6 +9468,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scim/v2/Groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Groups */
+        get: operations["get_scim_v2_Groups"];
+        put?: never;
+        /** Create Group */
+        post: operations["post_scim_v2_Groups"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scim/v2/Groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Group */
+        get: operations["get_scim_v2_Groups_group_id"];
+        put?: never;
+        post?: never;
+        /** Delete Group */
+        delete: operations["delete_scim_v2_Groups_group_id"];
+        options?: never;
+        head?: never;
+        /** Patch Group */
+        patch: operations["patch_scim_v2_Groups_group_id"];
+        trace?: never;
+    };
     "/scim/v2/ResourceTypes": {
         parameters: {
             query?: never;
@@ -9449,6 +9514,23 @@ export interface paths {
         };
         /** Resource Types */
         get: operations["get_scim_v2_ResourceTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scim/v2/ResourceTypes/Group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resource Type Group */
+        get: operations["get_scim_v2_ResourceTypes_Group"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9980,6 +10062,13 @@ export interface components {
              * @default 0
              */
             restricted_not_counted: number;
+        };
+        /** BrokenLine */
+        BrokenLine: {
+            /** External Id */
+            external_id: string;
+            /** On */
+            on: string;
         };
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
@@ -12992,6 +13081,58 @@ export interface components {
             /** Password */
             password?: string | null;
         };
+        /** MappingEffect */
+        MappingEffect: {
+            /** Applied */
+            applied: boolean;
+            /**
+             * Memberships Added
+             * @default 0
+             */
+            memberships_added: number;
+            /**
+             * Memberships Removed
+             * @default 0
+             */
+            memberships_removed: number;
+            /**
+             * Roles Default
+             * @default 0
+             */
+            roles_default: number;
+            /**
+             * Roles Fall
+             * @default 0
+             */
+            roles_fall: number;
+            /**
+             * Roles Rise
+             * @default 0
+             */
+            roles_rise: number;
+            /** Version */
+            version: number;
+        };
+        /** MappingIn */
+        MappingIn: {
+            /** Group Roles */
+            group_roles?: components["schemas"]["GroupRole"][];
+            /** Team Lines */
+            team_lines?: components["schemas"]["TeamLine"][];
+        };
+        /** MappingOut */
+        MappingOut: {
+            /** Group Roles */
+            group_roles: components["schemas"]["GroupRole"][];
+            /** Groups */
+            groups: components["schemas"]["PushedGroup"][];
+            /** Mapping Author */
+            mapping_author?: string | null;
+            /** Team Lines */
+            team_lines: components["schemas"]["TeamLine"][];
+            /** Version */
+            version: number;
+        };
         /**
          * MergeRequest
          * @description Merge another case into this one.
@@ -13802,6 +13943,15 @@ export interface components {
          * @enum {string}
          */
         ProposalState: "draft" | "linted" | "replayed" | "converted" | "shadow" | "live" | "rejected";
+        /** PushedGroup */
+        PushedGroup: {
+            /** Display Name */
+            display_name: string;
+            /** External Id */
+            external_id: string;
+            /** Id */
+            id: string;
+        };
         /** Range */
         Range: {
             /** Max */
@@ -14802,6 +14952,8 @@ export interface components {
             groups_claim: string;
             /** Issuer */
             issuer?: string | null;
+            /** Mapping Author */
+            mapping_author?: string | null;
             /** Provider Changed At */
             provider_changed_at?: string | null;
             /** Redirect Url */
@@ -14821,6 +14973,8 @@ export interface components {
              * @default false
              */
             sync_enabled: boolean;
+            /** Team Lines */
+            team_lines?: components["schemas"]["TeamLine"][];
             /** Updated At */
             updated_at?: string | null;
             /** Updated By */
@@ -14937,6 +15091,11 @@ export interface components {
         };
         /** SyncOut */
         SyncOut: {
+            /**
+             * Broken Lines
+             * @default []
+             */
+            broken_lines: components["schemas"]["BrokenLine"][];
             /** Directory Id Claim */
             directory_id_claim: string;
             /** Failed Authentications */
@@ -14945,8 +15104,20 @@ export interface components {
             last_manager_refusals: string[];
             /** Last Push */
             last_push?: string | null;
+            /** Mapping Note */
+            mapping_note?: string | null;
+            /**
+             * Role Refusals
+             * @default []
+             */
+            role_refusals: string[];
             /** Scim Path */
             scim_path: string;
+            /**
+             * Skipped Joins
+             * @default 0
+             */
+            skipped_joins: number;
             /** Sync Enabled */
             sync_enabled: boolean;
             /** Token */
@@ -15011,6 +15182,21 @@ export interface components {
             members: components["schemas"]["TeamMemberOut"][];
             /** Name */
             name: string;
+            /**
+             * Synced
+             * @default false
+             */
+            synced: boolean;
+        };
+        /**
+         * TeamLine
+         * @description A pushed group's externalId, and the team its members join.
+         */
+        TeamLine: {
+            /** Group */
+            group: string;
+            /** Team Id */
+            team_id: string;
         };
         /** TeamMemberAdd */
         TeamMemberAdd: {
@@ -15048,6 +15234,11 @@ export interface components {
             is_default: boolean;
             /** Name */
             name: string;
+            /**
+             * Synced
+             * @default false
+             */
+            synced: boolean;
         };
         /**
          * TemplateCreate
@@ -18088,6 +18279,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_auth_sso_mapping: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_sso_mapping: {
+        parameters: {
+            query?: {
+                dry_run?: boolean;
+            };
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingEffect"];
                 };
             };
             /** @description Validation Error */
@@ -32579,7 +32839,203 @@ export interface operations {
             };
         };
     };
+    get_scim_v2_Groups: {
+        parameters: {
+            query?: {
+                filter?: string | null;
+                startIndex?: number;
+                count?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_scim_v2_Groups: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_scim_v2_ResourceTypes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scim_v2_ResourceTypes_Group: {
         parameters: {
             query?: never;
             header?: {

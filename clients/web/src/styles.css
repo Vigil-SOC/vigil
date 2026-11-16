@@ -5403,10 +5403,16 @@
       display: flex;
       align-items: center;
       gap: 9px;
+      min-width: 0;
       font-size: 12.5px;
       padding: 9px 12px;
       border-radius: var(--r-sm);
       border: 1px solid var(--line);
+   }
+
+   .settings-banner > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
    }
 
    /* a wrapped message must not squeeze the icon */
@@ -5569,6 +5575,25 @@
    .sso-map-n {
       font-size: 12px;
       text-align: center;
+   }
+
+   .sso-map-sync {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--tx-3);
+   }
+
+   .sso-map-sync .drop {
+      flex: 1 1 140px;
+      min-width: 0;
+   }
+
+   .sso-map-sync .field-select > span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
    }
 
    .sso-require {

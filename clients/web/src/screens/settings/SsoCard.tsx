@@ -10,6 +10,7 @@ import api, {
 import { errorText } from '../../shared/errorText'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, Field, PasswordInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import DirectoryMapping from './DirectoryMapping'
 import type { Role } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -278,9 +279,23 @@ export default function SsoCard({ notify }: SectionProps) {
           <>
             <hr className="sso-rule" />
             <div className="sso-sub">
-              <h4>Roles from groups</h4>
-              <p>Checked top to bottom at each sign-in. The first match wins.</p>
+              <h4>{syncOn ? 'Groups' : 'Roles from groups'}</h4>
+              <p>
+                {syncOn
+                  ? 'Pushed groups set the role and the teams of a managed account. Nothing is applied until this mapping is saved.'
+                  : 'Checked top to bottom at each sign-in. The first match wins.'}
+              </p>
             </div>
+            {syncOn ? (
+              <DirectoryMapping
+                canSync={canSync}
+                roles={roles}
+                settingsVersion={saved.version}
+                notify={notify}
+                onApplied={load}
+              />
+            ) : (
+            <>
             {form.group_roles.length > 0 && (
               <ol className="sso-map">
                 {form.group_roles.map((g, i) => (
@@ -334,11 +349,17 @@ export default function SsoCard({ notify }: SectionProps) {
                 <Icon name="plus" size={14} /> Add mapping
               </button>
             </span>
+            </>
+            )}
             <div className="sso-pair">
               <div className="field">
                 <span className="field-label">Default role</span>
                 <Select label="Default role" value={form.default_role_id} options={roleOptions(form.default_role_id)} disabled={busy} onSelect={(v) => set({ default_role_id: v })} />
-                <span className="field-hint">For a new person whose groups match nothing. People who already have an account keep their role.</span>
+                <span className="field-hint">
+                  {syncOn
+                    ? 'For a managed account whose groups match nothing. Applied when the mapping is saved or a group changes.'
+                    : 'For a new person whose groups match nothing. People who already have an account keep their role.'}
+                </span>
               </div>
               <Field label="Groups claim" hint="The field in the sign-in token that lists a person's groups.">
                 <TextInput className="mono" value={form.groups_claim} disabled={busy} spellCheck={false} onChange={(e) => set({ groups_claim: e.target.value })} />
@@ -435,10 +456,34 @@ export default function SsoCard({ notify }: SectionProps) {
               <dd>{sync.failed_authentications}</dd>
             </div>
             <div>
+              <dt>Skipped joins</dt>
+              <dd>{sync.skipped_joins}</dd>
+            </div>
+            <div>
               <dt>Endpoint</dt>
               <dd className="font-mono">{sync.scim_path}</dd>
             </div>
           </dl>
+        )}
+        {syncOn && sync?.mapping_note && (
+          <div className="settings-banner warn" role="status">
+            <Icon name="alert" size={14} />
+            <span>{sync.mapping_note}</span>
+          </div>
+        )}
+        {syncOn && sync && sync.broken_lines.length > 0 && (
+          <div className="settings-banner warn" role="status">
+            <Icon name="alert" size={14} />
+            <span>
+              {sync.broken_lines
+                .map((line) =>
+                  line.on === 'team'
+                    ? `A team line names a group that is gone (${line.external_id}).`
+                    : `A role line names a group that is gone (${line.external_id}).`,
+                )
+                .join(' ')}
+            </span>
+          </div>
         )}
         {syncOn && sync && sync.last_manager_refusals.length > 0 && (
           <div className="settings-banner warn" role="status">
@@ -446,6 +491,15 @@ export default function SsoCard({ notify }: SectionProps) {
             <span>
               A push could not deactivate the last person who can manage roles:{' '}
               {sync.last_manager_refusals.join(', ')}.
+            </span>
+          </div>
+        )}
+        {syncOn && sync && sync.role_refusals.length > 0 && (
+          <div className="settings-banner warn" role="status">
+            <Icon name="alert" size={14} />
+            <span>
+              A group change left the role in place for the last person who can manage roles:{' '}
+              {sync.role_refusals.join(', ')}.
             </span>
           </div>
         )}

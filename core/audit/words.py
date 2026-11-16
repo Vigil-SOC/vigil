@@ -410,10 +410,32 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "team.unarchived": "Brought a team back",
     "team.member_added": "Added a person to a team",
     "team.member_removed": "Removed a person from a team",
-    "team.join_skipped": "Skipped a team join an invite named: its issuer can't "
-    "read every restricted case naming the team",
-    "team.join_defaulted": "Put a person on the default team: every team their "
-    "invite named was skipped",
+    "team.join_skipped": lambda p: (
+        "Skipped a team join: the person who saved the mapping can't "
+        "read every restricted case that names the team"
+        if p.get("via") == "directory"
+        else "Skipped a team join an invite named: its issuer can't "
+        "read every restricted case naming the team"
+    ),
+    "team.join_defaulted": lambda p: (
+        "Put a person on the default team: every mapped team join was skipped"
+        if p.get("via") == "directory"
+        else "Put a person on the default team: every team their invite named was skipped"
+    ),
+    "directory.mapping_saved": "Saved the directory group mapping",
+    "directory.role_skipped": lambda p: "Left a role unchanged"
+    + (
+        ": it would leave no one who can manage roles"
+        if p.get("reason") == "last_manager"
+        else (
+            ": the mapping's author can't grant it"
+            if p.get("reason") == "cannot_assign"
+            else ""
+        )
+    ),
+    "directory.group_refused": "Refused a group push with no externalId",
+    "directory.group_unknown": "Skipped a group a user push named, because that group has not been pushed",
+    "directory.member_skipped": "Skipped a group member who is not an account here",
     "teams.placed": lambda p: (
         "Created the default team, joined "
         f"{p.get('people_joined', 0)} people and placed "
