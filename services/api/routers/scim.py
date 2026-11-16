@@ -27,6 +27,7 @@ from core.audit.retention import is_erased
 from core.auth import (
     directory_groups,
     directory_sync,
+    invites,
     principals,
     sso,
     sso_settings,
@@ -557,7 +558,16 @@ def _create(
     role = session.get(Role, settings.default_role_id)
     if role is None:
         raise ScimFailure(409, "The default role no longer exists")
-    if _collide(session, caller, external_id, username, email):
+    # An invite for this address is the same person joining. Cancel it instead
+    # of refusing the push — but only when no account already holds the name,
+    # so a real collision leaves the invite waiting (#4441).
+    claim_sign_in_names(session, username, email)
+    held_by_account = identifier_in_use(
+        session, username, pending_invites=False
+    ) or identifier_in_use(session, email, pending_invites=False)
+    if not held_by_account:
+        invites.cancel_pending(session, email, "directory")
+    elif _collide(session, caller, external_id, username, email):
         raise ScimFailure(409, "That username or email is already in use", "uniqueness")
     user = User(
         user_id=f"user-{uuid.uuid4().hex[:12]}",
