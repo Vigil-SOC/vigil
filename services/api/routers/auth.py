@@ -1620,17 +1620,57 @@ def _confirm_it_is_you(
     request: Request, user: User, body: ConfirmRequest, session: Session
 ) -> None:
     """A fresh one-factor check on every call. It shares the confirmation's
-    window and its count of failures in a row."""
+    window and its count of failures in a row.
+
+    With a trail, the window opens only in the transaction that appends
+    ``auth.confirmed``. A refused insert is held and the window stays shut,
+    so the check grants nothing further; the sign-ins still end.
+    """
+    sid = _session_sid(request)
+    source = client_host(request)
+    if not trail_events.ready(session):
+        step_up.confirm(
+            user,
+            session,
+            sid,
+            password=body.password,
+            code=body.code,
+            assertion=body.assertion,
+            challenge=body.challenge,
+            source=source,
+        )
+        return
     step_up.confirm(
         user,
         session,
-        _session_sid(request),
+        sid,
         password=body.password,
         code=body.code,
         assertion=body.assertion,
         challenge=body.challenge,
-        source=client_host(request),
+        source=source,
+        settle=False,
     )
+    _settle_end_confirmation(user, sid, source)
+
+
+def _settle_end_confirmation(
+    user: User, sid: Optional[str], source: Optional[str]
+) -> None:
+    """Append ``auth.confirmed`` and open the window together, or hold it shut."""
+    beside = {"source_ip": source}
+    fields = dict(actor=user.principal_id, principal=user.principal_id, sign_in=sid)
+    try:
+        with unit_of_work() as own:
+            if sid and not step_up.open_window(own, sid):
+                return
+            trail_events.record(own, "auth.confirmed", beside, **fields)
+        return
+    except Exception:  # noqa: BLE001 - the sign-ins still end; the entry is held
+        logger.exception("auth.confirmed was not written with the window")
+    if trail_events.safety("auth.confirmed", beside, **fields) is not None and sid:
+        with unit_of_work() as own:
+            step_up.open_window(own, sid)
 
 
 class ConfirmItRequest(ConfirmRequest):
@@ -1680,19 +1720,33 @@ def _end_own(
     user: User,
     ids: List[str],
 ) -> sign_ins.EndedSignIns:
-    """End these sign-ins of the caller's, then write their entries (the rows
-    are locked before the trail's lock, the order every path takes)."""
-    ended = [sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, session)]
-    for sid in ended:
-        trail_events.record(
-            session,
-            "auth.sign_in_ended",
-            {"source_ip": client_host(request)},
-            actor=user.principal_id,
-            principal=user.principal_id,
-            sign_in=sid,
-            end_reason=sign_ins.ENDED_BY_PERSON,
-        )
+    """End these sign-ins of the caller's.
+
+    With a trail, the ends commit first and each entry is appended or held.
+    Without one, both stay in the request transaction (rows locked before the
+    trail's lock, the order every other path takes).
+    """
+    beside = {"source_ip": client_host(request)}
+    fields = dict(
+        actor=user.principal_id,
+        principal=user.principal_id,
+        end_reason=sign_ins.ENDED_BY_PERSON,
+    )
+    if trail_events.ready(session):
+        with unit_of_work() as own:
+            ended = [
+                sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, own)
+            ]
+        for sid in ended:
+            trail_events.safety("auth.sign_in_ended", beside, sign_in=sid, **fields)
+    else:
+        ended = [
+            sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, session)
+        ]
+        for sid in ended:
+            trail_events.record(
+                session, "auth.sign_in_ended", beside, sign_in=sid, **fields
+            )
     here = _session_sid(request) in ended
     if here:
         clear_auth_cookies(response)

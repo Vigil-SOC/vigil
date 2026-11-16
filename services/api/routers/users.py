@@ -1491,6 +1491,16 @@ def _managed_sign_ins(
     return user
 
 
+def _sign_in_ended(actor: str, principal: str, sign_in: str, reason: str, note: str):
+    return dict(
+        actor=actor,
+        principal=principal,
+        sign_in=sign_in,
+        end_reason=reason,
+        note=note,
+    )
+
+
 def _end_as_admin(
     request: Request,
     session: Session,
@@ -1499,20 +1509,31 @@ def _end_as_admin(
     note: str,
     reason: str = sign_ins.ENDED_BY_ADMIN,
 ) -> list[tuple[str, str]]:
-    """End these (sign-in id, principal id) pairs through ``sign_ins.end``, then
-    write an entry for each with the actor and the typed reason. Rows are locked
-    before the trail's lock, the order every path takes."""
+    """End these (sign-in id, principal id) pairs through ``sign_ins.end``.
+
+    With a trail, the ends commit first and each entry is appended or held, so
+    a refused insert leaves the sign-ins ended. Without one, both stay in the
+    request transaction. Rows are locked before the trail's lock on that path.
+    """
+    beside = {"source_ip": client_host(request)}
+    actor = current_user.principal_id
+    if trail_events.ready(session):
+        with unit_of_work() as own:
+            ended = [(sid, pid) for sid, pid in ids if sign_ins.end(sid, reason, own)]
+        for sid, pid in ended:
+            trail_events.safety(
+                "auth.sign_in_ended",
+                beside,
+                **_sign_in_ended(actor, pid, sid, reason, note),
+            )
+        return ended
     ended = [(sid, pid) for sid, pid in ids if sign_ins.end(sid, reason, session)]
     for sid, pid in ended:
         trail_events.record(
             session,
             "auth.sign_in_ended",
-            {"source_ip": client_host(request)},
-            actor=current_user.principal_id,
-            principal=pid,
-            sign_in=sid,
-            end_reason=reason,
-            note=note,
+            beside,
+            **_sign_in_ended(actor, pid, sid, reason, note),
         )
     return ended
 
@@ -1601,14 +1622,12 @@ def end_everyones_sign_ins(
         body.reason,
         sign_ins.EVERYONE,
     )
-    trail_events.record(
-        session,
-        "auth.everyone_signed_out",
-        {"source_ip": client_host(request)},
-        actor=current_user.principal_id,
-        count=len(ended),
-        note=body.reason,
-    )
+    beside = {"source_ip": client_host(request)}
+    fields = dict(actor=current_user.principal_id, count=len(ended), note=body.reason)
+    if trail_events.ready(session):
+        trail_events.safety("auth.everyone_signed_out", beside, **fields)
+    else:
+        trail_events.record(session, "auth.everyone_signed_out", beside, **fields)
     here = False
     for principal_id in {pid for _, pid in ended} - {current_user.principal_id}:
         # People only: a service account or agent has nobody to tell.
@@ -2268,6 +2287,30 @@ def _disable_alone(
         return revoked, links
 
 
+def _profile_sent(request: UpdateUserRequest) -> bool:
+    """A profile field in the body, changed or not. That request is not a demotion."""
+    return bool({"full_name", "email"} & request.model_fields_set)
+
+
+def _strictly_narrower(change: Optional[tuple]) -> bool:
+    """The new role drops at least one permission and adds none."""
+    if change is None:
+        return False
+    before, after = set(change[0]), set(change[1])
+    return after < before
+
+
+def _commit_narrowing(user_id: str, role_id: str) -> dict:
+    """The demotion and the sign-ins it ends, committed together."""
+    with unit_of_work() as own:
+        user = own.get(User, user_id)
+        user.role_id = role_id
+        own.flush()
+        sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, own)
+        own.refresh(user)
+        return UserSchema.dump(user)
+
+
 def _apply_user_update(
     session: Session, current_user: User, user_id: str, request: UpdateUserRequest
 ) -> tuple[User, Optional[str], dict]:
@@ -2329,6 +2372,30 @@ def _apply_user_update(
         )
 
     actor, principal = current_user.principal_id, user.principal_id
+    # A pure demotion commits on its own and is recorded, or held. The same
+    # grants, any grant added, or a profile field in the body stays in this
+    # transaction, so a trail failure changes nothing.
+    if (
+        _strictly_narrower(permission_change)
+        and not _profile_sent(request)
+        and trail_events.ready(session)
+    ):
+        previous = user.role_id
+        payload = _commit_narrowing(user.user_id, request.role_id)
+        before, after = permission_change
+        trail_events.safety(
+            "user.role_changed",
+            actor=actor,
+            principal=principal,
+            role_id=request.role_id,
+            previous_role_id=previous,
+            permissions_before=before,
+            permissions_after=after,
+        )
+        session.refresh(user)
+        # Sign-ins already ended in that transaction. No per-sign-in entries.
+        return user, None, payload
+
     entries = []
     stale_reason = None
     changed = []
@@ -2407,7 +2474,8 @@ async def update_user(
 
         # Sign the user out everywhere so their next session carries the new
         # email or role, not the claims and permissions cached at login. In
-        # this transaction: the change does not commit without it.
+        # this transaction: the change does not commit without it. A pure
+        # demotion already ended them in the transaction that committed it.
         if stale_reason:
             await asyncio.to_thread(
                 sign_ins.end_all_for_user,
@@ -2693,6 +2761,26 @@ def remove_unused_sync_account(
     return _dump_accounts(session, [user])[0]
 
 
+def _delete_committed(user_id: str, actor: str, by_person: bool) -> None:
+    """Commit the delete, then append or hold every entry it wrote."""
+    with trail_events.capture() as entries:
+        with unit_of_work() as own:
+            user = own.get(User, user_id)
+            principals.mark_deleted(own, user.principal_id)
+            deactivate_account(
+                own,
+                user,
+                actor=actor,
+                by_person=by_person,
+                route="person",
+            )
+            trail_events.record(
+                own, "user.deleted", actor=actor, principal=user.principal_id
+            )
+    for action, beside, fields in entries:
+        trail_events.safety(action, beside, **fields)
+
+
 def _delete_user(session: Session, current_user: User, user_id: str) -> User:
     """Sync half of delete_user: the account row stays, so its principal and
     its credentials still resolve; everything that could act as it stops."""
@@ -2708,15 +2796,22 @@ def _delete_user(session: Session, current_user: User, user_id: str) -> User:
     _refuse_lockout(current_user, session, users={user.user_id: (user.role_id, False)})
 
     actor = current_user.principal_id
+    by_person = _acts_as_person(current_user, session)
+    if trail_events.ready(session):
+        # Every entry the delete writes (revoked credentials and reset links
+        # included) is held until the delete has committed.
+        _delete_committed(user_id, actor, by_person)
+        session.expire(user)
+        return user
     principals.mark_deleted(session, user.principal_id)
     deactivate_account(
         session,
         user,
         actor=actor,
-        by_person=_acts_as_person(current_user, session),
+        by_person=by_person,
         route="person",
     )
-    # In this transaction: the delete does not happen without its entries.
+    # No trail yet: the delete and its entries commit with the request.
     trail_events.record(
         session, "user.deleted", actor=actor, principal=user.principal_id
     )
