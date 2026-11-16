@@ -15117,6 +15117,7 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanDetail"];
             /** Source Path */
             source_path: string;
             /** Version */
@@ -15174,8 +15175,59 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
             /** Source Path */
             source_path: string;
+        };
+        /** SkillScanDetail */
+        SkillScanDetail: {
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["SkillScanFinding"][];
+            /** Held */
+            held: boolean;
+            /** Max Severity */
+            max_severity?: string | null;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+            /** Scanner Version */
+            scanner_version?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
+        };
+        /** SkillScanFinding */
+        SkillScanFinding: {
+            /** File */
+            file?: string | null;
+            /** Message */
+            message: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Severity */
+            severity: string;
+        };
+        /** SkillScanSummary */
+        SkillScanSummary: {
+            /** Held */
+            held: boolean;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
         };
         /** SkillTestResponse */
         SkillTestResponse: {
@@ -15213,6 +15265,7 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
             /** Skills */
             skills: components["schemas"]["SkillResponse"][];
             /**

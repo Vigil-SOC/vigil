@@ -7,6 +7,7 @@ bundled library is never modified.
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -22,6 +23,7 @@ from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
 from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
+from core.skills.skill_hold import ScanState, scan_states
 from core.skills.skill_library import (
     UPLOAD_MAX,
     Skill,
@@ -42,6 +44,7 @@ from core.skills.skill_library import (
     write_operator_skill,
 )
 from core.skills.skill_usage import skill_usage
+from services.api import skill_sweep
 from services.api.routers.claude import NO_PROVIDER_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -61,6 +64,32 @@ ROUTER_META = RouterMeta(
 )
 
 
+class SkillScanSummary(BaseModel):
+    # bundled | unchecked | pending | failed | safe | flagged | approved. Only
+    # bundled, unchecked, safe and approved skills reach agents; the rest are held.
+    state: str
+    held: bool
+    recommendation: Optional[str] = None  # SAFE | CAUTION | DO_NOT_INSTALL
+    score: Optional[int] = None
+
+
+class SkillScanFinding(BaseModel):
+    rule_id: str
+    severity: str
+    message: str
+    file: Optional[str] = None
+
+
+class SkillScanDetail(SkillScanSummary):
+    max_severity: Optional[str] = None
+    findings: list[SkillScanFinding] = []
+    scanner_version: Optional[str] = None
+    scanned_at: Optional[datetime] = None
+    error: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
+
 class SkillResponse(BaseModel):
     name: str
     description: str
@@ -72,6 +101,7 @@ class SkillResponse(BaseModel):
     # skills themselves come from disk and must still list.
     reads_7d: int = 0
     agents_7d: int = 0
+    scan: SkillScanSummary
 
 
 class SkillUploadResponse(SkillResponse):
@@ -98,6 +128,7 @@ class SkillFileContent(BaseModel):
 
 
 class SkillDetail(SkillResponse):
+    scan: SkillScanDetail
     body: str
     operator_root_set: bool
     version: int
@@ -158,8 +189,32 @@ def _usage_by_skill() -> Dict[str, Tuple[int, int]]:
         return {}
 
 
+def _scan_summary(state: ScanState) -> dict:
+    return dict(
+        state=state.state,
+        held=not state.allowed,
+        recommendation=state.recommendation,
+        score=state.score,
+    )
+
+
+def _scan_detail(state: ScanState) -> SkillScanDetail:
+    return SkillScanDetail(
+        **_scan_summary(state),
+        max_severity=state.max_severity,
+        findings=[SkillScanFinding(**f) for f in state.findings],
+        scanner_version=state.scanner_version,
+        scanned_at=state.scanned_at,
+        error=state.error,
+        approved_by=state.approved_by,
+        approved_at=state.approved_at,
+    )
+
+
 def _response(
-    skill: Skill, usage: Optional[Dict[str, Tuple[int, int]]] = None
+    skill: Skill,
+    state: ScanState,
+    usage: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> SkillResponse:
     reads, agents = (usage or {}).get(skill.name, (0, 0))
     return SkillResponse(
@@ -170,7 +225,12 @@ def _response(
         file_count=len(skill_files(skill)),
         reads_7d=reads,
         agents_7d=agents,
+        scan=SkillScanSummary(**_scan_summary(state)),
     )
+
+
+def _state_of(skill: Skill) -> ScanState:
+    return scan_states([skill])[skill.name]
 
 
 def _loaded(name: str) -> Skill:
@@ -194,7 +254,9 @@ def _http(exc: SkillError) -> HTTPException:
 async def list_skills():
     """Every valid skill under the configured roots, bundled library first."""
     usage = _usage_by_skill()
-    return [_response(skill, usage) for skill in load_skills(skill_roots())]
+    skills = load_skills(skill_roots())
+    states = scan_states(skills)
+    return [_response(skill, states[skill.name], usage) for skill in skills]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -209,9 +271,11 @@ async def get_skill(name: str):
     except OSError as exc:
         logger.warning("could not read skill %s: %s", name, exc)
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
-    listed = _response(skill, _usage_by_skill())
+    state = _state_of(skill)
+    listed = _response(skill, state, _usage_by_skill())
     return SkillDetail(
-        **listed.model_dump(),
+        **listed.model_dump(exclude={"scan"}),
+        scan=_scan_detail(state),
         body=body,
         operator_root_set=operator_skills_root() is not None,
         version=skill_version(skill),
@@ -259,7 +323,8 @@ async def save_skill(req: SkillWriteRequest):
         )
     except SkillError as exc:
         raise _http(exc) from exc
-    return _response(skill)
+    skill_sweep.request()
+    return _response(skill, _state_of(skill))
 
 
 @router.post("/upload", response_model=SkillUploadResponse, dependencies=_SKILLS_WRITE)
@@ -276,7 +341,9 @@ async def upload_skill(file: UploadFile = File(...)):
         installed, skipped = install_uploaded_skills(file.filename or "", data)
     except SkillError as exc:
         raise _http(exc) from exc
-    skills = [_response(s) for s in installed]
+    skill_sweep.request()
+    states = scan_states(installed)
+    skills = [_response(s, states[s.name]) for s in installed]
     return SkillUploadResponse(
         **skills[0].model_dump(),
         skills=skills,
