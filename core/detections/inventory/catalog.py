@@ -1777,6 +1777,26 @@ def rule_findings(rule_id: int) -> Dict[str, Any]:
     return {"rule_id": rule_id, "total": 0, "days": FIRES_WINDOW_DAYS, "findings": []}
 
 
+def rule_detail(rule_id: int) -> Optional[Dict[str, Any]]:
+    """One active or disabled rule as ``search`` finds it by id (its latest
+    version's stored checks, an overlay rule's stage rows with their proof, its
+    link or deployed copies, its recent check changes), with that version's
+    query, its parsed content and the whole description. None when the rule is
+    not listed."""
+    hits = search("", None, 1, rule_id=rule_id)
+    if not hits:
+        return None
+    hit = hits[0]
+    with get_db_manager().session_scope() as session:
+        version = session.get(DetectionRuleVersion, (rule_id, hit["version"]))
+        content = version.content if version else {}
+        hit["query"] = version.query if version else ""
+    hit["content"] = content
+    description = content.get("description") if isinstance(content, dict) else None
+    hit["description"] = str(description or "")
+    return hit
+
+
 def search(
     query: str,
     language: Optional[str],

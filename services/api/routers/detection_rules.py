@@ -20,9 +20,13 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth import trail_events
+from core.auth import step_up, trail_events
 from core.auth.current_user import get_current_user
-from core.auth.permissions import permission_gate, require_permission
+from core.auth.permissions import (
+    permission_gate,
+    require_permission,
+    require_person_permission,
+)
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import detection_skill, exceptions, proof_card
 from core.detections.detection_rules_service import (
@@ -188,7 +192,13 @@ def add_source(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/sources/{source_id}", dependencies=_SETTINGS_WRITE)
+@router.delete(
+    "/sources/{source_id}",
+    dependencies=[
+        *_SETTINGS_WRITE,
+        step_up.gate("detections.write", "remove a detection source"),
+    ],
+)
 def remove_source(
     source_id: str,
     background: BackgroundTasks,
@@ -447,6 +457,18 @@ def _edited(result: Dict[str, Any]) -> Dict[str, Any]:
     raise HTTPException(status_code=status, detail=error)
 
 
+@router.get("/rules/{rule_id}")
+def get_rule(rule_id: int):
+    """One listed rule copy: its latest version's query, parsed content and
+    description, and that version's stored checks (lint, replay, runs, shadow
+    and the rest); an overlay copy also carries its stage rows with their proof.
+    Read-only."""
+    rule = catalog.rule_detail(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"No detection rule {rule_id}")
+    return rule
+
+
 @router.get("/rules/{rule_id}/stages")
 def get_rule_stages(rule_id: int):
     """A rule's stage rows, newest first: version, from and to stage, actor,
@@ -459,7 +481,7 @@ def get_rule_stages(rule_id: int):
 
 
 class StageChangeRequest(BaseModel):
-    """Why a person reverts a rule, or releases it."""
+    """Why a person reverts a rule, switches it off, or releases it."""
 
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -483,7 +505,13 @@ def _stage_change(change, rule_id: int, body: StageChangeRequest, user: User):
         raise HTTPException(status_code=409, detail=str(e))
 
 
-@router.post("/rules/{rule_id}/revert", dependencies=_SETTINGS_WRITE)
+@router.post(
+    "/rules/{rule_id}/revert",
+    dependencies=[
+        *_SETTINGS_WRITE,
+        step_up.gate("detections.write", "revert a detection"),
+    ],
+)
 def revert_rule(
     rule_id: int,
     body: StageChangeRequest,
@@ -492,6 +520,20 @@ def revert_rule(
     """Moves a live rule back to shadow and holds it there: the rollout does
     not promote it again until a person releases it."""
     return _stage_change(stages.revert, rule_id, body, current_user)
+
+
+@router.post("/rules/{rule_id}/switch-off", dependencies=_SETTINGS_WRITE)
+def switch_off_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(
+        require_person_permission("detections.write", refuse_machine=True)
+    ),
+):
+    """Switches a shadow rule off and holds it there: a signed-in person's own
+    decision, refused to an API token, a service account and an agent's
+    credential. A rule that is not in shadow is refused with 409."""
+    return _stage_change(stages.switch_off, rule_id, body, current_user)
 
 
 @router.post("/rules/{rule_id}/release", dependencies=_SETTINGS_WRITE)
