@@ -107,6 +107,14 @@ def reset_request_rate_key(request: Request) -> str:
     return f"reset-request:missing:{client_host(request)}"
 
 
+def confirm_email_rate_key(request: Request) -> str:
+    token = _body(request).get("token")
+    if isinstance(token, str) and token.strip():
+        digest = hashlib.sha256(token.strip().encode()).hexdigest()
+        return f"email-confirm:{digest}"
+    return f"email-confirm:missing:{client_host(request)}"
+
+
 def reset_confirm_rate_key(request: Request) -> str:
     token = _body(request).get("token")
     if isinstance(token, str) and token.strip():
