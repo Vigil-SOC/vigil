@@ -10,10 +10,11 @@ never the socket. Built from the Python standard library alone (asyncio).
 | `GET /containers/json` | `all`, `limit`, `filters` (JSON object) | **projected** to `Id, Names, Image, Labels, State, Status, Created` |
 | `GET /containers/{id}/json` | none | **projected** to `Id, Name, Created, RestartCount, Image`, `State{…, Health{Status, FailingStreak}}`, `Config{Image, Labels, Tty}`, `HostConfig{LogConfig.Type, RestartPolicy, Memory, NanoCpus}` |
 | `GET /containers/{id}/logs` | `follow, stdout, stderr, timestamps, since, until, tail` (**`details` refused**) | piped, never buffered |
+| `POST /containers/{id}/restart` | `t` (50-120; omitted becomes 50) | this project's soc-daemon only, while Medic is on. No body. |
 | `GET /events` | `since, until, filters` | piped; `filters.type` **forced** to `["container"]` |
 
 Everything else is refused (403 off the list, 405 other methods, 400 for an
-ambiguous shape) and never reaches Docker.
+ambiguous shape) and never reaches Docker. Medic off refuses every POST.
 
 Rules:
 - The raw path is matched segment by segment; `%`, `..`, `//`, `;`, `\`, `#`,
