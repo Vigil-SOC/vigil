@@ -90,6 +90,9 @@ export default function TwoStepDialog({
   const [target, setTarget] = useState<MfaMethod | null>(null)
   // answering a check with a key instead of a code (people with an app and a key choose)
   const [viaKey, setViaKey] = useState(false)
+  // The first method saved while Require MFA holds the person here. Unset for a
+  // voluntary setup and for someone who already has a method.
+  const [justAdded, setJustAdded] = useState<'app' | 'key' | null>(null)
 
   // Keys are offered only when this install can use them (the server's reason is shown otherwise).
   const keys = user?.security_keys
@@ -97,8 +100,17 @@ export default function TwoStepDialog({
   const keyRows = methods.filter((m) => m.type === 'security_key')
   const hasApp = methods.some((m) => m.type === 'authenticator_app')
   const canKey = keysOn && keyRows.length > 0
-  // a person with only keys has no code to type
-  const keyNow = canKey && (!hasApp || viaKey)
+  // a method saved in this required setup counts, before the user is refreshed
+  const methodOn = enabled || justAdded !== null
+  // a person with only keys has no code to type; so does adding the app beside a key just saved
+  const keyNow = justAdded === 'key' || (canKey && (!hasApp || viaKey))
+  // Required first setup only, and only when this install has another method to offer.
+  const offerOther: 'key' | 'app' | null =
+    required && justAdded === 'app' && keysOn
+      ? 'key'
+      : required && justAdded === 'key' && !hasApp
+        ? 'app'
+        : null
 
   useEffect(() => {
     if (open && enabled && view === 'main') {
@@ -121,6 +133,7 @@ export default function TwoStepDialog({
       setKeyName('')
       setTarget(null)
       setViaKey(false)
+      setJustAdded(null)
       cancelPrompt()
     }
   }, [open])
@@ -159,9 +172,20 @@ export default function TwoStepDialog({
 
   const verify = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(() => mfaApi.verify(code.trim(), password), 'Invalid MFA code')
+    const besideKey = justAdded === 'key'
+    const res = await run(
+      async () => mfaApi.verify(code.trim(), password, besideKey ? await factor() : {}),
+      'Invalid MFA code',
+    )
     if (!res) return
-    setCodes(res.data.recovery_codes)
+    // The app beside a key just saved: the codes were already shown. Open the console.
+    if (required && justAdded) {
+      await refreshUser()
+      return
+    }
+    const issued = res.data.recovery_codes ?? []
+    if (required && !enabled && issued.length) setJustAdded('app')
+    setCodes(issued)
     go('codes')
     // Required: the console must not open before the recovery codes have been seen.
     if (!required) await refreshUser()
@@ -194,19 +218,26 @@ export default function TwoStepDialog({
     e.preventDefault()
     const res = await run(async () => {
       // a first method needs only the password; after that, the strong check
-      const check = enabled ? await factor() : {}
+      const check = methodOn ? await factor() : {}
       const { data: reg } = await keysApi.registrationOptions()
       const credential = await createCredential(reg.options)
       return keysApi.add({ name: keyName.trim(), credential, registration_challenge: reg.challenge, password, ...check })
     }, 'Could not add the key.')
     if (!res) return
-    if (res.data.recovery_codes) {
-      setCodes(res.data.recovery_codes)
+    const issued = res.data.recovery_codes ?? []
+    if (issued.length) {
+      if (required && !enabled && !justAdded) setJustAdded('key')
+      setCodes(issued)
       go('codes')
       if (!required) await refreshUser()
-    } else {
-      go('main')
+      return
     }
+    // A key beside the app just saved during required setup: the console opens.
+    if (required && justAdded) {
+      await refreshUser()
+      return
+    }
+    go('main')
   }
 
   const removeKey = async (e: FormEvent) => {
@@ -388,14 +419,15 @@ export default function TwoStepDialog({
               />
             </Field>
             {passwordField}
+            {justAdded === 'key' && factorField}
             <div className="flex justify-end gap-2.5">
               <button
                 type="button"
                 className="btn ghost"
-                onClick={required ? () => void logout() : onClose}
+                onClick={justAdded ? () => go('codes') : required ? () => void logout() : onClose}
                 disabled={busy}
               >
-                {required ? 'Sign out' : 'Cancel'}
+                {justAdded ? 'Back' : required ? 'Sign out' : 'Cancel'}
               </button>
               <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6 || !password}>
                 {busy ? 'Verifying…' : 'Turn on'}
@@ -407,10 +439,43 @@ export default function TwoStepDialog({
         {view === 'codes' && (
           <>
             <RecoveryCodes codes={codes} />
-            <div className="flex justify-end">
-              <button className="btn primary" onClick={required ? () => void refreshUser() : onClose}>
-                Done
-              </button>
+            {offerOther === 'key' && (
+              <p className="m-0 text-sm text-tx-2 leading-relaxed">
+                Add a security key or passkey too, so you can still sign in if you lose the app. You can skip
+                this and add one later.
+              </p>
+            )}
+            {offerOther === 'app' && (
+              <p className="m-0 text-sm text-tx-2 leading-relaxed">
+                Add an authenticator app too, so you can still sign in if you lose the key. You can skip this
+                and add one later.
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-2.5">
+              {offerOther ? (
+                <>
+                  <button className="btn ghost" onClick={() => void refreshUser()} disabled={busy}>
+                    Skip
+                  </button>
+                  <button
+                    className="btn primary"
+                    disabled={busy}
+                    onClick={offerOther === 'key' ? () => go('addKey') : () => void startSetup()}
+                  >
+                    {offerOther === 'key' ? (
+                      <>
+                        <Icon name="key" size={14} /> Add a security key
+                      </>
+                    ) : (
+                      'Set up'
+                    )}
+                  </button>
+                </>
+              ) : (
+                <button className="btn primary" onClick={required ? () => void refreshUser() : onClose}>
+                  Done
+                </button>
+              )}
             </div>
           </>
         )}
@@ -442,7 +507,7 @@ export default function TwoStepDialog({
         {view === 'addKey' && (
           <form className="flex flex-col gap-3.5" onSubmit={addKey}>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
-              {enabled
+              {methodOn
                 ? 'Changes to your sign-in methods always ask for your password and a second step. Adding a key ends no sign-in.'
                 : 'Your password is all that is needed to add your first method. Your browser then asks for the key.'}
             </p>
@@ -456,10 +521,16 @@ export default function TwoStepDialog({
               />
             </Field>
             {passwordField}
-            {enabled && factorField}
-            <div className="flex justify-end gap-2.5">
-              {strongBack}
-              <button type="submit" className="btn primary" disabled={busy || !(enabled ? strongReady : !!password)}>
+            {methodOn && factorField}
+            <div className="flex flex-wrap justify-end gap-2.5">
+              {justAdded ? (
+                <button type="button" className="btn ghost" onClick={() => go('codes')} disabled={busy}>
+                  Back
+                </button>
+              ) : (
+                strongBack
+              )}
+              <button type="submit" className="btn primary" disabled={busy || !(methodOn ? strongReady : !!password)}>
                 {busy ? 'Working…' : 'Continue'}
               </button>
             </div>

@@ -1,9 +1,11 @@
-"""A rule's stage history, and a person's Revert and release of it.
+"""A rule's stage history, and a person's Revert, switch off and release of it.
 
 The history is the rule's ``detection_rule_stages`` rows, newest first. A
 person's Revert (live -> shadow) is a stage row with the person as actor and
 ``proof['hold']`` true: the rollout sweep does not promote a rule whose latest
-row says so. A release is a later shadow row with ``hold`` false (the latest row with a ``hold`` key
+row says so. A person's switch off (shadow -> off) is held the same way, so a
+later version of the rule waits in shadow for a person instead of going live
+on its own. A release is a later shadow row with ``hold`` false (the latest row with a ``hold`` key
 decides, so a new version's row does not lift it), so the normal
 rollout rules apply again, their shadow days counted from the release. Each
 write is audited in the same transaction as the same ``detections.rule_staged``
@@ -206,6 +208,27 @@ def revert(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
         if latest.stage != "live":
             raise ValueError(f"Rule {rule_id} is {latest.stage}, not live")
         return _write(session, rule, latest, "shadow", True, who, reason, "revert")
+
+
+def switch_off(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
+    """shadow -> off by a person, held there. ``who`` is (username, principal id).
+
+    The rollout sweep moves only shadow and live copies, and sync stages an
+    unchanged copy again only when it comes back after removal, so the rule
+    stays off. A new version still enters shadow, held: it runs but is not
+    promoted until a person releases it. A promotion of it still waiting for a
+    person is declined in the same transaction."""
+    with get_db_manager().session_scope() as session:
+        rule, latest = _context(rule_id, session)
+        if latest.stage != "shadow":
+            raise ValueError(f"Rule {rule_id} is {latest.stage}, not shadow")
+        from core.detections.inventory.rollout_approval import withdraw_promotions
+
+        result = _write(session, rule, latest, "off", True, who, reason, "switch_off")
+        result["promotions_declined"] = withdraw_promotions(
+            session, rule.id, who, reason
+        )
+        return result
 
 
 def release(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
