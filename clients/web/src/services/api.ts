@@ -1936,6 +1936,18 @@ export const invitesApi = {
   accept: (body: Schema<'AcceptInvite'>) => api.post<{ message: string }>('/auth/accept-invite', body),
 }
 
+// Directory pushes that wait for a link, and undoing a window of sync deactivations (#4507).
+export const directoryPushesApi = {
+  pending: () => api.get<Schema<'PendingPushes'>>('/users/sync/pending'),
+  link: (pendingId: string, userId: string) =>
+    api.post(`/users/sync/pending/${encodeURIComponent(pendingId)}/link`, { user_id: userId } satisfies Schema<'LinkRequest'>),
+  countWindow: (since: string, until: string) =>
+    api.get<Schema<'SyncWindowCount'>>('/users/sync/window', { params: { since, until } }),
+  reactivateWindow: (since: string, until: string) =>
+    api.post<Schema<'SyncWindowResult'>>('/users/sync/window', { since, until } satisfies Schema<'SyncWindow'>),
+  removeUnused: (userId: string) => api.post(`/users/${encodeURIComponent(userId)}/remove-unused`),
+}
+
 // Teams on Team & access. Reads need users.read; changes need teams.manage.
 export const teamsApi = {
   list: () => api.get<Schema<'TeamOut'>[]>('/users/teams'),
@@ -2059,6 +2071,8 @@ export type DirectorySync = {
   failed_authentications: number
   last_manager_refusals: string[]
   skipped_joins: number
+  /** pushes refused for a username or email in use, waiting for a link on Team & access */
+  pending_links: number
   broken_lines: { external_id: string; on: string }[]
   mapping_note: string | null
   role_refusals: string[]

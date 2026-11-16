@@ -345,7 +345,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "user.updated": lambda p: "Updated an account" + _fields(p.get("changed")),
     "user.deleted": "Deleted an account",
     "user.disabled": "Disabled an account",
-    "user.enabled": "Enabled an account",
+    "user.enabled": lambda p: "Enabled an account"
+    + (" deactivated by directory sync in a window" if p.get("window_since") else ""),
+    "user.removed_unused": "Removed a directory account nobody used and freed its names",
     "user.restored": "Restored a deleted account",
     "invite.sent": lambda p: "Invited someone"
     + (" by email" if p.get("channel") == "email" else " with a copied link"),
@@ -436,6 +438,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "directory.group_refused": "Refused a group push with no externalId",
     "directory.group_unknown": "Skipped a group a user push named, because that group has not been pushed",
     "directory.member_skipped": "Skipped a group member who is not an account here",
+    "directory.collision": "Held a pushed person whose username or email is in use",
+    "directory.linked": "Linked a waiting pushed person to an existing account",
     "teams.placed": lambda p: (
         "Created the default team, joined "
         f"{p.get('people_joined', 0)} people and placed "

@@ -71,7 +71,11 @@ from core.storage.models.detection_rule import (
     DetectionRuleVersion,
     SiemSearch,
 )
-from core.storage.models.directory import DirectoryGroup, DirectoryGroupMember
+from core.storage.models.directory import (
+    DirectoryGroup,
+    DirectoryGroupMember,
+    DirectoryPending,
+)
 from core.storage.models.episodic import (
     EpisodicDistilFailure,
     EpisodicDistilMarker,
@@ -139,6 +143,7 @@ __all__ = [
     "DetectionProposalEvent",
     "DirectoryGroup",
     "DirectoryGroupMember",
+    "DirectoryPending",
     "DetectionRule",
     "DetectionRuleCheckChange",
     "DetectionRuleStage",

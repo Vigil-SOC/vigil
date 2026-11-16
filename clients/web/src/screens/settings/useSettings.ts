@@ -275,6 +275,8 @@ export interface User {
   /** signs in with a password, and/or through the SSO provider (a linked subject) */
   has_password: boolean
   has_sso: boolean
+  /** a directory-managed account nobody signed in to and no case or task names: Remove frees its names */
+  unused_sync?: boolean
   last_login: string | null
   login_count: number
   principal_kind: 'person' | 'service_account'
