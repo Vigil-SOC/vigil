@@ -17,7 +17,7 @@ from services.medic_gateway.session import ViewerSession
 
 P = "VIGIL_MEDIC_GATEWAY_"
 # K1 §6 C6: none of the agent or daemon tokens, no Medic API key, and no
-# Viewer password in this environment (it comes from a file).
+# Viewer password or token in this environment (they come from files).
 FORBIDDEN_ENV = (
     "AGENT_INTERNAL_TOKEN",
     "AGENT_INTERNAL_TOKEN_PREVIOUS",
@@ -25,6 +25,7 @@ FORBIDDEN_ENV = (
     "DAEMON_WEBHOOK_TOKEN",
     "VIGIL_MEDIC_API_KEY",
     P + "VIEWER_PASSWORD",
+    P + "TOKEN",
 )
 CONTEXT_RE = re.compile(r"(/[A-Za-z0-9_-]+)*")
 USAGE = "usage: python -m services.medic_gateway {run|check}"
@@ -40,8 +41,9 @@ class Config:
     medic: tuple[str, int]
     out_bind: tuple[str, int]
     in_bind: tuple[str, int]
-    user: str
+    user: str | None  # needed only when the password is used
     password_file: Path
+    token_file: Path
     context_path: str
 
 
@@ -77,23 +79,23 @@ def load_config(env: Mapping[str, str]) -> Config:
     context = env.get("VIGIL_CONTEXT_PATH", "")
     if not CONTEXT_RE.fullmatch(context):
         raise ConfigError("VIGIL_CONTEXT_PATH must look like /name or be empty")
-    if not env.get(P + "VIEWER_USER"):
-        raise ConfigError(f"{P}VIEWER_USER is required")
     pw = env.get(P + "VIEWER_PASSWORD_FILE", "/run/secrets/medic_viewer_password")
+    tok = env.get(P + "TOKEN_FILE", "/run/secrets/medic_gateway_token")
     return Config(
         _hostport(env, "BACKEND"),
         _hostport(env, "MEDIC"),
         _listener(env, "OUT_BIND"),
         _listener(env, "IN_BIND"),
-        env[P + "VIEWER_USER"],
+        env.get(P + "VIEWER_USER") or None,
         Path(pw),
+        Path(tok),
         context,
     )
 
 
 def build(cfg: Config) -> list:
     backend = server.Upstream(*cfg.backend, prefix=cfg.context_path)
-    session = ViewerSession(backend, cfg.user, cfg.password_file)
+    session = ViewerSession(backend, cfg.user, cfg.password_file, cfg.token_file)
     # Same as the backend's _MAX_BODY (services/api/routers/medic.py): never hold more than it accepts.
     medic = server.Upstream(*cfg.medic, max_body=4 << 20)
     return [

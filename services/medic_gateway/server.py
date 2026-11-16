@@ -245,7 +245,9 @@ class Handler(BaseHTTPRequestHandler):
                 tok = self.session.token()
                 hdrs = {**fwd, "Authorization": f"Bearer {tok}"}
                 status, headers, data = self.upstream.request(method, target, hdrs)
-                if status == 401 and attempt == 2:
+                if status != 401:
+                    self.session.accepted(tok)
+                elif attempt == 2:
                     self.session.gave_up(tok)
                 if status != 401 or attempt == 2 or not self.session.rejected(tok):
                     return status, headers, data
