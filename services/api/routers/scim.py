@@ -20,6 +20,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,7 +38,14 @@ from core.auth.auth_cookies import context_path_prefix
 from core.auth.deactivation import clear_deactivation, deactivate_account
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import DirectoryGroup, Principal, Role, SsoLink, User
+from core.storage.models import (
+    DirectoryGroup,
+    DirectoryPending,
+    Principal,
+    Role,
+    SsoLink,
+    User,
+)
 from core.teams import join_default
 from core.time import utcnow
 from services.api import group_mapping
@@ -544,6 +552,28 @@ def _take_over(session: Session, caller: User, link: SsoLink, external_id: str) 
     return user
 
 
+def _hold(
+    session: Session,
+    external_id: str,
+    username: str,
+    email: str,
+    full_name: Optional[str],
+) -> None:
+    """Write or refresh the pending push for ``external_id``."""
+    values = dict(
+        username=username, email=email, display_name=full_name, received_at=utcnow()
+    )
+    session.execute(
+        insert(DirectoryPending)
+        .values(
+            pending_id=f"pending-{uuid.uuid4().hex[:12]}",
+            external_id=external_id,
+            **values,
+        )
+        .on_conflict_do_update(index_elements=["external_id"], set_=values)
+    )
+
+
 def _create(
     session: Session,
     caller: User,
@@ -568,6 +598,8 @@ def _create(
     if not held_by_account:
         invites.cancel_pending(session, email, "directory")
     elif _collide(session, caller, external_id, username, email):
+        # Kept for an admin to link: the failure commits, as the trail entry does.
+        _hold(session, external_id, username, email, full_name)
         raise ScimFailure(409, "That username or email is already in use", "uniqueness")
     user = User(
         user_id=f"user-{uuid.uuid4().hex[:12]}",
@@ -1038,6 +1070,10 @@ async def create_user(
                 full_name = _display(data)
                 email = _work_email(data) or None
             attrs = _apply_attributes(session, caller, user, username, email, full_name)
+        # Created or taken over: nothing waits for a link under this externalId.
+        session.query(DirectoryPending).filter(
+            DirectoryPending.external_id == external_id
+        ).delete(synchronize_session=False)
         active = _active_of(data, True)
         state = False
         if active is False:

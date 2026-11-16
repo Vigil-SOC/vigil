@@ -8,6 +8,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -72,7 +73,18 @@ from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import AuthLink, Case, Principal, Role, Team, User
+from core.storage.models import (
+    AuthLink,
+    Case,
+    CaseTask,
+    DirectoryGroupMember,
+    DirectoryPending,
+    Principal,
+    Role,
+    SsoLink,
+    Team,
+    User,
+)
 from core.storage.schemas import RoleSchema, UserSchema
 from core.storage.schemas.base import IsoDateTime
 from core.storage.unit_of_work import unit_of_work
@@ -444,6 +456,7 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
     ):
         (open_cases if can_read else hidden_cases)[assignee] = count
     linked = sso.linked_principals(session)
+    unused = _unused_sync(session, users)
     # Who each service account answers to: worked out here, never stored.
     answerable = {
         user.principal_id: (user, gone is not None)
@@ -466,6 +479,8 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         # How the account signs in (#4285); never the hash or the subject.
         entry["has_password"] = bool(user.password_hash)
         entry["has_sso"] = user.principal_id in linked
+        # A pushed account nobody used, which Remove frees for the next push.
+        entry["unused_sync"] = user.user_id in unused
         entry["status"] = _account_status(user, user.principal_id in deleted)
         entry["deactivation_route"] = user.deactivation_route
         entry["deactivated_at"] = (
@@ -1137,6 +1152,270 @@ def remove_team_member(
         session, team_id, user_id, actor=current_user.principal_id
     )
     return TeamMemberRemoved(user_id=user_id, warning=warning)
+
+
+# --- Directory sync: pushes waiting for a link, a window of sync deactivations ---
+
+
+class PendingHolder(BaseModel):
+    user_id: str
+    username: str
+    full_name: Optional[str] = None
+
+
+class PendingPush(BaseModel):
+    """A pushed person whose username or email an existing account holds."""
+
+    pending_id: str
+    external_id: str
+    username: str
+    email: str
+    display_name: Optional[str] = None
+    received_at: IsoDateTime
+    # The accounts holding that username or email: the likely link.
+    holders: list[PendingHolder]
+
+
+class PendingPushes(BaseModel):
+    sync_enabled: bool
+    pending: list[PendingPush]
+
+
+class LinkRequest(BaseModel):
+    user_id: str
+
+
+class SyncWindow(BaseModel):
+    since: datetime
+    until: datetime
+
+
+class SyncWindowCount(BaseModel):
+    # Accounts deactivated by sync in the window that would come back.
+    count: int
+    # Of those, the ones whose role grants something the caller lacks.
+    skipped: int
+
+
+class SyncWindowResult(BaseModel):
+    reactivated: int
+    skipped: int
+
+
+def _naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+@router.get("/sync/pending", response_model=PendingPushes)
+def list_pending_pushes(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Pushes refused because their username or email is in use, oldest first."""
+    with _denials(current_user, "directory.pending_list"):
+        deny_unless(current_user.user_id, "users.read")
+    rows = session.query(DirectoryPending).order_by(DirectoryPending.received_at).all()
+    out = []
+    for row in rows:
+        names = {row.username.casefold(), row.email.casefold()}
+        holders = (
+            _not_deleted(session.query(User))
+            .filter(
+                User.service_account.isnot(True),
+                or_(
+                    func.lower(User.username).in_(names),
+                    func.lower(User.email).in_(names),
+                ),
+            )
+            .order_by(User.username)
+            .all()
+        )
+        out.append(
+            PendingPush(
+                pending_id=row.pending_id,
+                external_id=row.external_id,
+                username=row.username,
+                email=row.email,
+                display_name=row.display_name,
+                received_at=row.received_at,
+                holders=[
+                    PendingHolder(
+                        user_id=u.user_id, username=u.username, full_name=u.full_name
+                    )
+                    for u in holders
+                    if not _is_erased(u)
+                ],
+            )
+        )
+    settings = sso_settings.read_row(session)[0].settings
+    return PendingPushes(sync_enabled=settings.sync_enabled, pending=out)
+
+
+def _refuse(detail: str, code: int = status.HTTP_409_CONFLICT) -> None:
+    raise HTTPException(status_code=code, detail=detail)
+
+
+@router.post("/sync/pending/{pending_id}/link", dependencies=[_step_up("users.write")])
+def link_pending_push(
+    pending_id: str,
+    body: LinkRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Attach one waiting push to one existing person account. The provider's
+    next retry matches the link and takes the account over. The password stays."""
+    with _denials(current_user, "directory.link"):
+        deny_unless(current_user.user_id, "users.write")
+        pending = session.get(DirectoryPending, pending_id)
+        if pending is None:
+            _refuse("That push is no longer waiting", status.HTTP_404_NOT_FOUND)
+        user = _live_user(session, body.user_id)
+        _refuse_erased(user)
+        if not _is_person_account(user, session):
+            _refuse("A service account can't take a directory link")
+        _require_privileges_cover_target(current_user, user, session, action="link")
+        issuer = sso_settings.read_row(session)[0].settings.issuer
+        if not issuer:
+            _refuse("Single sign-on has no issuer")
+        external_id = pending.external_id
+        held = sso.linked_by_directory(session, issuer, external_id) or sso.linked(
+            session, issuer, external_id
+        )
+        if held is not None and held.principal_id != user.principal_id:
+            _refuse("Another account already holds this directory id")
+        link = (
+            session.query(SsoLink)
+            .filter(SsoLink.principal_id == user.principal_id, SsoLink.issuer == issuer)
+            .first()
+        )
+        if link is not None and link.directory_id not in (None, external_id):
+            _refuse("This account is already linked to a different directory id")
+    if link is None:
+        # The subject is a placeholder until the first real sign-in adopts it.
+        link = sso.link(session, user.principal_id, issuer, external_id)
+    link.directory_id = external_id
+    link.managed = True
+    session.delete(pending)
+    session.flush()
+    trail_events.record(
+        session,
+        "directory.linked",
+        actor=current_user.principal_id,
+        principal=user.principal_id,
+        external_id=external_id,
+    )
+    # No mapping pass here: the account has no pushed groups yet, so it would
+    # fall to the default role. The provider's group push applies the mapping.
+    logger.info(f"Directory push linked by {current_user.username}: {user.username}")
+    return _dump_accounts(session, [user])[0]
+
+
+def _sync_window(
+    session: Session, current_user: User, window: SyncWindow, write: bool
+) -> tuple[list[User], int]:
+    """Accounts sync deactivated in the window that the caller may bring back,
+    and how many it may not. ``write`` brings them back."""
+    since, until = _naive_utc(window.since), _naive_utc(window.until)
+    if until < since:
+        _refuse("The window ends before it starts", status.HTTP_400_BAD_REQUEST)
+    rows = (
+        _not_deleted(session.query(User))
+        .filter(
+            User.is_active.is_(False),
+            User.deactivation_route == "sync",
+            User.deactivated_at >= since,
+            User.deactivated_at <= until,
+        )
+        .order_by(User.user_id)
+        .all()
+    )
+    back, skipped = [], 0
+    for user in rows:
+        if _is_erased(user):
+            continue
+        role = session.get(Role, user.role_id)
+        try:
+            # The per-account checks reactivate_user makes.
+            _require_privileges_cover_target(
+                current_user, user, session, action="reactivate"
+            )
+            _refuse_machine_widening(
+                current_user, session, None, role.permissions if role else {}
+            )
+        except HTTPException:
+            skipped += 1
+            continue
+        back.append(user)
+        if not write:
+            continue
+        user.is_active = True
+        clear_deactivation(user)
+        user.dormancy_floor = utcnow()
+        clear_lock(user)
+        session.flush()
+        trail_events.record(
+            session,
+            "user.enabled",
+            actor=current_user.principal_id,
+            principal=user.principal_id,
+            window_since=since.isoformat() + "Z",
+            window_until=until.isoformat() + "Z",
+        )
+        teams.join_default_if_none(
+            session, user.principal_id, actor=current_user.principal_id
+        )
+    return back, skipped
+
+
+@router.get("/sync/window", response_model=SyncWindowCount)
+def count_sync_window(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+    since: datetime = Query(...),
+    until: datetime = Query(...),
+):
+    """How many accounts a window reactivation would bring back. Changes nothing."""
+    with _denials(current_user, "directory.window_count"):
+        deny_unless(current_user.user_id, "users.write")
+    back, skipped = _sync_window(
+        session, current_user, SyncWindow(since=since, until=until), write=False
+    )
+    return SyncWindowCount(count=len(back) + skipped, skipped=skipped)
+
+
+@router.post(
+    "/sync/window",
+    response_model=SyncWindowResult,
+    dependencies=[_step_up("users.write")],
+)
+def reactivate_sync_window(
+    body: SyncWindow,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Reactivate every account directory sync deactivated in the window. Other
+    routes stay deactivated, tokens stay revoked, nobody is sent a notice."""
+    with _denials(current_user, "directory.window_reactivate"):
+        deny_unless(current_user.user_id, "users.write")
+    back, skipped = _sync_window(session, current_user, body, write=True)
+    if back:
+        # Imported here: group_mapping imports this module.
+        from services.api import group_mapping
+
+        stored = sso_settings.read_row(session)[0]
+        group_mapping.apply_current(
+            session,
+            stored.settings,
+            {user.principal_id for user in back},
+            stored.version,
+        )
+    logger.info(
+        f"Sync window reactivated by {current_user.username}: {len(back)} back, "
+        f"{skipped} skipped"
+    )
+    return SyncWindowResult(reactivated=len(back), skipped=skipped)
 
 
 @router.get("/{user_id}")
@@ -2414,6 +2693,90 @@ def restore_user(
         "administrator reactivates it; MCP tokens from before stay revoked.",
     )
     logger.info(f"User restored by {current_user.username}: {user.username}")
+    return _dump_accounts(session, [user])[0]
+
+
+def _unused_sync(session: Session, users: list[User]) -> set[str]:
+    """The user ids, of ``users``, a provider pushed that nobody has used: a
+    managed link, no sign-in, and no case or task, open or closed, names them."""
+    ids = {
+        pid
+        for (pid,) in session.query(SsoLink.principal_id).filter(
+            SsoLink.principal_id.in_([u.principal_id for u in users]),
+            SsoLink.managed.is_(True),
+        )
+    }
+    found = [u for u in users if u.principal_id in ids and not u.login_count]
+    names = [u.username for u in found]
+    if not names:
+        return set()
+    named = {
+        name
+        for model in (Case, CaseTask)
+        for (name,) in session.query(model.assignee)
+        .filter(model.assignee.in_(names))
+        .distinct()
+    }
+    return {u.user_id for u in found if u.username not in named}
+
+
+@router.post("/{user_id}/remove-unused", dependencies=[_step_up("users.delete")])
+def remove_unused_sync_account(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Remove an account a push created for the wrong person: its username and
+    email are freed, its link and pushed groups go, and it is deactivated. The
+    principal stays. The provider's next push creates a new account."""
+    with _denials(current_user, "user.remove_unused"):
+        deny_unless(current_user.user_id, "users.delete")
+        if not _acts_as_person(current_user, session):
+            _refuse(
+                "Removing an account needs a person's own sign-in",
+                status.HTTP_403_FORBIDDEN,
+            )
+        user = _live_user(session, user_id)
+        _refuse_erased(user)
+        _require_privileges_cover_target(current_user, user, session, action="remove")
+        link = (
+            session.query(SsoLink)
+            .filter(SsoLink.principal_id == user.principal_id)
+            .order_by(SsoLink.managed.desc())
+            .first()
+        )
+        if link is None or not link.managed:
+            _refuse("Only an account directory sync manages can be removed this way")
+        if user.login_count:
+            _refuse("This account has signed in, so it can't be removed this way")
+        if user.user_id not in _unused_sync(session, [user]):
+            _refuse("A case or task names this account, so it can't be removed")
+        if user.is_active:
+            _refuse_lockout(
+                current_user, session, users={user.user_id: (user.role_id, False)}
+            )
+    actor, principal = current_user.principal_id, user.principal_id
+    external_id = link.directory_id or link.subject
+    if user.is_active:
+        deactivate_account(session, user, actor=actor, by_person=True, route="person")
+    trail_events.record(
+        session,
+        "user.removed_unused",
+        actor=actor,
+        principal=principal,
+        external_id=external_id,
+    )
+    # A synced team refuses a hand remove, and the mapping no longer sees the
+    # account once its link goes: leave mapped teams first, as erasure does.
+    retention._leave_mapped_teams(session, principal, user.user_id)
+    for model in (SsoLink, DirectoryGroupMember):
+        session.query(model).filter(model.principal_id == principal).delete(
+            synchronize_session=False
+        )
+    session.flush()
+    retention.free_identifiers(session, principal)
+    session.expire(user)
+    logger.info(f"Unused directory account removed by {current_user.username}")
     return _dump_accounts(session, [user])[0]
 
 
