@@ -28,6 +28,7 @@ import stat
 import tempfile
 import zipfile
 import zlib
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, Iterable, List, Optional
@@ -58,6 +59,8 @@ OPERATOR_SKILLS_MAX = 100
 # Category folders allowed between a skills root and a skill folder, the depth
 # the ``npx skills`` CLI reads: ``<root>/<cat>/<cat>/<name>/SKILL.md``.
 CATEGORY_DEPTH = 2
+# Folders opened past that depth only to report a SKILL.md placed too deep.
+DEEP_SEARCH_MAX = 256
 
 
 @dataclass(frozen=True)
@@ -144,32 +147,56 @@ def as_user_turn(user_input: Any) -> str:
     )
 
 
-def _deep_skill_dirs(folder: Path) -> List[Path]:
-    """The folders under ``folder`` holding ``SKILL.md``, links not followed.
+def _deep_skill_dirs(folder: Path, budget: List[int]) -> tuple[List[Path], bool]:
+    """The folders under ``folder`` holding ``SKILL.md``, and whether all were searched.
 
-    A folder holding one is not searched further, and dot folders are left out.
+    Found only to be logged, so the search is cheap: shallowest first, links
+    not followed, dot folders and a skill folder's insides left out, and at
+    most ``budget[0]`` folders opened, shared across the root. A copied
+    project's ``node_modules`` would otherwise be walked on every load.
     """
     found: List[Path] = []
-    for path, dirs, files in os.walk(folder):
-        if SKILL_FILE in files:
-            found.append(Path(path))
-            dirs[:] = []
+    queue = deque([str(folder)])
+    complete = True
+    while queue:
+        if budget[0] <= 0:
+            return found, False
+        budget[0] -= 1
+        path = queue.popleft()
+        try:
+            with os.scandir(path) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
             continue
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
-    return found
+        if any(e.name == SKILL_FILE for e in entries):
+            found.append(Path(path))
+            continue
+        for e in entries:
+            if e.name.startswith(".") or not e.is_dir(follow_symlinks=False):
+                continue
+            if len(queue) >= budget[0]:
+                complete = False  # never opened, so no need to hold it
+                break
+            queue.append(e.path)
+    return found, complete
 
 
 def _walk(
-    folder: Path, depth: int, found: List[Path], skipped: List[tuple[Path, str]]
+    folder: Path,
+    depth: int,
+    found: List[Path],
+    skipped: List[tuple[Path, str]],
+    budget: Optional[List[int]] = None,
 ) -> bool:
     """Add the skill folders under ``folder`` to ``found``; whether any were.
 
     ``depth`` counts the category folders between the root and ``folder``. A
     child holding ``SKILL.md`` is a skill and is not searched further. Any other
     child is a category while ``depth`` allows; past that, a ``SKILL.md`` under
-    it is skipped. Dot folders are left out, and a symlinked category, or a
-    symlinked skill inside one, is not opened: it could reach outside the root
-    that writes and deletes are confined to.
+    it is skipped and reported, as far as ``budget`` searches. Dot folders are
+    left out, and a symlinked category, or a symlinked skill inside one, is not
+    opened: it could reach outside the root that writes and deletes are
+    confined to.
     """
     try:
         children = sorted(p for p in folder.iterdir() if p.is_dir())
@@ -178,6 +205,8 @@ def _walk(
             raise
         skipped.append((folder, str(exc)))
         return False
+    if budget is None:
+        budget = [DEEP_SEARCH_MAX]
     hit = False
     for child in children:
         if child.name.startswith("."):
@@ -192,15 +221,27 @@ def _walk(
             skipped.append((child, "a symlinked category"))
         elif depth < CATEGORY_DEPTH:
             before = len(skipped)
-            if _walk(child, depth + 1, found, skipped):
+            if _walk(child, depth + 1, found, skipped, budget):
                 hit = True
             elif not depth and len(skipped) == before:
                 skipped.append((child, f"no {SKILL_FILE}"))
-        else:
-            for deep in _deep_skill_dirs(child):
+        elif budget[0] >= 0:
+            deep, complete = _deep_skill_dirs(child, budget)
+            for path in deep:
                 skipped.append(
-                    (deep, f"more than {CATEGORY_DEPTH} category folders deep")
+                    (path, f"more than {CATEGORY_DEPTH} category folders deep")
                 )
+            if not complete:
+                skipped.append(
+                    (
+                        child,
+                        f"more than {CATEGORY_DEPTH} category folders deep; the "
+                        f"search for a {SKILL_FILE} that deep stopped here after "
+                        f"{DEEP_SEARCH_MAX} folders across the root, and later "
+                        "folders were not searched",
+                    )
+                )
+                budget[0] = -1  # said once per root
     return hit
 
 
