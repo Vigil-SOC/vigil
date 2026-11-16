@@ -6430,7 +6430,7 @@ export interface paths {
         put?: never;
         /**
          * Save Skill
-         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+         * @description Write ``<root>/[<category>/]<name>/SKILL.md``, bumping its version.
          *
          *     An existing operator skill is overwritten when ``version`` is the one on disk
          *     (409 otherwise); ``source`` copies that skill's folder.
