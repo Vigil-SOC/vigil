@@ -38,7 +38,7 @@ from services.medic.engine.core import BUILTINS, OVERFLOW
 from services.medic.engine.history import gkey
 from services.medic.packs import lifecycle
 from services.medic.packs.loader import read_active, vet_pack
-from services.medic.router import Router
+from services.medic.router import Router, runnable
 from services.medic.sensors import (
     Bus,
     Pipeline,
@@ -142,12 +142,12 @@ def _no_pack(reason: str, events: Sequence[dict[str, Any]] = ()) -> Loaded:
 
 def _runbook_map(shape: str, descriptors: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Rule id -> {id, verify_after_s}, one entry per rule a descriptor applies to.
-    The record's runbook object takes nothing else. A stop_stale_listener runbook
-    is only for start_sh, so a later pack carrying one stays out of other shapes."""
+    The record's runbook object takes nothing else. A descriptor the code list
+    does not allow on this shape is left out, so the incident has no runbook."""
     return {
         rid: {"id": rb["id"], "verify_after_s": rb["verify_after_s"]}
         for rb in descriptors
-        if rb["action"]["type"] != "stop_stale_listener" or shape == "start_sh"
+        if runnable(rb["action"], shape)
         for rid in rb["applies_to"]
     }
 

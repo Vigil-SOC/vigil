@@ -19,7 +19,12 @@ from typing import Any
 from services.medic.engine import LoadedRule
 from services.medic.engine.core import BUILTINS
 
-ESCALATE_AFTER_FAILURES = 2  # Phase 1 1C5: two failed attempts escalate to lane 3
+ESCALATE_AFTER_FAILURES = 2  # two failed attempts; the lane does not change
+
+# (action type, service, install shape). A runbook off this list is no runbook.
+RUNNABLE = frozenset({("restart_service", "soc-daemon", "compose")})
+# This path runs the restart for real, so R6 does not simulate an escalation.
+NO_ESCALATION = frozenset({"restart-soc-daemon"})
 
 
 def _conditions(node: dict) -> Iterator[dict]:
@@ -78,15 +83,24 @@ def would_have(
     return {"L0": "record", "L1": l1, "L2": l2}
 
 
+def runnable(action: Mapping[str, Any], shape: str) -> bool:
+    """True when this shape may copy the runbook onto an incident."""
+    return (action.get("type"), action.get("service"), shape) in RUNNABLE
+
+
 def escalation(
     would: dict[str, Any],
     routed_at: int | None,
     verify_after_s: int | None,
     resolved_at: int | None,
     until: int,
+    runbook_id: str | None = None,
 ) -> dict[str, Any] | None:
     """R6: still open 2 x verify_after_s after routing, when L2 would have run a
-    runbook (only that can "fail"). `until` bounds an incident still open."""
+    runbook (only that can "fail"). `until` bounds an incident still open.
+    A runbook this path actually runs is not simulated."""
+    if runbook_id in NO_ESCALATION:
+        return None
     if routed_at is None or would["L2"]["action"] != "run_runbook":
         return None
     assert verify_after_s is not None
