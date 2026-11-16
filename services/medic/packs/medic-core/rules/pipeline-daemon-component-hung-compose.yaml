@@ -1,14 +1,15 @@
-# P-3.c on Compose, lane 1. Same signals and condition as
+# P-3.d on Compose, lane 1. Same signals and condition as
 # pipeline.daemon-component-hung. Helm and host-native keep the lane-3 rule.
-# P-3.c is this cell's cause: P-3.a stays the death cell, which rule_for binds
-# to pipeline.daemon-component-failed-compose. A database outage is a parent
+# P-3.d is this cell's cause. P-3.c is host-native's stale /health listener,
+# and P-3.a stays the death cell, which rule_for binds to
+# pipeline.daemon-component-failed-compose. A database outage is a parent
 # (suppression.yaml), so this id waits 5 minutes after firing before it routes.
 apiVersion: medic.rules/v1
 kind: Rule
 id: pipeline.daemon-component-hung-compose
 title: A soc-daemon component reports running but does no work
 revision: 1
-fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b, P-3.c]}
+fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b, P-3.d]}
 lane: 1
 detection: absence
 shapes: [compose]

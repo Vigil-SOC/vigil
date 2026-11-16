@@ -334,7 +334,7 @@ def p3a_verify(s: Stack, faulted: bool) -> None:
         )
 
 
-# ---- P-3.c: the scheduler loop stalls without dying --------------------------
+# ---- P-3.d: the scheduler loop stalls without dying --------------------------
 # SIGUSR2 (sitecustomize.py) stops TaskScheduler.run from counting passes and
 # leaves the task running. Not P-3.a: that cause is the death cell, and
 # rule_for binds it to pipeline.daemon-component-failed-compose. The lane-1
@@ -346,9 +346,9 @@ def p3a_verify(s: Stack, faulted: bool) -> None:
 
 HUNG_RULE = "pipeline.daemon-component-hung-compose"
 # 15m changes window plus for: 5m. The 5-minute route hold is not part of this.
-P3C_DETECT_S = 15 * 60 + 5 * 60
+P3D_DETECT_S = 15 * 60 + 5 * 60
 # Past that window plus the 5-minute child delay, so a hang would have routed.
-P3D_DETECT_S = P3C_DETECT_S + 5 * 60 + 60
+P3E_DETECT_S = P3D_DETECT_S + 5 * 60 + 60
 # The scheduler counts a pass and then sleeps 60s (services/daemon/scheduler.py).
 # Longer than the 60s sleep: a pass also runs its tasks before sleeping again.
 _TICK_S = 90
@@ -490,13 +490,13 @@ def _passes_moved(s: Stack) -> bool:
     return status == 200 and comp == "running" and second is not None and second > first
 
 
-def p3c_inject(s: Stack) -> None:
+def p3d_inject(s: Stack) -> None:
     _source_pack(s, True)
     status, comp, count = _scheduler_pass(s)
     if (
         status == 200
         and comp == "running"
-        and s.marks.get("p3c") == count
+        and s.marks.get("p3d") == count
         and count is not None
     ):
         return
@@ -512,16 +512,16 @@ def p3c_inject(s: Stack) -> None:
     _expect(comp, "running", "components.scheduler while stalled")
     _expect(count, stalled, "passes.scheduler across one scheduler sleep")
     assert count is not None
-    s.marks["p3c"] = count
-    s.marks["p3c_at"] = int(time.time())
+    s.marks["p3d"] = count
+    s.marks["p3d_at"] = int(time.time())
 
 
-def p3c_revert(s: Stack) -> None:
+def p3d_revert(s: Stack) -> None:
     try:
-        if s.marks.get("p3c_clear") and _scheduler_pass(s)[:2] == (200, "running"):
+        if s.marks.get("p3d_clear") and _scheduler_pass(s)[:2] == (200, "running"):
             return
         opened_after = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(s.marks.get("p3c_at", 0))
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(s.marks.get("p3d_at", 0))
         )
         incident = _wait_routed(s, opened_after)
         started = _daemon_started(s)
@@ -540,27 +540,27 @@ def p3c_revert(s: Stack) -> None:
             timeout=240,
             every=5,
         )
-        s.marks["p3c_clear"] = 1
+        s.marks["p3d_clear"] = 1
     finally:
         _source_pack(s, False)
 
 
-def p3c_verify(s: Stack, faulted: bool) -> None:
+def p3d_verify(s: Stack, faulted: bool) -> None:
     status, comp, _count = _scheduler_pass(s)
     if faulted:
         _expect((status, comp), (200, "running"), "stalled scheduler still running")
-        assert s.marks.get("p3c") is not None
+        assert s.marks.get("p3d") is not None
     else:
         _expect((status, comp), (200, "running"), "scheduler after the run-fix")
 
 
-def p3d_inject(s: Stack) -> None:
+def p3e_inject(s: Stack) -> None:
     """Postgres down, no hang. The daemon is not recreated: that would open
     ingest.processor-without-database and reset the pass counters."""
-    if s.marks.get("p3d"):
+    if s.marks.get("p3e"):
         return
     _source_pack(s, True)
-    s.p3d = {  # type: ignore[attr-defined]
+    s.p3e = {  # type: ignore[attr-defined]
         "started": _daemon_started(s),
         "fixes": tuple(_fix_seqs(s)),
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -568,15 +568,15 @@ def p3d_inject(s: Stack) -> None:
         # Postgres is down stays down. Remember what was already down.
         "down": tuple(s.not_running()),
     }
-    s.marks["p3d"] = 1
+    s.marks["p3e"] = 1
     s.compose("stop", "postgres")
 
 
-def p3d_revert(s: Stack) -> None:
+def p3e_revert(s: Stack) -> None:
     try:
-        if not s.marks.get("p3d"):
+        if not s.marks.get("p3e"):
             return
-        held = getattr(s, "p3d", {})
+        held = getattr(s, "p3e", {})
         routed = _hung_routed(s, held.get("at", ""))
         assert routed is None, (
             f"lane-1 hang routed during the database outage: {routed}"
@@ -585,7 +585,7 @@ def p3d_revert(s: Stack) -> None:
         assert _daemon_started(s) == held.get("started"), "State.StartedAt changed"
     finally:
         _source_pack(s, False)
-        s.marks.pop("p3d", None)
+        s.marks.pop("p3e", None)
         if "postgres" in s.not_running():
             s.compose("start", "postgres")
             s.wait(
@@ -593,10 +593,10 @@ def p3d_revert(s: Stack) -> None:
                 lambda o: '"healthy"' in o,
                 timeout=180,
             )
-        restore(s, set(getattr(s, "p3d", {}).get("down", ())))
+        restore(s, set(getattr(s, "p3e", {}).get("down", ())))
 
 
-def p3d_verify(s: Stack, faulted: bool) -> None:
+def p3e_verify(s: Stack, faulted: bool) -> None:
     if faulted:
         assert "postgres" in s.not_running(), "postgres is still running"
         before = _health_body(s)
@@ -679,22 +679,22 @@ CELLS = (
         ("POST /v1/incidents/{id}/fix (restart soc-daemon)",),
     ),
     Cell(
-        "P-3.c",
-        1,
-        P3C_DETECT_S,
-        p3c_inject,
-        p3c_verify,
-        p3c_revert,
-        ("docker compose kill -s SIGUSR2 soc-daemon (scheduler loop stalls)",),
-        ("POST /v1/incidents/{id}/fix once routed (restart soc-daemon)",),
-    ),
-    Cell(
         "P-3.d",
         1,
         P3D_DETECT_S,
         p3d_inject,
         p3d_verify,
         p3d_revert,
+        ("docker compose kill -s SIGUSR2 soc-daemon (scheduler loop stalls)",),
+        ("POST /v1/incidents/{id}/fix once routed (restart soc-daemon)",),
+    ),
+    Cell(
+        "P-3.e",
+        1,
+        P3E_DETECT_S,
+        p3e_inject,
+        p3e_verify,
+        p3e_revert,
         ("docker compose stop postgres",),
         ("docker compose start postgres",),
     ),

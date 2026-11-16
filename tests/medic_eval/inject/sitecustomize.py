@@ -5,7 +5,7 @@ Python imports this at start. Inert until a signal:
 - SIGUSR1 raises in the scheduler task, so /health reads "failed: RuntimeError" (P-3.a).
 - SIGUSR2 stalls TaskScheduler.run without raising and without stopping the metrics
   server, so the component stays "running", /health stays 200, and passes.scheduler
-  stops (P-3.c). Cancelling the task would read "stopped".
+  stops (P-3.d). Cancelling the task would read "stopped".
 
 No Vigil imports.
 """
