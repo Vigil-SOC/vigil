@@ -6,7 +6,6 @@ Handles user CRUD operations, role assignment, and user administration.
 
 import asyncio
 import logging
-import re
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from typing import Annotated, Literal, Optional
@@ -61,7 +60,7 @@ from core.auth.permissions import (
     missing_permission,
     require_person_permission,
 )
-from core.auth.service_account import USERNAME_PATTERN as MEDIC_USERNAME_PATTERN
+from core.auth.service_account import is_medic as _is_medic
 from core.cases.case_readers import no_active_reader
 from core.config import get_settings
 from core.platform.email_service import mail_is_configured, send_email
@@ -146,12 +145,6 @@ ROLES_MANAGE = "roles.manage"
 BUILTIN_ROLE_REFUSED = (
     "Built-in roles can't be changed. Copy it to create a custom role."
 )
-
-
-def _is_medic(user: User) -> bool:
-    return _is_service_account(user) and bool(
-        re.fullmatch(MEDIC_USERNAME_PATTERN, user.username or "")
-    )
 
 
 def _refuse_medic_reassignment(user: User) -> None:

@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.auth.mcp_credential_service import authenticate
+from core.auth.service_account import is_medic
 from core.cases.agent_closure import bound_credential
 from core.integrations.mcp.surface import acting_as, is_enabled
 
@@ -139,7 +140,8 @@ class McpSurfaceGate:
         if user is None and token:
             # Off the loop: a refusal may wait on the audit trail's lock.
             authenticated = await asyncio.to_thread(authenticate, token)
-            if authenticated is not None:
+            # Medic's token reads the HTTP API only (#2851): refused as unknown.
+            if authenticated is not None and not is_medic(authenticated.user):
                 user = authenticated.user
                 credential_id = authenticated.credential_id
         if user is None:
