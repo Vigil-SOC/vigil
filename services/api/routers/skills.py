@@ -335,7 +335,6 @@ async def test_skill(name: str):
             LLMRouter(),
             provider,
             skill,
-            root=skill.path.parent,
             max_tokens=1024,
             model=model,
             cases=cases,

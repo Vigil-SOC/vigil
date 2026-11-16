@@ -49,7 +49,6 @@ async def run_skill(
     skill: Skill,
     *,
     agent_id: str,
-    root: Path,
     max_tokens: int,
 ) -> Tuple[int, int]:
     """Run one skill's cases; returns (passed, total) and prints each failure."""
@@ -60,7 +59,6 @@ async def run_skill(
         provider,
         skill,
         agent_id=agent_id,
-        root=root,
         max_tokens=max_tokens,
         sequential=True,
     )
@@ -130,7 +128,6 @@ async def main(argv: Sequence[str]) -> int:
             provider,
             skill,
             agent_id=args.agent,
-            root=args.root,
             max_tokens=args.max_tokens,
         )
         passed += p
