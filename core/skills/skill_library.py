@@ -830,6 +830,7 @@ def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
             or name.startswith("/")
             or re.match(r"^[A-Za-z]:", name)
             or ".." in parts
+            or "" in parts  # "a//x" would rejoin as the absolute "/x"
         ):
             raise SkillError(f"the zip has an unsafe path: {name!r}")
         mode = info.external_attr >> 16
