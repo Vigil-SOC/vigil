@@ -1433,6 +1433,16 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
                 raise sso.Refused("email_in_use")
             notes["linked_by"] = "created"
             return None
+        # Taking over an existing account on its email needs the provider to
+        # vouch for that address; a missing claim is not a yes. Some providers
+        # send the claim as a string.
+        if claims.get("email_verified") not in (True, "true"):
+            raise sso.Refused(
+                "email_link_unverified",
+                sso.EMAIL_NOT_VERIFIED,
+                principal=user.principal_id,
+                attempted=email,
+            )
         notes["linked_by"] = "email"
     if user is None:
         raise sso.Refused("linked_account_missing")
@@ -3025,6 +3035,9 @@ def password_reset_request(
     # any while single sign-on is required; the answer stays the same.
     if sso.required():
         logger.info("Password reset refused: single sign-on is required")
+    elif user and sso.sso_only(session, user):
+        # The provider is this account's only way in; a mailbox is not.
+        logger.info("Password reset refused: %s signs in only with SSO", user.user_id)
     elif user and user.is_active and user.is_verified and not _is_service_account(user):
         _, token = invites.issue_reset(session, user, invites.SELF, user.principal_id)
         link = reset_link(default_base_url(settings), token)
@@ -3124,6 +3137,13 @@ def password_reset_confirm(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account no longer eligible for reset",
+        )
+    # A self-service link never gives an SSO-only account a password; an
+    # administrator's or the host script's still can.
+    if row.channel == invites.SELF and sso.sso_only(session, user):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_INVALID_RESET_TOKEN,
         )
 
     # The minimum age limits a voluntary change only: not the reset sign-in
