@@ -22,7 +22,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from core.auth import step_up, trail_events
 from core.auth.current_user import get_current_user
-from core.auth.permissions import permission_gate, require_permission
+from core.auth.permissions import (
+    permission_gate,
+    require_permission,
+    require_person_permission,
+)
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import detection_skill, exceptions, proof_card
 from core.detections.detection_rules_service import (
@@ -477,7 +481,7 @@ def get_rule_stages(rule_id: int):
 
 
 class StageChangeRequest(BaseModel):
-    """Why a person reverts a rule, or releases it."""
+    """Why a person reverts a rule, switches it off, or releases it."""
 
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -516,6 +520,20 @@ def revert_rule(
     """Moves a live rule back to shadow and holds it there: the rollout does
     not promote it again until a person releases it."""
     return _stage_change(stages.revert, rule_id, body, current_user)
+
+
+@router.post("/rules/{rule_id}/switch-off", dependencies=_SETTINGS_WRITE)
+def switch_off_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(
+        require_person_permission("detections.write", refuse_machine=True)
+    ),
+):
+    """Switches a shadow rule off and holds it there: a signed-in person's own
+    decision, refused to an API token, a service account and an agent's
+    credential. A rule that is not in shadow is refused with 409."""
+    return _stage_change(stages.switch_off, rule_id, body, current_user)
 
 
 @router.post("/rules/{rule_id}/release", dependencies=_SETTINGS_WRITE)
