@@ -17,8 +17,8 @@ from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
-from core.auth.auth_service import AuthService, _is_service_account
-from core.auth.permissions import STEP_UP, deny_unless, missing_permission
+from core.auth.auth_service import _is_service_account
+from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta
@@ -96,12 +96,9 @@ def _refuse_token_request(request: Request, what: str) -> None:
 
 
 def _confirm(request: Request, user: User, action: str) -> None:
-    """A token is never asked to confirm it's you, so a new one asks as its holder's
-    own privileged writes would: inside the window, for whoever holds such a permission.
-    """
-    held = AuthService.get_user_permissions(user.user_id)
-    if any(held.get(permission) for permission in STEP_UP):
-        step_up.check(request, user.user_id, action)
+    """Creating or rotating a token asks "Confirm it's you" of the person calling,
+    whatever their role holds (#4434). A machine caller is never asked."""
+    step_up.check(request, user.user_id, action)
 
 
 def _may_mint_for(caller: User, holder: User) -> bool:

@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.audit.trail import SYSTEM
-from core.auth import trail_events
+from core.auth import sso_settings, trail_events
 from core.auth.principals import PERSON
 from core.exceptions import TeamRefused
 from core.storage.models import (
@@ -33,6 +33,11 @@ NAME_MAX = 100
 # Never names a case: a refused actor learns nothing about what it can't read.
 GRANTS_ACCESS = "Adding to this team grants access you don't hold."
 PERSON_MUST = "A person must do this: adding to this team grants access."
+# The way out is in the sentence: the provider, or take the team off the mapping.
+SYNCED = (
+    "This team is kept in step with the identity provider. "
+    "Change the group at the provider, or take the team out of the mapping."
+)
 
 
 def clean_name(raw: str) -> str:
@@ -55,6 +60,14 @@ def list_teams(session: Session) -> list[Team]:
     return list(
         session.scalars(select(Team).order_by(func.lower(Team.name), Team.team_id))
     )
+
+
+def mapped_team_ids(session: Session) -> set[str]:
+    """Teams the directory mapping names while sync is on. No column: the lines are the flag."""
+    settings = sso_settings.read_row(session)[0].settings
+    if not settings.sync_enabled:
+        return set()
+    return {line.team_id for line in settings.team_lines}
 
 
 def members_of(session: Session, team_id: str) -> list[User]:
@@ -156,6 +169,8 @@ def add_member(
     """``direct``: a person acting in their own session, which a join to a team
     a restricted case names needs."""
     team = _lock(session, team_id)
+    if team.team_id in mapped_team_ids(session):
+        raise TeamRefused(SYNCED, 409)
     _refuse_archived(team)
     user = _person(session, user_id)
     if _has(session, team.team_id, user.principal_id):
@@ -167,10 +182,21 @@ def add_member(
 
 
 def remove_member(
-    session: Session, team_id: str, user_id: str, *, actor: str
+    session: Session,
+    team_id: str,
+    user_id: str,
+    *,
+    actor: str,
+    by_mapping: bool = False,
 ) -> Optional[str]:
-    """Remove the membership. The warning names a last team, or a team left empty."""
+    """Remove the membership. The warning names a last team, or a team left empty.
+
+    ``by_mapping`` is the sync leave. A hand remove of a mapped team is refused,
+    and that refusal must not block the leave.
+    """
     team = _lock(session, team_id)
+    if not by_mapping and team.team_id in mapped_team_ids(session):
+        raise TeamRefused(SYNCED, 409)
     user = session.get(User, user_id)
     if user is None:
         raise TeamRefused("User not found.", 404)
@@ -264,7 +290,12 @@ def join_default(session: Session, principal_id: str, *, actor: str) -> None:
 
 
 def join_named(
-    session: Session, principal_id: str, team_ids: list[str], *, actor: str
+    session: Session,
+    principal_id: str,
+    team_ids: list[str],
+    *,
+    actor: str,
+    via: Optional[str] = None,
 ) -> None:
     """The teams an invite named, instead of the default team.
 
@@ -285,6 +316,7 @@ def join_named(
                 actor,
                 team_id=team.team_id,
                 principal=principal_id,
+                via=via,
             )
             continue
         _insert(session, team, principal_id, actor)
@@ -297,6 +329,7 @@ def join_named(
             actor,
             team_id=default_team(session).team_id,
             principal=principal_id,
+            via=via,
         )
 
 

@@ -306,9 +306,10 @@ export default function TeamsCard({ notify }: SectionProps) {
                 <tr key={team.id}>
                   <td className="cell-wrap">
                     <div className="cell-clamp">{team.name}</div>
-                    {(team.is_default || team.archived) && (
+                    {(team.is_default || team.archived || team.synced) && (
                       <div className="flex flex-wrap items-center gap-1.5 mt-1">
                         {team.is_default && <span className="chip">Default</span>}
+                        {team.synced && <span className="chip">Synced</span>}
                         {team.archived && (
                           <span className="state-pill">
                             <span className="state-dot" aria-hidden="true" />
@@ -333,15 +334,25 @@ export default function TeamsCard({ notify }: SectionProps) {
       <Popup open={!!opened} onClose={closeOpen} title={detail?.name ?? opened?.name ?? 'Team'} width={520}>
         {opened && (
           <div className="flex flex-col gap-3.5">
-            {(opened.is_default || opened.archived) && (
+            {(opened.is_default || opened.archived || opened.synced) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {opened.is_default && <span className="chip">Default</span>}
+                {opened.synced && <span className="chip">Synced</span>}
                 {opened.archived && (
                   <span className="state-pill">
                     <span className="state-dot" aria-hidden="true" />
                     Archived
                   </span>
                 )}
+              </div>
+            )}
+            {opened.synced && (
+              <div className="settings-banner warn" role="status">
+                <Icon name="alert" size={14} />
+                <span>
+                  This team is kept in step with the identity provider. Change the group at the provider, or take the
+                  team out of the mapping.
+                </span>
               </div>
             )}
             {openError && (

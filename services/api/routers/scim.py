@@ -1,10 +1,12 @@
-"""Directory sync's SCIM User endpoint (#4423).
+"""Directory sync's SCIM User and Group endpoints (#4423, #4424).
 
 Mounted at ``/scim/v2``. Every handler answers 404 while sync is off and 403
 for anyone but the directory-sync account. The body and the Authorization
 header are never logged.
 
-No groups, no bulk, no library: the handlers call the account functions.
+No bulk and no library: the handlers call the account and group functions.
+A user payload that names groups writes the same member rows a Group push does,
+and does not create a group that has not been pushed.
 """
 
 from __future__ import annotations
@@ -18,17 +20,26 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.audit.retention import is_erased
-from core.auth import directory_sync, principals, sso, sso_settings, trail_events
+from core.auth import (
+    directory_groups,
+    directory_sync,
+    principals,
+    sso,
+    sso_settings,
+    trail_events,
+)
 from core.auth.auth_cookies import context_path_prefix
 from core.auth.deactivation import clear_deactivation, deactivate_account
 from core.auth.identity import claim_sign_in_names, identifier_in_use
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import Principal, Role, SsoLink, User
+from core.storage.models import DirectoryGroup, Principal, Role, SsoLink, User
 from core.teams import join_default
 from core.time import utcnow
+from services.api import group_mapping
 from services.api.middleware.auth import get_current_active_user
 from services.api.routers.users import _leaves_no_manager as leaves_no_manager
 
@@ -37,6 +48,7 @@ router = APIRouter()
 ROUTER_META = RouterMeta(prefix="/scim/v2", tags=["scim"], auth=Auth.REQUIRED)
 
 _USER = "urn:ietf:params:scim:schemas:core:2.0:User"
+_GROUP = "urn:ietf:params:scim:schemas:core:2.0:Group"
 _LIST = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR = "urn:ietf:params:scim:api:messages:2.0:Error"
 _PATCH = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
@@ -45,6 +57,18 @@ _MEDIA = "application/scim+json"
 _EQ = re.compile(
     r"^\s*(userName|externalId|active)\s+eq\s+"
     r'(?:"((?:[^"\\]|\\.)*)"|(true|false))\s*$',
+    re.IGNORECASE,
+)
+_GROUP_EQ = re.compile(
+    r'^\s*(displayName|externalId)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*$',
+    re.IGNORECASE,
+)
+_MEMBER_EQ = re.compile(
+    r'^members\[value eq "((?:[^"\\]|\\.)*)"\]$',
+    re.IGNORECASE,
+)
+_GROUP_FILTER = re.compile(
+    r'^groups\[value eq "((?:[^"\\]|\\.)*)"\]$',
     re.IGNORECASE,
 )
 
@@ -375,9 +399,13 @@ def _version_of(header: Optional[str]) -> Optional[int]:
 
 
 def _check_version(user: User, header: Optional[str]) -> None:
+    _check_match(user.scim_version or 1, header, "user")
+
+
+def _check_match(current: int, header: Optional[str], noun: str) -> None:
     version = _version_of(header)
-    if version is not None and version != user.scim_version:
-        raise ScimFailure(412, "The user has changed since it was read")
+    if version is not None and version != current:
+        raise ScimFailure(412, f"The {noun} has changed since it was read")
 
 
 def _returned_user_name(user: User) -> str:
@@ -587,16 +615,32 @@ def _ops(data: dict) -> dict:
         if not isinstance(op, dict):
             raise ScimFailure(400, "Each operation must be an object", "invalidValue")
         name = str(op.get("op") or "").lower()
-        if name not in ("add", "replace"):
-            raise ScimFailure(400, "Only add and replace are supported", "invalidValue")
+        if name not in ("add", "replace", "remove"):
+            raise ScimFailure(
+                400, "Only add, remove and replace are supported", "invalidValue"
+            )
         path = op.get("path")
         value = op.get("value")
+        if name == "remove":
+            _op_remove_groups(fields, path, value)
+            continue
         if path is None and isinstance(value, dict):
-            fields.update(_resource_fields(value))
+            piece = _resource_fields(value)
+            ops = piece.pop("groups_ops", None)
+            fields.update(piece)
+            if ops:
+                fields.setdefault("groups_ops", []).extend(ops)
             continue
         if not isinstance(path, str):
             raise ScimFailure(400, "An operation needs a path", "invalidValue")
         short = path.split(":")[-1]
+        filtered = _GROUP_FILTER.match(short)
+        if filtered:
+            _op_groups(fields, name, [filtered.group(1).replace('\\"', '"')])
+            continue
+        if short.lower() == "groups":
+            _op_groups(fields, name, _group_refs(value))
+            continue
         if short == "active":
             fields["active"] = _as_bool(value)
         elif short in ("userName", "displayName"):
@@ -612,6 +656,48 @@ def _ops(data: dict) -> dict:
         elif short == "externalId" and isinstance(value, str):
             fields["externalId"] = value.strip()
     return fields
+
+
+def _group_refs(value) -> list[str]:
+    """Group ids from a SCIM groups value: strings, or objects with ``value``."""
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, dict):
+        raw = value.get("value")
+        return [raw.strip()] if isinstance(raw, str) and raw.strip() else []
+    if not isinstance(value, list):
+        return []
+    found = []
+    for item in value:
+        found.extend(_group_refs(item))
+    return found
+
+
+def _push_groups(fields: dict, kind: str, ids: list[str]) -> None:
+    fields.setdefault("groups_ops", []).append((kind, list(ids)))
+
+
+def _op_groups(fields: dict, name: str, ids: list[str]) -> None:
+    _push_groups(fields, "add" if name == "add" else "replace", ids)
+
+
+def _op_remove_groups(fields: dict, path, value) -> None:
+    """A remove that is not about groups is still refused, as before."""
+    if not isinstance(path, str):
+        raise ScimFailure(400, "Only add and replace are supported", "invalidValue")
+    short = path.split(":")[-1]
+    filtered = _GROUP_FILTER.match(short)
+    if filtered:
+        _push_groups(fields, "remove", [filtered.group(1).replace('\\"', '"')])
+        return
+    if short.lower() != "groups":
+        raise ScimFailure(400, "Only add and replace are supported", "invalidValue")
+    ids = _group_refs(value)
+    if ids:
+        _push_groups(fields, "remove", ids)
+    else:
+        # Removing the attribute with no value clears the person's groups.
+        _push_groups(fields, "replace", [])
 
 
 def _resource_fields(data: dict) -> dict:
@@ -630,6 +716,8 @@ def _resource_fields(data: dict) -> dict:
         fields["active"] = _as_bool(data.get("active"))
     if isinstance(data.get("externalId"), str):
         fields["externalId"] = data["externalId"].strip()
+    if "groups" in data:
+        fields["groups_ops"] = [("replace", _group_refs(data.get("groups")))]
     return fields
 
 
@@ -658,6 +746,46 @@ def _fields_to_names(
     else:
         full_name = None
     return username, email, full_name
+
+
+def _sync_user_groups(
+    session: Session,
+    caller: User,
+    user: User,
+    ops: list[tuple[str, list[str]]],
+) -> bool:
+    """Write group ids from a user payload, in order, then apply. True if membership moved."""
+    if not ops:
+        return False
+    changed = False
+    for kind, ids in ops:
+        unknown, moved = directory_groups.apply_user_groups(
+            session,
+            user.principal_id,
+            add=ids if kind == "add" else [],
+            remove=ids if kind == "remove" else [],
+            replace=ids if kind == "replace" else None,
+        )
+        for key in unknown:
+            trail_events.record(
+                session,
+                "directory.group_unknown",
+                actor=caller.principal_id,
+                principal=user.principal_id,
+                group=key,
+            )
+        changed = changed or moved
+    if changed:
+        _apply_members(session, {user.principal_id})
+    return changed
+
+
+def _apply_members(session: Session, principals: set[str]) -> None:
+    """Role and team changes for these principals, when a mapping author is saved."""
+    if not principals:
+        return
+    stored = sso_settings.read_row(session)[0]
+    group_mapping.apply_current(session, stored.settings, principals, stored.version)
 
 
 # --- discovery -----------------------------------------------------------------
@@ -714,6 +842,34 @@ def _user_type(request: Request) -> dict:
     }
 
 
+def _group_schema() -> dict:
+    return {
+        "id": _GROUP,
+        "name": "Group",
+        "description": "A group pushed from the identity provider.",
+        "attributes": [
+            {"name": "displayName", "type": "string", "required": True},
+            {"name": "externalId", "type": "string", "required": True},
+            {"name": "members", "type": "complex", "multiValued": True},
+        ],
+    }
+
+
+def _group_type(request: Request) -> dict:
+    location = (
+        f"{str(request.base_url).rstrip('/')}"
+        f"{context_path_prefix()}/scim/v2/ResourceTypes/Group"
+    )
+    return {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ResourceType"],
+        "id": "Group",
+        "name": "Group",
+        "endpoint": "/Groups",
+        "schema": _GROUP,
+        "meta": {"resourceType": "ResourceType", "location": location},
+    }
+
+
 @router.get("/ServiceProviderConfig")
 def service_provider_config(
     session: UnitOfWorkSession,
@@ -734,12 +890,11 @@ def resource_types(
 ):
     try:
         _gate(session, caller)
-        one = _user_type(request)
         return _json(
             {
                 "schemas": [_LIST],
-                "totalResults": 1,
-                "Resources": [one],
+                "totalResults": 2,
+                "Resources": [_user_type(request), _group_type(request)],
             }
         )
     except ScimFailure as exc:
@@ -759,6 +914,19 @@ def resource_type_user(
         return _fail(session, exc)
 
 
+@router.get("/ResourceTypes/Group")
+def resource_type_group(
+    request: Request,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+):
+    try:
+        _gate(session, caller)
+        return _json(_group_type(request))
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
 @router.get("/Schemas")
 def schemas(
     session: UnitOfWorkSession,
@@ -767,7 +935,11 @@ def schemas(
     try:
         _gate(session, caller)
         return _json(
-            {"schemas": [_LIST], "totalResults": 1, "Resources": [_user_schema()]}
+            {
+                "schemas": [_LIST],
+                "totalResults": 2,
+                "Resources": [_user_schema(), _group_schema()],
+            }
         )
     except ScimFailure as exc:
         return _fail(session, exc)
@@ -781,9 +953,11 @@ def schema_one(
 ):
     try:
         _gate(session, caller)
-        if schema_id != _USER:
-            raise ScimFailure(404, "No such schema")
-        return _json(_user_schema())
+        if schema_id == _USER:
+            return _json(_user_schema())
+        if schema_id == _GROUP:
+            return _json(_group_schema())
+        raise ScimFailure(404, "No such schema")
     except ScimFailure as exc:
         return _fail(session, exc)
 
@@ -865,6 +1039,13 @@ async def create_user(
         # A new row is version 1. A takeover bumps when a name or the active flag moved.
         if not created and (attrs or state):
             _touch(user)
+        if "groups" in data:
+            _sync_user_groups(
+                session,
+                caller,
+                user,
+                [("replace", _group_refs(data.get("groups")))],
+            )
         _pushed(session, caller, external_id, user, "create")
         return _json(
             _representation(request, user, link),
@@ -929,7 +1110,10 @@ async def patch_user(
                 changed = changed or (was_active and not user.is_active)
             elif _reactivate(session, caller, user):
                 changed = True
-        if changed:
+        groups_changed = _sync_user_groups(
+            session, caller, user, fields.get("groups_ops") or []
+        )
+        if changed or groups_changed:
             _touch(user)
         _pushed(session, caller, link.directory_id, user, "patch")
         return _json(_representation(request, user, link), etag=user.scim_version)
@@ -956,6 +1140,319 @@ def delete_user(
         if was_active and not user.is_active:
             _touch(user)
         _pushed(session, caller, link.directory_id, user, "delete")
+        return Response(status_code=204)
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
+# --- Groups --------------------------------------------------------------------
+
+
+def _group_location(request: Request, group_id: str) -> str:
+    return (
+        f"{str(request.base_url).rstrip('/')}"
+        f"{context_path_prefix()}/scim/v2/Groups/{quote(group_id)}"
+    )
+
+
+def _group_body(request: Request, session: Session, group: DirectoryGroup) -> dict:
+    members = [
+        {
+            "value": user.user_id,
+            "display": (user.full_name or "").strip() or user.username,
+        }
+        for user in directory_groups.member_users(session, group.group_id)
+    ]
+    return {
+        "schemas": [_GROUP],
+        "id": group.group_id,
+        "externalId": group.external_id,
+        "displayName": group.display_name,
+        "members": members,
+        "meta": {
+            "resourceType": "Group",
+            "location": _group_location(request, group.group_id),
+            "version": str(group.version or 1),
+        },
+    }
+
+
+def _group_filter(query, expression: Optional[str]):
+    if expression is None or not expression.strip():
+        return query
+    matched = _GROUP_EQ.match(expression)
+    if matched is None:
+        raise ScimFailure(
+            400,
+            "Only eq on displayName and externalId is supported",
+            "invalidFilter",
+        )
+    attr, quoted = matched.group(1).lower(), matched.group(2).replace('\\"', '"')
+    column = (
+        DirectoryGroup.display_name
+        if attr == "displayname"
+        else DirectoryGroup.external_id
+    )
+    return query.filter(column == quoted)
+
+
+def _label(value) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ScimFailure(400, "displayName is required", "invalidValue")
+    value = value.strip()
+    if len(value) > directory_groups.DISPLAY_MAX:
+        raise ScimFailure(400, "displayName is too long", "invalidValue")
+    return value
+
+
+def _resolved(session: Session, settings, caller: User, values: list[str]) -> set[str]:
+    """Principal ids of accounts that already exist. The rest are recorded and skipped."""
+    found: set[str] = set()
+    for value in values:
+        user = directory_groups.account(session, settings.issuer, value)
+        if user is None:
+            trail_events.record(
+                session,
+                "directory.member_skipped",
+                actor=caller.principal_id,
+                value=value,
+            )
+            continue
+        found.add(user.principal_id)
+    return found
+
+
+def _group_patch(data: dict) -> list[tuple]:
+    """Operations as (kind, payload). Unknown attributes are ignored."""
+    ops = data.get("Operations", data.get("operations"))
+    if not isinstance(ops, list):
+        raise ScimFailure(400, "Operations must be a list", "invalidValue")
+    parsed = []
+    for op in ops:
+        if not isinstance(op, dict):
+            raise ScimFailure(400, "Each operation must be an object", "invalidValue")
+        name = str(op.get("op") or "").lower()
+        if name not in ("add", "replace", "remove"):
+            raise ScimFailure(
+                400, "Only add, remove and replace are supported", "invalidValue"
+            )
+        path = op.get("path")
+        value = op.get("value")
+        if path is None and isinstance(value, dict):
+            if isinstance(value.get("displayName"), str):
+                parsed.append(("display", value["displayName"]))
+            if isinstance(value.get("externalId"), str):
+                parsed.append(("external", value["externalId"].strip()))
+            if "members" in value:
+                parsed.append(("replace", _group_refs(value.get("members"))))
+            continue
+        if not isinstance(path, str):
+            raise ScimFailure(400, "An operation needs a path", "invalidValue")
+        short = path.split(":")[-1]
+        member = _MEMBER_EQ.match(short)
+        if member:
+            one = [member.group(1).replace('\\"', '"')]
+            parsed.append(("remove" if name == "remove" else "add", one))
+            continue
+        if short.lower() == "members":
+            ids = _group_refs(value)
+            if name == "replace" or (name == "remove" and not ids):
+                parsed.append(("replace", ids))
+            elif name == "remove":
+                parsed.append(("remove", ids))
+            else:
+                parsed.append(("add", ids))
+            continue
+        if short.lower() == "displayname":
+            parsed.append(("display", value if isinstance(value, str) else ""))
+        elif short.lower() == "externalid" and isinstance(value, str):
+            parsed.append(("external", value.strip()))
+    return parsed
+
+
+def _pushed_group(
+    session: Session, caller: User, group: DirectoryGroup, op: str
+) -> None:
+    trail_events.record(
+        session,
+        "directory.pushed",
+        actor=caller.principal_id,
+        group_id=group.group_id,
+        external_id=group.external_id,
+        op=op,
+    )
+
+
+def _require_external(session: Session, caller: User, data: dict) -> str:
+    value = data.get("externalId")
+    if not isinstance(value, str) or not value.strip():
+        trail_events.record(
+            session,
+            "directory.group_refused",
+            actor=caller.principal_id,
+            reason="external_id",
+        )
+    return _external(data, required=True)
+
+
+@router.get("/Groups")
+def list_groups(
+    request: Request,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+    filter: Optional[str] = Query(None, alias="filter"),
+    startIndex: int = Query(1, ge=1),
+    count: int = Query(100, ge=0, le=200),
+):
+    try:
+        _gate(session, caller)
+        query = _group_filter(session.query(DirectoryGroup), filter)
+        total = query.count()
+        rows = (
+            []
+            if count == 0
+            else query.order_by(DirectoryGroup.display_name, DirectoryGroup.group_id)
+            .offset(startIndex - 1)
+            .limit(count)
+            .all()
+        )
+        return _json(
+            {
+                "schemas": [_LIST],
+                "totalResults": total,
+                "startIndex": startIndex,
+                "itemsPerPage": len(rows),
+                "Resources": [_group_body(request, session, group) for group in rows],
+            }
+        )
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
+@router.post("/Groups", status_code=201)
+async def create_group(
+    request: Request,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+):
+    try:
+        settings = _gate(session, caller)
+        data = await _payload(request)
+        external_id = _require_external(session, caller, data)
+        if directory_groups.by_external(session, external_id) is not None:
+            raise ScimFailure(
+                409, "A group with that externalId already exists", "uniqueness"
+            )
+        try:
+            group = directory_groups.create(
+                session, external_id, _label(data.get("displayName"))
+            )
+        except IntegrityError:
+            raise ScimFailure(
+                409, "A group with that externalId already exists", "uniqueness"
+            ) from None
+        members = _resolved(session, settings, caller, _group_refs(data.get("members")))
+        affected = directory_groups.replace_principals(session, group, members)
+        _apply_members(session, affected)
+        _pushed_group(session, caller, group, "create")
+        return _json(_group_body(request, session, group), 201, group.version)
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
+@router.get("/Groups/{group_id}")
+def get_group(
+    group_id: str,
+    request: Request,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+):
+    try:
+        _gate(session, caller)
+        group = directory_groups.by_id(session, group_id)
+        if group is None:
+            raise ScimFailure(404, "Group not found")
+        return _json(_group_body(request, session, group), etag=group.version)
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
+@router.patch("/Groups/{group_id}")
+async def patch_group(
+    group_id: str,
+    request: Request,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+):
+    try:
+        settings = _gate(session, caller)
+        group = directory_groups.by_id(session, group_id, lock=True)
+        if group is None:
+            raise ScimFailure(404, "Group not found")
+        _check_match(group.version or 1, if_match, "group")
+        parsed = _group_patch(await _payload(request))
+        for kind, payload in parsed:
+            if kind == "display":
+                _label(payload)
+        working = directory_groups.principal_ids(session, group.group_id)
+        members_touched = False
+        for kind, payload in parsed:
+            if kind == "display":
+                directory_groups.rename(group, _label(payload))
+            elif kind == "external" and payload and payload != group.external_id:
+                trail_events.record(
+                    session,
+                    "directory.claim_ignored",
+                    actor=caller.principal_id,
+                    group_id=group.group_id,
+                    directory_id=payload,
+                )
+            elif kind == "replace":
+                working = _resolved(session, settings, caller, payload)
+                members_touched = True
+            elif kind == "add":
+                working |= _resolved(session, settings, caller, payload)
+                members_touched = True
+            elif kind == "remove":
+                working -= _resolved(session, settings, caller, payload)
+                members_touched = True
+        affected: set[str] = set()
+        if members_touched:
+            affected = directory_groups.replace_principals(session, group, working)
+        # The membership change stands even when a role or a join is skipped.
+        _apply_members(session, affected)
+        _pushed_group(session, caller, group, "patch")
+        return _json(_group_body(request, session, group), etag=group.version)
+    except ScimFailure as exc:
+        return _fail(session, exc)
+
+
+@router.delete("/Groups/{group_id}", status_code=204)
+def delete_group(
+    group_id: str,
+    session: UnitOfWorkSession,
+    caller: User = Depends(get_current_active_user),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+):
+    try:
+        _gate(session, caller)
+        group = directory_groups.by_id(session, group_id, lock=True)
+        if group is None:
+            raise ScimFailure(404, "Group not found")
+        _check_match(group.version or 1, if_match, "group")
+        external_id = group.external_id
+        group_key = group.group_id
+        held = directory_groups.delete(session, group)
+        _apply_members(session, held)
+        trail_events.record(
+            session,
+            "directory.pushed",
+            actor=caller.principal_id,
+            group_id=group_key,
+            external_id=external_id,
+            op="delete",
+        )
         return Response(status_code=204)
     except ScimFailure as exc:
         return _fail(session, exc)

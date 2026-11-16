@@ -394,6 +394,11 @@ class ApprovalAction(Base):
         Boolean, nullable=False, default=True, server_default="true"
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # A stop holds an approved outside action until a person releases it.
+    # The executor skips a held row. Default false: a new row is not held.
+    held: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     approved_by_principal_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
