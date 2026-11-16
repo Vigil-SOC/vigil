@@ -11,10 +11,11 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth.permissions import permission_gate
+from core.auth import trail_events
+from core.auth.permissions import permission_gate, require_permission
 from core.llm.cost.budget import BudgetExceeded
 from core.llm.oneshot import NoProviderConfigured
 from core.llm.providers.registry import get_registry
@@ -24,7 +25,7 @@ from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
 from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
-from core.skills.skill_hold import ScanState, scan_states
+from core.skills.skill_hold import ApprovalRefused, ScanState, approve, scan_states
 from core.skills.skill_library import (
     UPLOAD_MAX,
     Skill,
@@ -45,6 +46,7 @@ from core.skills.skill_library import (
     write_operator_skill,
 )
 from core.skills.skill_usage import skill_usage
+from core.storage.unit_of_work import unit_of_work
 from services.api import skill_sweep
 from services.api.routers.claude import NO_PROVIDER_DETAIL
 
@@ -86,6 +88,8 @@ class SkillScanDetail(SkillScanSummary):
     max_severity: Optional[str] = None
     findings: list[SkillScanFinding] = []
     scanner_version: Optional[str] = None
+    # The content the verdict is about; POST /{name}/approve takes it back.
+    digest: Optional[str] = None
     scanned_at: Optional[datetime] = None
     error: Optional[str] = None
     approved_by: Optional[str] = None
@@ -104,6 +108,11 @@ class SkillResponse(BaseModel):
     reads_7d: int = 0
     agents_7d: int = 0
     scan: SkillScanSummary
+
+
+class SkillApproveRequest(BaseModel):
+    # The scan's digest the approver read; refused if the skill has moved on.
+    digest: str
 
 
 class SkillUploadResponse(SkillResponse):
@@ -206,6 +215,7 @@ def _scan_detail(state: ScanState) -> SkillScanDetail:
         max_severity=state.max_severity,
         findings=[SkillScanFinding(**f) for f in state.findings],
         scanner_version=state.scanner_version,
+        digest=state.digest,
         scanned_at=state.scanned_at,
         error=state.error,
         approved_by=state.approved_by,
@@ -379,6 +389,44 @@ async def generate_skill(req: SkillGenerateRequest):
             detail="The model call failed. Check the provider and the gateway logs.",
         ) from exc
     return SkillGenerateResponse(draft=draft)
+
+
+@router.post("/{name}/approve", response_model=SkillResponse)
+async def approve_skill(
+    name: str,
+    req: SkillApproveRequest,
+    user=Depends(require_permission("skills.approve")),
+):
+    """Release a held skill's current content to agents.
+
+    Needs ``skills.approve``, which ``automation.write`` does not carry, so the
+    uploader cannot approve their own skill. 409 when the skill needs no
+    approval, has no verdict yet, or its content is no longer ``digest``.
+    """
+    try:
+        skill = _loaded(name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+
+    def release() -> ScanState:
+        with unit_of_work() as session:
+            try:
+                before = approve(skill, req.digest, user.principal_id, session)
+            except ApprovalRefused as exc:
+                raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+            trail_events.record(
+                session,
+                "skills.approved",
+                actor=user.principal_id,
+                name=skill.name,
+                digest=req.digest,
+                state=before.state,
+                recommendation=before.recommendation,
+            )
+        return _state_of(skill)
+
+    # Digesting, the verdict read and the write are blocking: off the event loop.
+    return _response(skill, await asyncio.to_thread(release))
 
 
 @router.delete("/{name}", dependencies=_SKILLS_WRITE)

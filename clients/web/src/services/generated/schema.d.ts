@@ -6675,6 +6675,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Skill
+         * @description Release a held skill's current content to agents.
+         *
+         *     Needs ``skills.approve``, which ``automation.write`` does not carry, so the
+         *     uploader cannot approve their own skill. 409 when the skill needs no
+         *     approval, has no verdict yet, or its content is no longer ``digest``.
+         */
+        post: operations["post_api_skills_name_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/{name}/files/{path}": {
         parameters: {
             query?: never;
@@ -15082,6 +15106,11 @@ export interface components {
             /** Started At */
             started_at: string;
         };
+        /** SkillApproveRequest */
+        SkillApproveRequest: {
+            /** Digest */
+            digest: string;
+        };
         /** SkillCaseResult */
         SkillCaseResult: {
             /** Missing */
@@ -15185,6 +15214,8 @@ export interface components {
             approved_at?: string | null;
             /** Approved By */
             approved_by?: string | null;
+            /** Digest */
+            digest?: string | null;
             /** Error */
             error?: string | null;
             /**
@@ -28325,6 +28356,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_approve: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillResponse"];
                 };
             };
             /** @description Validation Error */
