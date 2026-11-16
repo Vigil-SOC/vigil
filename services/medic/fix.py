@@ -35,6 +35,15 @@ log = logging.getLogger("services.medic")
 
 RULE_ID = "pipeline.daemon-component-failed-compose"
 SIBLING_RULE = "pipeline.daemon-component-failed"
+HUNG_RULE = "pipeline.daemon-component-hung-compose"
+HUNG_SIBLING = "pipeline.daemon-component-hung"
+_COVERED_RULES = frozenset({RULE_ID, SIBLING_RULE, HUNG_RULE, HUNG_SIBLING})
+_HANG_RULES = frozenset({HUNG_RULE, HUNG_SIBLING})
+# services/daemon/metrics.py _PASS_COMPONENTS. kafka and executor have no counter.
+_PASS_NAMES = ("poller", "processor", "scheduler", "orchestrator")
+# services/daemon/scheduler.py counts a pass, then sleeps 60s. 90s covers that
+# sleep and the work before the next pass, so a healthy loop has moved.
+_SCHEDULER_GAP_S = 90.0
 RUNBOOK_ID = "restart-soc-daemon"
 SERVICE = "soc-daemon"
 # Compose stop_grace_period. The proxy refuses a shorter `t`.
@@ -129,6 +138,10 @@ class Fixer:
         self.medic = medic
         self._lock = threading.Lock()
         self._timers: list[threading.Timer] = []
+        # seq -> (monotonic time, passes from the first /health of the new process).
+        # Not a fix_run field: that record's additionalProperties is false.
+        self._hang_base: dict[int, tuple[float, dict]] = {}
+        self._hang_tries: dict[int, int] = {}
         self.daemon, self.proxy = _addrs(medic)
 
     def stop(self) -> None:
@@ -331,14 +344,63 @@ class Fixer:
             self._verify(rec)
 
     def _verify(self, rec: dict) -> None:
-        result = "not_back"
+        status, body = None, None
         if self.daemon is not None:
             try:
                 status, body = _health(self.daemon)
             except httpx.HTTPError:
                 status, body = None, None
-            result = death_cleared(status, body)
+        passes = None
+        if _covers_hang(self.medic.writer.root, rec):
+            kind, passes = self._hang_passes(rec, status, body)
+            if kind == "wait":
+                return
+            if kind in ("not_back", "not_cleared"):
+                self._verified(rec, kind, None)
+                return
+        result = (
+            "not_back"
+            if self.daemon is None
+            else death_cleared(status, body, passes=passes)
+        )
         self._verified(rec, result, None)
+
+    def _hang_passes(
+        self, rec: dict, status: int | None, body: Any
+    ) -> tuple[str, dict[str, int] | None]:
+        """('wait', None) when the second read is still armed, else the baseline
+        for every component that is running now. 'not_back' when the new process
+        never answered."""
+        seq = rec["seq"]
+        started = _parse_time(rec["body"].get("started_at"))
+        fresh = status == 200 and _new_process(body, started)
+        saved = self._hang_base.get(seq)
+        if saved is None:
+            if (
+                fresh
+                and isinstance(body, dict)
+                and isinstance(body.get("passes"), dict)
+            ):
+                self._hang_base[seq] = (time.monotonic(), body["passes"])
+                self._arm(rec, delay=_SCHEDULER_GAP_S)
+                return "wait", None
+            tries = self._hang_tries.get(seq, 0) + 1
+            self._hang_tries[seq] = tries
+            if tries < 6:
+                self._arm(rec, delay=10.0)
+                return "wait", None
+            return "not_back", None
+        at, baseline = saved
+        remain = _SCHEDULER_GAP_S - (time.monotonic() - at)
+        if remain > 1:
+            self._arm(rec, delay=remain)
+            return "wait", None
+        if not fresh:
+            return "not_back", None
+        built = _running_baseline(baseline, body)
+        if built is None:
+            return "not_cleared", None
+        return "passes", built
 
     def _not_verified(self, rec: dict) -> None:
         self._verified(rec, "not_verified", "medic_stopped")
@@ -352,6 +414,8 @@ class Fixer:
                 # Still awaiting: try again shortly, or the next click is blocked.
                 self._arm(rec, delay=5.0)
                 return
+        self._hang_base.pop(rec["seq"], None)
+        self._hang_tries.pop(rec["seq"], None)
         log.info("fix verified %s", result)
 
     def _append_verified(self, body: dict[str, Any]) -> bool:
@@ -398,16 +462,63 @@ def _machine_opened(engine, incident_id: str) -> float | None:
 
 
 def _covered(engine, incident_id: str) -> list[str]:
-    """This incident, plus other open soc-daemon component-failed incidents."""
+    """This incident, plus other open soc-daemon death or hang incidents.
+    One restart writes fix_verified for each of them."""
     found = {incident_id}
     for row in engine.status():
         if (
-            row.get("rule") in (RULE_ID, SIBLING_RULE)
+            row.get("rule") in _COVERED_RULES
             and row.get("state") in _OPEN
             and row.get("incident_id")
         ):
             found.add(row["incident_id"])
     return sorted(found)
+
+
+def _covers_hang(data_dir, rec: dict) -> bool:
+    for incident_id in rec["body"]["covered"]:
+        opened = _opened(data_dir, incident_id)
+        rule = ((opened or {}).get("body") or {}).get("rule") or {}
+        if rule.get("id") in _HANG_RULES:
+            return True
+    return False
+
+
+def _new_process(body: Any, started: datetime | None) -> bool:
+    """True when /health is the process that began at or after `started`
+    (Docker State.StartedAt). A naive timestamp is UTC, as the daemon writes it."""
+    if started is None or not isinstance(body, dict):
+        return False
+    raw = body.get("started_at")
+    if not isinstance(raw, str):
+        return False
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        begun = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    if begun.tzinfo is None:
+        begun = begun.replace(tzinfo=UTC)
+    return begun.astimezone(UTC) + timedelta(seconds=5) >= started
+
+
+def _running_baseline(baseline: dict, body: Any) -> dict[str, int] | None:
+    """Baseline passes for components that are running now. None if one of
+    those has no integer baseline, so the clear cannot succeed on /health alone."""
+    components = body.get("components") if isinstance(body, dict) else None
+    if not isinstance(components, dict) or not isinstance(baseline, dict):
+        return None
+    out: dict[str, int] = {}
+    for name in _PASS_NAMES:
+        if components.get(name) != "running":
+            continue
+        previous = baseline.get(name)
+        if type(previous) is not int:
+            return None
+        out[name] = previous
+    return out
 
 
 def _dependencies(engine, opened: dict | None) -> list[str]:

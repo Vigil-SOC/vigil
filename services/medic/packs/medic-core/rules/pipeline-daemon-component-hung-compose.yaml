@@ -1,0 +1,46 @@
+# P-3.c on Compose, lane 1. Same signals and condition as
+# pipeline.daemon-component-hung. Helm and host-native keep the lane-3 rule.
+# P-3.c is this cell's cause: P-3.a stays the death cell, which rule_for binds
+# to pipeline.daemon-component-failed-compose. A database outage is a parent
+# (suppression.yaml), so this id waits 5 minutes after firing before it routes.
+apiVersion: medic.rules/v1
+kind: Rule
+id: pipeline.daemon-component-hung-compose
+title: A soc-daemon component reports running but does no work
+revision: 1
+fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b, P-3.c]}
+lane: 1
+detection: absence
+shapes: [compose]
+signals:
+  processor:          {sample: {signal: daemon_health, key: components.processor}}
+  poller:             {sample: {signal: daemon_health, key: components.poller}}
+  scheduler:          {sample: {signal: daemon_health, key: components.scheduler}}
+  orchestrator:       {sample: {signal: daemon_health, key: components.orchestrator}}
+  processor_passes:   {sample: {signal: daemon_health, key: passes.processor}}
+  poller_passes:      {sample: {signal: daemon_health, key: passes.poller}}
+  scheduler_passes:   {sample: {signal: daemon_health, key: passes.scheduler}}
+  orchestrator_passes: {sample: {signal: daemon_health, key: passes.orchestrator}}
+when:
+  any:
+    - all:
+        - {fn: latest, signal: processor, op: "==", value: running}
+        - {fn: changes, signal: processor_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: poller, op: "==", value: running}
+        - {fn: changes, signal: poller_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: scheduler, op: "==", value: running}
+        - {fn: changes, signal: scheduler_passes, window: 15m, op: "==", value: 0}
+    - all:
+        - {fn: latest, signal: orchestrator, op: "==", value: running}
+        - {fn: changes, signal: orchestrator_passes, window: 15m, op: "==", value: 0}
+for: 5m
+keep_firing_for: 10m
+advice:
+  summary: A soc-daemon work loop (processor, poller, scheduler or orchestrator) reports running but has not completed a pass for 15 minutes.
+  fix: >-
+    Restart soc-daemon. The loop starts again with it. A medic.admin can run
+    that restart from Medic. Keep the soc-daemon log from before the restart.
+    One stuck worker, one stuck source, and a stuck supervision or distil loop
+    stay on /status and are not this restart.
