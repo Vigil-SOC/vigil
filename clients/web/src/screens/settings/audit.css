@@ -155,8 +155,8 @@
 .ag-notes p { color: var(--tx1); line-height: 1.45; }
 .ag-notes b { color: var(--tx0); font-weight: 650; }
 
-.ag-fields { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
-.ag-fields dt { color: var(--tx2); }
+.ag-fields { display: grid; grid-template-columns: minmax(130px, 11rem) minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.ag-fields dt { color: var(--tx2); overflow-wrap: anywhere; }
 .ag-fields dd { margin: 0; color: var(--tx0); overflow-wrap: anywhere; }
 .ag-fields dd.mono { font-family: var(--font-mono); }
 

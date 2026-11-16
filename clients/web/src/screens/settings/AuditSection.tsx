@@ -304,6 +304,57 @@ function Marks({ entry }: { entry: AuditEntry }) {
   return <>{marks.map((m) => <span key={m} className="ag-mark">{m}</span>)}</>
 }
 
+const VERIFIED_BY: Record<string, string> = {
+  in_person: 'In person',
+  video_call: 'On a video call',
+  phone_call_back: 'By calling them back on a known number',
+  other_verified_channel: 'Another verified channel',
+}
+
+const HOST_DETAIL: { key: string; label: string }[] = [
+  { key: 'reason', label: 'Reason' },
+  { key: 'identity_confirmed_by', label: 'Verified by' },
+  { key: 'verification_note', label: 'Note' },
+  { key: 'os_user', label: 'OS account' },
+  { key: 'invoking_user', label: 'Invoking user' },
+  { key: 'host', label: 'Host' },
+]
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value) as unknown
+    } catch {
+      return null
+    }
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return null
+}
+
+/** Host recovery writes who ran it into personal. Other actions keep an email there. */
+function hostDetail(entry: AuditEntry): [string, string][] {
+  if (entry.restricted) return []
+  const personal = asRecord(entry.personal)
+  if (!personal) return []
+  if (typeof personal.os_user !== 'string' && typeof personal.identity_confirmed_by !== 'string') {
+    return []
+  }
+  const rows: [string, string][] = []
+  for (const field of HOST_DETAIL) {
+    const value = personal[field.key]
+    if (typeof value !== 'string' || value === '') continue
+    const shown = field.key === 'identity_confirmed_by' ? (VERIFIED_BY[value] ?? value) : value
+    rows.push([field.label, shown])
+  }
+  if (entry.payload.suspected_compromise === true) {
+    rows.push(['Suspected compromise', 'Yes'])
+  }
+  return rows
+}
+
 /** Entry detail, laid out like the case Record tab's card. */
 function EntryDetail({ entry }: { entry: AuditEntry }) {
   const p = entry.payload
@@ -327,6 +378,7 @@ function EntryDetail({ entry }: { entry: AuditEntry }) {
     ['On behalf of', [nameOf(entry.on_behalf_of, str(p.on_behalf_of)), entry.on_behalf_of?.erased ? 'erased' : '', entry.on_behalf_of?.deleted ? 'deleted' : ''].filter(Boolean).join(' · ')],
     // A narrowed entry has no operator text to show, not an empty one.
     ...(entry.restricted ? [] : [['Operator text', entry.operator_text ?? ''] as [string, string]]),
+    ...hostDetail(entry),
     ['What it was', entry.sentence ?? ''],
     ['Action', str(p.action)],
     ...(entry.restricted ? [['Case', str(p.case_id)] as [string, string]] : [['Object', str(p.object)] as [string, string]]),
