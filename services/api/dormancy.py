@@ -112,7 +112,9 @@ def _handle(user_id: str, days: int, now) -> None:
                 user.dormancy_held_at = now
                 _tell_held(session, user, last, days)
             return
-        deactivate_account(session, user, actor=ACTOR, by_person=False)
+        deactivate_account(
+            session, user, actor=ACTOR, by_person=False, route="dormancy"
+        )
         trail_events.record(
             session,
             "user.deactivated_dormant",

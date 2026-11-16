@@ -153,14 +153,16 @@ function PeopleAndRoles({ notify }: SectionProps) {
     const r = roles.find((x) => x.role_id === id)
     return r ? roleLabel(r) : id
   }
-  const roleOptions = roles.map((r) => ({
-    value: r.role_id,
-    label: r.description ? `${roleLabel(r)} — ${r.description}` : roleLabel(r),
-  }))
+  const roleOptions = roles
+    .filter((r) => !r.reserved || r.role_id === form.role_id)
+    .map((r) => ({
+      value: r.role_id,
+      label: r.description ? `${roleLabel(r)} — ${r.description}` : roleLabel(r),
+    }))
   // A kept legacy role is never the default for a new account.
   const defaultRoleId =
     roles.find((r) => r.role_id === 'role-viewer')?.role_id ??
-    roles.find((r) => r.kind !== 'legacy')?.role_id ??
+    roles.find((r) => r.kind !== 'legacy' && !r.reserved)?.role_id ??
     roles[0]?.role_id
   const editingMedic = !!editing?.managed_by_medic
 
@@ -410,6 +412,15 @@ function PeopleAndRoles({ notify }: SectionProps) {
                     {u.status === 'locked' && (
                       <div className="text-xs text-tx-3 mt-1" title={lockedFrom(u)}>
                         <Icon name="lock" size={11} /> {u.locked_until ? 'Until ' + lockEnd(u.locked_until) : 'Until unlocked'}
+                      </div>
+                    )}
+                    {u.status === 'deactivated' && u.deactivation_route && (
+                      <div className="text-xs text-tx-3 mt-1 break-words">
+                        {u.deactivation_route === 'sync'
+                          ? 'Directory sync'
+                          : u.deactivation_route === 'dormancy'
+                            ? 'Dormancy'
+                            : 'By a person'}
                       </div>
                     )}
                     {u.status === 'active' && u.deactivating_at && (
@@ -915,8 +926,9 @@ function RolesCard({
   const [deleting, setDeleting] = useState(false)
 
   const known = new Set(meta.permissions)
+  // directory.sync is not grantable. A copy drops it.
   const onlyKnown = (p: Record<string, boolean>) =>
-    Object.fromEntries(Object.entries(p).filter(([k]) => known.has(k)))
+    Object.fromEntries(Object.entries(p).filter(([k]) => known.has(k) && k !== 'directory.sync'))
 
   const startOptions = [
     { value: '', label: 'Blank' },
@@ -939,7 +951,9 @@ function RolesCard({
     )
   const openRole = (r: Role) =>
     open(
-      canManage && r.kind !== 'builtin' ? { mode: 'edit', role: r } : { mode: 'view', role: r },
+      canManage && r.kind !== 'builtin' && !r.reserved
+        ? { mode: 'edit', role: r }
+        : { mode: 'view', role: r },
       { name: r.name, description: r.description, permissions: { ...r.permissions } },
     )
 
@@ -1040,6 +1054,7 @@ function RolesCard({
                   <div className="flex items-center gap-1.5 whitespace-nowrap">
                     <span>{roleLabel(r)}</span>
                     {r.kind === 'builtin' && <span className="chip">Built-in</span>}
+                    {r.reserved && <span className="chip">Directory sync</span>}
                     {r.kind === 'legacy' && <span className="chip sel">Review</span>}
                     {r.modified && (
                       <span className="chip sel" title={Object.keys(r.diff ?? {}).join(', ')}>
@@ -1059,17 +1074,17 @@ function RolesCard({
                   <div className="inline-flex gap-1.5">
                     <button
                       className="btn ghost icon"
-                      title={canManage && r.kind !== 'builtin' ? 'Edit' : 'View'}
+                      title={canManage && r.kind !== 'builtin' && !r.reserved ? 'Edit' : 'View'}
                       onClick={() => openRole(r)}
                     >
-                      <Icon name={canManage && r.kind !== 'builtin' ? 'edit' : 'eye'} size={15} />
+                      <Icon name={canManage && r.kind !== 'builtin' && !r.reserved ? 'edit' : 'eye'} size={15} />
                     </button>
                     {canManage && (
                       <button className="btn ghost icon" title="Copy" onClick={() => openCopy(r)}>
                         <Icon name="copy" size={15} />
                       </button>
                     )}
-                    {canManage && r.kind !== 'builtin' && (
+                    {canManage && r.kind !== 'builtin' && !r.reserved && (
                       <button
                         className="btn ghost icon"
                         title={r.holders ? `${r.holders} account(s) hold this role` : 'Delete'}
@@ -1143,16 +1158,24 @@ function RolesCard({
                   {keys.map((k) => (
                     <label
                       key={k}
-                      className="flex items-center gap-2 py-0.5 text-xs"
+                      className="flex flex-wrap items-center gap-2 py-0.5 text-xs"
                       style={{ cursor: viewing ? 'default' : 'pointer' }}
                     >
                       <input
                         type="checkbox"
                         checked={!!form.permissions[k]}
-                        disabled={!!viewing}
+                        disabled={!!viewing || k === 'directory.sync'}
+                        title={
+                          k === 'directory.sync'
+                            ? 'directory.sync is held only by directory sync and can’t be granted'
+                            : undefined
+                        }
                         onChange={() => toggle(k)}
                       />
                       <span className="font-mono">{k}</span>
+                      {k === 'directory.sync' && (
+                        <span className="text-tx-3 basis-full">not grantable</span>
+                      )}
                       {platformEquivalent.has(k) && <span className="text-tx-3 whitespace-nowrap">platform-equivalent</span>}
                     </label>
                   ))}

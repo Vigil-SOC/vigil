@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from core.auth import current_user as current_user_module
+from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
 from core.auth.auth_service import AuthService, _is_service_account
@@ -203,6 +204,11 @@ def mint(
             raise HTTPException(
                 status_code=403, detail="Medic's token is minted from the host only"
             )
+        if directory_sync.is_sync_account(holder):
+            raise HTTPException(
+                status_code=403,
+                detail="Directory sync's token is minted from Single sign-on",
+            )
         _check_holder(current_user, holder)
     _confirm(request, current_user, "create a token")
     minted = tokens.mint(
@@ -243,6 +249,11 @@ def rotate(
     for the holder rotates, so an admin revokes another person's token, never this."""
     _refuse_token_request(request, "rotate tokens")
     credential, holder = _found(credential_id)
+    if directory_sync.is_sync_account(holder):
+        raise HTTPException(
+            status_code=403,
+            detail="Directory sync's token is minted from Single sign-on",
+        )
     if not _may_mint_for(current_user, holder):
         if holder.user_id != current_user.user_id and not _manages(current_user):
             raise HTTPException(status_code=404, detail="Token not found")

@@ -20,9 +20,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.dialects.postgresql import insert
 
-from core.auth import sign_ins, sso, sso_settings, trail_events
+from core.auth import directory_sync, sign_ins, sso, sso_settings, trail_events
+from core.auth.auth_cookies import context_path_prefix
 from core.auth.password_reset import default_base_url
-from core.auth.permissions import require_permission
+from core.auth.permissions import deny_unless, require_permission
 from core.config import get_settings
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, secret_write_failure_detail, set_secret
@@ -30,7 +31,7 @@ from core.storage.models import Role, SignIn, SystemConfig, User
 from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
 from services.api.routers.auth import _session_sid
-from services.api.routers.users import _can_assign_role
+from services.api.routers.users import _can_assign_role, _leaves_no_manager
 
 router = APIRouter()
 
@@ -56,6 +57,11 @@ REQUIRE_STALE = (
     "sign in with SSO again"
 )
 REQUIRE_FIRST = "Turn off Require single sign-on first"
+SYNC_HOLDS_PROVIDER = (
+    "Directory sync is on, so single sign-on stays on and the discovery URL "
+    "and client ID stay as they are. Turn directory sync off on the host first: "
+    "python -m core.auth.directory_sync_off"
+)
 
 
 def require_blockers(
@@ -205,6 +211,8 @@ def put_sso_settings(
             old.settings.require_sso if body.require_sso is None else body.require_sso
         ),
         provider_changed_at=old.settings.provider_changed_at,
+        sync_enabled=old.settings.sync_enabled,
+        directory_id_claim=old.settings.directory_id_claim,
     )
     changes = {
         "old": old.settings.model_dump(mode="json"),
@@ -231,6 +239,9 @@ def put_sso_settings(
         new.discovery_url != old.settings.discovery_url
         or new.client_id != old.settings.client_id
     )
+    # While directory sync is on, the provider it pushes against stays put.
+    if old.settings.sync_enabled and (client_changed or not new.enabled):
+        refuse(409, SYNC_HOLDS_PROVIDER)
     # While required, the provider people sign in through stays put.
     if old.settings.require_sso and (client_changed or not new.enabled):
         refuse(409, REQUIRE_FIRST)
@@ -298,3 +309,87 @@ def put_sso_settings(
     stored = sso_settings.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
     return _out(stored, session, request)
+
+
+_SYNC_PERMS = ("roles.manage", "users.write", "teams.manage")
+
+
+class SyncIn(BaseModel):
+    directory_id_claim: str = Field("sub", min_length=1, max_length=128)
+    # When sync is already on, mint a replacement token and revoke the previous one.
+    mint: bool = False
+
+
+class SyncOut(BaseModel):
+    sync_enabled: bool
+    directory_id_claim: str
+    last_push: Optional[str] = None
+    token_expires_at: Optional[str] = None
+    failed_authentications: int
+    last_manager_refusals: list[str]
+    scim_path: str
+    # Present only in the response that mints it.
+    token: Optional[str] = None
+
+
+def _stamp(value) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.isoformat()
+    if getattr(value, "tzinfo", None) is None:
+        return text + "Z"
+    return text
+
+
+def _sync_caller(user: User, session) -> None:
+    for permission in _SYNC_PERMS:
+        deny_unless(user.user_id, permission, session)
+
+
+def _sync_out(session, token: Optional[str] = None) -> SyncOut:
+    settings = sso_settings.read_row(session)[0].settings
+    refusals = []
+    for user_id in directory_sync.last_manager_ids(session):
+        held = session.get(User, user_id)
+        if held is None or not held.is_active:
+            continue
+        if _leaves_no_manager(session, users={held.user_id: (held.role_id, False)}):
+            refusals.append(held.username)
+    return SyncOut(
+        sync_enabled=settings.sync_enabled,
+        directory_id_claim=settings.directory_id_claim,
+        last_push=_stamp(directory_sync.latest_push(session)),
+        token_expires_at=_stamp(directory_sync.token_expiry(session)),
+        failed_authentications=directory_sync.failed_authentications(session),
+        last_manager_refusals=refusals,
+        scim_path=f"{context_path_prefix()}/scim/v2",
+        token=token,
+    )
+
+
+@router.get("/sync", response_model=SyncOut)
+def get_sync(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
+    """Whether directory sync is on, and what the last push did. No token."""
+    return _sync_out(session)
+
+
+@router.post("/sync", response_model=SyncOut)
+def post_sync(body: SyncIn, session: UnitOfWorkSession, user: User = Depends(_MANAGE)):
+    """Turn directory sync on, or change its claim, and optionally mint a new token.
+
+    Turning it on mints the token once. Minting again revokes the previous one.
+    Needs roles.manage, users.write and teams.manage, and one step-up.
+    """
+    _sync_caller(user, session)
+    try:
+        current = sso_settings.read_row(session)[0].settings
+        token = None
+        if not current.sync_enabled:
+            token = directory_sync.turn_on(session, user, body.directory_id_claim)
+        else:
+            directory_sync.set_claim(session, user, body.directory_id_claim)
+            if body.mint:
+                token = directory_sync.remint(session, user)
+    except directory_sync.SyncRefused as refusal:
+        raise HTTPException(status_code=refusal.status, detail=refusal.detail) from None
+    return _sync_out(session, token)

@@ -16,6 +16,8 @@ const SSO_ERRORS: Record<string, string> = {
   deactivated: 'Your Vigil account is deactivated. Ask your Vigil administrator to turn it back on.',
   email_not_verified:
     "Your company sign-in hasn't verified your email address, so Vigil can't sign you in. Ask your IT team to verify it.",
+  not_provisioned:
+    "Your account hasn't been set up in Vigil from your identity provider yet. If this lasts, ask your admin.",
 }
 // A plain navigation: the server answers with the provider's redirect.
 const SSO_START = `${basePath}/api/auth/sso/start`
