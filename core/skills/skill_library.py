@@ -59,8 +59,10 @@ OPERATOR_SKILLS_MAX = 100
 # Category folders allowed between a skills root and a skill folder, the depth
 # the ``npx skills`` CLI reads: ``<root>/<cat>/<cat>/<name>/SKILL.md``.
 CATEGORY_DEPTH = 2
-# Folders opened past that depth only to report a SKILL.md placed too deep.
+# Folders opened past that depth, per top-level folder, only to report a
+# SKILL.md placed too deep. Dependency and cache folders are not opened for it.
 DEEP_SEARCH_MAX = 256
+_UNSEARCHED = frozenset({"node_modules", "__pycache__", "venv"})
 
 
 @dataclass(frozen=True)
@@ -151,9 +153,10 @@ def _deep_skill_dirs(folder: Path, budget: List[int]) -> tuple[List[Path], bool]
     """The folders under ``folder`` holding ``SKILL.md``, and whether all were searched.
 
     Found only to be logged, so the search is cheap: shallowest first, links
-    not followed, dot folders and a skill folder's insides left out, and at
-    most ``budget[0]`` folders opened, shared across the root. A copied
-    project's ``node_modules`` would otherwise be walked on every load.
+    not followed, dot folders, ``_UNSEARCHED`` folders and a skill folder's
+    insides left out, and at most ``budget[0]`` folders opened, shared across
+    the top-level folder. A copied project's ``node_modules`` would otherwise
+    be walked on every load.
     """
     found: List[Path] = []
     queue = deque([str(folder)])
@@ -172,7 +175,9 @@ def _deep_skill_dirs(folder: Path, budget: List[int]) -> tuple[List[Path], bool]
             found.append(Path(path))
             continue
         for e in entries:
-            if e.name.startswith(".") or not e.is_dir(follow_symlinks=False):
+            if e.name.startswith(".") or e.name in _UNSEARCHED:
+                continue
+            if not e.is_dir(follow_symlinks=False):
                 continue
             if len(queue) >= budget[0]:
                 complete = False  # never opened, so no need to hold it
@@ -193,8 +198,9 @@ def _walk(
     ``depth`` counts the category folders between the root and ``folder``. A
     child holding ``SKILL.md`` is a skill and is not searched further. Any other
     child is a category while ``depth`` allows; past that, a ``SKILL.md`` under
-    it is skipped and reported, as far as ``budget`` searches. Dot folders are
-    left out, and a symlinked category, or a symlinked skill inside one, is not
+    it is skipped and reported, as far as ``budget`` searches: each top-level
+    folder gets its own, and ``_UNSEARCHED`` folders are not searched for it.
+    Dot folders are left out, and a symlinked category, or a symlinked skill inside one, is not
     opened: it could reach outside the root that writes and deletes are
     confined to.
     """
@@ -221,11 +227,14 @@ def _walk(
             skipped.append((child, "a symlinked category"))
         elif depth < CATEGORY_DEPTH:
             before = len(skipped)
-            if _walk(child, depth + 1, found, skipped, budget):
+            sub = [DEEP_SEARCH_MAX] if not depth else budget
+            if child.name in _UNSEARCHED:
+                sub = [-1]
+            if _walk(child, depth + 1, found, skipped, sub):
                 hit = True
             elif not depth and len(skipped) == before:
                 skipped.append((child, f"no {SKILL_FILE}"))
-        elif budget[0] >= 0:
+        elif budget[0] >= 0 and child.name not in _UNSEARCHED:
             deep, complete = _deep_skill_dirs(child, budget)
             for path in deep:
                 skipped.append(
@@ -236,12 +245,10 @@ def _walk(
                     (
                         child,
                         f"more than {CATEGORY_DEPTH} category folders deep; the "
-                        f"search for a {SKILL_FILE} that deep stopped here after "
-                        f"{DEEP_SEARCH_MAX} folders across the root, and later "
-                        "folders were not searched",
+                        f"search for a {SKILL_FILE} that deep stopped here",
                     )
                 )
-                budget[0] = -1  # said once per root
+                budget[0] = -1  # said once per top-level folder
     return hit
 
 
