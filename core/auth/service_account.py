@@ -36,8 +36,12 @@ trail gets a ``user.deleted`` entry for each. It refuses an existing account
 that is not a Viewer service account, one that was deleted, and one that is
 deactivated: it never reactivates, so a deactivation made in an incident stands
 until a person reactivates it on Team & access (exit 77, nothing changed).
-Nothing it prints or logs holds the password. Once the account has
-any token (revoked or expired included), ``ensure`` refuses (exit 77) and points
+While the newest Medic account is deactivated and not deleted, a new name is
+refused the same way (exit 77, nothing created or retired): ``Medic's account
+<name> was deactivated on Team & access; reactivate it there to turn Medic
+back on``. An older inactive account never blocks, and a current account that
+was deleted does not either. Nothing it prints or logs holds the password. Once the
+account has any token (revoked or expired included), ``ensure`` refuses (exit 77) and points
 to ``token``: a password must not come back to a token-only account.
 
 Exit codes, for both commands (sysexits, so a caller can tell them from
@@ -123,6 +127,34 @@ def _check_ready(session) -> None:
         raise NotReady(f"role {VIEWER_ROLE_ID} is not seeded yet")
 
 
+def _deactivated_current(session, username: str) -> Optional[str]:
+    """Name of the newest other Medic account when a person turned it off.
+
+    Newest is by ``created_at``, then ``user_id``, and includes accounts the
+    rotation deleted. Only an inactive one whose principal is not deleted
+    blocks a new name. An older inactive account never does.
+    """
+    others = (
+        session.query(User)
+        .filter(
+            User.service_account.is_(True),
+            User.username.like("medic-%"),
+            User.username != username,
+        )
+        .order_by(User.created_at.desc(), User.user_id.desc())
+    )
+    for other in others:
+        if not _USERNAME.fullmatch(other.username):
+            continue
+        if other.is_active:
+            return None
+        principal = session.get(Principal, other.principal_id)
+        if principal is not None and principal.deleted_at is not None:
+            return None
+        return other.username
+    return None
+
+
 def _account(session, username: str, password_hash: Optional[str]) -> tuple[User, bool]:
     """(account, created): the existing one, checked, or a new one with ``password_hash``.
 
@@ -135,6 +167,15 @@ def _account(session, username: str, password_hash: Optional[str]) -> tuple[User
     claim_sign_in_names(session, username, email)
     user = session.query(User).filter(User.username == username).first()
     if user is None:
+        # Before anything is added, so a refused new name rolls back with
+        # nothing created and nothing retired. The same-name refusals below
+        # stay as they are.
+        blocked = _deactivated_current(session, username)
+        if blocked is not None:
+            raise ServiceAccountError(
+                f"Medic's account {blocked} was deactivated on Team & access; "
+                "reactivate it there to turn Medic back on"
+            )
         if identifier_in_use(session, username) or identifier_in_use(session, email):
             raise ServiceAccountError(
                 f"{username} collides with an existing sign-in name"
