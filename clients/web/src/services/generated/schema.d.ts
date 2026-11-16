@@ -7573,9 +7573,10 @@ export interface paths {
         put?: never;
         /**
          * Issue Reset Link
-         * @description A one-hour, single-use reset link for the person, replacing any open one:
-         *     emailed to their address, or returned once to hand over. It never touches
-         *     two-step sign-in. They and the other holders of users.write are told.
+         * @description A one-hour, single-use reset link for the person, replacing any open one,
+         *     and their open sign-ins ended, with a typed reason: emailed to their address,
+         *     or returned once to hand over. It never touches two-step sign-in. They and
+         *     the other holders of users.write are told.
          */
         post: operations["post_api_users_user_id_reset-link"];
         /**
@@ -7682,9 +7683,10 @@ export interface paths {
         put?: never;
         /**
          * Unlock User
-         * @description End a lock and the failure count. users.write over the account, a role the
-         *     caller covers, and a person's own act, not a playbook's. A lock ends no
-         *     sign-in, so a locked caller's open session may not unlock anyone, itself included.
+         * @description End a lock, the failure count and the person's open sign-ins, with a typed
+         *     reason. users.write over the account, a role the caller covers, and a person's
+         *     own act, not a playbook's. A lock ends no sign-in, so a locked caller's open
+         *     session may not unlock anyone, itself included.
          */
         post: operations["post_api_users_user_id_unlock"];
         delete?: never;
@@ -14237,8 +14239,8 @@ export interface components {
         };
         /**
          * ResetLinkRequest
-         * @description Send the person a reset link, or copy one to hand over. A copied link
-         *     needs how their identity was confirmed.
+         * @description A typed reason, and a reset link emailed or copied to hand over. A copied
+         *     link needs how their identity was confirmed.
          */
         ResetLinkRequest: {
             /**
@@ -14248,6 +14250,8 @@ export interface components {
             channel: "email" | "copy";
             /** Identity Confirmed By */
             identity_confirmed_by?: ("in_person" | "video_call" | "phone_call_back" | "other_verified_channel") | null;
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false
@@ -15571,8 +15575,8 @@ export interface components {
         };
         /**
          * UnlockRequest
-         * @description How the manager confirmed the person is who they say. Kept in the trail.
-         *     ``suspected_compromise`` also revokes the person's API tokens.
+         * @description A typed reason and how the manager confirmed the person is who they say,
+         *     both kept. ``suspected_compromise`` also revokes the person's API tokens.
          */
         UnlockRequest: {
             /**
@@ -15580,6 +15584,8 @@ export interface components {
              * @enum {string}
              */
             identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false

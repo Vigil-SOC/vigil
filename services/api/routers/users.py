@@ -1401,17 +1401,17 @@ IdentityConfirmedBy = Literal[
 ]
 
 
-class UnlockRequest(BaseModel):
-    """How the manager confirmed the person is who they say. Kept in the trail.
-    ``suspected_compromise`` also revokes the person's API tokens."""
+class UnlockRequest(EndSignInsRequest):
+    """A typed reason and how the manager confirmed the person is who they say,
+    both kept. ``suspected_compromise`` also revokes the person's API tokens."""
 
     identity_confirmed_by: IdentityConfirmedBy
     suspected_compromise: bool = False
 
 
-class ResetLinkRequest(BaseModel):
-    """Send the person a reset link, or copy one to hand over. A copied link
-    needs how their identity was confirmed."""
+class ResetLinkRequest(EndSignInsRequest):
+    """A typed reason, and a reset link emailed or copied to hand over. A copied
+    link needs how their identity was confirmed."""
 
     channel: Literal["email", "copy"]
     identity_confirmed_by: Optional[IdentityConfirmedBy] = None
@@ -1559,9 +1559,10 @@ def unlock_user(
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
 ):
-    """End a lock and the failure count. users.write over the account, a role the
-    caller covers, and a person's own act, not a playbook's. A lock ends no
-    sign-in, so a locked caller's open session may not unlock anyone, itself included.
+    """End a lock, the failure count and the person's open sign-ins, with a typed
+    reason. users.write over the account, a role the caller covers, and a person's
+    own act, not a playbook's. A lock ends no sign-in, so a locked caller's open
+    session may not unlock anyone, itself included.
     """
     with _denials(current_user, "user.unlock"):
         deny_unless(current_user.user_id, "users.write")
@@ -1591,6 +1592,14 @@ def unlock_user(
         principal=user.principal_id,
         identity_confirmed_by=body.identity_confirmed_by,
         suspected_compromise=body.suspected_compromise or None,
+        note=body.reason,
+    )
+    _end_as_admin(
+        request,
+        session,
+        current_user,
+        sign_ins.open_ids(session, user.principal_id),
+        body.reason,
     )
     if body.suspected_compromise:
         _revoke_tokens(session, current_user, user)
@@ -1600,8 +1609,9 @@ def unlock_user(
         current_user,
         user,
         "Your account was unlocked",
-        f"{who} unlocked your account. If you didn't ask for this, tell an admin now.",
-        f"{who} unlocked {user.username}'s account.",
+        f"{who} unlocked your account and ended your sign-ins. "
+        "If you didn't ask for this, tell an admin now.",
+        f"{who} unlocked {user.username}'s account and ended their sign-ins.",
     )
     return _dump_accounts(session, [user])[0]
 
@@ -1641,9 +1651,10 @@ def issue_reset_link(
     current_user: Annotated[User, Depends(get_current_user)],
     session: UnitOfWorkSession,
 ):
-    """A one-hour, single-use reset link for the person, replacing any open one:
-    emailed to their address, or returned once to hand over. It never touches
-    two-step sign-in. They and the other holders of users.write are told."""
+    """A one-hour, single-use reset link for the person, replacing any open one,
+    and their open sign-ins ended, with a typed reason: emailed to their address,
+    or returned once to hand over. It never touches two-step sign-in. They and
+    the other holders of users.write are told."""
     with _denials(current_user, "user.reset_link"):
         user = _recovery_target(current_user, session, user_id, "reset the password of")
         if not user.is_active:
@@ -1674,6 +1685,14 @@ def issue_reset_link(
         current_user.principal_id,
         identity_confirmed_by=body.identity_confirmed_by,
         suspected_compromise=body.suspected_compromise or None,
+        note=body.reason,
+    )
+    _end_as_admin(
+        request,
+        session,
+        current_user,
+        sign_ins.open_ids(session, user.principal_id),
+        body.reason,
     )
     revoked = (
         _revoke_tokens(session, current_user, user) if body.suspected_compromise else 0
@@ -1701,10 +1720,10 @@ def issue_reset_link(
         current_user,
         user,
         "Your password reset link",
-        f"{who} {how} a link to reset your password. It works once, for one hour. "
-        "If you didn't ask for this, tell an admin now.",
-        f"{who} issued a password reset link for {user.username}"
-        f"{' and revoked their API tokens' if revoked else ''}.",
+        f"{who} {how} a link to reset your password and ended your sign-ins. "
+        "It works once, for one hour. If you didn't ask for this, tell an admin now.",
+        f"{who} issued a password reset link for {user.username} and ended their "
+        f"sign-ins{' and revoked their API tokens' if revoked else ''}.",
     )
     entry = _reset_entry(session, row)
     if body.channel == invites.EMAIL:
