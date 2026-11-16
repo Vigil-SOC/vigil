@@ -6078,6 +6078,7 @@ export interface paths {
          *     A run's id is derived from its investigation id and its ledger is terminal
          *     once finished, so the same investigation cannot run twice. The failure stays
          *     on record; the restart is a fresh Human Ask over the same workflow and findings.
+         *     A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -6590,7 +6591,7 @@ export interface paths {
         put?: never;
         /**
          * Save Skill
-         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+         * @description Write ``<root>/[<category>/...]<name>/SKILL.md``, bumping its version.
          *
          *     An existing operator skill is overwritten when ``version`` is the one on disk
          *     (409 otherwise); ``source`` copies that skill's folder.

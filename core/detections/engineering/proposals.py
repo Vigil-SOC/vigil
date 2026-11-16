@@ -20,7 +20,9 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
 - the daily gaps run opens one proposal per gap a rule can answer, recording the gap and
   its evidence, and the copies its agent run saves are attached to it (``for_gaps``,
   ``attach_saved``). Those copies keep the automatic rollout every agent draft has: the
-  proposal records them, it does not own them.
+  proposal records them, it does not own them. While one of those runs is still working,
+  or a rule for the technique is in shadow, the gaps run holds the technique back
+  (``worked_techniques``).
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
-from sqlalchemy import exists, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
@@ -43,6 +45,8 @@ from core.storage.models import (
     DetectionRule,
     DetectionRuleStage,
     DetectionRuleVersion,
+    IntakeTrigger,
+    Investigation,
     WorkflowRun,
 )
 from core.storage.models.detection_proposal import (
@@ -50,6 +54,10 @@ from core.storage.models.detection_proposal import (
     TRANSITIONS,
     InvalidProposalMove,
     ProposalState,
+)
+from core.storage.models.workflow import (
+    LIVE_INVESTIGATION_STATUSES,
+    PARKED_INVESTIGATION_STATUSES,
 )
 from core.storage.unit_of_work import unit_of_work
 
@@ -994,3 +1002,98 @@ def attach_saved(
             )
             attached.append(proposal.proposal_id)
         return attached
+
+
+# A gaps run still working: queued, or launched and running. One parked on a person
+# (waiting on an approval, or paused) may never resume, so it holds nothing.
+_RUNNING_INVESTIGATION_STATUSES = tuple(
+    s for s in LIVE_INVESTIGATION_STATUSES if s not in PARKED_INVESTIGATION_STATUSES
+)
+
+
+def _unfinished_gap_runs(session: Session) -> Set[str]:
+    """The gaps-run proposals whose run is still working: the intake row that carries
+    them is still queued, or the investigation it launched is assigned or executing."""
+    payloads: Iterable[Optional[Dict[str, Any]]] = session.scalars(
+        select(IntakeTrigger.payload)
+        .outerjoin(
+            Investigation,
+            Investigation.investigation_id == IntakeTrigger.investigation_id,
+        )
+        .where(
+            IntakeTrigger.kind == "schedule",
+            IntakeTrigger.payload.has_key("gap_proposal_ids"),
+            or_(
+                IntakeTrigger.state == "queued",
+                and_(
+                    IntakeTrigger.state == "launched",
+                    Investigation.status.in_(_RUNNING_INVESTIGATION_STATUSES),
+                ),
+            ),
+        )
+    )
+    return {
+        i
+        for payload in payloads
+        for i in (payload or {}).get("gap_proposal_ids") or ()
+        if isinstance(i, str)
+    }
+
+
+def _shadow_copies(session: Session) -> Dict[int, List[str]]:
+    """Each active Splunk, Elastic or Wazuh copy whose latest stage is shadow, with the
+    techniques it names. A live copy is not here, nor one off, nor one never staged
+    (only Vigil's own copies are); the Sigma form runs nowhere."""
+    s = DetectionRuleStage
+    latest = (
+        select(s.rule_id, s.stage)
+        .distinct(s.rule_id)
+        .order_by(s.rule_id, s.at.desc(), s.id.desc())
+        .subquery()
+    )
+    return {
+        rule_id: list(techniques or ())
+        for rule_id, techniques in session.execute(
+            select(DetectionRule.id, DetectionRule.techniques)
+            .join(latest, latest.c.rule_id == DetectionRule.id)
+            .where(
+                DetectionRule.status == "active",
+                DetectionRule.language.in_(COPY_LANGUAGES),
+                latest.c.stage == "shadow",
+            )
+        )
+    }
+
+
+def worked_techniques() -> Set[str]:
+    """The techniques a rule is already proposed or in shadow for, which the gaps run
+    does not raise again:
+
+    - a gaps-run proposal not rejected (or withdrawn) whose run is still working;
+    - a copy in shadow, whatever drafted it: the techniques it names, and for a copy
+      attached to a gaps-run proposal, that proposal's technique too, rejected or
+      not (a reject does not stop the copies' rollout).
+
+    So a run that ended (or parked) without saving a rule frees the technique, and so
+    does switching off or removing every copy in shadow. A live copy holds nothing: a
+    gap that still shows once its rule is live is that rule missing it."""
+    with unit_of_work() as session:
+        shadow = _shadow_copies(session)
+        worked = {
+            t.strip().upper() for techniques in shadow.values() for t in techniques if t
+        }
+        rows = session.scalars(
+            select(DetectionProposal).where(
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+                DetectionProposal.technique.isnot(None),
+            )
+        ).all()
+        steps = _link_steps(session, [p.proposal_id for p in rows])
+        unfinished = _unfinished_gap_runs(session)
+        for p in rows:
+            attached = _links(p, steps.get(p.proposal_id, ()))["rule_ids"]
+            if any(r in shadow for r in attached) or (
+                p.proposal_id in unfinished and p.state != ProposalState.REJECTED
+            ):
+                worked.add((p.technique or "").strip().upper())
+        return worked

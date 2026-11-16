@@ -603,14 +603,22 @@ def bootstrap_admin(
 
 
 def _end_others_after_change(
-    session: Session, user: User, keep: Optional[str], source: Optional[str]
+    session: Session,
+    user: User,
+    keep: Optional[str],
+    source: Optional[str],
+    reason: str = sign_ins.ACCOUNT_CHANGED,
 ) -> None:
     """A method change ends the person's other sign-ins and stops their runs;
-    ``keep``, the one making the change, stays open with its runs."""
+    ``keep``, the one making the change, stays open with its runs.
+
+    ``reason`` stays ``account_changed`` for a role, code or method change.
+    A recovery-code sign-in passes ``recovery``.
+    """
     ids = [sid for sid, _ in sign_ins.open_ids(session, user.principal_id, keep=keep)]
     sign_ins.end_all_for_user(
         user.user_id,
-        sign_ins.ACCOUNT_CHANGED,
+        reason,
         session,
         except_sign_in_id=keep,
     )
@@ -622,7 +630,7 @@ def _end_others_after_change(
             actor=user.principal_id,
             principal=user.principal_id,
             sign_in=sid,
-            end_reason=sign_ins.ACCOUNT_CHANGED,
+            end_reason=reason,
         )
 
 
@@ -716,7 +724,7 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
         actor=user.principal_id,
         principal=user.principal_id,
     )
-    _end_others_after_change(session, user, None, source)
+    _end_others_after_change(session, user, None, source, sign_ins.RECOVERY)
     _tell_person(
         session,
         user,

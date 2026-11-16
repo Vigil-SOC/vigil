@@ -424,7 +424,7 @@ def clear_two_step(session, who: str, compromise: bool):
         return None
     AuthService.clear_mfa(user)
     keys = security_keys.remove_all(session, user.principal_id)
-    ended = sign_ins.end_all_for_user(user.user_id, sign_ins.ENDED_BY_ADMIN, session)
+    ended = sign_ins.end_all_for_user(user.user_id, sign_ins.MFA_RESET, session)
     _record(
         session,
         "auth.mfa_reset",

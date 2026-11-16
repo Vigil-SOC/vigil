@@ -225,6 +225,9 @@ PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
 # ``deny_unless`` asks by itself, so ``require_permission`` and an inline check
 # are covered alike; a handler that records its own 403s adds ``step_up.gate``.
 # Never ai_decisions.approve: routine approvals must not ask.
+# Never detections.write: only reverting a live rule and removing a source ask,
+# and those routes gate themselves. Minting a token asks when the holder has
+# any permission in this set.
 # Machines are never asked, whatever they hold.
 STEP_UP = {
     "platform.write": "change settings",

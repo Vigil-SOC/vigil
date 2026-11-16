@@ -21,7 +21,7 @@ from core.agents.builtins import builtin_manifests
 from core.agents.operator_manifest import read_manifest
 from core.agents.prompts import render_system
 from core.llm.router.router import LLMRouter, ProviderSpec
-from core.skills.skill_library import Skill, as_user_turn, read_skill
+from core.skills.skill_library import Skill, as_user_turn, skill_body
 
 
 @dataclass(frozen=True)
@@ -83,8 +83,13 @@ def agent_system(agent_id: str) -> str:
     return render_system(str(doc.get("system") or ""), needs=())
 
 
-def system_prompt_for(skill: Skill, agent_id: str, root: Path) -> str:
-    body = read_skill(skill.name, roots=[root])["content"]
+def system_prompt_for(skill: Skill, agent_id: str) -> str:
+    """The prompt the skill is graded under, from the folder ``skill`` loaded from.
+
+    Not looked up again by name: under another root a same-name folder could
+    win, and the cases would run against the wrong body.
+    """
+    body = skill_body(skill)
     return agent_system(agent_id) + "\n\n" + _INLINE_NOTE.format(name=skill.name) + body
 
 
@@ -94,7 +99,6 @@ async def run_cases(
     skill: Skill,
     *,
     agent_id: str = DEFAULT_AGENT,
-    root: Path,
     max_tokens: int,
     model: Optional[str] = None,
     cases: Optional[List[Dict[str, Any]]] = None,
@@ -104,7 +108,7 @@ async def run_cases(
 
     A dispatch failure propagates: it is not a failed case.
     """
-    system_prompt = system_prompt_for(skill, agent_id, root)
+    system_prompt = system_prompt_for(skill, agent_id)
 
     async def one(case: Dict[str, Any]) -> CaseResult:
         result = await router.dispatch(
