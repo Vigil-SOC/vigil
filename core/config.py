@@ -147,9 +147,10 @@ class Settings(BaseSettings):
     vigil_intent_path: str = ""
     # One extra root of SKILL.md directories, read alongside core/skills/library
     # and written by the skills API. A folder without its own SKILL.md is a
-    # category, and the skill folders inside it are read too. Unset (None) is
-    # the State Directory's skills/ folder; empty turns operator skills off, as
-    # the Helm chart does.
+    # category, read up to two levels deep (<cat>/<cat>/<name>/SKILL.md); a
+    # skill folder's subfolders are never skills. Unset (None) is the State
+    # Directory's skills/ folder; empty turns operator skills off, as the Helm
+    # chart does.
     vigil_skills_path: Optional[str] = None
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.

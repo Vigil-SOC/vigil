@@ -230,7 +230,7 @@ async def get_skill_file(name: str, path: str):
     dependencies=_SKILLS_WRITE,
 )
 async def save_skill(req: SkillWriteRequest):
-    """Write ``<root>/[<category>/]<name>/SKILL.md``, bumping its version.
+    """Write ``<root>/[<category>/...]<name>/SKILL.md``, bumping its version.
 
     An existing operator skill is overwritten when ``version`` is the one on disk
     (409 otherwise); ``source`` copies that skill's folder.
