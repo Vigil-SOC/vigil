@@ -249,6 +249,7 @@ def confirm(
     strong: bool = False,
     signed_in: bool = False,
     source: Optional[str] = None,
+    settle: bool = True,
 ) -> None:
     """Check it is still the person, or raise.
 
@@ -260,6 +261,9 @@ def confirm(
     make the web client refresh and retry. An empty field is asked for, not counted.
     ``signed_in``: the sign-in itself gave the code (a key-only person's recovery
     sign-in while keys are unavailable), so no code is asked for.
+    ``settle=False`` only checks the factor. The caller opens the window, and only
+    when ``auth.confirmed`` was appended: ending one's own sign-ins must not
+    widen the sign-in when that entry can only be held.
     """
     needs_password = strong or not user.mfa_enabled
     needs_code = user.mfa_enabled and not signed_in
@@ -283,7 +287,8 @@ def confirm(
         problem = BAD_STRONG if strong else BAD_CODE
 
     if problem is None:
-        confirmed(session, user.principal_id, sign_in_id, source, strong=strong)
+        if settle:
+            confirmed(session, user.principal_id, sign_in_id, source, strong=strong)
         return
     _refuse(user, sign_in_id, source, problem)
 
