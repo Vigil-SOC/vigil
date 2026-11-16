@@ -25,7 +25,6 @@ from core.cases.case_handoff import (
     move_reopened_archived_team,
     note_owner,
     require_merge_source,
-    require_owner_can_write,
 )
 from core.cases.closure import (
     CHANNEL_AGENT,
@@ -220,8 +219,6 @@ class CaseWorkflowService:
             # Generate case ID
             timestamp = utcnow().strftime("%Y%m%d%H%M%S")
             case_id = f"case-{timestamp}"
-            if assignee:
-                require_owner_can_write(session, assignee)
 
             case = insert_case(
                 session,
