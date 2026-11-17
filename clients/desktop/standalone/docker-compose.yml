@@ -276,6 +276,9 @@ services:
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
+      # The desktop restore runs this service and empties the agent-run queue.
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set by the desktop app}
     volumes:
       - vigil_home:/home/vigil/.vigil
       - upgrade_state:/var/lib/vigil-upgrade

@@ -879,7 +879,7 @@ async function onUpgradeStop(stop: UpgradeStop): Promise<void> {
 // Stated before confirm, on both the failure dialog and the tray entry.
 const RESTORE_COST =
   "Restoring logs everyone out, rejects pending approvals, and discards alerts, " +
-  "investigations and every other write made since the point was taken.";
+  "investigations and every other write made since the point was taken, and agent runs still queued.";
 
 // Resolves false when the operator cancels (or another restore is running).
 async function restoreFlow({ snapshot, version }: RestorePoint): Promise<boolean> {
@@ -940,7 +940,9 @@ async function restoreFlow({ snapshot, version }: RestorePoint): Promise<boolean
 async function restoreStandalone(snapshot: string): Promise<string | null> {
   if ((await runCompose(composeArgs("stop", "backend", "agent-worker", "agent-serve", "bifrost"))) !== 0)
     return "could not stop the Vigil containers";
-  if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) return "postgres did not start";
+  // Redis too: the restore empties the agent-run queue there.
+  if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres", "redis"))) !== 0)
+    return "postgres or redis did not start";
   const restored = await runCompose(
     composeArgs(
       "run", "--rm", "--no-deps", "-T", "-e", "JWT_SECRET_KEY",

@@ -326,6 +326,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
+      # A restore empties the agent-run queue.
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Inherited by backup-pre-upgrade. History and the no-setup repo live here.
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       # The only bypass: both must be set, and the version must be this image.
@@ -349,6 +352,9 @@ services:
       disable: true
     depends_on:
       postgres:
+        condition: service_healthy
+      # `start.sh restore` runs this service and discards the queue in redis.
+      redis:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
