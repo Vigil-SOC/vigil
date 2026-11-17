@@ -33,6 +33,9 @@ export interface StructuredConclusion {
   // Which field holds the run's verdict on the case. Carried onto the terminal as
   // it stands after the guard, where benign or false_positive closes the case.
   disposition_field?: string;
+  // Which field holds a short title for the case the run was started from. Carried
+  // onto the terminal, where a completed run retitles a case no person has titled.
+  title_field?: string;
   // Which field lists the actions the run asks a person to approve, each a
   // ProposedAction. Carried onto the terminal, where the backend files them as
   // pending approvals on the case the run was started from.

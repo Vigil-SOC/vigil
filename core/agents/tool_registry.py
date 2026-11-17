@@ -16,7 +16,7 @@ from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
-from core.cases.agent_closure import actor, service_session
+from core.cases.agent_closure import actor, service_session, title_edited_activities
 from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
@@ -43,6 +43,7 @@ from core.cases.closure import (
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
+from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -623,6 +624,10 @@ def update_case(
     updates: Args = {}
     if title:
         updates["title"] = title
+        # Marked only when a principal stands behind the call (chat, /mcp): a run's
+        # own agent renaming the case must not hold off the run's retitle.
+        if current_caller() and (edited := title_edited_activities(case, title)):
+            updates["activities"] = edited
     if description:
         updates["description"] = description
     if status is not None:

@@ -15848,6 +15848,8 @@ export interface components {
              * @default
              */
             summary: string;
+            /** Title */
+            title?: string | null;
         };
         /**
          * ThemeConfig

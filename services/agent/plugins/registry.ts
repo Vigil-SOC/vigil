@@ -162,9 +162,10 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
   const severity_field = raw["severity_field"] === undefined ? undefined : text_(raw, "severity_field", `${where}: conclusion`);
   const confidence_field = raw["confidence_field"] === undefined ? undefined : text_(raw, "confidence_field", `${where}: conclusion`);
   const disposition_field = raw["disposition_field"] === undefined ? undefined : text_(raw, "disposition_field", `${where}: conclusion`);
+  const title_field = raw["title_field"] === undefined ? undefined : text_(raw, "title_field", `${where}: conclusion`);
   const proposals_field = raw["proposals_field"] === undefined ? undefined : text_(raw, "proposals_field", `${where}: conclusion`);
   // A field the schema never asks for is one the run can never fill.
-  for (const field of [summary_field, citations_field, open_questions_field, severity_field, confidence_field, disposition_field, proposals_field]) {
+  for (const field of [summary_field, citations_field, open_questions_field, severity_field, confidence_field, disposition_field, title_field, proposals_field]) {
     if (field !== undefined && !(field in properties)) throw new SpecError(`${where}: conclusion names ${field}, which the schema does not declare`);
   }
   // Rated in case priorities, so the far side applies it without a mapping.
@@ -195,6 +196,7 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
     ...(severity_field === undefined ? {} : { severity_field }),
     ...(confidence_field === undefined ? {} : { confidence_field }),
     ...(disposition_field === undefined ? {} : { disposition_field }),
+    ...(title_field === undefined ? {} : { title_field }),
     ...(proposals_field === undefined ? {} : { proposals_field }),
   };
 }

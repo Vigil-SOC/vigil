@@ -34,6 +34,7 @@ from core.cases import (
     case_records_service,
     case_trail,
 )
+from core.cases.agent_closure import title_edited_activities
 from core.cases.assignee import (
     owner_states,
     require_current_owner,
@@ -965,6 +966,8 @@ def update_case(
     updates = {}
     if case_data.title is not None:
         updates["title"] = case_data.title
+        if edited := title_edited_activities(case, case_data.title):
+            updates["activities"] = edited
     if case_data.description is not None:
         updates["description"] = case_data.description
     if case_data.status is not None:
