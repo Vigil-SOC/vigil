@@ -761,35 +761,41 @@ TITLE_MAX = 200
 # like that alert. A title a person has edited is never replaced, and a closed
 # case keeps the title it was closed under.
 def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
+    from core.cases.agent_closure import service_session
     from core.storage.database_data_service import DatabaseDataService
+    from core.storage.models import Case
 
     new = " ".join((title or "").split())[:TITLE_MAX]
     if not new:
         return
     try:
-        data = DatabaseDataService()
-        case = data.get_case(case_id)
-        if not case or str(case.get("status") or "").lower() == "closed":
-            return
-        old = str(case.get("title") or "")
-        if new == old:
-            return
-        activities = list(case.get("activities") or [])
-        if any(a.get("activity_type") == TITLE_EDITED for a in activities):
-            return
-        # The title and its activity in one write, so the write is not taken for a
-        # person's edit.
-        activities.append(
-            {
-                "timestamp": utcnow().isoformat() + "Z",
-                "activity_type": "agent_run_retitled",
-                "description": f"Retitled by the investigation: {old} \u2192 {new}",
-                "details": {"run_id": run_id, "from": old, "to": new},
-                **activity_actor(),
-            }
-        )
-        if not data.update_case(case_id, title=new, activities=activities):
-            logger.error("could not retitle case %s", case_id)
+        # The case row stays locked from the read to the write, so a person's
+        # edit made meanwhile is waited for and then seen, never overwritten.
+        with service_session() as session:
+            case = session.get(Case, case_id, with_for_update=True)
+            if case is None or str(case.status or "").lower() == "closed":
+                return
+            old = str(case.title or "")
+            if new == old:
+                return
+            activities = list(case.activities or [])
+            if any(a.get("activity_type") == TITLE_EDITED for a in activities):
+                return
+            # The title and its activity in one write, so the write is not taken
+            # for a person's edit.
+            activities.append(
+                {
+                    "timestamp": utcnow().isoformat() + "Z",
+                    "activity_type": "agent_run_retitled",
+                    "description": f"Retitled by the investigation: {old} \u2192 {new}",
+                    "details": {"run_id": run_id, "from": old, "to": new},
+                    **activity_actor(),
+                }
+            )
+            if not DatabaseDataService().update_case(
+                case_id, session=session, title=new, activities=activities
+            ):
+                logger.error("could not retitle case %s", case_id)
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception("could not apply the title of %s to case %s", run_id, case_id)
 
