@@ -259,8 +259,9 @@ run Vigil anywhere real:
 - **[Deployment guide](https://vigilsoc.org/docs/deployment/)** — network exposure,
   TLS termination, and reverse-proxy placement.
 
-Non-negotiables: set `DEV_MODE=false`, generate a real `JWT_SECRET_KEY`, change
-the default database password, terminate TLS in front of the API, and never
+Non-negotiables: set `DEV_MODE=false`, generate a real `JWT_SECRET_KEY`, keep
+per-install database passwords (Compose: `./start.sh` generates both; Helm:
+set your own), terminate TLS in front of the API, and never
 commit a credential.
 
 ---

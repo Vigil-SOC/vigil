@@ -17,6 +17,17 @@ if [ -n "$owner_pw" ] && [ "$app_pw" = "$owner_pw" ]; then
     echo "ERROR: POSTGRES_APP_PASSWORD must differ from the database owner password." >&2
     exit 1
 fi
+# Published values (core/storage/connection.py _SHIPPED_DEFAULT_PASSWORDS).
+# DEV_MODE=true is the opt-in local mode that still accepts them.
+if [ "${DEV_MODE:-false}" != "true" ]; then
+    for pw in "$owner_pw" "$app_pw"; do
+        case "$pw" in
+            deeptempo_secure_password_change_me|vigil_app_password_change_me|change-me-before-production)
+                echo "ERROR: a database password is a published default; run ./start.sh once to replace it (or set DEV_MODE=true)." >&2
+                exit 1 ;;
+        esac
+    done
+fi
 echo "setting vigil_app password"
 printf '%s\n' \
     "ALTER ROLE vigil_app PASSWORD :'pw';" \

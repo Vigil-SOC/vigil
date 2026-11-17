@@ -55,11 +55,14 @@ def _params() -> tuple[str, str, str, str]:
     """User, password, host, port from POSTGRES_*, the knobs DatabaseManager reads.
 
     DATABASE_URL is not one of them. CI's integration job uses test/test; a
-    compose stack uses the deeptempo defaults.
+    compose stack's owner password is POSTGRES_PASSWORD in .env.
     """
+    password = os.getenv("POSTGRES_PASSWORD")
+    if not password:
+        sys.exit("POSTGRES_PASSWORD is required (the compose owner's is in .env)")
     return (
         os.getenv("POSTGRES_USER", "deeptempo"),
-        os.getenv("POSTGRES_PASSWORD", "deeptempo_secure_password_change_me"),
+        password,
         _host(),
         os.getenv("POSTGRES_PORT", "5432"),
     )

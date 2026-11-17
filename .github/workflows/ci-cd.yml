@@ -419,6 +419,49 @@ jobs:
           ensure_venv
           install_python_deps
 
+      # start.sh's environment steps on a clean checkout must leave no value
+      # core/storage/connection.py lists as published in .env, and env.example
+      # must not ship one (setup_dev.sh and dc() only fill empty values).
+      - name: Assert a fresh .env holds no published password
+        run: |
+          set -euo pipefail
+          rm -f .env
+          source scripts/lib.sh
+          load_env
+          ensure_agent_token
+          ensure_bifrost_admin_password
+          ensure_postgres_passwords --replace-published
+          ./venv/bin/python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          tree = ast.parse(Path("core/storage/connection.py").read_text())
+          published = next(
+              {e.value for e in node.value.args[0].elts}
+              for node in ast.walk(tree)
+              if isinstance(node, ast.Assign)
+              and getattr(node.targets[0], "id", "") == "_SHIPPED_DEFAULT_PASSWORDS"
+          )
+          bad = []
+          for name in ("env.example", ".env"):
+              text = Path(name).read_text()
+              bad += [f"{name} holds {v}" for v in sorted(published) if v in text]
+          # The other two copies of the list must not drift from it.
+          for name in ("scripts/lib.sh", "infra/docker/initdb/00_apply.sh"):
+              text = Path(name).read_text()
+              bad += [f"{name} does not list {v}" for v in sorted(published) if v not in text]
+          env = dict(
+              line.split("=", 1) for line in Path(".env").read_text().splitlines()
+              if line.startswith(("POSTGRES_PASSWORD=", "POSTGRES_APP_PASSWORD="))
+          )
+          owner, app = env.get("POSTGRES_PASSWORD", '""'), env.get("POSTGRES_APP_PASSWORD", '""')
+          if owner == '""' or app == '""' or owner == app:
+              bad.append(".env database passwords are not two distinct values")
+          for b in bad:
+              print(f"::error::{b}")
+          raise SystemExit(1 if bad else 0)
+          PY
+
       - name: Assert the provisioned interpreter
         run: |
           set -euo pipefail

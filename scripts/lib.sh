@@ -78,6 +78,9 @@ dc() {
     # Compose refuses to start redis without one (`${REDIS_PASSWORD:?}`), so a
     # caller that skipped start.sh still gets the install's password.
     ensure_redis_password >&2 || return 1
+    # Compose refuses to start without both (`:?`). Fill-only: dc also wraps
+    # logs, backups and restores, which must not change a login.
+    ensure_postgres_passwords >&2
     local -a medic_files=() medic_env=()
     _dc_medic
     OLLAMA_URL="$(_container_ollama_url)" \
@@ -476,25 +479,33 @@ env_file_value() {
 
 # --- Minted secrets in .env ---
 # Fill an empty KEY once (a value the caller exported, else a new one) and
-# never replace a set one. Two lines are left alone: which one to fill is a
-# guess, and a wrong guess splits two processes onto different values. Never
-# fails: start.sh runs under set -e, and the caller that needs the value says
-# what is missing. Rewritten in place (cat, not mv) so .env keeps its owner
-# and mode; the line keeps its `export` and its CR, if any.
+# never replace a set one, unless it is one of the space-separated values in
+# the optional third argument (published ones). Two lines are left alone: which
+# one to fill is a guess, and a wrong guess splits two processes onto different
+# values. Never fails: start.sh runs under set -e, and the caller that needs the
+# value says what is missing. Rewritten in place (cat, not mv) so .env keeps its
+# owner and mode; the line keeps its `export` and its CR, if any.
 _fill_env_secret() {
-    local key="$1" blurb="$2"
+    local key="$1" blurb="$2" replace="${3:-}"
     # A later ${key} on the same `local` line is still unset under `set -u`.
-    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}${key}=" lines token
+    local env="$REPO_ROOT/.env" re="${_ENV_LINE_RE}${key}=" lines token cur
     [ -f "$env" ] || return 0
     lines="$(grep -cE "$re" "$env" || true)"
     if [ "$lines" -gt 1 ]; then
         echo "Warning: .env sets ${key} $lines times; left as is (the last one counts)." >&2
         return 0
     fi
-    [ -n "$(env_file_value "$key" "$env")" ] && return 0
+    cur="$(env_file_value "$key" "$env")"
+    if [ -n "$cur" ]; then
+        case " $replace " in *" $cur "*) ;; *) return 0 ;; esac
+    fi
     # printenv, not ${!key}: an unset name under set -u is a fatal unbound
     # variable, and an empty one must still fall through to a new value.
     token="$(printenv "$key" 2>/dev/null || true)"
+    # load_env exported the value being replaced; it must not come back.
+    if [ -n "$token" ]; then
+        case " $replace " in *" $token "*) token="" ;; esac
+    fi
     [ -n "$token" ] || token="$(openssl rand -hex 32 2>/dev/null)" || token=""
     [ -n "$token" ] || token="$(od -An -tx1 -N32 /dev/urandom 2>/dev/null | tr -d ' \n')" || token=""
     if [ -z "$token" ]; then
@@ -520,7 +531,11 @@ _fill_env_secret() {
     fi
     rm -f "$env.tmp.$$"
     export "${key}=${token}"
-    echo "Set ${key} in .env (${blurb})"
+    if [ -n "$cur" ]; then
+        echo "Replaced the published ${key} in .env (${blurb})"
+    else
+        echo "Set ${key} in .env (${blurb})"
+    fi
 }
 
 # The backend and the agent layer share AGENT_INTERNAL_TOKEN. env.example ships
@@ -536,6 +551,72 @@ ensure_agent_token() {
 # start that service while the variable is empty. Same mint as the agent token.
 ensure_bifrost_admin_password() {
     _fill_env_secret BIFROST_ADMIN_PASSWORD "Bifrost's management API password"
+}
+
+# Database passwords anyone can read: env.example's and Compose's old values,
+# and Helm's. Same list as _SHIPPED_DEFAULT_PASSWORDS in
+# core/storage/connection.py and infra/docker/initdb/00_apply.sh.
+PUBLISHED_POSTGRES_PASSWORDS="deeptempo_secure_password_change_me vigil_app_password_change_me change-me-before-production"
+
+# The database owner's and vigil_app's passwords, per install. In .env, not
+# ~/.vigil: Compose and agent_up.sh read them there. Fills an empty one and keeps
+# a set one. --replace-published (start.sh) also replaces a published value;
+# sync_postgres_passwords then sets the database to match. Without it, an empty
+# owner password stays empty while a Postgres volume exists: that volume was
+# initialised with Compose's old fallback, and a new value in .env would no
+# longer match it. Compose then stops with a message naming ./start.sh.
+ensure_postgres_passwords() {
+    local replace=""
+    [ -f "$REPO_ROOT/.env" ] || return 0
+    [ "${1:-}" = "--replace-published" ] && replace="$PUBLISHED_POSTGRES_PASSWORDS"
+    if [ -n "$replace" ] || [ -n "$(env_file_value POSTGRES_PASSWORD)" ] \
+            || ! _postgres_volume_may_exist; then
+        _fill_env_secret POSTGRES_PASSWORD "the database owner's password" "$replace"
+    fi
+    _fill_env_secret POSTGRES_APP_PASSWORD "vigil_app's database password" "$replace"
+}
+
+# True when Compose's postgres_data volume (or its container) exists, or
+# Docker can't say.
+_postgres_volume_may_exist() {
+    docker info >/dev/null 2>&1 || return 0
+    docker inspect deeptempo-postgres >/dev/null 2>&1 && return 0
+    docker volume inspect "${COMPOSE_PROJECT_NAME:-docker}_postgres_data" >/dev/null 2>&1
+}
+
+# Set the passwords .env holds inside deeptempo-postgres, as the owner over the
+# container's local socket, which the stock image trusts without a password.
+# .env is the source of truth and this can always run again, so a change cut
+# off between writing .env and here finishes on the next ./start.sh. vigil_app
+# is set once the upgrade one-shot has created it (which sets it too).
+sync_postgres_passwords() {
+    local owner app i=0
+    owner="$(env_file_value POSTGRES_PASSWORD)"
+    app="$(env_file_value POSTGRES_APP_PASSWORD)"
+    if [ -z "$owner" ] || [ -z "$app" ]; then
+        echo "POSTGRES_PASSWORD and POSTGRES_APP_PASSWORD must both be set in .env" >&2
+        return 1
+    fi
+    # Over TCP: the first boot's init server listens on the socket only, and
+    # restarts once it is done.
+    until docker exec deeptempo-postgres pg_isready -q -h 127.0.0.1 -U deeptempo -d deeptempo_soc 2>/dev/null; do
+        i=$((i + 1))
+        [ "$i" -lt 60 ] || { echo "PostgreSQL did not become ready" >&2; return 1; }
+        sleep 1
+    done
+    # \getenv, so neither value is on a command line.
+    printf '%s\n' \
+        '\getenv owner_pw VIGIL_OWNER_PW' \
+        '\getenv app_pw VIGIL_APP_PW' \
+        "ALTER ROLE deeptempo PASSWORD :'owner_pw';" \
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_app') AS has_app \\gset" \
+        '\if :has_app' \
+        "ALTER ROLE vigil_app PASSWORD :'app_pw';" \
+        '\endif' \
+        | VIGIL_OWNER_PW="$owner" VIGIL_APP_PW="$app" docker exec -i \
+            -e VIGIL_OWNER_PW -e VIGIL_APP_PW deeptempo-postgres \
+            psql -X -q -v ON_ERROR_STOP=1 -U deeptempo -d deeptempo_soc >/dev/null \
+        || { echo "Could not set the database passwords from .env" >&2; return 1; }
 }
 
 # The password .env or the environment holds, for host scripts that call

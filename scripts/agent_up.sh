@@ -33,8 +33,12 @@ export POSTGRES_DB="${POSTGRES_DB:-deeptempo_soc}"
 export POSTGRES_USER="${POSTGRES_USER:-vigil_app}"
 # vigil_app's password. POSTGRES_PASSWORD in .env is the owner password; this
 # process logs in as vigil_app and must not take it.
-_app_pw="$(env_file_value POSTGRES_APP_PASSWORD)"
-export POSTGRES_PASSWORD="${POSTGRES_APP_PASSWORD:-${_app_pw:-vigil_app_password_change_me}}"
+_app_pw="${POSTGRES_APP_PASSWORD:-$(env_file_value POSTGRES_APP_PASSWORD)}"
+if [ -z "$_app_pw" ]; then
+    echo "POSTGRES_APP_PASSWORD is unset in .env; run ./start.sh once, which sets it" >&2
+    exit 1
+fi
+export POSTGRES_PASSWORD="$_app_pw"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 # Redis requires a password (a REDIS_PASSWORD in .env wins, as for the backend).
 # The agent reads it only alongside REDIS_HOST, so name the parts of a plain
