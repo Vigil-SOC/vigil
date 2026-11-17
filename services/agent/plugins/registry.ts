@@ -38,15 +38,26 @@ export function operatorPlugin(text: unknown, carried: unknown): PluginManifest 
   return parsePlugin(text, [...carriedSkills(carried), ...loadSkills(SKILLS)], OPERATOR_MANIFEST, { operator: true });
 }
 
-export function carriedSkills(value: unknown): SkillSpec[] {
+export function carriedSkills(value: unknown, of: string = OPERATOR_MANIFEST): SkillSpec[] {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new SpecError(`${OPERATOR_MANIFEST}: skills must be a list`);
+  if (!Array.isArray(value)) throw new SpecError(`${of}: skills must be a list`);
   return value.map((one: unknown, i) => {
-    if (typeof one !== "object" || one === null) throw new SpecError(`${OPERATOR_MANIFEST}: skill ${i} must be a mapping`);
+    if (typeof one !== "object" || one === null) throw new SpecError(`${of}: skill ${i} must be a mapping`);
     const raw = one as Record<string, unknown>;
-    const where = `${OPERATOR_MANIFEST}: skill ${i}`;
+    const where = `${of}: skill ${i}`;
     return { name: text_(raw, "name", where), description: text_(raw, "description", where), body: text_(raw, "body", where) };
   });
+}
+
+// The skills an operator added, carried on a start job: resolved Python-side, with
+// the ones a content scan holds already left out. Every run is offered them beside
+// its plugin's own, which win a name clash.
+export const ADDED_SKILLS = "added_skills";
+
+export function withAddedSkills(plugin: PluginManifest, carried: unknown): PluginManifest {
+  const own = new Set(plugin.skills.map((skill) => skill.name));
+  const added = carriedSkills(carried, ADDED_SKILLS).filter((skill) => !own.has(skill.name) && own.add(skill.name));
+  return added.length === 0 ? plugin : { ...plugin, skills: [...plugin.skills, ...added] };
 }
 
 export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml", options: { operator?: boolean } = {}): PluginManifest {

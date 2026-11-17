@@ -26,6 +26,7 @@ import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
 import type { Harness, Outcome, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
+import { ADDED_SKILLS, withAddedSkills } from "../plugins/registry.js";
 import { DENIAL_RECHECK_MS } from "./leases.js";
 import { logger } from "./log.js";
 import { scrub } from "./security.js";
@@ -272,7 +273,9 @@ export async function runAgent(harness: Harness<Kinds>, options: AgentOptions): 
 
 // The run as it happens: every event the loop yields, after the kernel has
 // journaled its own, then the report. A conversation streams this to its reader.
-export async function* streamAgent(harness: Harness<Kinds>, options: AgentOptions): AsyncGenerator<StreamEvent<unknown>, AgentReport> {
+export async function* streamAgent(harness: Harness<Kinds>, given: AgentOptions): AsyncGenerator<StreamEvent<unknown>, AgentReport> {
+  // Read off the spec, never the request: a resume has none, and the run event holds it.
+  const options = { ...given, plugin: withAddedSkills(given.plugin, given.spec.sections[ADDED_SKILLS]) };
   const { run_id } = options;
   if ((await harness.state.latestSeq(run_id)) === null) await open(harness, options);
   await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
