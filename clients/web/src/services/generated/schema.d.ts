@@ -5570,7 +5570,7 @@ export interface paths {
          * Post Fix Level
          * @description Raise one step (with a reason) or lower a fix type's level. The admin is the session.
          */
-        post: operations["post_api_medic_fix_level"];
+        post: operations["post_api_medic_fix-level"];
         delete?: never;
         options?: never;
         head?: never;
@@ -26381,7 +26381,7 @@ export interface operations {
             };
         };
     };
-    post_api_medic_fix_level: {
+    "post_api_medic_fix-level": {
         parameters: {
             query?: never;
             header?: {

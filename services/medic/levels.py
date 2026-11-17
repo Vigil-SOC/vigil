@@ -353,13 +353,15 @@ class Levels:
             "fix_type": fix_type,
             "level": level,
             "unreadable": unreadable,
-            "raised_on": None
-            if level != "L2" or raised is None
-            else {
-                "at": _iso(raised["at"]),
-                "revision": raised["rule"].get("revision"),
-                "pack_id": raised["rule"].get("pack_id"),
-            },
+            "raised_on": (
+                None
+                if level != "L2" or raised is None
+                else {
+                    "at": _iso(raised["at"]),
+                    "revision": raised["rule"].get("revision"),
+                    "pack_id": raised["rule"].get("pack_id"),
+                }
+            ),
             "track_record": track,
         }
 
