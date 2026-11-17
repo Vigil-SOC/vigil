@@ -18,7 +18,7 @@ import type {
   TerminalPayload,
   UnboundPayload,
 } from "../contracts/events.js";
-import { isStructured, recordModeOf, type GuardSpec, type PluginManifest } from "../contracts/plugin.js";
+import { isStructured, recordModeOf, type GuardSpec, type PluginManifest, type SkillSpec } from "../contracts/plugin.js";
 import { journalAnswers, noAnswers, type Answers } from "./answers.js";
 import { GatewayExhausted } from "./limiter.js";
 import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
@@ -226,7 +226,7 @@ export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[])
 
 // Progressive disclosure: the system prompt carries each skill's name and one
 // line, and the body arrives only when the agent asks for it.
-export function skillTool(plugin: PluginManifest): RegisteredTool {
+export function skillTool(plugin: Pick<PluginManifest, "skills">): RegisteredTool {
   const names = plugin.skills.map((skill) => skill.name);
   return defineTool(
     {
@@ -705,17 +705,21 @@ export function approvalsFor(options: Pick<AgentOptions, "spec" | "origin">): Re
   return unattended ? new Set() : new Set(options.spec.approvals);
 }
 
+// The system prompt's list of the skills an agent can load: a name and one line each.
+export function skillsIndex(plugin: Pick<PluginManifest, "skills">): string {
+  return plugin.skills.length === 0
+    ? ""
+    : [
+        "## Skills",
+        `Playbooks you can load with ${SKILL_TOOL}. Load one before you rely on it.`,
+        ...plugin.skills.map((skill) => `- ${skill.name}: ${skill.description}`),
+      ].join("\n");
+}
+
 // What the agent is, the skills it can load, and how it finishes. Fixed for the
 // run, so the prefix it opens on is the prefix every turn sends.
 export function systemOf(plugin: PluginManifest): string {
-  const skills =
-    plugin.skills.length === 0
-      ? ""
-      : [
-          "## Skills",
-          `Playbooks you can load with ${SKILL_TOOL}. Load one before you rely on it.`,
-          ...plugin.skills.map((skill) => `- ${skill.name}: ${skill.description}`),
-        ].join("\n");
+  const skills = skillsIndex(plugin);
   const record =
     recordModeOf(plugin) === "off"
       ? ""
@@ -864,6 +868,8 @@ export interface Subturn {
   tools: readonly string[];
   // The Vigil agent this step's skill reads are credited to (#1560).
   agent_id?: string;
+  // The skills this step offers, so its frame records the bodies the model could load.
+  skills?: readonly SkillSpec[];
   // Model rounds this step may take, its answer's among them, in place of the spec's runtime allowance.
   max_turns?: number;
   // Numbers each result as the ledger will (r12), so the answer can cite them.
@@ -899,7 +905,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     ...(sub.cite === true ? { refs: { prefix: CALL_REF, offset: count } } : {}),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
-  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, [], []);
+  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, sub.skills ?? [], []);
   const stream = streamTurn<T, Kinds>(cfg, scoped);
   for (;;) {
     const next = await stream.next();

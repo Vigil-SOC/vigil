@@ -190,10 +190,10 @@ def added_skills() -> List[Dict[str, str]]:
     return added
 
 
-# Run kinds with no run-wide skill index or loader to offer them through: root
-# cause runs its own engine, and a playbook's phases run under their own agents'
-# prompts and grants. Neither is sent them.
-NO_ADDED_SKILLS = frozenset({"root_cause", "compose"})
+# Run kinds with no run-wide skill index or loader to offer them through: a
+# playbook's phases run under their own agents' prompts and grants. It is not
+# sent them.
+NO_ADDED_SKILLS = frozenset({"compose"})
 
 
 # The start request's field for those skills, for every run whatever started it.
