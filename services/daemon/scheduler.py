@@ -11,7 +11,7 @@ from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refr
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from core.workflows.enablement import is_enabled
-from core.workflows.routing import SCHEDULED_WORKFLOW
+from core.workflows.routing import DETECTION_GAPS_WORKFLOW, SCHEDULED_WORKFLOW
 from services.daemon.config import SchedulerConfig
 from services.daemon.probes import inject_probes, score_probes
 from services.daemon.threat_feed_poller import ThreatFeedPoller
@@ -20,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 # Each sync reads every repo in full; hourly sees a deleted rule soon enough.
 DETECTION_RULES_SYNC_INTERVAL = 3600
-# Once a day, mitre_analyst drafts and checks rules for the listed detection gaps.
-DETECTION_GAPS_WORKFLOW = "agent-run-mitre_analyst"
 DETECTION_GAPS_INTERVAL = 86400
 
 

@@ -9,7 +9,8 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, AgentRowsProvider, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedDraft, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
+import { HuntDetections } from './HuntDetections'
 import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
@@ -2424,7 +2425,7 @@ function StopRun({ runId, onStopped }: { runId: string; onStopped: () => void })
   )
 }
 
-type HuntTab = 'memory' | 'hyp' | 'evidence' | 'moves' | 'frontier' | 'gaps' | 'esc' | 'report' | 'next'
+type HuntTab = 'memory' | 'hyp' | 'evidence' | 'moves' | 'frontier' | 'gaps' | 'esc' | 'detections' | 'report' | 'next'
 
 /** Views of one run as tabs rather than stacked tables. A view with nothing in it
  *  is not offered rather than offered empty. */
@@ -2441,6 +2442,8 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
   const steps = hunt.narrative?.next_steps ?? []
   const memory = hunt.recall ?? null
   const remembered = memory === null ? null : recalledCount(memory)
+  const detections = useHuntDetections(d.run_id, !IN_FLIGHT.includes(d.status))
+  const led = detections === null ? 0 : detections.proposals.length + detections.without.length
   const tabs: [HuntTab, string, number | null][] = [
     ['hyp', 'Hypotheses', hunt.hypotheses.length],
     ...(hunt.evidence_count > 0 ? ([['evidence', 'Evidence', hunt.evidence_count]] as [HuntTab, string, number][]) : []),
@@ -2453,6 +2456,8 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
     ...(frontier.length > 0 ? ([['frontier', 'Frontier', frontier.length]] as [HuntTab, string, number][]) : []),
     ...(gaps.length > 0 ? ([['gaps', 'Gaps', gaps.length]] as [HuntTab, string, number][]) : []),
     ...(supervision > 0 ? ([['esc', 'Escalations & checkpoints', supervision]] as [HuntTab, string, number][]) : []),
+    // A concluded hunt's proposals and rules, or why a proven hypothesis got none.
+    ...(led > 0 ? ([['detections', 'Detections', led]] as [HuntTab, string, number][]) : []),
     ['report', 'Report', null],
     ...(steps.length > 0 ? ([['next', 'Next steps', steps.length]] as [HuntTab, string, number][]) : []),
   ]
@@ -2480,6 +2485,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
           <HuntCheckpoints checkpoints={checkpoints} />
         </>
       )}
+      {shown === 'detections' && detections !== null && <HuntDetections read={detections} hyp={(id) => <Hyp id={id} />} />}
       {shown === 'report' && (report === ''
         ? <div className="muted text-[12.5px] py-3">The report is written when the hunt reaches a terminal state — completed, cancelled, or stopped at its budget.</div>
         : (
@@ -2496,6 +2502,21 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'next' && <HuntActions hunt={hunt} />}
     </HypLabels.Provider>
   )
+}
+
+/** What a concluded run led to for detection, once; null while in flight, unread, or not
+ *  readable (no detections.read, or the read failed): the tab is then not offered. */
+function useHuntDetections(runId: string, concluded: boolean): HuntDetectionsRead | null {
+  const [read, setRead] = useState<HuntDetectionsRead | null>(null)
+  useEffect(() => {
+    if (!concluded) return
+    let live = true
+    detectionEngineeringApi.hunt(runId)
+      .then((res) => { if (live) setRead(res.data) })
+      .catch(() => { if (live) setRead(null) })
+    return () => { live = false }
+  }, [runId, concluded])
+  return concluded ? read : null
 }
 
 /** The account, laid out — what happened, with the tabs carrying the evidence and

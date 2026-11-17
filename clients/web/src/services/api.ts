@@ -1212,6 +1212,52 @@ export interface Proposal extends ProposalRow {
   events: ProposalEvent[]
   /** The attached copies' stage rows, oldest first; kept after a copy is removed. */
   stages: { rule_id: number; version: number; stage: 'shadow' | 'live' | 'off'; actor: string; reason: string; at: string }[]
+  /** Each "hunt:<id>" in its evidence, by hunt id; a hunt with no distil marker is absent. */
+  hunts: Record<string, HuntRunLink>
+}
+
+/** A hunt's run, from its distil marker; withheld when it ran on a Case the reader can't read. */
+export interface HuntRunLink {
+  run_id: string | null
+  withheld: boolean
+}
+
+/** A gaps-run proposal in brief, as a hunt or a rule reads the ones it led to or answers. */
+export interface LinkedProposal {
+  proposal_id: string
+  title: string
+  technique: string | null
+  state: string
+  created_at: string
+  run_id: string | null
+  run_status: string | null
+  run_working: boolean
+  rule_id: number | null
+  rule_ids: number[]
+  /** Each attached copy and its current stage; a removed one has ``status: 'removed'``. */
+  rules: { rule_id: number; name: string | null; language: string | null; status: string; version: number | null; stage: 'shadow' | 'live' | 'off' | null }[]
+  hunts: Record<string, HuntRunLink>
+}
+
+/** Why a proven hypothesis got no proposal, in the order the backend checks them. */
+export type NoProposalReason = 'outside_window' | 'no_technique' | 'unknown' | 'caught' | 'workflow_off' | 'held' | 'waiting' | 'below_floor'
+
+/** What a hunt run led to for detection (GET /detection-engineering/hunts/{run_id}). */
+export interface HuntDetections {
+  run_id: string
+  hunt_ids: string[]
+  proposals: LinkedProposal[]
+  /** Each proven hypothesis on a technique none of the proposals covers, and why. */
+  without: {
+    hunt_id: string
+    hypothesis_id: string
+    statement: string
+    techniques: string[]
+    trust: string
+    concluded_at: string
+    reason: NoProposalReason
+    detail: string
+  }[]
 }
 
 /** Detection proposals: rules Vigil or a person drafted, with every step on the record. */
@@ -1224,6 +1270,12 @@ export const detectionEngineeringApi = {
   /** Rejects a proposal; the reason is required and stays on its record. */
   reject: (proposalId: string, reason: string) =>
     api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
+
+  /** What a hunt run led to: its proposals and their rules, and why a proven hypothesis got none. */
+  hunt: (runId: string) => api.get<HuntDetections>(`/detection-engineering/hunts/${encodeURIComponent(runId)}`),
+
+  /** The gaps-run proposals a rule copy answers, oldest first, each with its hunts. */
+  ruleProposals: (ruleId: number) => api.get<{ proposals: LinkedProposal[] }>(`/detection-engineering/rules/${ruleId}/proposals`),
 }
 
 /** The signed-in person's notices and live conditions (the bell's second source). */

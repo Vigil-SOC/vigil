@@ -3,10 +3,9 @@ import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { utcDayClock } from '../../shared/utc'
 import { detectionRulesApi, type RuleStages as Stages } from '../../services/api'
-import { sampledText, stageLine, unprovenNote, waitingNote, who, type Stage, type StageFields } from './ruleStage'
+import { STAGE_NAME, sampledText, stageLine, unprovenNote, waitingNote, who, type StageFields } from './ruleStage'
 import DeployAgain from './DeployAgain'
-
-const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
+import RuleProposals from './RuleProposals'
 
 /** An overlay rule's rollout moves, newest first, read when the panel opens, with
  * Revert to shadow (live) or Release (held by a person) where Add exception sits on
@@ -86,6 +85,7 @@ export default function RuleStages({ ruleId, row, asking: askFirst, onChanged }:
               ? `In shadow it runs but alerts nobody. ${unproven}`
               : 'In shadow it runs but alerts nobody. Vigil moves it live after 7 quiet days with its data arriving, once it has been shown to catch the attack it was written for.'}
       </p>
+      <RuleProposals ruleId={ruleId} />
     </div>
   )
 }

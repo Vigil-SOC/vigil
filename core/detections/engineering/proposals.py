@@ -23,18 +23,23 @@ Ported from 1.x's core/detections/engineering/proposals.py (#4157). On main:
   proposal records them, it does not own them. While one of those runs is still working,
   or a rule for the technique is in shadow, the gaps run holds the technique back
   (``worked_techniques``).
+- a hunt's run reads the proposals the gaps run raised from it, and why each proven
+  hypothesis that got none did not (``for_hunt``); a rule reads the proposals it answers
+  (``for_rule``). Both are worked out on read from ``origin.gap.runs``, the attach events
+  and the hunt's distil marker; nothing is stored.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import String, and_, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from core.auth.permissions import case_read_clause, may_read_case
-from core.detections import gap_run
+from core.detections import gap_run, gaps
 from core.detections.engineering import lint as lint_mod
 from core.detections.engineering import siem_replay, sigma_text
 from core.detections.inventory.readers import OVERLAY_SOURCE
@@ -46,6 +51,8 @@ from core.storage.models import (
     DetectionRule,
     DetectionRuleStage,
     DetectionRuleVersion,
+    EpisodicDistilMarker,
+    EpisodicVerdict,
     IntakeTrigger,
     Investigation,
     WorkflowRun,
@@ -61,6 +68,9 @@ from core.storage.models.workflow import (
     PARKED_INVESTIGATION_STATUSES,
 )
 from core.storage.unit_of_work import unit_of_work
+from core.workflows.enablement import is_enabled
+from core.workflows.routing import DETECTION_GAPS_WORKFLOW
+from core.workflows.workflow_run_service import run_hidden
 
 logger = logging.getLogger(__name__)
 
@@ -231,12 +241,15 @@ def _link_steps(session: Session, ids: List[str]) -> Dict[str, List[Dict[str, An
     return out
 
 
-def _gap_case_ids(origins: Iterable[Optional[Dict[str, Any]]]) -> Set[str]:
+def _gap_case_ids(
+    origins: Iterable[Optional[Dict[str, Any]]], kind: str = "case"
+) -> Set[str]:
+    """The ids of a gaps run's evidence runs of one kind ("case" or "hunt")."""
     return {
         key.partition(":")[2]
         for origin in origins
         for key in ((origin or {}).get("gap") or {}).get("runs") or ()
-        if key.startswith("case:")
+        if key.startswith(f"{kind}:")
     }
 
 
@@ -304,6 +317,8 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "stages": (
             _stage_view(session, links["rule_ids"]) if links["rule_ids"] else []
         ),
+        # Each "hunt:<id>" in its evidence, by hunt id: its run, or withheld.
+        "hunts": _hunt_runs(session, _gap_case_ids([proposal.origin], "hunt")),
     }
 
 
@@ -1242,3 +1257,330 @@ def worked_techniques() -> Set[str]:
             ):
                 worked.add((p.technique or "").strip().upper())
         return worked
+
+
+# --- Hunts, and the proposals and rules they led to (#4698) -----------------
+
+# Why a proven hypothesis got no proposal, in the order they are checked.
+OUTSIDE_WINDOW, NO_TECHNIQUE, UNKNOWN, CAUGHT = (
+    "outside_window",
+    "no_technique",
+    "unknown",
+    "caught",
+)
+WORKFLOW_OFF, HELD, WAITING, BELOW_FLOOR = (
+    "workflow_off",
+    "held",
+    "waiting",
+    "below_floor",
+)
+
+
+def _hunt_rows(hunt_ids: Iterable[str]) -> List[Dict[str, str]]:
+    return [{"investigation_kind": "hunt", "investigation_id": h} for h in hunt_ids]
+
+
+def _hunt_runs(session: Session, hunt_ids: Set[str]) -> Dict[str, Dict[str, Any]]:
+    """Each hunt's run from its distil marker, as ``prior_hunts`` reads it; a hunt run on
+    a Case the reader can't read is withheld (#4359). A hunt with no marker is absent.
+    """
+    if not hunt_ids:
+        return {}
+    hidden = gaps._unreadable_runs(session, _hunt_rows(hunt_ids))
+    rows = session.execute(
+        select(
+            EpisodicDistilMarker.investigation_id, EpisodicDistilMarker.origin_run_id
+        ).where(
+            EpisodicDistilMarker.investigation_kind == "hunt",
+            EpisodicDistilMarker.investigation_id.in_(list(hunt_ids)),
+        )
+    ).all()
+    return {
+        hunt_id: (
+            {"run_id": None, "withheld": True}
+            if ("hunt", hunt_id) in hidden
+            else {"run_id": str(run_id) if run_id else None, "withheld": False}
+        )
+        for hunt_id, run_id in rows
+    }
+
+
+def _latest_stages(session: Session, rule_ids: Sequence[int]) -> Dict[int, Dict]:
+    latest: Dict[int, Dict[str, Any]] = {}
+    for row in _stage_view(session, list(rule_ids)):
+        latest[row["rule_id"]] = row
+    return latest
+
+
+def _proposal_rows(
+    session: Session, proposals: Sequence[DetectionProposal]
+) -> List[Dict[str, Any]]:
+    """Gaps-run proposals in brief, batched as ``listing`` reads them: state, technique,
+    the run they were handed to, and each attached rule copy with its current stage."""
+    ids = [p.proposal_id for p in proposals]
+    steps = _link_steps(session, ids)
+    links = {p.proposal_id: _links(p, steps.get(p.proposal_id, ())) for p in proposals}
+    rule_ids = sorted({r for link in links.values() for r in link["rule_ids"]})
+    stages = _latest_stages(session, rule_ids)
+    rules = {
+        r.id: r
+        for r in session.scalars(
+            select(DetectionRule).where(DetectionRule.id.in_(rule_ids))
+        )
+    }
+    statuses = _run_statuses(session, (link["run_id"] for link in links.values()))
+    unfinished = _unfinished_gap_runs(session)
+    hunts = _hunt_runs(session, _gap_case_ids((p.origin for p in proposals), "hunt"))
+    out = []
+    for p in proposals:
+        link = links[p.proposal_id]
+        keys = _gap_case_ids([p.origin], "hunt")
+        out.append(
+            {
+                "proposal_id": p.proposal_id,
+                "title": p.title,
+                "technique": p.technique,
+                "state": p.state.value,
+                "created_at": p.created_at.isoformat(),
+                **link,
+                "run_status": statuses.get(link["run_id"]),
+                "run_working": p.proposal_id in unfinished,
+                # The copies attached, each with its stage; a removed one has no name.
+                "rules": [
+                    {
+                        "rule_id": rid,
+                        "name": rules[rid].name if rid in rules else None,
+                        "language": rules[rid].language if rid in rules else None,
+                        "status": rules[rid].status if rid in rules else "removed",
+                        "version": (
+                            stages[rid]["version"]
+                            if rid in stages
+                            else rules[rid].latest_version if rid in rules else None
+                        ),
+                        "stage": stages[rid]["stage"] if rid in stages else None,
+                    }
+                    for rid in link["rule_ids"]
+                ],
+                "hunts": {h: hunts[h] for h in sorted(keys) if h in hunts},
+            }
+        )
+    return out
+
+
+def _gap_proposals_naming(session: Session, keys: Sequence[str]):
+    """Every gaps-run proposal, rejected or withdrawn too, whose evidence names one of
+    ``keys`` ("hunt:<id>"), oldest first."""
+    if not keys:
+        return []
+    return session.scalars(
+        select(DetectionProposal)
+        .where(
+            DetectionProposal.origin["source"].astext == GAPS_RUN,
+            or_(
+                *(
+                    DetectionProposal.origin.contains({"gap": {"runs": [k]}})
+                    for k in keys
+                )
+            ),
+            ~_hidden(),
+        )
+        .order_by(DetectionProposal.created_at)
+    ).all()
+
+
+def _missed_runs(
+    window_start: datetime, raised: Mapping[str, str], techniques: Set[str]
+) -> Dict[str, Tuple[Set[str], Set[str]]]:
+    """Each technique's new missed runs as the gaps run counts them: proven Verdicts in
+    its window, by run key, that no run raised yet and that reconstruct as missed (or
+    LogLM only), as ``missed_runs_report`` groups them; and those a person confirmed.
+    Only Verdicts on ``techniques`` are reconstructed."""
+    out: Dict[str, Tuple[Set[str], Set[str]]] = {t: (set(), set()) for t in techniques}
+    for v in gaps.read_ledger(gap_run.WINDOW_DAYS):
+        key = gap_run._run_key(v)
+        on = techniques & v["techniques"]
+        if not on or v["outcome"] != "proven" or key in raised:
+            continue
+        if gaps._naive_utc(v["concluded_at"]) < gaps._naive_utc(window_start):
+            continue
+        _, record = gaps.reconstruct_verdict(v, gaps.read_window_findings)
+        if record.get("verdict") not in ("missed", "loglm"):
+            continue
+        for t in on:
+            out[t][0].add(key)
+            if v["trust"] == "analyst":
+                out[t][1].add(key)
+    return out
+
+
+def _why_none(
+    v: Dict[str, Any],
+    techniques: Set[str],
+    *,
+    window_start: datetime,
+    named: bool,
+    context: Dict[str, Any],
+) -> Tuple[str, str]:
+    """One reason a proven Verdict got no proposal, and its detail. ``techniques`` are
+    its listable techniques no proposal for this hunt covers; ``named`` is whether any
+    proposal names the hunt; ``context`` caches the reads shared across Verdicts."""
+    if gaps._naive_utc(v["concluded_at"]) < gaps._naive_utc(window_start):
+        return OUTSIDE_WINDOW, (
+            f"Concluded more than {gap_run.WINDOW_DAYS} days ago, before the window "
+            "the daily gaps run reads."
+        )
+    if not techniques:
+        return NO_TECHNIQUE, (
+            "It names no ATT&CK technique a rule could be drafted for."
+            if not v["techniques"]
+            else "It names no active ATT&CK technique: "
+            + ", ".join(sorted(v["techniques"]))
+            + "."
+        )
+    reason, record = gaps.reconstruct_verdict(v, gaps.read_window_findings)
+    if reason:
+        return UNKNOWN, f"{reason[:1].upper()}{reason[1:]}."
+    if record["verdict"] in ("rule", "both"):
+        names = sorted(
+            {c["rule_name"] for c in record["citations"] if c.get("rule_name")}
+        )
+        alerts = len(record["citations"])
+        return CAUGHT, (
+            f"A rule alerted on it: {alerts} alert{'' if alerts == 1 else 's'} in its "
+            "window name its hosts, IPs or users"
+            + (f" ({', '.join(names)})." if names else ".")
+        )
+    if "enabled" not in context:
+        context["enabled"] = is_enabled(DETECTION_GAPS_WORKFLOW)
+    if not context["enabled"]:
+        return WORKFLOW_OFF, "The daily detection gaps run is turned off."
+    if "raised" not in context:
+        context["raised"] = gap_run.read_raised().runs
+    listed = ", ".join(sorted(techniques))
+    if gap_run._run_key(v) in context["raised"]:
+        if "worked" not in context:
+            context["worked"] = worked_techniques()
+        if not named or techniques & context["worked"]:
+            return HELD, (
+                f"The gaps run held it back: a rule for {listed} was already proposed "
+                "or in shadow."
+            )
+        # Counted once, for another technique's proposal: a run is never counted twice.
+        return BELOW_FLOOR, (
+            "The gaps run counted this hunt once, for the proposal that names it, and "
+            f"{listed} was below the floor then; it does not count a hunt twice."
+        )
+    counts = context.setdefault("counts", {})
+    wanted = techniques - counts.keys()
+    if wanted:
+        counts.update(_missed_runs(window_start, context["raised"], wanted))
+    counted = max(len(counts[t][0]) for t in techniques)
+    if any(counts[t][1] for t in techniques):
+        return WAITING, (
+            "A person confirmed a run on it that no rule caught, so the next daily "
+            "gaps run raises it."
+        )
+    if counted >= gap_run.GAP_FLOOR:
+        return WAITING, (
+            f"{counted} runs on it in the window that no rule caught: the next daily "
+            "gaps run raises it."
+        )
+    return BELOW_FLOOR, (
+        f"{counted} run{'' if counted == 1 else 's'} on it in the window that no rule "
+        "caught, none confirmed by a person: the gaps run raises a technique at "
+        f"{gap_run.GAP_FLOOR} runs, or one a person confirmed."
+    )
+
+
+def for_hunt(run_id: str) -> Dict[str, Any]:
+    """What a hunt run led to for detection: the proposals the gaps run raised from it
+    (rejected and withdrawn ones too), each with its rule copies and their stage, and
+    for each proven hypothesis on a technique none of them covers, why not.
+
+    The hunt is the run's distil marker; a run on a Case the caller can't read is not
+    found (#4359). Nothing here is stored: the reasons are worked out on every read.
+    """
+    window_start = datetime.now(timezone.utc) - timedelta(days=gap_run.WINDOW_DAYS)
+    with unit_of_work() as session:
+        if run_hidden(session, run_id):
+            raise NotFound(f"No run {run_id}.")
+        hunt_ids = sorted(
+            session.scalars(
+                select(EpisodicDistilMarker.investigation_id).where(
+                    EpisodicDistilMarker.investigation_kind == "hunt",
+                    cast(EpisodicDistilMarker.origin_run_id, String) == run_id,
+                )
+            )
+        )
+        found = _gap_proposals_naming(session, [f"hunt:{h}" for h in hunt_ids])
+        rows = _proposal_rows(session, found)
+        # Read directly, not through the ledger's window: one older is said to be so.
+        verdicts = [
+            {**gaps.verdict_row(v), "statement": v.statement}
+            for v in session.scalars(
+                select(EpisodicVerdict)
+                .where(
+                    EpisodicVerdict.investigation_kind == "hunt",
+                    EpisodicVerdict.investigation_id.in_(hunt_ids),
+                )
+                .order_by(EpisodicVerdict.concluded_at, EpisodicVerdict.id)
+            )
+        ]
+    covered = {(p.technique or "").strip().upper() for p in found}
+    named = _gap_case_ids((p.origin for p in found), "hunt")
+    context: Dict[str, Any] = {}
+    without = []
+    for v in verdicts:
+        if v["outcome"] != "proven":
+            continue  # benign and ruled-out hypotheses get no row
+        listable = {t for t in v["techniques"] if gaps._is_listable(t)}
+        if listable and listable <= covered:
+            continue
+        v["entities"] = gaps._subject_entities(v["subjects"])
+        code, detail = _why_none(
+            v,
+            listable - covered,
+            window_start=window_start,
+            named=v["investigation_id"] in named,
+            context=context,
+        )
+        without.append(
+            {
+                "hunt_id": v["investigation_id"],
+                "hypothesis_id": v["hypothesis_id"],
+                "statement": v["statement"],
+                "techniques": sorted(v["techniques"]),
+                "trust": v["trust"],
+                "concluded_at": v["concluded_at"].isoformat(),
+                "reason": code,
+                "detail": detail,
+            }
+        )
+    return {
+        "run_id": run_id,
+        "hunt_ids": hunt_ids,
+        "proposals": rows,
+        "without": without,
+    }
+
+
+def for_rule(rule_id: int) -> List[Dict[str, Any]]:
+    """The gaps-run proposals a rule copy answers (an attach event names it, or it is the
+    copy their stages follow), oldest first, each with the hunts behind it."""
+    with unit_of_work() as session:
+        attached = exists().where(
+            DetectionProposalEvent.proposal_id == DetectionProposal.proposal_id,
+            DetectionProposalEvent.evidence.contains(
+                {"step": "attach", "rule_ids": [rule_id]}
+            ),
+        )
+        found = session.scalars(
+            select(DetectionProposal)
+            .where(
+                DetectionProposal.origin["source"].astext == GAPS_RUN,
+                or_(DetectionProposal.rule_id == rule_id, attached),
+                ~_hidden(),
+            )
+            .order_by(DetectionProposal.created_at)
+        ).all()
+        return _proposal_rows(session, found)

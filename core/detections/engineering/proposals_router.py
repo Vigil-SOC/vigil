@@ -137,6 +137,20 @@ def list_proposals(
     return {"proposals": _all_shown(current_user, rows)}
 
 
+@router.get("/hunts/{run_id}")
+def hunt_detections(run_id: str, current_user: User = Depends(get_current_user)):
+    """What a hunt run led to for detection: its proposals and their rules, and why
+    each proven hypothesis without one got none. Not found on a Case it can't read."""
+    with _answers():
+        return proposals.for_hunt(run_id)
+
+
+@router.get("/rules/{rule_id}/proposals")
+def rule_proposals(rule_id: int, current_user: User = Depends(get_current_user)):
+    """The gaps-run proposals a rule copy answers, each with the hunts behind it."""
+    return {"proposals": proposals.for_rule(rule_id)}
+
+
 @router.post("/proposals", dependencies=_WRITE)
 def paste_proposal(body: PasteRequest, current_user: User = Depends(get_current_user)):
     origin = {
