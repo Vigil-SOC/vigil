@@ -574,6 +574,14 @@ ensure_postgres_passwords() {
         _fill_env_secret POSTGRES_PASSWORD "the database owner's password" "$replace"
     fi
     _fill_env_secret POSTGRES_APP_PASSWORD "vigil_app's database password" "$replace"
+    # Compose reads them from the environment: a caller that never ran load_env
+    # (dc in vigil-backup.sh, setup_dev.sh) still gets .env's.
+    local key v
+    for key in POSTGRES_PASSWORD POSTGRES_APP_PASSWORD; do
+        [ -n "$(printenv "$key" 2>/dev/null || true)" ] && continue
+        v="$(env_file_value "$key")"
+        [ -z "$v" ] || export "$key=$v"
+    done
 }
 
 # True when Compose's postgres_data volume (or its container) exists, or
