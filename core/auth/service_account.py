@@ -62,7 +62,7 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import NoSuchTableError, OperationalError, SQLAlchemyError
 
 from core.audit import trail
-from core.auth import key_ring, principals, sign_ins, trail_events
+from core.auth import key_ring, principals, sign_ins, token_policy, trail_events
 from core.auth.auth_service import AuthService
 from core.auth.deactivation import deactivate_account
 from core.auth.identity import claim_sign_in_names, identifier_in_use
@@ -312,6 +312,8 @@ def mint_token(username: str) -> tuple[str, str, int]:
     _check_username(username)
     with unit_of_work() as session:
         _check_ready(session)
+        # Before any token row is touched: the order a save of the policy takes.
+        token_policy.current(session)
         user, created = _account(session, username, None)
         if not created:
             _restore(user)  # its password stays: it ends on the token's first use
@@ -435,7 +437,7 @@ def main(
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_USAGE
-    except ServiceAccountError as exc:
+    except (ServiceAccountError, token_policy.PolicyUnreadable) as exc:
         print(f"error: {exc}", file=stderr)
         return EX_REFUSED
     except (NotReady, key_ring.KeyRingError) as exc:  # the ring: not adopted yet

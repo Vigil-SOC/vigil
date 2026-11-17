@@ -21,6 +21,7 @@ from core.auth import (
     principals,
     sso,
     sso_settings,
+    token_policy,
     trail_events,
 )
 from core.auth.deactivation import clear_deactivation
@@ -246,10 +247,15 @@ def _revoke_tokens(session: Session, account: User, actor: str) -> None:
 
 
 def _mint(session: Session, account: User, actor: str) -> str:
-    _revoke_tokens(session, account, actor)
-    minted = mcp_credential_service.mint(
-        account.user_id, TOKEN_LABEL, session=session, actor=actor
-    )
+    try:
+        # The policy before the token rows, the order a save of it takes them in.
+        token_policy.current(session)
+        _revoke_tokens(session, account, actor)
+        minted = mcp_credential_service.mint(
+            account.user_id, TOKEN_LABEL, session=session, actor=actor
+        )
+    except token_policy.PolicyUnreadable as exc:
+        raise SyncRefused(str(exc)) from exc
     if minted is None:
         raise SyncRefused("Could not mint a token")
     return minted.token
@@ -258,6 +264,12 @@ def _mint(session: Session, account: User, actor: str) -> str:
 def turn_on(session: Session, actor: User, claim: str) -> str:
     """Turn sync on and mint its token. The token is returned once."""
     claim = claim_name(claim)
+    # The policy before anything is recorded or locked: a save of it holds it, then
+    # appends to the trail, and the account's creation below appends too.
+    try:
+        token_policy.current(session)
+    except token_policy.PolicyUnreadable as exc:
+        raise SyncRefused(str(exc)) from exc
     old, found = sso_settings.read_row(session, lock=True)
     if old.settings.sync_enabled:
         raise SyncRefused("Directory sync is already on")

@@ -17,11 +17,10 @@ from core.auth import break_glass
 from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
-from core.auth import step_up, trail_events
-from core.auth.auth_service import _is_service_account, with_dispute
+from core.auth import session_policy, step_up, token_notices, token_policy, trail_events
+from core.auth.auth_service import _is_service_account
 from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
-from core.platform.notices import notify
 from core.routing import Auth, RouterMeta
 from core.storage.models import McpCredential, Principal, User
 from core.storage.unit_of_work import unit_of_work
@@ -34,7 +33,6 @@ router = APIRouter()
 ROUTER_META = RouterMeta(prefix="/api/tokens", tags=["tokens"], auth=Auth.REQUIRED)
 
 USERS_WRITE = "users.write"
-NOTICE_LINK = "/settings?section=users"
 
 
 class MintRequest(BaseModel):
@@ -75,30 +73,34 @@ def _view(credential: McpCredential, holder: User) -> dict:
 
 
 def _tell(holder: User, title: str, message: str, priority: str = "normal") -> None:
-    """The holder is told, or a service account's accountable person. Never the
-    token: notices are emailed."""
-    to = (
-        holder.accountable_principal_id
-        if _is_service_account(holder)
-        else holder.principal_id
-    )
-    if to is None:
-        return
+    """The holder's recipients are told (core.auth.token_notices). Never the token:
+    notices are emailed."""
+    token_notices.tell(holder, title, message, priority)
+
+
+def _limits(holder: User) -> dict:
+    """The lifetime that applies to ``holder``'s tokens: the most, the default, and
+    whether the holder has no choice (a service account's token gets its maximum)."""
+    with unit_of_work() as session:
+        stored = session_policy.read_row(session, tolerant=True)[0]
+    machine = _is_service_account(holder)
+    if stored.unreadable:
+        return {"max_days": None, "default_days": None, "fixed": machine}
+    return {
+        "max_days": token_policy.maximum_days(holder, stored.policy),
+        "default_days": tokens.default_days(holder, stored.policy),
+        "fixed": machine,
+    }
+
+
+def _minted(call):
+    """``call()``, with the policy's refusals as responses that state the reason."""
     try:
-        message = with_dispute(to, message, "")
-    except Exception:  # noqa: BLE001 - the notice still goes, in today's wording
-        logger.exception("could not name the managers on a token notice")
-    try:
-        notify(
-            to,
-            "api_token",
-            title,
-            message,
-            link=NOTICE_LINK,
-            priority=priority,
-        )
-    except Exception:  # noqa: BLE001 - the act stands; the notice is not its record
-        logger.exception("Could not notify the holder of a token change")
+        return call()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except token_policy.PolicyUnreadable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _refuse_token_request(request: Request, what: str) -> None:
@@ -162,10 +164,14 @@ def _date(value) -> str:
 
 @router.get("")
 def list_own(current_user: User = Depends(get_current_active_user)):
-    """Your own tokens, newest first, revoked and ended ones included."""
+    """Your own tokens, newest first, revoked and ended ones included, and the
+    lifetime that applies to a token of yours."""
     with unit_of_work() as session:
         rows = tokens.list_all(current_user.user_id, session)
-    return {"tokens": [_view(c, u) for c, u in rows]}
+    return {
+        "tokens": [_view(c, u) for c, u in rows],
+        "limits": _limits(current_user),
+    }
 
 
 @router.get("/all")
@@ -176,12 +182,16 @@ def list_all(
 ):
     """Every token, for a ``users.write`` holder; filtered on the server.
 
-    ``holders`` is everyone who holds one, whatever the filter, for its menu."""
+    ``holders`` is everyone who holds one, whatever the filter, for its menu.
+    ``limits`` is the lifetime that applies to the filtered holder's tokens, or yours.
+    """
     deny_unless(current_user.user_id, USERS_WRITE)
     with unit_of_work() as session:
         rows = tokens.list_all(holder, session)
         everyone = tokens.holders(session)
+        whose = session.get(User, holder) if holder else None
     return {
+        "limits": _limits(whose or current_user),
         "tokens": [_view(c, u) for c, u in rows if not status or c.status() == status],
         "holders": [_holder(u) for u in everyone],
     }
@@ -220,11 +230,13 @@ def mint(
         _check_holder(current_user, holder)
     _refuse_marked(holder)
     _confirm(request, current_user, "create a token")
-    minted = tokens.mint(
-        holder.user_id,
-        body.label,
-        body.expires_in_days,
-        actor=current_user.principal_id,
+    minted = _minted(
+        lambda: tokens.mint(
+            holder.user_id,
+            body.label,
+            body.expires_in_days,
+            actor=current_user.principal_id,
+        )
     )
     if minted is None:
         raise HTTPException(status_code=500, detail="Could not mint a token")
@@ -273,11 +285,13 @@ def rotate(
     _refuse_marked(holder)
     _confirm(request, current_user, "rotate a token")
     try:
-        rotated = tokens.rotate(
-            credential_id,
-            body.suspected_compromise,
-            body.expires_in_days,
-            actor=current_user.principal_id,
+        rotated = _minted(
+            lambda: tokens.rotate(
+                credential_id,
+                body.suspected_compromise,
+                body.expires_in_days,
+                actor=current_user.principal_id,
+            )
         )
     except tokens.NotRotatable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

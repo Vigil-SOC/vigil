@@ -545,6 +545,14 @@ export interface ApiToken {
   holder: ApiTokenHolder
 }
 
+// What a token for its holder may last. `max_days` is null when the stored policy can't be
+// read (a mint is then refused). `fixed`: a service account's token has no choice of length.
+export interface ApiTokenLimits {
+  max_days: number | null
+  default_days: number | null
+  fixed: boolean
+}
+
 // A minted or rotated token is in the response and nowhere else.
 export interface MintedApiToken {
   token: string
@@ -552,14 +560,14 @@ export interface MintedApiToken {
 }
 
 export const tokensApi = {
-  listOwn: () => api.get<{ tokens: ApiToken[] }>('/tokens'),
+  listOwn: () => api.get<{ tokens: ApiToken[]; limits: ApiTokenLimits }>('/tokens'),
 
   // users.write. The filter is the server's.
   listAll: (params: { holder?: string; status?: ApiTokenStatus }) =>
-    api.get<{ tokens: ApiToken[]; holders: ApiTokenHolder[] }>('/tokens/all', { params }),
+    api.get<{ tokens: ApiToken[]; holders: ApiTokenHolder[]; limits: ApiTokenLimits }>('/tokens/all', { params }),
 
-  // userId: a service account's, for a users.write holder; its token lasts a year.
-  mint: (label: string, expiresInDays: number, userId?: string) =>
+  // userId: a service account's, for a users.write holder; its token lasts its maximum.
+  mint: (label: string, expiresInDays: number | undefined, userId?: string) =>
     api.post<MintedApiToken>('/tokens', { label, expires_in_days: expiresInDays, user_id: userId }),
 
   rotate: (credentialId: string, suspectedCompromise: boolean) =>

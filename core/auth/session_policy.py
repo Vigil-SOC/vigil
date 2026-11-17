@@ -11,10 +11,11 @@ through ``limits``; the password rules and lockout through ``policy``.
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Iterable, Literal, NamedTuple, Optional
+from typing import Iterable, Literal, NamedTuple, Optional, Union
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -77,6 +78,10 @@ class SessionPolicy(BaseModel):
     # Whose sign-in needs a security key: the app no longer counts for them. Never
     # above require_mfa. Raising it is a person's act, and needs the person to hold a key.
     require_phishing_resistant: Literal["nobody", "privileged", "everyone"] = "nobody"
+    # The most days a token may live, by who holds it. Lowering one also shortens
+    # the tokens already issued; raising one never lengthens them.
+    personal_token_max_days: int = Field(365, ge=1, le=365)
+    service_token_max_days: int = Field(365, ge=1, le=365)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -153,7 +158,8 @@ def mfa_covered(
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
     guesser have more tries or a shorter lock, an idle account stay longer, or a
-    password be shorter, simpler, reused sooner, older or changed sooner."""
+    password be shorter, simpler, reused sooner, older or changed sooner, or a
+    token live longer."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -196,6 +202,8 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or new.password_history < old.password_history
         or easier_lock
         or longer_dormancy
+        or new.personal_token_max_days > old.personal_token_max_days
+        or new.service_token_max_days > old.service_token_max_days
     )
 
 
@@ -205,6 +213,10 @@ class Stored(NamedTuple):
     version: int
     updated_by: Optional[str]
     updated_at: Optional[datetime]
+    # The row exists but cannot be parsed: ``policy`` is the defaults, at the
+    # stored version, so a save overwrites it. Only set when ``read_row`` is
+    # asked to tolerate it.
+    unreadable: bool = False
 
 
 CARRIED = "carried from host configuration"
@@ -256,26 +268,60 @@ def _seed(session: Session) -> None:
         )
 
 
-def read_row(session: Session, lock: bool = False) -> tuple[Stored, bool]:
+# Fixed key for the transaction advisory lock that orders a mint against a save,
+# whether or not the row exists yet.
+_LOCK_KEY = 47240001
+
+
+def read_row(
+    session: Session,
+    lock: Union[bool, Literal["share"]] = False,
+    tolerant: bool = False,
+) -> tuple[Stored, bool]:
     """The stored document (defaults when no row) and whether a row exists.
+
+    ``lock=True`` holds the policy until the transaction ends, for a save;
+    ``"share"`` lets minters read together while a save waits for them. Both
+    also take an advisory lock, so they order the same way when no row exists
+    yet. An unparseable row raises ``ValidationError``, or with ``tolerant``
+    reads as the defaults at the stored version.
 
     The first read with no row saves any password settings carried from the
     host environment as version 1 (#4175)."""
+    if lock:
+        session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(:k)"
+                if lock is True
+                else "SELECT pg_advisory_xact_lock_shared(:k)"
+            ),
+            {"k": _LOCK_KEY},
+        )
     for attempt in range(2):
         row = (
             session.query(SystemConfig)
             .filter(SystemConfig.key == KEY)
             .populate_existing()
         )
-        row = (row.with_for_update() if lock else row).first()
+        if lock:
+            row = row.with_for_update(read=lock == "share")
+        row = row.first()
         if row is not None or attempt:
             break
         _seed(session)
     if row is None:
         return Stored(SessionPolicy(), 0, None, None), False
-    value = dict(row.value or {})
-    version = int(value.pop("version", 0))
-    return Stored(SessionPolicy(**value), version, row.updated_by, row.updated_at), True
+    try:
+        value = dict(row.value or {})
+        version = int(value.pop("version", 0))
+        current, unreadable = SessionPolicy(**value), False
+    except (ValidationError, TypeError, ValueError):
+        if not tolerant:
+            raise
+        # Not a document at all, or a version that is not a number: the defaults
+        # at version 0, which a save overwrites.
+        version, current, unreadable = 0, SessionPolicy(), True
+    return Stored(current, version, row.updated_by, row.updated_at, unreadable), True
 
 
 class Limits(NamedTuple):

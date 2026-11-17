@@ -15,7 +15,7 @@ Only `migrate-to-encrypted` writes an audit record (config type `secrets`, key `
 
 From a script, use a personal API token. Mint one in the console: **Settings**, **Team & access**, the **API tokens** card. Give it a label and a lifetime, then **Mint**. The token is shown once, so store it then.
 
-- A person's token lasts 90 days by default and 365 at most. A service account's lasts 365 days.
+- A person's token lasts 90 days by default and 365 at most. A service account's lasts 365 days. An administrator with `sessions.manage` can set a lower maximum for each under **Settings**, **Sessions**, **API tokens**. Lowering a maximum also shortens the tokens already issued to end no later than that many days from the change; raising it never lengthens one. A request for longer than the maximum is refused with the maximum in the message, and if the stored policy can't be read no token is minted until it is saved again.
 - A Manager or Admin must confirm it's them to mint one, so they need two-step sign-in set up.
 - A token can do what its holder's role allows. It can never mint or rotate a token, or change an account.
 - For unattended work, use a service account's token. Someone who holds `users.write` mints it, from the **Tokens of** card on that account.
