@@ -4158,7 +4158,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   <span className="sk-tab" />
                   <span className="sk-back" />
                   <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
-                  <span className="sk-flap"><span className="sk-origin">{s.bundled ? 'Built in' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
+                  <span className="sk-flap"><span className="sk-origin" title={s.held ? 'Held: agents cannot use this skill until its scan clears it or someone approves it. Open it for the scan.' : undefined}>{s.bundled ? 'Built in' : s.held ? 'Held' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
                 </span>
                 <span className="sk-text">
                   <span className="sk-name" title={s.name}>{s.name}</span>
