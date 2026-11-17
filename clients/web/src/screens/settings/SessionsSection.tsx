@@ -13,7 +13,7 @@ type Keys = SessionPolicyBody['require_phishing_resistant']
 type NumKey =
   | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
   | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
-  | 'personal_token_max_days' | 'service_token_max_days'
+  | 'personal_token_max_days' | 'service_token_max_days' | 'token_unused_days'
 // What the form holds: every field of the body.
 type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; require_phishing_resistant: Keys; lockout_timed: boolean }
 
@@ -82,6 +82,10 @@ const FIELDS: FieldDef[] = [
     key: 'service_token_max_days', title: 'Service-account token maximum lifetime', unit: 'days',
     hint: 'How long a service account’s API token lasts: its holder has no choice at mint. Lowering it also shortens every existing service-account token, directory sync’s and Medic’s included, so they need renewing sooner. Raising it never lengthens one. Only a person can raise it.',
   },
+  {
+    key: 'token_unused_days', title: 'Unused-token period', unit: 'days', optional: true, none: 'Off',
+    hint: 'Days an API token may go unused before it is revoked. Its holder is reminded 7 days before, and the token is revoked no sooner than 7 days after the reminder. Using it keeps it. Directory sync’s token is exempt while directory sync is on. Empty: off. Longer periods, or off, leave forgotten tokens working longer. Only a person can loosen it.',
+  },
 ]
 
 const RULES: { value: Rules; label: string; text: string }[] = [
@@ -116,7 +120,7 @@ const ORDER: (NumKey | 'require_mfa' | 'require_phishing_resistant' | 'lockout_t
   'require_mfa', 'require_phishing_resistant', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
   'password_min_length', 'password_history', 'password_character_rules',
   'password_max_age_days', 'password_min_age_days',
-  'api_tokens', 'personal_token_max_days', 'service_token_max_days',
+  'api_tokens', 'personal_token_max_days', 'service_token_max_days', 'token_unused_days',
 ]
 
 const RULES_TITLE = 'Password character rules'
@@ -139,6 +143,7 @@ const toForm = (p: SessionPolicy): Form => ({
   dormancy_days: p.dormancy_days == null ? '' : String(p.dormancy_days),
   personal_token_max_days: String(p.personal_token_max_days),
   service_token_max_days: String(p.service_token_max_days),
+  token_unused_days: p.token_unused_days == null ? '' : String(p.token_unused_days),
   require_mfa: p.require_mfa,
   require_phishing_resistant: p.require_phishing_resistant,
 })
@@ -261,6 +266,7 @@ export default function SessionsSection({ notify }: SectionProps) {
   const timedChanged = !!next && next.lockout_timed !== saved.lockout_timed
   const range = (f: FieldDef) => saved.ranges[f.key]
   const dormancyLonger = !!next && saved.dormancy_days != null && (next.dormancy_days == null || next.dormancy_days > saved.dormancy_days)
+  const unusedLonger = !!next && saved.token_unused_days != null && (next.token_unused_days == null || next.token_unused_days > saved.token_unused_days)
   const set = (patch: Partial<Form>) => setForm({ ...form, ...patch })
 
   const numberRow = (f: FieldDef) => (
@@ -421,7 +427,7 @@ export default function SessionsSection({ notify }: SectionProps) {
         body={
           <>
             <p>{confirm?.loosening
-              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, an unused account stay open longer, or a new token last longer:'
+              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, an unused account stay open longer, a new token last longer, or an unused token stay valid longer:'
               : confirm?.without_key != null
                 ? 'This change requires security keys of more people:'
                 : 'This change lowers how long an API token may last:'}</p>
@@ -443,6 +449,7 @@ export default function SessionsSection({ notify }: SectionProps) {
             {saved.unreadable && <p>The stored policy could not be read, so this save replaces whatever it held with the values above and the defaults for every other setting.</p>}
             {confirm?.shortened && <p>{confirm.shortened} will end sooner, no later than the new maximum counted from now, and their holders are told. No token is ever lengthened.</p>}
             {dormancyLonger && <p>Longer periods, or off, leave unused accounts open longer.</p>}
+            {unusedLonger && <p>A longer unused-token period, or off, leaves forgotten API tokens working longer.</p>}
             <p>It is recorded in the audit trail with your name and the old and new values.</p>
           </>
         }

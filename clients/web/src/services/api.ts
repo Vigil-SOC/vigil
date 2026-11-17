@@ -557,6 +557,8 @@ export interface ApiTokenLimits {
 export interface MintedApiToken {
   token: string
   credential: ApiToken
+  // When the token is revoked if it is never used; null when the rule is off or doesn't reach it.
+  unused_rule: string | null
 }
 
 export const tokensApi = {

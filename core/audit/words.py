@@ -400,7 +400,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "credential.minted": "Issued an API token",
     "credential.rotated": lambda p: "Rotated an API token"
     + (" (suspected compromise)" if p.get("compromised") else ""),
-    "credential.revoked": "Revoked an API token",
+    "credential.revoked": lambda p: "Revoked an API token"
+    + (f" ({p['reason']})" if p.get("reason") else ""),
     "credential.expired": "Refused an expired API token",
     "credential.refused": "Refused a token of an inactive account",
     "credential.expiry_set": "Set an API token to expire in 90 days",

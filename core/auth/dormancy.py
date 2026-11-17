@@ -79,17 +79,21 @@ def start_grace(session: Session, now: Optional[datetime] = None) -> datetime:
     return now
 
 
-def grace_until() -> Optional[datetime]:
-    """When the grace after the last restore ends, or None if no restore recorded."""
-    with unit_of_work() as session:
+def settled_at(session: Optional[Session] = None) -> Optional[datetime]:
+    """When the last restore settled, or None if no restore recorded."""
+    with unit_of_work(session) as session:
         value = (
             session.query(SystemConfig.value)
             .filter(SystemConfig.key == GRACE_KEY)
             .scalar()
         )
-    if not value:
-        return None
-    return datetime.fromisoformat(value["settled_at"]) + GRACE
+    return datetime.fromisoformat(value["settled_at"]) if value else None
+
+
+def grace_until() -> Optional[datetime]:
+    """When the grace after the last restore ends, or None if no restore recorded."""
+    settled = settled_at()
+    return settled + GRACE if settled else None
 
 
 def in_grace(now: Optional[datetime] = None) -> bool:

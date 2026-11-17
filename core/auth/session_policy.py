@@ -82,6 +82,9 @@ class SessionPolicy(BaseModel):
     # the tokens already issued; raising one never lengthens them.
     personal_token_max_days: int = Field(365, ge=1, le=365)
     service_token_max_days: int = Field(365, ge=1, le=365)
+    # Days a token may sit unused before it is revoked (reminded 7 days before);
+    # None: never. A longer period, or off, is a loosening.
+    token_unused_days: Optional[int] = Field(45, ge=7, le=365)
 
     @model_validator(mode="after")
     def _privileged_within_standard(self):
@@ -158,8 +161,8 @@ def mfa_covered(
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
     guesser have more tries or a shorter lock, an idle account stay longer, or a
-    password be shorter, simpler, reused sooner, older or changed sooner, or a
-    token live longer."""
+    password be shorter, simpler, reused sooner, older or changed sooner, a
+    token live longer, or an unused token stay valid longer."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -179,6 +182,9 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     )
     longer_dormancy = old.dormancy_days is not None and (
         new.dormancy_days is None or new.dormancy_days > old.dormancy_days
+    )
+    longer_unused = old.token_unused_days is not None and (
+        new.token_unused_days is None or new.token_unused_days > old.token_unused_days
     )
     lower_mfa = MFA_LEVELS.index(new.require_mfa) < MFA_LEVELS.index(old.require_mfa)
     lower_keys = _rank(new.require_phishing_resistant) < _rank(
@@ -204,6 +210,7 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or longer_dormancy
         or new.personal_token_max_days > old.personal_token_max_days
         or new.service_token_max_days > old.service_token_max_days
+        or longer_unused
     )
 
 

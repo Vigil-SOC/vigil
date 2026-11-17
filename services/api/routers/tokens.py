@@ -8,6 +8,7 @@ Storage and the lifetime rule are ``core.auth.mcp_credential_service``.
 """
 
 import logging
+from datetime import timedelta
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -91,6 +92,24 @@ def _limits(holder: User) -> dict:
         "default_days": tokens.default_days(holder, stored.policy),
         "fixed": machine,
     }
+
+
+def _unused_rule(record: McpCredential, holder: User) -> Optional[str]:
+    """What the unused-token rule says of this new token: when it is revoked if never
+    used. None when the rule is off, can't be read, doesn't reach the token (directory
+    sync's) or the token ends first."""
+    with unit_of_work() as session:
+        stored = session_policy.read_row(session, tolerant=True)[0]
+    days = None if stored.unreadable else stored.policy.token_unused_days
+    if days is None or directory_sync.is_sync_account(holder):
+        return None
+    ends = record.created_at + timedelta(days=days)
+    if record.expires_at is not None and record.expires_at <= ends:
+        return None
+    return (
+        f"A token left unused for {days} days is reminded about, then revoked: if "
+        f"this one is never used, on {_date(ends)}. Using it before then keeps it."
+    )
 
 
 def _minted(call):
@@ -246,15 +265,17 @@ def mint(
         if holder is not current_user
         else "your account"
     )
+    unused = _unused_rule(record, holder)
     _tell(
         holder,
         "API token issued",
         f'A token "{record.label}" was issued for {whose}. '
-        f"It expires on {_date(record.expires_at)}.",
+        f"It expires on {_date(record.expires_at)}." + (f" {unused}" if unused else ""),
     )
     return {
         "token": minted.token,
         "credential": _view(record, holder),
+        "unused_rule": unused,
         "warning": "This token is shown once. Store it now; it cannot be recovered.",
     }
 
@@ -308,15 +329,18 @@ def rotate(
         if _is_service_account(holder)
         else "Your"
     )
+    unused = _unused_rule(minted.record, holder)
     _tell(
         holder,
         "API token rotated",
-        f'{whose} token "{credential.label}" was rotated; the old one {ends}.',
+        f'{whose} token "{credential.label}" was rotated; the old one {ends}.'
+        + (f" {unused}" if unused else ""),
         "high" if body.suspected_compromise else "normal",
     )
     return {
         "token": minted.token,
         "credential": _view(minted.record, holder),
+        "unused_rule": unused,
         "rotated": _view(old, holder),
         "warning": "This token is shown once. Store it now; it cannot be recovered.",
     }

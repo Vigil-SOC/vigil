@@ -69,11 +69,12 @@ function Dates({ t }: { t: ApiToken }) {
 }
 
 /** The one place a new token is shown. The server keeps only a hash of it. */
-function Reveal({ token, onDone }: { token: string; onDone: () => void }) {
+function Reveal({ token, rule, onDone }: { token: string; rule: string | null; onDone: () => void }) {
   return (
     <div className="mcp-callout" role="alert">
       <strong>Copy this now. It is not stored and cannot be shown again.</strong>
       <pre className="mcp-token">{token}</pre>
+      {rule && <span className="text-xs text-tx-3">{rule}</span>}
       <button className="btn" onClick={onDone}>
         I have copied it
       </button>
@@ -99,7 +100,7 @@ export default function TokensCard({
   const [label, setLabel] = useState('')
   const [days, setDays] = useState('')
   const [limits, setLimits] = useState<ApiTokenLimits | null>(null)
-  const [revealed, setRevealed] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState<{ token: string; rule: string | null } | null>(null)
   const [rotating, setRotating] = useState<ApiToken | null>(null)
   const [compromise, setCompromise] = useState(false)
 
@@ -155,7 +156,7 @@ export default function TokensCard({
     act(async () => {
       // A service account's token has no length to choose: the server gives it its maximum.
       const r = await tokensApi.mint(label.trim(), limits?.fixed ? undefined : Number(chosen), accountId)
-      setRevealed(r.data.token)
+      setRevealed({ token: r.data.token, rule: r.data.unused_rule })
       setLabel('')
     }, 'Could not mint a token')
 
@@ -163,7 +164,7 @@ export default function TokensCard({
     rotating &&
     act(async () => {
       const r = await tokensApi.rotate(rotating.credential_id, compromise)
-      setRevealed(r.data.token)
+      setRevealed({ token: r.data.token, rule: r.data.unused_rule })
       setRotating(null)
       setCompromise(false)
     }, 'Could not rotate that token')
@@ -211,7 +212,7 @@ export default function TokensCard({
         }
       >
         <div className="flex flex-col gap-3.5">
-          {revealed && <Reveal token={revealed} onDone={() => setRevealed(null)} />}
+          {revealed && <Reveal token={revealed.token} rule={revealed.rule} onDone={() => setRevealed(null)} />}
 
           <div className="flex gap-2 flex-wrap items-center">
             <div className="flex-1" style={{ minWidth: 220 }}>

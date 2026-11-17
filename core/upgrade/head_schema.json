@@ -3781,6 +3781,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column mcp_credentials.reminded_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column mcp_credentials.revoked_at": {
   "default": null,
   "nullable": true,
