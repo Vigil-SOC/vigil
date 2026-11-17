@@ -6,8 +6,10 @@ case for good: it has no lease row for the worker's sweeper to find and no ledge
 events. The enqueue-failure paths end such a run as failed; this does the same
 for one whose job vanished after a successful enqueue.
 
-A run is lost only when all of these hold: it is a running agent run (a paused one
-always has a lease), it has no lease row and no ledger events, its job id (the run
+A run is lost only when all of these hold: it is a running run that was started
+through the agent queue (its trigger context carries ``run_kind``, which every
+caller that enqueues a start job sets, whatever its ``workflow_source``; a paused
+run always has a lease), it has no lease row and no ledger events, its job id (the run
 id) is not waiting, delayed, active or otherwise held in the queue, and its row is
 older than ``START_GRACE_SECONDS``. A run that is merely queued while no worker
 runs is left alone and continues when a worker returns. A run whose worker finished
@@ -19,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from sqlalchemy import text
 
@@ -55,7 +57,7 @@ _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 # The cast is guarded: a console id that is not a uuid has no lease or ledger.
 _RUN_UUID = "CASE WHEN r.run_id ~* :uuid THEN CAST(r.run_id AS uuid) END"
 _UNSTARTED = (
-    "r.workflow_source = 'agent' AND r.status = 'running' "
+    "r.trigger_context->>'run_kind' IS NOT NULL AND r.status = 'running' "
     "AND r.run_id ~* :uuid "
     f"AND NOT EXISTS (SELECT 1 FROM agent_run_leases l WHERE l.run_id = {_RUN_UUID}) "
     f"AND NOT EXISTS (SELECT 1 FROM agent_events e WHERE e.run_id = {_RUN_UUID})"
@@ -63,8 +65,8 @@ _UNSTARTED = (
 
 
 PAGE = 100
-# Pages per pass, so a long backlog of merely queued runs is walked across ticks
-# rather than held in one.
+# Pages per pass. The caller keeps the cursor between passes, so a long backlog of
+# merely queued runs is walked across ticks rather than held in one.
 MAX_PAGES = 10
 
 Cursor = Tuple[datetime, str]
@@ -123,19 +125,20 @@ def _claim(run_id: str) -> Optional[Tuple[str, Optional[str]]]:
     return None if won is None else (won[0], won[1])
 
 
-async def end_lost_start_jobs() -> List[str]:
-    """Fail each run whose start job is gone; returns the investigations whose own
-    run it was, for the caller to fail as the enqueue-failure path does.
+async def end_lost_start_jobs(
+    after: Optional[Cursor], on_investigation: Callable[[str], None]
+) -> Optional[Cursor]:
+    """Fail each run whose start job is gone, from ``after`` on; returns where the
+    next pass resumes, or None once the end is reached (the next pass starts over).
 
-    A queue that cannot be read ends the pass: a job it cannot see is not a job
-    that is gone. One run failing to end does not stop the rest.
+    ``on_investigation`` is called with the investigation whose own run was just
+    ended, for the caller to fail as the enqueue-failure path does; it must not
+    raise. A queue that cannot be read ends the pass: a job it cannot see is not a
+    job that is gone. One run failing to end does not stop the rest.
     """
-    investigations: List[str] = []
-    after: Optional[Cursor] = None
     for _ in range(MAX_PAGES):
         page = await asyncio.to_thread(_candidates, after)
         for started_at, run_id in page:
-            after = (started_at, run_id)
             try:
                 state = await asyncio.wait_for(
                     _run_queue().getJobState(run_id), QUEUE_READ_TIMEOUT_SECONDS
@@ -148,7 +151,8 @@ async def end_lost_start_jobs() -> List[str]:
                     )
                 except Exception:  # noqa: BLE001
                     pass
-                return investigations
+                return after
+            after = (started_at, run_id)
             if state not in LOST_STATES:
                 continue
             try:
@@ -156,6 +160,11 @@ async def end_lost_start_jobs() -> List[str]:
                 if won is None:
                     continue
                 run_kind, investigation_id = won
+                # A shadow run shares its investigation's id in its context; only
+                # the investigation's own run decides the investigation. First, so
+                # nothing after can drop it.
+                if investigation_id and run_id == run_id_for(investigation_id):
+                    on_investigation(investigation_id)
                 # What the enqueue-failure paths do, less the row, written above.
                 _runs_finished_counter().add(
                     1, {"run_kind": run_kind, "status": "failed"}
@@ -164,12 +173,8 @@ async def end_lost_start_jobs() -> List[str]:
                 logger.warning(
                     "ended run %s: its start job was lost (%s)", run_id, state
                 )
-                # A shadow run shares its investigation's id in its context; only
-                # the investigation's own run decides the investigation.
-                if investigation_id and run_id == run_id_for(investigation_id):
-                    investigations.append(investigation_id)
             except Exception:  # noqa: BLE001 - one run must not stop the rest
                 logger.exception("could not end lost run %s", run_id)
         if len(page) < PAGE:
-            break
-    return investigations
+            return None
+    return after
