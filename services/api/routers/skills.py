@@ -88,6 +88,8 @@ class SkillScanDetail(SkillScanSummary):
     max_severity: Optional[str] = None
     findings: list[SkillScanFinding] = []
     scanner_version: Optional[str] = None
+    # How the verdict was reached: "static" or "llm:<model>".
+    scan_mode: Optional[str] = None
     # The content the verdict is about; POST /{name}/approve takes it back.
     digest: Optional[str] = None
     scanned_at: Optional[datetime] = None
@@ -215,6 +217,7 @@ def _scan_detail(state: ScanState) -> SkillScanDetail:
         max_severity=state.max_severity,
         findings=[SkillScanFinding(**f) for f in state.findings],
         scanner_version=state.scanner_version,
+        scan_mode=state.scan_mode,
         digest=state.digest,
         scanned_at=state.scanned_at,
         error=state.error,

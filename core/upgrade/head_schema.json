@@ -4221,6 +4221,11 @@
   "nullable": true,
   "type": "text"
  },
+ "column skill_scans.scan_mode": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column skill_scans.scanned_at": {
   "default": "(now() AT TIME ZONE 'utc'::text)",
   "nullable": false,
