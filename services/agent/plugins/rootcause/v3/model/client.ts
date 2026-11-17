@@ -247,6 +247,8 @@ export class KernelTurns {
   }
   // The skills this run may load: the plugin's own and the operator's, read off the spec so a resume offers the same.
   get skills(): PluginManifest["skills"] { return this.ctx.options.plugin.skills; }
+  // Reads an added skill's text when it is loaded, as the kernel's own load_skill does.
+  get skillBodies(): Harness<AgentKinds>["skillBodies"] { return this.ctx.harness.skillBodies; }
   turn<T>(sub: Subturn): Promise<Outcome<T>> { return runSubturn<T>(this.ctx, sub); }
   async calls(): Promise<CallPayload[]> {
     return (await this.ctx.harness.state.read(this.ctx.options.run_id)).filter((e) => e.kind === "call").map((e) => e.payload as CallPayload);
@@ -270,7 +272,7 @@ export class KernelModelClient implements ModelClient {
 
   constructor(private d: ClientDeps & { tools: Registry }, private turns: KernelTurns) {
     this.system = [SYSTEM_PROMPT, d.survey];
-    turns.local = [...d.tools.list().map((t) => this.localTool(t)), ...(turns.skills.length === 0 ? [] : [skillTool({ skills: turns.skills })])];
+    turns.local = [...d.tools.list().map((t) => this.localTool(t)), ...(turns.skills.length === 0 ? [] : [skillTool({ skills: turns.skills }, turns.skillBodies)])];
   }
 
   addContext(text: string) {
