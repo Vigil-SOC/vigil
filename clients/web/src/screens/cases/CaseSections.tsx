@@ -474,7 +474,25 @@ export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: ()
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ ioc_type: 'ip', value: '', context: '', source: '' })
   const [writeError, setWriteError] = useState<string | null>(null)
+  const canWrite = useAuth().hasPermission('cases.write')
   const iocs = data || []
+
+  // Named by type and value: an indicator a linked alert names has no id.
+  const mark = async (i: CaseIOC) => {
+    setWriteError(null)
+    try {
+      await casesApi.markIOCFalsePositive(caseId, {
+        ioc_type: i.ioc_type || '',
+        value: i.value || '',
+        is_false_positive: !i.is_false_positive,
+      })
+    } catch (e) {
+      setWriteError(errorDetail(e, 'Couldn’t update the IOC'))
+      return
+    }
+    reload()
+    onWritten?.()
+  }
 
   const submit = async () => {
     if (!form.value.trim()) return
@@ -526,6 +544,15 @@ export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: ()
               <li key={i.ioc_id ?? value} title={i.context || undefined}>
                 <div className="side-row-main mono" title={value}>{value}</div>
                 <div className="side-meta">{meta}</div>
+                {canWrite && (
+                  <button
+                    className="btn ghost mt-1.5"
+                    title={i.is_false_positive ? 'Clear the mark: alerts may join or link to this Case on it again' : 'No alert will join or link to this Case on this value'}
+                    onClick={() => void mark(i)}
+                  >
+                    {i.is_false_positive ? 'Clear false positive' : 'Mark false positive'}
+                  </button>
+                )}
               </li>
             )
           })}

@@ -2747,6 +2747,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/iocs/false-positive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark Ioc False Positive
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     While marked, no alert joins the case or links to it on that value. It
+         *     covers the value under any spelling, and a value a linked alert names gets
+         *     a recorded, marked row.
+         */
+        put: operations["put_api_cases_case_id_iocs_false-positive"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/merge": {
         parameters: {
             query?: never;
@@ -8922,6 +8946,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/iocs/false-positive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark Ioc False Positive
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     While marked, no alert joins the case or links to it on that value. It
+         *     covers the value under any spelling, and a value a linked alert names gets
+         *     a recorded, marked row.
+         */
+        put: operations["put_api_v1_cases_case_id_iocs_false-positive"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/merge": {
         parameters: {
             query?: never;
@@ -12834,6 +12882,23 @@ export interface components {
             iocs: {
                 [key: string]: unknown;
             }[];
+        };
+        /**
+         * IOCMark
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     Named by type and value, not id: an indicator a linked alert names has none.
+         */
+        IOCMark: {
+            /** Ioc Type */
+            ioc_type: string;
+            /**
+             * Is False Positive
+             * @default true
+             */
+            is_false_positive: boolean;
+            /** Value */
+            value: string;
         };
         /** ImportListResponse */
         ImportListResponse: {
@@ -21383,6 +21448,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseIOCExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_cases_case_id_iocs_false-positive": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IOCMark"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseIOCListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -32545,6 +32647,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseIOCExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_v1_cases_case_id_iocs_false-positive": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IOCMark"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseIOCListResponse"];
                 };
             };
             /** @description Validation Error */

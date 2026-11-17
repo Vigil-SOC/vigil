@@ -74,6 +74,27 @@ def split_key(key: str) -> Optional[Tuple[str, str]]:
     return ioc_type, value
 
 
+def marked_keys(session: Session, case_ids: Iterable[str]) -> Dict[str, Set[str]]:
+    """Each Case's keys a person marked a false positive, by ``make_key``.
+
+    The one reading of the mark: matching honours it here, and recording a
+    value again looks it up here, so the two cannot drift.
+    """
+    ids = set(case_ids)
+    out: Dict[str, Set[str]] = {}
+    if not ids:
+        return out
+    rows = session.execute(
+        select(CaseIOC.case_id, CaseIOC.ioc_type, CaseIOC.value).where(
+            CaseIOC.case_id.in_(ids), CaseIOC.is_false_positive.is_(True)
+        )
+    )
+    for case_id, ioc_type, value in rows:
+        if key := make_key(ioc_type, value):
+            out.setdefault(case_id, set()).add(key)
+    return out
+
+
 def index_case_iocs_on_close(session: Session, case_id: str) -> int:
     """Index a closing case's IOCs without letting a failure fail the close."""
     # Flush first so the SAVEPOINT covers only our inserts and rolling it back
@@ -227,6 +248,11 @@ class SharedIOCRepository:
                 )
             )
             rows += [(*r, True) for r in self.session.execute(same_title)]
+
+        # A key marked false positive on a Case no longer matches it; its other
+        # keys still do. Read here, not at index write, so it holds at once.
+        marked = marked_keys(self.session, {r[0] for r in rows})
+        rows = [r for r in rows if f"{r[1]}:{r[2]}" not in marked.get(r[0], ())]
 
         rows.sort(key=lambda r: (-r[3].timestamp(), _KEY_RANK.get(r[1], 9)))
         seen: Set[str] = set()
