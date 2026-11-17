@@ -847,9 +847,11 @@ async def _read_case_shell(args: Args) -> Args:
     if response.status_code == 401:
         raise MCPFailure(
             "unavailable",
-            "the case shell refused this backend's SHELL_TOKEN"
-            if token
-            else "the case shell requires a bearer and this backend has no SHELL_TOKEN",
+            (
+                "the case shell refused this backend's SHELL_TOKEN"
+                if token
+                else "the case shell requires a bearer and this backend has no SHELL_TOKEN"
+            ),
         )
     if response.status_code != 200:
         raise MCPFailure(
