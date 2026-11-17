@@ -81,8 +81,8 @@ class MCPServer:
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
-        # The env names mcp-config.json declares; ``env`` also carries the
-        # backend's own environment, which only a stdio child inherits.
+        # The env names mcp-config.json declares; ``env`` holds just these,
+        # substituted. The stdio child's full env is built at connect time.
         self.declared_env: List[str] = list(declared_env or [])
 
 
@@ -326,26 +326,24 @@ class MCPService:
                     for k, v in (server_config.get("env") or {}).items()
                     if not k.startswith("_")
                 }
-                # Inherit the backend's environment so servers that need
-                # runtime config not declared in mcp-config.json can connect
-                # — notably the POSTGRES_* vars DatabaseService reads for
-                # case/DB tools (vigil). Declared config env
-                # entries still take precedence. Required-credential
-                # detection scans the raw config above, not this spawn env,
-                # so dormancy behavior is unchanged.
-                env = os.environ.copy()  # noqa: ENV001 - MCP child env
+                # ${VAR} in declared env and args resolves against the backend's
+                # own environment, but only the declared entries are kept on the
+                # server: what a stdio child gets is built at connect time by
+                # child_env.stdio_env, so the backend's whole environment never
+                # reaches it. Required-credential detection scans the raw config
+                # above, not this env.
+                env = os.environ.copy()  # noqa: ENV001 - ${VAR} substitution source
                 # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
                 # would substitute to "" and root child paths at "/".
                 env.setdefault("VIGIL_DIR", str(vigil_path()))
                 # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
                 # not enough.
                 env.update(ca_bundle_env())
-                env.update(
-                    {
-                        k: self._substitute_env_vars(v, env)
-                        for k, v in raw_env_strs.items()
-                    }
-                )
+                declared = {
+                    k: self._substitute_env_vars(v, env)
+                    for k, v in raw_env_strs.items()
+                }
+                env.update(declared)
                 env["PYTHONPATH"] = project_path_str
 
                 # Get args and perform environment variable substitution
@@ -368,7 +366,7 @@ class MCPService:
                         "command": command,
                         "args": args,
                         "cwd": cwd,
-                        "env": env,
+                        "env": declared,
                         "required_env_vars": required_env_vars,
                         "declared_env": list(raw_env_strs),
                     }

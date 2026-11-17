@@ -10,9 +10,11 @@ honored as aliases. A resolved *file* path is also exported as
 directory equivalent, so a capath is left as ``SSL_CERT_DIR`` only.
 
 Forwarding also has to be explicit rather than inherited: ``stdio_client``
-narrows the child environment to ``HOME``, ``LOGNAME``, ``PATH``, ``SHELL``,
-``TERM``, ``USER`` plus the server's own ``env`` block, so a bundle set in the
-backend's environment never reaches a server spawned that way.
+merges the ``env`` it is given over ``HOME``, ``LOGNAME``, ``PATH``, ``SHELL``,
+``TERM`` and ``USER``, so it only narrows the child if that ``env`` is narrow.
+``stdio_env`` builds it: the inputs the MCP runner would start the server with,
+plus a few stdio-only additions, and none of the rest of the backend's
+environment.
 
 The same holds for the proxy variables: on a proxy-only network a server
 spawned without them reports running while every tool call fails to connect.
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Dict
 
 logger = logging.getLogger(__name__)
@@ -84,4 +87,80 @@ def proxy_env() -> Dict[str, str]:
     if not any(name.upper() in _PROXY_VARS for name in env):
         return {}
     env["NODE_USE_ENV_PROXY"] = "1"
+    return env
+
+
+# Package launchers' own settings (registry, index, cache): a runner-less install
+# downloads pinned npx/uvx entries at spawn, so a mirror set in the backend's
+# environment has to reach them. Matched case-insensitively by prefix.
+_LAUNCHER_PREFIXES = ("NPM_CONFIG_", "UV_", "PIP_")
+
+# What an in-repo server reads to reach the database and the secret store the way
+# the backend does (resolve() reads its non-secret settings from the database).
+_IN_REPO_VARS = (
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_SSL_MODE",
+    "DEV_MODE",
+    "SECRETS_BACKEND",
+    "ENABLE_KEYRING",
+    "VIGIL_DISABLE_DOTENV",
+    "VIGIL_DIR_EPHEMERAL",
+)
+
+# Credential-file locations (paths, not keys) for the cloud entries that sign in
+# from a file.
+_CLOUD_FILE_VARS = (
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_PROFILE",
+)
+
+_IN_REPO_ARG = re.compile(r"core/integrations/[^/]+/tool\.py")
+
+
+def stdio_env(server, project_root: str) -> Dict[str, str]:
+    """The env a stdio-spawned ``server`` starts with, built at connect time.
+
+    The runner's inputs (``runner_env``), the proxy and CA-bundle entries and
+    ``PYTHONPATH``, as ``Catalog.launch`` adds them, plus what only a runner-less
+    child needs: ``VIGIL_DIR`` (it shares the backend's state directory), the
+    package launchers' settings, for in-repo servers the database and
+    secret-store variables, and for ``gcp-*`` / ``aws-security`` the credential
+    file locations. Each extra is passed only when set in the backend. Anything
+    else in the backend's environment, raw cloud keys included, stays there.
+    """
+    from core.config import vigil_path
+    from core.integrations.mcp.runner import runner_env
+
+    # Declared keys reach the child even when empty, as under the runner, whose
+    # catalog launches the entry's own env.
+    env = {k: (server.env or {}).get(k, "") for k in server.declared_env}
+    env.update(runner_env(server))
+    # A proxy name the entry sets drops both forwarded spellings.
+    overridden = {k.upper() for k in env if k in PROXY_ENV_NAMES}
+    env = {
+        **{k: v for k, v in proxy_env().items() if k.upper() not in overridden},
+        **env,
+        **ca_bundle_env(),
+    }
+    env["PYTHONPATH"] = project_root
+    env["VIGIL_DIR"] = str(vigil_path())
+
+    extra = [
+        name
+        for name in os.environ  # noqa: ENV001 - MCP child process env
+        if name.upper().startswith(_LAUNCHER_PREFIXES)
+    ]
+    if any(_IN_REPO_ARG.fullmatch(arg) for arg in server.args):
+        extra += _IN_REPO_VARS
+    if server.name.startswith("gcp-") or server.name == "aws-security":
+        extra += _CLOUD_FILE_VARS
+    for name in extra:
+        if value := os.environ.get(name):  # noqa: ENV001 - MCP child process env
+            env.setdefault(name, value)
     return env
