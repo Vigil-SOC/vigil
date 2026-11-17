@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../../services/api'
-import type { DecisionRecord, FeedbackBody, IncidentDetail, IncidentPage, PackState, SensorList, StatusRead } from './medicTypes'
+import type { DecisionRecord, FeedbackBody, FixLevel, FixLevelName, IncidentDetail, IncidentPage, PackState, SensorList, StatusRead } from './medicTypes'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
@@ -262,3 +262,7 @@ export const importPack = (file: File, sha256: string, override: boolean) =>
   }).then((r) => r.data)
 export const revertPack = () => api.post<PackState>('/medic/pack/revert', null, { timeout: 45_000 }).then((r) => r.data)
 export const switchToBundled = () => api.post<PackState>('/medic/pack/switch-to-bundled', null, { timeout: 45_000 }).then((r) => r.data)
+
+/** POST /api/medic/fix-level: a raise is one step and carries a reason, a lower needs none. The answer is the fix type as the pack read serves it next. */
+export const setFixLevel = (fix_type: string, level: FixLevelName, reason?: string) =>
+  api.post<FixLevel>('/medic/fix-level', { fix_type, level, ...(reason ? { reason } : {}) }).then((r) => r.data)
