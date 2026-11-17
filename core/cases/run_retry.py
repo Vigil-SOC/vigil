@@ -48,7 +48,7 @@ TRANSIENT = re.compile(
 
 def transient(reason: Optional[str]) -> bool:
     """True when a run's failure names a cause that passes."""
-    return bool(reason) and TRANSIENT.search(reason) is not None
+    return reason is not None and TRANSIENT.search(reason) is not None
 
 
 def retries_due(session, after: timedelta, attempts: int) -> List[Dict[str, Any]]:
