@@ -1,4 +1,5 @@
 import type { AgentEvent, CallPayload, TerminalPayload } from "../../../contracts/events.js";
+import { SKILL_TOOL } from "../../../core/agent.js";
 import { rowsIn } from "../../../core/call-view.js";
 import type { SpendPayload } from "../../../core/seams.js";
 import type { RootCauseProjection, SearchView } from "../projection.js";
@@ -103,7 +104,7 @@ export function rootCauseV3Projection(runId: string, events: readonly AgentEvent
       const call = event.payload as CallPayload;
       // Only the model's searches that ran: not the code's own, and not a call refused before it ran.
       if (call.role === "code") codeSearches += 1;
-      else if (!neverRan(call)) {
+      else if (call.tool !== SKILL_TOOL && !neverRan(call)) {
         const rows = call.ok ? rowsIn(call.result) : undefined;
         searches.push({ tool: call.tool, args: queryOf(call.arguments).slice(0, 500), ...(rows === undefined ? {} : { rows }), failed: !call.ok });
       }
