@@ -599,8 +599,11 @@ class AuthService:
             secret = pyotp.random_base32()
             user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
             # A person with security keys keeps MFA on, and the codes issued with
-            # their first method, while the app is set up beside them.
-            if not security_keys.has_keys(session, user.principal_id):
+            # their first method, while the app is set up beside them. So does
+            # a break-glass account, with the safe's codes.
+            if user.break_glass_at is None and not security_keys.has_keys(
+                session, user.principal_id
+            ):
                 user.mfa_enabled = False
                 # Clear any stale codes from a prior setup attempt; fresh codes
                 # are issued at enable time.
@@ -649,11 +652,8 @@ class AuthService:
                         result = []
                     else:
                         user.mfa_enabled = True
-                        codes, user.mfa_recovery_codes = (
-                            AuthService._generate_recovery_codes()
-                        )
+                        result = AuthService._first_codes(user)
                         logger.info(f"MFA enabled for user: {user.username}")
-                        result = codes
             finally:
                 if failed:
                     nested.rollback()
@@ -712,16 +712,17 @@ class AuthService:
                 if not user or _account_is_locked(user):
                     return None
                 keyed = security_keys.has_keys(session, user.principal_id)
-                # With keys, a secret no code has confirmed yet (no TOTP step) is a
-                # setup in progress, not a method: it answers no login or check.
+                # A break-glass account's codes are its sign-in factor.
+                marked = user.break_glass_at is not None
+                # With keys (or the safe's codes), a secret no code has confirmed
+                # yet (no TOTP step) is a setup in progress, not a method: it
+                # answers no login or check.
                 app = bool(user.mfa_secret) and not (
-                    user.mfa_last_totp_step is None and keyed
+                    user.mfa_last_totp_step is None and (keyed or marked)
                 )
                 # A person with keys and no app has only the recovery codes to
                 # give, and only at the login step (count_failures): a check
                 # that needs a key never takes a code in its place.
-                # A break-glass account's codes are its sign-in factor.
-                marked = user.break_glass_at is not None
                 if not app and not ((keyed or marked) and count_failures):
                     return None
 
@@ -777,6 +778,14 @@ class AuthService:
         user.mfa_secret = None
         user.mfa_last_totp_step = None
         user.mfa_enabled = True
+        return AuthService._first_codes(user)
+
+    @staticmethod
+    def _first_codes(user: User) -> list[str]:
+        """The codes a first method issues, shown once. A break-glass account's
+        are the host's, for the safe: it keeps them and none are shown."""
+        if user.break_glass_at is not None:
+            return []
         codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
         return codes
 

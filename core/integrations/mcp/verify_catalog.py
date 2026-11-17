@@ -1,6 +1,7 @@
 """Offline packaged-catalog smoke check; never connects to vendor servers.
 
-Run with ``python -m core.integrations.mcp.verify_catalog`` inside the backend image.
+Run with ``python -m core.integrations.mcp.verify_catalog`` inside the MCP runner
+image, or on a host-native install with ``VIGIL_MCP_PREFIX`` set as start.sh sets it.
 """
 
 from __future__ import annotations
@@ -28,14 +29,14 @@ def check_catalog(root: Path) -> dict:
         raise RuntimeError(
             f"Catalog mismatch: missing={expected - actual}, extra={actual - expected}"
         )
-    # MCPService swaps npx/uvx for the image's baked copy only when that copy
-    # is the pinned version, so a command still npx/uvx is a pin the image lacks.
+    # MCPService swaps npx/uvx for the installed copy only when that copy is
+    # the pinned version, so a command still npx/uvx is a pin the install lacks.
     unbaked = sorted(
         name for name, s in service.servers.items() if s.command in ("npx", "uvx")
     )
     if unbaked:
         raise RuntimeError(
-            f"Catalog entries not installed in the image at their pinned version: {unbaked}"
+            f"Catalog entries not installed at their pinned version: {unbaked}"
         )
     missing = []
     # Joe Sandbox's uv is here, but its separate install is not; this check

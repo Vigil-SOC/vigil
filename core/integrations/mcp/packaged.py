@@ -1,9 +1,11 @@
-"""Pinned npx/uvx specs in mcp-config.json and the copies the backend image bakes.
+"""Pinned npx/uvx specs in mcp-config.json and the installed copies of them.
 
-The backend image installs every pinned npx package under ``NPM_PREFIX`` and
-every uvx tool under ``UV_TOOL_DIR`` at build time. ``installed_launch`` swaps an
-entry's ``npx``/``uvx`` command for that copy when its exact pin is installed,
-and returns the declared command otherwise (local dev, or a pin the image lacks).
+The MCP runner image (at build) and start.sh (on a host-native install) install
+every pinned npx package under ``npm_prefix()`` and every uvx tool under
+``uv_tool_dir()``, both from infra/docker/mcp-packages. ``installed_launch``
+swaps an entry's ``npx``/``uvx`` command for that copy when its exact pin is
+installed, and returns the declared command otherwise (no install, or a pin it
+lacks).
 """
 
 from __future__ import annotations
@@ -14,8 +16,16 @@ from importlib.metadata import Distribution, distributions
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-NPM_PREFIX = Path("/opt/vigil/mcp/npm")
-UV_TOOL_DIR = Path("/opt/vigil/mcp/uv-tools")
+from core.config import get_settings
+
+
+def npm_prefix() -> Path:
+    return Path(get_settings().vigil_mcp_prefix) / "npm"
+
+
+def uv_tool_dir() -> Path:
+    return Path(get_settings().vigil_mcp_prefix) / "uv-tools"
+
 
 # uvx flags whose next token is a package spec.
 UVX_SPEC_FLAGS = {"--from", "--with"}
@@ -127,7 +137,7 @@ def _spec_installed(spec: str, dists: List[Distribution]) -> bool:
 
 
 def installed_npx(args: List[str]) -> Optional[List[str]]:
-    """``node <bin> <args>`` for an npx entry whose exact pin is under ``NPM_PREFIX``."""
+    """``node <bin> <args>`` for an npx entry whose exact pin is under ``npm_prefix()``."""
     spec, rest = npx_package(args)
     if not spec or npm_version(spec) is None:
         return None
@@ -136,7 +146,7 @@ def installed_npx(args: List[str]) -> Optional[List[str]]:
     if at and args[at - 1] in ("-p", "--package"):
         return None
     name = npm_name(spec)
-    manifest = NPM_PREFIX / "node_modules" / name / "package.json"
+    manifest = npm_prefix() / "node_modules" / name / "package.json"
     try:
         pkg = json.loads(manifest.read_text())
     except (OSError, ValueError):
@@ -158,9 +168,10 @@ def installed_npx(args: List[str]) -> Optional[List[str]]:
 def installed_uvx(args: List[str]) -> Optional[List[str]]:
     """``<tool exe> <args>`` for a uvx entry whose pinned specs are all installed."""
     spec, with_specs, exe, rest = uvx_specs(args)
-    if not spec or not exe or not UV_TOOL_DIR.is_dir():
+    tool_dir = uv_tool_dir()
+    if not spec or not exe or not tool_dir.is_dir():
         return None
-    for venv in sorted(p for p in UV_TOOL_DIR.iterdir() if p.is_dir()):
+    for venv in sorted(p for p in tool_dir.iterdir() if p.is_dir()):
         script = venv / "bin" / exe
         if not script.is_file():
             continue
@@ -172,7 +183,7 @@ def installed_uvx(args: List[str]) -> Optional[List[str]]:
 
 
 def installed_launch(command: str, args: List[str]) -> Tuple[str, List[str]]:
-    """The baked copy's argv for an npx/uvx entry, else ``(command, args)``."""
+    """The installed copy's argv for an npx/uvx entry, else ``(command, args)``."""
     # A malformed install must cost only this entry, not the whole catalog load.
     try:
         if command == "npx":

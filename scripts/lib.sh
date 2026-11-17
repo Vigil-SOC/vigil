@@ -376,6 +376,66 @@ frontend_deps_stale() {
     [ "$dir/package-lock.json" -nt "$dir/node_modules/.package-lock.json" ]
 }
 
+# sha256 of the given files' concatenated contents followed by stdin.
+files_digest() {
+    { cat "$@"; cat; } | if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi | cut -d' ' -f1
+}
+
+# Install the pinned MCP connectors from infra/docker/mcp-packages under
+# $VIGIL_MCP_PREFIX (default: the repo's .mcp/), as Dockerfile.mcp-runner does,
+# so installed_launch runs them instead of npx/uvx resolving at runtime. Each
+# half is skipped while its stamp matches its sources. Never fatal: on failure
+# it sets MCP_CONNECTORS_PROBLEM, and connectors fall back to npx/uvx.
+#   $1 non-empty to skip the npm half (no usable node)
+install_mcp_connectors() {
+    local no_node="$1" src="$REPO_ROOT/infra/docker/mcp-packages"
+    export VIGIL_MCP_PREFIX="${VIGIL_MCP_PREFIX:-$REPO_ROOT/.mcp}"
+    local npm_dir="$VIGIL_MCP_PREFIX/npm" uv_dir="$VIGIL_MCP_PREFIX/uv-tools"
+    local log="$REPO_ROOT/logs/mcp-install.log" failed="" stamp
+    mkdir -p "$REPO_ROOT/logs" "$VIGIL_MCP_PREFIX" || { MCP_CONNECTORS_PROBLEM="cannot create $VIGIL_MCP_PREFIX"; return 0; }
+
+    local npm_files=("$src/package.json" "$src/package-lock.json" "$src/.npmrc" "$src/postinstall.mjs")
+    stamp=$(files_digest "${npm_files[@]}" </dev/null)
+    if [ -n "$no_node" ] || ! command -v npm >/dev/null; then
+        failed="npm (no Node.js 20+)"
+    elif [ "$(cat "$npm_dir/.vigil-stamp" 2>/dev/null)" != "$stamp" ]; then
+        echo "Installing pinned npm MCP connectors into $npm_dir (log: $log)..."
+        rm -rf "$npm_dir" && mkdir -p "$npm_dir" && cp "${npm_files[@]}" "$npm_dir/"
+        if (cd "$npm_dir" && npm ci --omit=dev --no-audit --no-fund) >>"$log" 2>&1; then
+            echo "$stamp" > "$npm_dir/.vigil-stamp"
+        else
+            # A half-done tree may hold unpatched connectors at their pins.
+            rm -rf "$npm_dir"; failed="npm"
+        fi
+    fi
+
+    # The tool venvs are built on the venv's interpreter, so its pin is in the stamp.
+    stamp=$(python_pin | files_digest "$src/uv-tools.txt")
+    if ! ensure_uv; then
+        failed="${failed:+$failed, }uv (no uv)"
+    elif [ "$(cat "$uv_dir/.vigil-stamp" 2>/dev/null)" != "$stamp" ]; then
+        echo "Installing pinned uv MCP connectors into $uv_dir (log: $log)..."
+        rm -rf "$uv_dir" && mkdir -p "$uv_dir"
+        local line uv_failed=0
+        while read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
+            # Unquoted on purpose: a line is a spec plus its flags, as xargs -L1 reads it.
+            # shellcheck disable=SC2086
+            UV_TOOL_DIR="$uv_dir" UV_TOOL_BIN_DIR="$uv_dir/.bin" UV_PYTHON_DOWNLOADS=never \
+                "$UV" tool install --python "$REPO_ROOT/venv/bin/python" $line >>"$log" 2>&1 \
+                || { uv_failed=1; echo "uv tool install failed: $line" >>"$log"; }
+        done < "$src/uv-tools.txt"
+        # Tools that did install stay usable; no stamp, so the next start retries.
+        if [ "$uv_failed" -eq 0 ]; then echo "$stamp" > "$uv_dir/.vigil-stamp"; else failed="${failed:+$failed, }uv"; fi
+    fi
+
+    if [ -n "$failed" ]; then
+        MCP_CONNECTORS_PROBLEM="not installed: $failed (see $log); those connectors fall back to npx/uvx"
+        echo "Warning: MCP connectors: $MCP_CONNECTORS_PROBLEM" >&2
+    fi
+    return 0
+}
+
 # Where dependency versions come from. requirements.lock is fully pinned and
 # resolved for every supported platform, so two people installing months apart
 # get the same tree; requirements.txt (open ranges) is the fallback for a

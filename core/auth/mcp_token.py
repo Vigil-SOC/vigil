@@ -32,6 +32,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from core.audit import trail
 from core.auth import mcp_credential_service as tokens
 from core.auth import principals
+from core.auth.break_glass import MARKED
 from core.auth.service_account import (
     EX_OK,
     EX_REFUSED,
@@ -114,6 +115,8 @@ def _holder(username: str, days: Optional[int]) -> Holder:
             raise MintRefused(f"{username} is not an existing person")
         if not user.is_active:
             raise MintRefused(f"{username} is inactive")
+        if user.break_glass_at is not None:
+            raise MintRefused(f"{username} is break-glass. {MARKED}")
         tokens.lifetime(user, days)  # ValueError before anything is written
         return Holder(user.user_id, user.principal_id)
 

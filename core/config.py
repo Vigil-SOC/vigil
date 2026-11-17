@@ -270,6 +270,9 @@ class Settings(BaseSettings):
     mcp_auto_connect_on_startup: Optional[bool] = None
     # The MCP runner; empty runs each server as a stdio child (start.sh).
     mcp_runner_url: str = ""
+    # Root of the pinned MCP connectors (npm/ and uv-tools/ under it), installed
+    # from infra/docker/mcp-packages. start.sh sets it to the repo's .mcp/.
+    vigil_mcp_prefix: str = "/opt/vigil/mcp"
     llm_budget_unlimited: bool = False
     extension_connector_allowlist: Annotated[List[str], NoDecode] = []
 
