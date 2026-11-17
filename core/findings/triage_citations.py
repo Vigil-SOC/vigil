@@ -20,6 +20,11 @@ from typing import Dict, List, Mapping
 #: Cited without a field to check against: what the model knows, not the alert.
 GENERAL_KNOWLEDGE = "general knowledge"
 
+# A defanged dot, as alerts and analysts write an address so it can't be clicked:
+# 203.0.113[.]77. Not a citation, and the same address as 203.0.113.77.
+DEFANGED = "[.]"
+_HELD = "\x00"
+
 _FACT = re.compile(r"([^\[\];]+?)\s*\[([^\]]*)\]")
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 # A dotted name with a letter in its last label: a host or domain, not a number.
@@ -41,7 +46,9 @@ def parse_facts(known: str, field_names: List[str]) -> List[Fact]:
     """Each ``claim [source, source]`` in the KNOWN line, separated by ";"."""
     by_name = {name.lower(): name for name in field_names}
     facts = []
-    for claim, cited in _FACT.findall(known or ""):
+    held = (known or "").replace(_HELD, "").replace(DEFANGED, _HELD)
+    for claim, cited in _FACT.findall(held):
+        claim = claim.replace(_HELD, DEFANGED)
         fact = Fact(claim=claim.strip(" ;").strip())
         for token in (t.strip() for t in cited.split(",")):
             if not token:
@@ -57,8 +64,13 @@ def parse_facts(known: str, field_names: List[str]) -> List[Fact]:
     return facts
 
 
+def _refang(text: str) -> str:
+    return text.replace(DEFANGED, ".")
+
+
 def _names(claim: str) -> List[str]:
     """The addresses and host names a claim states, the parts that can be checked."""
+    claim = _refang(claim)
     ips = _IPV4.findall(claim)
     hosts = [h for h in _HOST.findall(claim) if not _IPV4.fullmatch(h)]
     return ips + hosts
@@ -81,7 +93,7 @@ def check(facts: List[Fact], fields: Mapping[str, str]) -> List[str]:
             errors.append(f"{label} names no source")
         if not fact.fields:
             continue
-        shown = " ".join(fields[name] for name in fact.fields).lower()
+        shown = _refang(" ".join(fields[name] for name in fact.fields)).lower()
         for name in _names(fact.claim):
             if name.lower() not in shown:
                 errors.append(
