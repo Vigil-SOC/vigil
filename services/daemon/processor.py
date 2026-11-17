@@ -666,30 +666,23 @@ class FindingProcessor:
             return False
 
     async def _update_finding(self, finding: Dict[str, Any]):
-        """Persist only what triage/enrich produced — severity and the cached
-        AI analysis. This is a targeted partial update: the in-memory copy
-        carries transient, source-derived keys (raw_data, entity context, etc.)
-        that shouldn't be written back over the stored row, so only the
-        whitelisted fields are sent."""
+        """Persist only what triage/enrich produced — the cached AI analysis.
+        This is a targeted partial update: the in-memory copy carries
+        transient, source-derived keys (raw_data, entity context, etc.) that
+        shouldn't be written back over the stored row, so only the whitelisted
+        fields are sent."""
         finding_id = finding.get("finding_id")
         if not finding_id or not self._data_service:
             return
 
-        updates: Dict[str, Any] = {}
-        if finding.get("severity"):
-            updates["severity"] = finding["severity"]
         ai_enrichment = {k: finding[k] for k in DAEMON_ENRICHMENT_KEYS if k in finding}
-
-        # Both report failure by returning False rather than raising.
-        if ai_enrichment:
-            # Replaces only the triage keys; a generated analysis survives.
-            ok = self._data_service.write_ai_enrichment(
-                finding_id, ai_enrichment, daemon=True, **updates
-            )
-        elif updates:
-            ok = self._data_service.update_finding(finding_id, **updates)
-        else:
+        if not ai_enrichment:
             return
+        # Replaces only the triage keys; a generated analysis survives. It
+        # reports failure by returning False rather than raising.
+        ok = self._data_service.write_ai_enrichment(
+            finding_id, ai_enrichment, daemon=True
+        )
         if not ok:
             logger.error(
                 "Failed to persist triage result for %s; the enrichment backfill "
@@ -911,8 +904,9 @@ REASONING: [Brief explanation]
             finding["ai_triage_error"] = "reply had no parseable action or severity"
             return finding
 
+        # Kept as triage's opinion only: a finding's severity is the detector's
+        # or an analyst's, never the model's.
         if severity in ["critical", "high", "medium", "low"]:
-            finding["severity"] = severity
             triage_result["severity"] = severity
 
         try:

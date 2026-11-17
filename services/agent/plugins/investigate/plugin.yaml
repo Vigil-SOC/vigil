@@ -68,7 +68,7 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: gaps
-  # Raises the case's priority to it, never lowers it (run_bridge_router.py).
+  # Carried on the terminal; vigil never applies it to the case.
   severity_field: severity
   # Read off the terminal when the verdict is scored against the case's closure (analytics_service.py).
   confidence_field: confidence

@@ -30,7 +30,7 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: open_questions
-  # Raises the case's priority to it, never lowers it (run_bridge_router.py). Sent
+  # Carried on the terminal; vigil never applies it to the case. Sent
   # only when the record proved an adversary explanation (hooks.ts provenSeverity).
   severity_field: severity
   schema:
