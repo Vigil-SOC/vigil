@@ -4,7 +4,10 @@ Computed on each request from ``mcp_credentials`` and stored nowhere: it clears
 itself once the token is rotated (it has a successor), revoked or expired. The
 holder sees their own; a holder of ``users.write``, and the person accountable for
 it, also see a service account's. Medic's token also reaches ``medic.admin``
-holders, and names the host commands that renew it.
+holders, and names the host commands that renew it, for Compose and for Helm.
+
+The warning starts 14 days before the end, or half the token's lifetime if that is
+shorter, so a low maximum does not leave every token in a standing warning.
 """
 
 from __future__ import annotations
@@ -12,12 +15,14 @@ from __future__ import annotations
 from datetime import timedelta
 from types import SimpleNamespace
 
+from core.auth.token_notices import medic_renewal
 from core.platform import notices
 from core.storage.models import McpCredential, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 WARN_DAYS = 14
+WARN_LEAD = timedelta(days=WARN_DAYS)
 LINK = "/settings?section=users"
 MEDIC_LINK = "/medic"  # where medic.admin holders see Medic's notices
 
@@ -49,6 +54,9 @@ def warning(user: User) -> list[dict[str, str]]:
         manages = medic_admin = None
         out = []
         for credential, machine, accountable, username in rows:
+            lifetime = credential.expires_at - credential.created_at
+            if credential.expires_at - now > min(WARN_LEAD, lifetime / 2):
+                continue
             medic = is_medic(
                 SimpleNamespace(service_account=machine, username=username)
             )
@@ -72,10 +80,8 @@ def warning(user: User) -> list[dict[str, str]]:
             if medic:
                 out.append(
                     {
-                        "message": f"Medic's API token expires {when}. Renew it "
-                        "from the host: scripts/medic/enable-compose.sh --rotate, "
-                        "or python -m core.auth.service_account token "
-                        f"{username}",
+                        "message": f"Medic's API token expires {when}. "
+                        + medic_renewal(username),
                         "link": MEDIC_LINK if medic_admin else LINK,
                     }
                 )

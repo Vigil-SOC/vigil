@@ -28,7 +28,7 @@ from typing import List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
-from core.auth import trail_events
+from core.auth import session_policy, token_policy, trail_events
 from core.storage.models import McpCredential, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 TOKEN_PREFIX = "vgl_api_"
 MCP_TOKEN_PREFIX = "vgl_mcp_"
 
-# How long a token lives, by who holds it. There is no "never".
+# A person's token lasts this long unless they ask for less, and never longer than
+# the maximum the session policy sets (token_policy). There is no "never".
 PERSON_DEFAULT_DAYS = 90
+# The ceiling the policy's maximums can be set to; the request models' ceiling too.
 PERSON_MAX_DAYS = 365
-SERVICE_ACCOUNT_DAYS = 365
 # What a rotated token keeps working for, unless it is suspected compromised.
 ROTATION_GRACE = timedelta(hours=24)
 
@@ -95,17 +96,30 @@ class NotRotatable(Exception):
     """The token is rotated, revoked or expired already."""
 
 
-def lifetime(user: User, days: Optional[int] = None) -> timedelta:
-    """How long a token for ``user`` lives; ValueError for a request out of range.
+def default_days(user: User, policy: session_policy.SessionPolicy) -> int:
+    """What a token for ``user`` lasts when no length is asked for."""
+    most = token_policy.maximum_days(user, policy)
+    return most if user.service_account is True else min(PERSON_DEFAULT_DAYS, most)
 
-    One rule for every minter: a person's defaults to 90 days and is 365 at most;
-    a service account's is 365.
+
+def lifetime(
+    user: User, days: Optional[int], policy: session_policy.SessionPolicy
+) -> timedelta:
+    """How long a token for ``user`` lives under ``policy``; ValueError for a
+    request out of range, naming the maximum.
+
+    One rule for every minter: a person's defaults to 90 days, or the maximum when
+    that is lower; a service account's is its maximum, with no choice.
     """
+    most = token_policy.maximum_days(user, policy)
     if user.service_account is True:
-        return timedelta(days=SERVICE_ACCOUNT_DAYS)
-    days = PERSON_DEFAULT_DAYS if days is None else days
-    if not 1 <= days <= PERSON_MAX_DAYS:
-        raise ValueError(f"A token lasts 1 to {PERSON_MAX_DAYS} days")
+        return timedelta(days=most)
+    days = default_days(user, policy) if days is None else days
+    if not 1 <= days <= most:
+        raise ValueError(
+            f"A token lasts 1 to {most} days: {most} is the most the session "
+            "policy allows for this account"
+        )
     return timedelta(days=days)
 
 
@@ -124,15 +138,17 @@ def mint(
 
     It expires after :func:`lifetime` of ``days``. The caller must show the token
     to the operator now; it is not recoverable. ``actor`` is the principal minting
-    it; its trail entry commits with it.
+    it; its trail entry commits with it. The policy is read in this transaction
+    (PolicyUnreadable if it cannot be: nothing falls back to defaults).
     """
     with unit_of_work(session) as session:
+        policy = token_policy.current(session)
         user = session.query(User).filter(User.user_id == user_id).first()
         if user is None:
             logger.warning("Refusing to mint a token for unknown user")
             return None
 
-        expires_at = utcnow() + lifetime(user, days)
+        expires_at = utcnow() + lifetime(user, days, policy)
         token = TOKEN_PREFIX + secrets.token_urlsafe(_TOKEN_BYTES)
         record = McpCredential(
             credential_id=f"mcpc-{uuid.uuid4().hex[:16]}",
@@ -291,8 +307,10 @@ def rotate(
     The old token then ends at the earlier of its own expiry and 24 hours from
     now, or now when ``compromised``. NotRotatable once it is rotated, revoked or
     expired. The row is locked, so two rotations of one token cannot both win.
+    The policy is locked first, as a save of it locks it before the tokens.
     """
     with unit_of_work(session) as session:
+        token_policy.current(session)
         old = (
             session.query(McpCredential)
             .filter(McpCredential.credential_id == credential_id)

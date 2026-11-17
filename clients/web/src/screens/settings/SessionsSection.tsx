@@ -13,6 +13,7 @@ type Keys = SessionPolicyBody['require_phishing_resistant']
 type NumKey =
   | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
   | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
+  | 'personal_token_max_days' | 'service_token_max_days'
 // What the form holds: every field of the body.
 type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; require_phishing_resistant: Keys; lockout_timed: boolean }
 
@@ -73,6 +74,14 @@ const FIELDS: FieldDef[] = [
     key: 'password_min_age_days', title: 'Password minimum age', unit: 'days', none: 'Off', zeroIsOff: true,
     hint: 'How long after a change before the person may change it again. A forced change, a reset of a locked account, an administrator’s reset and a reported leak are exempt. 0: off.',
   },
+  {
+    key: 'personal_token_max_days', title: 'Personal token maximum lifetime', unit: 'days',
+    hint: 'The longest a person’s API token may last. A person’s token still defaults to 90 days, or this if it is lower. Lowering it also shortens every existing personal token to end no later than this many days from the change, and its holder is told. Raising it never lengthens one. Only a person can raise it.',
+  },
+  {
+    key: 'service_token_max_days', title: 'Service-account token maximum lifetime', unit: 'days',
+    hint: 'How long a service account’s API token lasts: its holder has no choice at mint. Lowering it also shortens every existing service-account token, directory sync’s and Medic’s included, so they need renewing sooner. Raising it never lengthens one. Only a person can raise it.',
+  },
 ]
 
 const RULES: { value: Rules; label: string; text: string }[] = [
@@ -101,12 +110,13 @@ const TIMED_TITLE = 'Timed locks'
 const TIMED_HINT = 'On: a lock ends after the length set below. Off: a lock holds until an administrator unlocks the account or the person uses a reset link.'
 const timedText = (v: boolean) => (v ? 'on' : 'off')
 
-// Display order; the three that are not plain numbers have their own rows.
-const ORDER: (NumKey | 'require_mfa' | 'require_phishing_resistant' | 'lockout_timed' | 'password_character_rules')[] = [
+// Display order; the ones that are not plain numbers have their own rows, and 'api_tokens' is a group heading.
+const ORDER: (NumKey | 'require_mfa' | 'require_phishing_resistant' | 'lockout_timed' | 'password_character_rules' | 'api_tokens')[] = [
   'idle_standard_minutes', 'idle_privileged_minutes', 'absolute_hours', 'sign_in_limit',
   'require_mfa', 'require_phishing_resistant', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
   'password_min_length', 'password_history', 'password_character_rules',
   'password_max_age_days', 'password_min_age_days',
+  'api_tokens', 'personal_token_max_days', 'service_token_max_days',
 ]
 
 const RULES_TITLE = 'Password character rules'
@@ -127,6 +137,8 @@ const toForm = (p: SessionPolicy): Form => ({
   lockout_timed: p.lockout_timed,
   lockout_minutes: String(p.lockout_minutes),
   dormancy_days: p.dormancy_days == null ? '' : String(p.dormancy_days),
+  personal_token_max_days: String(p.personal_token_max_days),
+  service_token_max_days: String(p.service_token_max_days),
   require_mfa: p.require_mfa,
   require_phishing_resistant: p.require_phishing_resistant,
 })
@@ -159,7 +171,7 @@ export default function SessionsSection({ notify }: SectionProps) {
   const [stale, setStale] = useState<SessionPolicy | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<{ body: SessionPolicyBody; without_mfa: number | null; without_key: number | null; loosening: boolean } | null>(null)
+  const [confirm, setConfirm] = useState<{ body: SessionPolicyBody; without_mfa: number | null; without_key: number | null; shortened: string | null; loosening: boolean } | null>(null)
 
   const load = useCallback(() => {
     setFailed(null)
@@ -230,7 +242,9 @@ export default function SessionsSection({ notify }: SectionProps) {
       // A raise of the key requirement is shown with its count before it is saved, as a loosening is.
       const loosening = 'loosening' in data && data.loosening
       const without_key = 'without_key' in data ? data.without_key ?? null : null
-      if (loosening || without_key != null) setConfirm({ body, without_mfa: ('without_mfa' in data && data.without_mfa) || null, without_key, loosening })
+      // Lowering a token maximum shortens tokens already issued: its count is shown before the save, too.
+      const shortened = ('shortened' in data && data.shortened?.text) || null
+      if (loosening || without_key != null || shortened) setConfirm({ body, without_mfa: ('without_mfa' in data && data.without_mfa) || null, without_key, shortened, loosening })
       else await save(body)
     } catch (e) {
       refused(e)
@@ -365,6 +379,12 @@ export default function SessionsSection({ notify }: SectionProps) {
           </div>
         </div>
       )}
+      {saved.unreadable && (
+        <div className="settings-banner err mb-3" role="alert">
+          <Icon name="alert" size={14} />
+          <span>The stored policy could not be read, so these are the defaults. No API token can be minted or rotated until it is saved again; saving overwrites it.</span>
+        </div>
+      )}
       {problem && (
         <div className="settings-banner err mb-3" role="alert">
           <Icon name="alert" size={14} />
@@ -376,12 +396,13 @@ export default function SessionsSection({ notify }: SectionProps) {
         if (key === 'require_phishing_resistant') return keysRow
         if (key === 'lockout_timed') return timedRow
         if (key === 'password_character_rules') return rulesRow
+        if (key === 'api_tokens') return <h4 key={key} className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mt-5 mb-1">API tokens</h4>
         // The length applies only to timed locks.
         if (key === 'lockout_minutes' && !form.lockout_timed) return null
         return numberRow(FIELDS.find((f) => f.key === key)!)
       })}
       <div className="flex flex-wrap items-center gap-2.5 mt-3.5">
-        <button className="btn primary" disabled={busy || !dirty || !valid} onClick={submit}>
+        <button className="btn primary" disabled={busy || !(dirty || saved.unreadable) || !valid} onClick={submit}>
           {busy ? 'Saving…' : 'Save'}
         </button>
         <button className="btn ghost" disabled={busy || !dirty} onClick={() => { setForm(toForm(saved)); setProblem(null) }}>
@@ -392,7 +413,7 @@ export default function SessionsSection({ notify }: SectionProps) {
       <ConfirmDialog
         open={!!confirm}
         danger={false}
-        title={confirm?.loosening ? 'Loosen the policy?' : 'Require security keys?'}
+        title={confirm?.loosening ? 'Loosen the policy?' : confirm?.without_key != null ? 'Require security keys?' : 'Shorten existing tokens?'}
         confirmLabel="Save change"
         busy={busy}
         onConfirm={() => confirm && save(confirm.body)}
@@ -400,8 +421,10 @@ export default function SessionsSection({ notify }: SectionProps) {
         body={
           <>
             <p>{confirm?.loosening
-              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, or an unused account stay open longer:'
-              : 'This change requires security keys of more people:'}</p>
+              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, an unused account stay open longer, or a new token last longer:'
+              : confirm?.without_key != null
+                ? 'This change requires security keys of more people:'
+                : 'This change lowers how long an API token may last:'}</p>
             <ul className="my-2 pl-5 list-disc">
               {changes.map((f) => (
                 <li key={f.key}>{f.title}: {shown(f, saved[f.key])} → {shown(f, next?.[f.key])}</li>
@@ -417,6 +440,8 @@ export default function SessionsSection({ notify }: SectionProps) {
               <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
             )}
             {confirm?.without_key != null && <p>{noKeyText(confirm.without_key)}.</p>}
+            {saved.unreadable && <p>The stored policy could not be read, so this save replaces whatever it held with the values above and the defaults for every other setting.</p>}
+            {confirm?.shortened && <p>{confirm.shortened} will end sooner, no later than the new maximum counted from now, and their holders are told. No token is ever lengthened.</p>}
             {dormancyLonger && <p>Longer periods, or off, leave unused accounts open longer.</p>}
             <p>It is recorded in the audit trail with your name and the old and new values.</p>
           </>

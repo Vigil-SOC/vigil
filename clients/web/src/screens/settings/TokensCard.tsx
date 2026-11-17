@@ -5,18 +5,20 @@ import { ConfirmDialog, EmptyState, Select, SettingsCard, TextInput } from '../.
 import {
   tokensApi,
   type ApiToken,
+  type ApiTokenLimits,
   type ApiTokenHolder,
   type ApiTokenStatus,
 } from '../../services/api'
 import type { SectionProps } from './types'
 
-// The server's rule: a person's token defaults to 90 days and lasts a year at most.
-const LIFETIMES = [
-  { value: '30', label: '30 days' },
-  { value: '90', label: '90 days (default)' },
-  { value: '180', label: '180 days' },
-  { value: '365', label: '1 year' },
-]
+// What a person may pick: these, up to the maximum the session policy sets, and the maximum itself.
+const LIFETIME_STEPS = [30, 90, 180, 365]
+const lifetimeLabel = (d: number) => (d === 365 ? '1 year' : `${d} day${d === 1 ? '' : 's'}`)
+function lifetimeOptions(limits: ApiTokenLimits | null) {
+  if (limits?.max_days == null) return []
+  const days = [...new Set([...LIFETIME_STEPS.filter((d) => d <= limits.max_days!), limits.max_days])].sort((a, b) => a - b)
+  return days.map((d) => ({ value: String(d), label: d === limits.default_days ? `${lifetimeLabel(d)} (default)` : lifetimeLabel(d) }))
+}
 
 const STATUSES = [
   { value: '', label: 'Any status' },
@@ -95,7 +97,8 @@ export default function TokensCard({
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [label, setLabel] = useState('')
-  const [days, setDays] = useState('90')
+  const [days, setDays] = useState('')
+  const [limits, setLimits] = useState<ApiTokenLimits | null>(null)
   const [revealed, setRevealed] = useState<string | null>(null)
   const [rotating, setRotating] = useState<ApiToken | null>(null)
   const [compromise, setCompromise] = useState(false)
@@ -111,6 +114,7 @@ export default function TokensCard({
     ;(accountId ? tokensApi.listAll({ holder: accountId }) : tokensApi.listOwn())
       .then((r) => {
         setOwn(r.data.tokens)
+        setLimits(r.data.limits)
         setFailed(false)
       })
       .catch(() => setFailed(true))
@@ -149,7 +153,8 @@ export default function TokensCard({
 
   const mint = () =>
     act(async () => {
-      const r = await tokensApi.mint(label.trim(), Number(days), accountId)
+      // A service account's token has no length to choose: the server gives it its maximum.
+      const r = await tokensApi.mint(label.trim(), limits?.fixed ? undefined : Number(chosen), accountId)
       setRevealed(r.data.token)
       setLabel('')
     }, 'Could not mint a token')
@@ -169,6 +174,17 @@ export default function TokensCard({
       notify('ok', 'Token revoked')
     }, 'Could not revoke that token')
 
+  const options = lifetimeOptions(limits)
+  const chosen = options.some((o) => o.value === days) ? days : String(limits?.default_days ?? '')
+  const maxText =
+    limits === null
+      ? null
+      : limits.max_days == null
+        ? 'The token policy can’t be read, so no token can be minted until Settings › Sessions is saved again.'
+        : limits.fixed
+          ? `A token here lasts ${limits.max_days} days, the maximum set for service-account tokens in Settings › Sessions.`
+          : `A token lasts at most ${limits.max_days} days, the maximum set in Settings › Sessions.`
+
   const holderOptions = [
     { value: '', label: 'Any holder' },
     ...holders.map((h) => ({
@@ -185,7 +201,7 @@ export default function TokensCard({
         title={account ? `Tokens of ${account.username}` : 'API tokens'}
         desc={
           account
-            ? 'A token lets the integration call Vigil’s API as this service account, with what its role allows. Each lasts a year; rotate before it ends. Minting and rotating is a person’s act: a token can never mint another token.'
+            ? `A token lets the integration call Vigil’s API as this service account, with what its role allows. Each lasts ${limits?.max_days == null ? 'the maximum set for service-account tokens' : `${limits.max_days} days, the maximum set for service-account tokens`}; rotate before it ends. Minting and rotating is a person’s act: a token can never mint another token.`
             : 'A token lets a program call Vigil’s API and MCP server as you. What it may do is what your account may do, and it is recorded against your name. A token can never change an account or mint another token.'
         }
         actions={
@@ -209,11 +225,12 @@ export default function TokensCard({
                 onChange={(e) => setLabel(e.target.value)}
               />
             </div>
-            {!account && <Select value={days} options={LIFETIMES} onSelect={setDays} name="Lasts" />}
-            <button className="btn primary" disabled={busy || !label.trim()} onClick={mint}>
+            {!limits?.fixed && options.length > 0 && <Select value={chosen} options={options} onSelect={setDays} name="Lasts" />}
+            <button className="btn primary" disabled={busy || !label.trim() || limits?.max_days == null} onClick={mint}>
               <Icon name="plus" /> Mint
             </button>
           </div>
+          {maxText && <span className="text-xs text-tx-3" style={{ marginTop: -6 }}>{maxText}</span>}
 
           {own === null ? (
             failed ? (

@@ -44,6 +44,7 @@ from core.auth import (
     mfa_coverage,
     password_validator,
     token_expiry,
+    token_policy,
 )
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
@@ -235,6 +236,7 @@ warn_if_cookie_insecure_in_production()
 mfa_coverage.register()
 password_validator.register()
 token_expiry.register()
+token_policy.register()
 key_age.register()
 break_glass.register()
 register_medic_notices()

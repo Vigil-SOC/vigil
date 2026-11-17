@@ -3,20 +3,38 @@
 One row, versioned. GET returns it with its version as the ETag; PUT needs that
 version in ``If-Match`` and refuses a stale one with 412. A machine caller (a
 service account) may only tighten the policy, and may not change the dormancy period
-or the maximum password age.
+or the maximum password age. Lowering a token maximum shortens the tokens already
+issued, in the same transaction as the save. A stored row that cannot be parsed reads
+as the defaults at its version, so a save overwrites it; minting is refused meanwhile.
 """
 
 from __future__ import annotations
 
 from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import insert
 
-from core.auth import mfa_coverage, security_keys, session_policy, trail_events
+from core.auth import (
+    mfa_coverage,
+    security_keys,
+    session_policy,
+    token_notices,
+    token_policy,
+    trail_events,
+)
 from core.auth.permissions import require_permission
+from core.platform.notices import send_notices
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import SystemConfig, User
 from core.storage.schemas.base import OptDateTime
@@ -54,6 +72,29 @@ def _ranges() -> dict[str, Range]:
     return found
 
 
+class TokenShortening(BaseModel):
+    """Tokens a lowered maximum ends early, with the two the product names apart."""
+
+    count: int
+    # Directory sync's token and Medic's token, when they are among the count.
+    sync: int = 0
+    medic: int = 0
+    text: str
+
+
+def _shortening(found: token_policy.Shortening) -> Optional[TokenShortening]:
+    count = len(found.rows)
+    if not count:
+        return None
+    sync, medic = found.sync, found.medic
+    named = [
+        n for n, c in (("directory sync's token", sync), ("Medic's token", medic)) if c
+    ]
+    text = f"{count} existing token{'s' if count != 1 else ''}"
+    text += f" ({' and '.join(named)} included)" if named else ""
+    return TokenShortening(count=count, sync=sync, medic=medic, text=text)
+
+
 class PolicyOut(session_policy.SessionPolicy):
     # What the model allows, so the console copies no numbers.
     ranges: dict[str, Range]
@@ -62,8 +103,12 @@ class PolicyOut(session_policy.SessionPolicy):
     # Who updated_by is, for a screen that says who changed it.
     updated_by_name: Optional[str] = None
     updated_at: OptDateTime = None
+    # The stored row could not be read: these are the defaults, and saving overwrites it.
+    unreadable: bool = False
     # Set only on the save that raised Require phishing-resistant MFA.
     without_key: Optional[int] = None
+    # Set only on the save that lowered a token maximum, and had tokens to shorten.
+    shortened: Optional[TokenShortening] = None
     notice: Optional[str] = None
 
 
@@ -82,6 +127,8 @@ class LooseningOut(BaseModel):
     # Set only when security keys are required of more people: covered, active
     # people with no key, who can't finish signing in until they add one.
     without_key: Optional[int] = None
+    # Set only when a maximum is lowered and tokens would end sooner.
+    shortened: Optional[TokenShortening] = None
 
 
 class StaleOut(BaseModel):
@@ -98,6 +145,7 @@ def _out(stored: session_policy.Stored, session) -> PolicyOut:
         updated_by=stored.updated_by,
         updated_by_name=(editor.full_name or editor.username) if editor else None,
         updated_at=stored.updated_at,
+        unreadable=stored.unreadable,
     )
 
 
@@ -121,7 +169,7 @@ def get_policy(
     response: Response, session: UnitOfWorkSession, _: User = Depends(_MANAGE)
 ):
     """The policy in force and its version (the ETag)."""
-    stored, _found = session_policy.read_row(session)
+    stored, _found = session_policy.read_row(session, tolerant=True)
     response.headers["ETag"] = _etag(stored.version)
     return _out(stored, session)
 
@@ -138,6 +186,7 @@ def put_policy(
     body: session_policy.SessionPolicy,
     request: Request,
     response: Response,
+    background: BackgroundTasks,
     session: UnitOfWorkSession,
     user: User = Depends(_MANAGE),
     if_match: Optional[str] = Header(None),
@@ -151,7 +200,7 @@ def put_policy(
     expected = _version_of(if_match)
 
     def stale():
-        current = _out(session_policy.read_row(session)[0], session)
+        current = _out(session_policy.read_row(session, tolerant=True)[0], session)
         return JSONResponse(
             status_code=412,
             content=StaleOut(
@@ -161,11 +210,13 @@ def put_policy(
         )
 
     # The row stays locked until this request ends.
-    old, found = session_policy.read_row(session, lock=not dry_run)
+    old, found = session_policy.read_row(session, lock=not dry_run, tolerant=True)
     if old.version != expected:
         return stale()
 
-    loosening = session_policy.is_loosening(old.policy, body)
+    # An unreadable row's real values are unknown, so no save over it can be shown
+    # to tighten: a machine may not do it, and a person is asked to confirm.
+    loosening = old.unreadable or session_policy.is_loosening(old.policy, body)
     raising = session_policy.KEY_LEVELS.index(
         body.require_phishing_resistant
     ) > session_policy.KEY_LEVELS.index(old.policy.require_phishing_resistant)
@@ -182,6 +233,7 @@ def put_policy(
         )
         return LooseningOut(
             loosening=loosening,
+            shortened=_shortening(token_policy.affected(session, old.policy, body)),
             without_mfa=count,
             without_key=(
                 mfa_coverage.without_key(session, body.require_phishing_resistant)
@@ -191,6 +243,8 @@ def put_policy(
         )
     actor = request.state.vigil_http_actor
     changes = {"old": old.policy.model_dump(), "new": body.model_dump()}
+    if old.unreadable:
+        changes["old_unreadable"] = True
     # Any change to dormancy or the maximum password age, tightening too, is a
     # person's act.
     dormancy = old.policy.dormancy_days != body.dormancy_days
@@ -253,6 +307,12 @@ def put_policy(
         )
         if inserted.rowcount == 0:
             return stale()
+
+    # Under the policy lock held since the read: no mint can slip past the cap.
+    found_tokens, ends = token_policy.shorten(session, old.policy, body)
+    shortened = _shortening(found_tokens)
+    if shortened:
+        changes["tokens_shortened"] = [c.credential_id for c, _ in found_tokens.rows]
     trail_events.record(
         session,
         "session_policy.changed",
@@ -262,9 +322,19 @@ def put_policy(
         **changes,
     )
     session.flush()
+    if shortened:
+        # Added in this transaction; mailed once it has committed.
+        notices = token_notices.tell_shortened(found_tokens.rows, ends, session)
+        background.add_task(send_notices, notices)
     stored = session_policy.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
     out = _out(stored, session)
+    notice = []
     if without_key is not None:
-        out.without_key, out.notice = without_key, _no_key_text(without_key)
+        out.without_key = without_key
+        notice.append(_no_key_text(without_key))
+    if shortened:
+        out.shortened = shortened
+        notice.append(f"{shortened.text} now end sooner, and their holders are told")
+    out.notice = "; ".join(notice) or None
     return out

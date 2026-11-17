@@ -12,7 +12,8 @@ deleted. If the MCP surface is closed it is opened first (``config.changed`` on
 ``mcp.server_enabled``); the token is then minted (``credential.minted``). Both
 are on the audit trail by ``system``, and the holder gets a notice without the
 token. The token is a ``vgl_api_`` one: it reaches ``/mcp`` and the HTTP API as
-its holder, for 90 days unless ``--expires-days`` (1 to 365) says otherwise.
+its holder, for 90 days unless ``--expires-days`` says otherwise, and never past
+the personal token maximum the session policy sets (365 days unless lowered).
 
 stdout carries the token alone, on one line; everything else goes to stderr.
 It is not an API route: nothing reachable over the network can run it.
@@ -31,7 +32,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from core.audit import trail
 from core.auth import mcp_credential_service as tokens
-from core.auth import principals
+from core.auth import principals, token_policy
 from core.auth.break_glass import MARKED
 from core.auth.service_account import (
     EX_OK,
@@ -117,7 +118,8 @@ def _holder(username: str, days: Optional[int]) -> Holder:
             raise MintRefused(f"{username} is inactive")
         if user.break_glass_at is not None:
             raise MintRefused(f"{username} is break-glass. {MARKED}")
-        tokens.lifetime(user, days)  # ValueError before anything is written
+        # ValueError before anything is written; PolicyUnreadable if it cannot be read.
+        tokens.lifetime(user, days, token_policy.current(session))
         return Holder(user.user_id, user.principal_id)
 
 
@@ -176,7 +178,7 @@ def main(
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_USAGE
-    except MintRefused as exc:
+    except (MintRefused, token_policy.PolicyUnreadable) as exc:
         print(f"error: {exc}", file=stderr)
         return EX_REFUSED
     except NotReady as exc:

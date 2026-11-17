@@ -7104,7 +7104,8 @@ export interface paths {
         };
         /**
          * List Own
-         * @description Your own tokens, newest first, revoked and ended ones included.
+         * @description Your own tokens, newest first, revoked and ended ones included, and the
+         *     lifetime that applies to a token of yours.
          */
         get: operations["get_api_tokens"];
         put?: never;
@@ -7132,6 +7133,7 @@ export interface paths {
          * @description Every token, for a ``users.write`` holder; filtered on the server.
          *
          *     ``holders`` is everyone who holds one, whatever the filter, for its menu.
+         *     ``limits`` is the lifetime that applies to the filtered holder's tokens, or yours.
          */
         get: operations["get_api_tokens_all"];
         put?: never;
@@ -13577,6 +13579,7 @@ export interface components {
         LooseningOut: {
             /** Loosening */
             loosening: boolean;
+            shortened?: components["schemas"]["TokenShortening"] | null;
             /** Without Key */
             without_key?: number | null;
             /** Without Mfa */
@@ -14408,6 +14411,11 @@ export interface components {
              * @default 16
              */
             password_min_length: number;
+            /**
+             * Personal Token Max Days
+             * @default 365
+             */
+            personal_token_max_days: number;
             /** Ranges */
             ranges: {
                 [key: string]: components["schemas"]["Range"];
@@ -14424,8 +14432,19 @@ export interface components {
              * @enum {string}
              */
             require_phishing_resistant: "nobody" | "privileged" | "everyone";
+            /**
+             * Service Token Max Days
+             * @default 365
+             */
+            service_token_max_days: number;
+            shortened?: components["schemas"]["TokenShortening"] | null;
             /** Sign In Limit */
             sign_in_limit?: number | null;
+            /**
+             * Unreadable
+             * @default false
+             */
+            unreadable: boolean;
             /** Updated At */
             updated_at?: string | null;
             /** Updated By */
@@ -15187,6 +15206,11 @@ export interface components {
              */
             password_min_length: number;
             /**
+             * Personal Token Max Days
+             * @default 365
+             */
+            personal_token_max_days: number;
+            /**
              * Require Mfa
              * @default privileged
              * @enum {string}
@@ -15198,6 +15222,11 @@ export interface components {
              * @enum {string}
              */
             require_phishing_resistant: "nobody" | "privileged" | "everyone";
+            /**
+             * Service Token Max Days
+             * @default 365
+             */
+            service_token_max_days: number;
             /** Sign In Limit */
             sign_in_limit?: number | null;
         };
@@ -16223,6 +16252,26 @@ export interface components {
             start_time?: string | null;
             /** Total */
             total: number;
+        };
+        /**
+         * TokenShortening
+         * @description Tokens a lowered maximum ends early, with the two the product names apart.
+         */
+        TokenShortening: {
+            /** Count */
+            count: number;
+            /**
+             * Medic
+             * @default 0
+             */
+            medic: number;
+            /**
+             * Sync
+             * @default 0
+             */
+            sync: number;
+            /** Text */
+            text: string;
         };
         /** ToolClassBody */
         ToolClassBody: {
