@@ -9821,6 +9821,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/tools/skill-bodies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Skill Body
+         * @description An operator skill's current body, for the load_skill a run answers itself.
+         *
+         *     Runs carry a skill's name, description and digest, not its text, so the text
+         *     is read here when it is asked for, and a resumed run reads what the skill says
+         *     now. The answer is ``{"name", "body"}``; a refusal is an error status whose
+         *     ``detail`` the agent layer hands the model.
+         */
+        post: operations["post_internal_tools_skill-bodies"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/tools/skill-reads": {
         parameters: {
             query?: never;
@@ -15196,6 +15221,11 @@ export interface components {
         SkillApproveRequest: {
             /** Digest */
             digest: string;
+        };
+        /** SkillBodyRequest */
+        SkillBodyRequest: {
+            /** Name */
+            name: string;
         };
         /** SkillCaseResult */
         SkillCaseResult: {
@@ -34127,6 +34157,43 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_internal_tools_skill-bodies": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillBodyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
                     };
                 };
             };

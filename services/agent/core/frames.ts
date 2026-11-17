@@ -14,7 +14,7 @@ export class Framer {
   private constructor(
     private readonly runId: string,
     private readonly runKind: RunKind,
-    private readonly skills: readonly { name: string; hash: string; body: string }[],
+    private readonly skills: readonly { name: string; hash: string; body?: string }[],
     private readonly known: Set<string>,
     private readonly counts: Map<string, number>,
     // Refs of the calls already in the transcript when the stream started, in
@@ -39,7 +39,11 @@ export class Framer {
         counts.set(role, (counts.get(role) ?? 0) + 1);
       }
     }
-    const hashed = skills.map((skill) => ({ name: skill.name, hash: contentHash(skill.body), body: skill.body }));
+    const hashed = skills.map((skill) => ({
+      name: skill.name,
+      hash: skill.body === undefined ? (skill.digest as string) : contentHash(skill.body),
+      ...(skill.body === undefined ? {} : { body: skill.body }),
+    }));
     return new Framer(runId, runKind, hashed, known, counts, opening);
   }
 
@@ -72,7 +76,9 @@ export class Framer {
       task: hash(seen.task),
       recall: hash(seen.recall),
       tools: seen.tools.map((tool) => ({ id: tool.id, hash: hash(stable(tool)) })),
-      skills: this.skills.map((skill) => ({ name: skill.name, hash: hash(skill.body) })),
+      // A skill whose text the run does not carry is named by its digest alone: its
+      // text is not in the ledger to point at.
+      skills: this.skills.map((skill) => ({ name: skill.name, hash: skill.body === undefined ? skill.hash : hash(skill.body) })),
       transcript: [...(this.opening ?? []), ...this.added.slice(0, seen.results)],
       history,
       fold: {

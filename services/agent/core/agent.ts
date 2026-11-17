@@ -22,7 +22,7 @@ import { isStructured, recordModeOf, type GuardSpec, type PluginManifest, type S
 import { journalAnswers, noAnswers, type Answers } from "./answers.js";
 import { GatewayExhausted } from "./limiter.js";
 import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
-import type { Harness, Outcome, TurnConfig } from "./loop.js";
+import type { Harness, Outcome, SkillBodies, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
 import { ADDED_SKILLS, withAddedSkills } from "../plugins/registry.js";
@@ -226,7 +226,7 @@ export function unboundNeeds(plugin: PluginManifest, tools: readonly ToolSpec[])
 
 // Progressive disclosure: the system prompt carries each skill's name and one
 // line, and the body arrives only when the agent asks for it.
-export function skillTool(plugin: Pick<PluginManifest, "skills">): RegisteredTool {
+export function skillTool(plugin: Pick<PluginManifest, "skills">, bodies?: SkillBodies): RegisteredTool {
   const names = plugin.skills.map((skill) => skill.name);
   return defineTool(
     {
@@ -243,10 +243,29 @@ export function skillTool(plugin: Pick<PluginManifest, "skills">): RegisteredToo
         if (skill === undefined) {
           return { ok: false, failure: { kind: "invalid_args", detail: `no skill is named ${String(args["name"])}; known: ${names.join(", ")}` } };
         }
-        return { ok: true, rows: [{ name: skill.name, body: skill.body }], rowCount: 1, capped: false, sourceSystem: "skills" };
+        let body = skill.body;
+        if (body === undefined) {
+          // An operator's skill: the run carries its digest, the text is read now. A
+          // failed read is the call's result, so the run goes on without the skill.
+          const read =
+            bodies === undefined
+              ? undefined
+              : await bodies(skill.name).catch((error: unknown) => ({
+                  ok: false as const,
+                  kind: "unavailable" as const,
+                  detail: error instanceof Error ? error.message : String(error),
+                }));
+          if (read === undefined) {
+            return { ok: false, failure: { kind: "unavailable", detail: `${skill.name} is not carried with this run and nothing can be asked for it` } };
+          }
+          if (!read.ok) return { ok: false, failure: { kind: read.kind, detail: read.detail } };
+          body = read.body;
+        }
+        return { ok: true, rows: [{ name: skill.name, body }], rowCount: 1, capped: false, sourceSystem: "skills" };
       },
     },
-    { maxRows: 1, timeoutMs: 1_000 },
+    // Room for the backend read an operator's skill takes.
+    { maxRows: 1, timeoutMs: 10_000 },
     true,
   );
 }
@@ -378,7 +397,7 @@ function equipped(harness: Harness<Kinds>, options: AgentOptions, turn: () => nu
     options.tools === undefined
       ? layered(harness.registry, own)
       : registryOf(
-          dedupe([...(options.tools ?? []), ...own, ...(options.plugin.skills.length === 0 ? [] : [skillTool(options.plugin)])]),
+          dedupe([...(options.tools ?? []), ...own, ...(options.plugin.skills.length === 0 ? [] : [skillTool(options.plugin, harness.skillBodies)])]),
           pluginGrants(options.plugin, options.spec.tools, own.map((tool) => tool.id)),
         );
   const dispatch = options.hooks?.dispatch?.(ctx, harness.dispatch) ?? harness.dispatch;
