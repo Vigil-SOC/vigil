@@ -916,10 +916,13 @@ def _levels(
     return out
 
 
-def _fetch(
-    url: str, key: str
-) -> Optional[
-    tuple[list[_Item], dict[str, Any], Optional[list], Optional[dict[str, tuple[str, Any]]]]
+def _fetch(url: str, key: str) -> Optional[
+    tuple[
+        list[_Item],
+        dict[str, Any],
+        Optional[list],
+        Optional[dict[str, tuple[str, Any]]],
+    ]
 ]:
     """Open pages, the details this pass may tell, and the fix log.
 
