@@ -23,6 +23,7 @@ from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Tup
 
 from sqlalchemy import String, cast
 
+from core.auth.permissions import case_read_clause, may_read_case
 from core.detections.reconstruction import _entities_from_context, reconstruct
 from core.memory.entity_keys import normalise_keys
 from core.storage.connection import get_db_manager
@@ -90,9 +91,11 @@ def read_alert_labels(
     context: str = "", since: Optional[datetime] = None
 ) -> AlertLabels:
     """Scope by ``context``: empty is every alert, a case id is that case, else a label
-    match; with ``since``, only alerts stored at or after it."""
+    match; with ``since``, only alerts stored at or after it. A case the caller may
+    not read is no case: ``context`` is then a label match, as an unknown id is."""
     with get_db_manager().session_scope() as session:
-        is_case = bool(context) and session.get(Case, context) is not None
+        case = session.get(Case, context) if context else None
+        is_case = case is not None and may_read_case(case)
         rows = session.query(
             FindingMitrePrediction.finding_id, FindingMitrePrediction.technique_id
         )
@@ -417,6 +420,8 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
             }
             for v in query.all()
         ]
+        hidden = _unreadable_runs(session, verdicts)
+        verdicts = [v for v in verdicts if _run(v) not in hidden]
         case_ids = {
             v["investigation_id"] for v in verdicts if v["investigation_kind"] == "case"
         }
@@ -485,6 +490,42 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
                 for key, values in _entities_from_context(entity_context).items():
                     v["entities"][key] += values
     return verdicts
+
+
+def _unreadable_runs(session: Any, verdicts: List[Dict[str, Any]]) -> set:
+    """The (kind, id) of Verdicts on a restricted Case the caller may not read: a
+    Case Verdict on it, or a hunt run on it (trigger_context.case_id)."""
+    ids = {
+        kind: {
+            v["investigation_id"] for v in verdicts if v["investigation_kind"] == kind
+        }
+        for kind in LEDGER_KINDS
+    }
+    unreadable = ~case_read_clause()
+    hidden = set()
+    if ids["case"]:
+        hidden |= {
+            ("case", case_id)
+            for (case_id,) in session.query(Case.case_id).filter(
+                Case.case_id.in_(ids["case"]), unreadable
+            )
+        }
+    if ids["hunt"]:
+        hidden |= {
+            ("hunt", hunt_id)
+            for (hunt_id,) in session.query(EpisodicDistilMarker.investigation_id)
+            .join(
+                WorkflowRun,
+                WorkflowRun.run_id == cast(EpisodicDistilMarker.origin_run_id, String),
+            )
+            .join(Case, Case.case_id == WorkflowRun.trigger_context["case_id"].astext)
+            .filter(
+                EpisodicDistilMarker.investigation_kind == "hunt",
+                EpisodicDistilMarker.investigation_id.in_(ids["hunt"]),
+                unreadable,
+            )
+        }
+    return hidden
 
 
 def _subject_entities(keys: List[str]) -> Dict[str, List[str]]:
