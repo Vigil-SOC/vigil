@@ -28,7 +28,7 @@ from typing import List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
-from core.auth import session_policy, token_policy, trail_events
+from core.auth import session_policy, token_policy, token_unused, trail_events
 from core.storage.models import McpCredential, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -213,6 +213,12 @@ def authenticate(
                         record.credential_id,
                         user.principal_id,
                     )
+                return None
+
+            # An unused token past its period, reminded 7 or more days ago, is refused
+            # and revoked, whether or not the sweep has run. Stored state only.
+            if token_unused.refused(record, user, session, utcnow()):
+                refusal = partial(token_unused.refuse, record.credential_id)
                 return None
 
             # Written on the way through so an unused credential can be found

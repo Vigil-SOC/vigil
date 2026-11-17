@@ -461,6 +461,9 @@ class McpCredential(Base):
     # The credential that replaced this one when it was rotated. Set once: a
     # rotated credential is not rotated again.
     successor_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # When the unused-token reminder went out (core.auth.token_unused). Whether it
+    # still counts is judged against last use, the last restore and the period.
+    reminded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (Index("idx_mcp_credentials_user", "user_id"),)
 

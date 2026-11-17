@@ -146,3 +146,55 @@ def tell_shortened(
         if notice is not None:
             ids.append(notice)
     return ids
+
+
+def describe(credential: McpCredential, holder: User) -> str:
+    """``The token "label"``, naming the service account when the holder is one."""
+    return f'The token "{credential.label}"' + (
+        f" of service account {holder.username}" if holder.service_account else ""
+    )
+
+
+def tell_reminded(
+    rows: list[tuple[McpCredential, User, datetime]], session: Session
+) -> list[int]:
+    """One notice per recipient, listing the unused tokens a reminder went out for.
+    Each row carries the date its token is revoked unless used."""
+    from core.auth.service_account import is_medic
+
+    lines: dict[str, list[str]] = {}
+    renew: dict[str, list[str]] = {}
+    for credential, holder, ends in rows:
+        used = credential.last_used_at
+        line = (
+            describe(credential, holder)
+            + (f" was last used on {_date(used)}" if used else " has never been used")
+            + f" and will be revoked on {_date(ends)}"
+        )
+        for to in recipients(holder, session):
+            lines.setdefault(to, []).append(line)
+            if is_medic(holder):
+                renew.setdefault(to, []).append(
+                    f"Medic's token ({holder.username}): {medic_renewal(holder.username)}"
+                )
+    ids = []
+    for to, items in lines.items():
+        try:
+            notice = notify(
+                to,
+                "api_token",
+                "Unused API tokens will be revoked",
+                "These API tokens are unused. "
+                + "; ".join(items)
+                + ". Using a token once keeps it; otherwise mint a replacement before then."
+                + "".join(f" {text}." for text in renew.get(to, [])),
+                link=LINK,
+                priority="high",
+                session=session,
+            )
+        except Exception:  # noqa: BLE001 - the other recipients are still told
+            logger.exception("Could not notify about unused tokens")
+            continue
+        if notice is not None:
+            ids.append(notice)
+    return ids

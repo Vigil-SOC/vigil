@@ -700,6 +700,10 @@ async def _startup(app: FastAPI):
 
         app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
 
+        from services.api.token_sweep import run as token_sweeper
+
+        app.state.token_sweep_task = asyncio.create_task(token_sweeper())
+
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
@@ -742,6 +746,7 @@ async def _stop_setup_code(app) -> None:
         "setup_code_task",
         "dormancy_task",
         "skill_sweep_task",
+        "token_sweep_task",
     ):
         task = getattr(app.state, name, None)
         if task is None:

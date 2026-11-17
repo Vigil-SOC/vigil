@@ -14482,6 +14482,11 @@ export interface components {
             /** Sign In Limit */
             sign_in_limit?: number | null;
             /**
+             * Token Unused Days
+             * @default 45
+             */
+            token_unused_days: number | null;
+            /**
              * Unreadable
              * @default false
              */
@@ -15270,6 +15275,11 @@ export interface components {
             service_token_max_days: number;
             /** Sign In Limit */
             sign_in_limit?: number | null;
+            /**
+             * Token Unused Days
+             * @default 45
+             */
+            token_unused_days: number | null;
         };
         /** SetupState */
         SetupState: {
