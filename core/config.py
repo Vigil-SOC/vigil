@@ -366,6 +366,11 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+    # A case investigation that failed for a passing reason (a provider 5xx, a
+    # timeout) is launched again once it is case_run_retry_after_seconds old, at
+    # most case_run_retries times in a row (core/cases/run_retry.py). 0 turns it off.
+    case_run_retries: int = 1
+    case_run_retry_after_seconds: int = 300
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False

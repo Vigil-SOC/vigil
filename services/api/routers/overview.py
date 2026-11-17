@@ -19,8 +19,11 @@ ROUTER_META = RouterMeta(
 )
 
 
+# Both handlers are plain def: their reads are synchronous SQLAlchemy, so FastAPI
+# runs them in its threadpool. As async def every poll held the event loop, and
+# every other request with it, for the length of the read.
 @router.get("/overview")
-async def get_overview(
+def get_overview(
     range: Literal["today", "all"] = Query("today"),
     user: User = Depends(get_current_user),
 ):
@@ -50,7 +53,7 @@ async def get_overview(
     "/overview/alerts/{finding_id}",
     dependencies=[permission_gate("findings.read")],
 )
-async def get_overview_alert(finding_id: str):
+def get_overview_alert(finding_id: str):
     """One alert in the feed item's shape, including noise-marked and older ones."""
     item = overview_alert(finding_id)
     if item is None:

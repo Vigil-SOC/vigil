@@ -178,6 +178,8 @@ class CaseDetailResponse(CaseSchema):
     investigations: list[CaseInvestigationRef] = []
     closure: Optional[CaseClosureView] = None
     linked_findings: list[CaseLinkedFinding] = []
+    # The finding the case was opened from: the first one linked to it.
+    opened_from: Optional[str] = None
     # Merged after the case's newest run started, so that run did not read them.
     alerts_since_last_run: int = 0
     owner_state: OwnerStateField

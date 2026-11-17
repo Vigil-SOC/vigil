@@ -2,32 +2,23 @@
 
 The frozen read and record-update surface lives in ``core/api/v1/findings_router.py``
 and is mounted at both ``/api/v1/findings`` and (for now) ``/api/findings``.
-This module keeps the routes that are *not* part of that contract: AI
-enrichment generation and the destructive wipe. They remain under
-``/api/findings`` only.
+This module keeps the routes that are *not* part of that contract, such as
+the destructive wipe. They remain under ``/api/findings`` only.
 """
 
 import logging
 from datetime import datetime
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.audit import trail
 from core.auth.permissions import permission_gate
 from core.cases import case_trail
 from core.cases.closure import ClosedByKind, FalsePositiveCause
-from core.findings.enrichment import (
-    FindingNotFound,
-    NoProviderConfigured,
-    ProviderUnavailable,
-    enrich,
-    is_generated_analysis,
-)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import get_config_service
-from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Finding, User
 from core.time import utcnow
 from services.api.middleware.auth import get_current_user
@@ -43,7 +34,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
-data_service = DatabaseDataService()
 
 
 class NoiseMarkRequest(BaseModel):
@@ -72,63 +62,6 @@ def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
     if finding is None:
         raise HTTPException(status_code=404, detail="Finding not found")
     return finding
-
-
-@router.post("/{finding_id}/enrich", dependencies=_FINDINGS_WRITE)
-async def get_or_generate_enrichment(
-    finding_id: str, force_regenerate: bool = Query(False)
-):
-    """
-    Get or generate AI enrichment for a finding.
-
-    Returns cached enrichment if present, otherwise generates, caches, and
-    returns new enrichment from the configured reporting model.
-
-    Args:
-        finding_id: The finding ID to enrich
-        force_regenerate: Force regeneration even if enrichment exists
-
-    Returns:
-        AI enrichment data with threat analysis, impact, recommendations, etc.
-    """
-    import asyncio
-
-    # The data layer is synchronous SQLAlchemy, so keep it off the event loop —
-    # this handler stays async because it awaits the LLM.
-    finding = await asyncio.to_thread(data_service.get_finding, finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="Finding not found")
-
-    # Caching is HTTP policy — the shared enrich() seam deliberately doesn't do
-    # this check, since force_regenerate is a query param and the daemon has its
-    # own freshness rules. Triage-only keys don't count as a cached analysis.
-    existing_enrichment = finding.get("ai_enrichment")
-    if is_generated_analysis(existing_enrichment) and not force_regenerate:
-        logger.info(f"Returning cached enrichment for {finding_id}")
-        return {
-            "finding_id": finding_id,
-            "cached": True,
-            "enrichment": existing_enrichment,
-        }
-
-    try:
-        # Pass the path param, not the id off the row we just read — it's the
-        # authoritative write target, exactly as the pre-extraction handler did.
-        enrichment = await enrich(
-            finding, finding_id=finding_id, data_service=data_service
-        )
-    except FindingNotFound:
-        raise HTTPException(status_code=404, detail="Finding not found")
-    except NoProviderConfigured:
-        # 503 with the structured payload the chat drawer matches on to render
-        # a "Configure a provider" CTA instead of a generic error bubble.
-        from services.api.routers.claude import NO_PROVIDER_DETAIL
-
-        raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-    except ProviderUnavailable as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    return {"finding_id": finding_id, "cached": False, "enrichment": enrichment}
 
 
 @router.delete("/all", dependencies=[permission_gate("findings.delete")])

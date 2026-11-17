@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { casesApi, configApi, findingsApi, searchApi, workflowApi } from '../services/api'
 import type { Schema } from '../services/apiTypes'
 import type { IconName } from '../shared/icons'
+import { caseLabel } from '../shared/caseLabel'
 import { errorText } from '../shared/errorText'
 import type { ConsoleScreenGoOptions } from '../shared/types'
 import type { ToastKind } from './toast'
@@ -178,7 +179,7 @@ export const COMMANDS: CommandDef[] = [
       if (runId) ctx.onGo('workflows', { search: `?run=${encodeURIComponent(runId)}` })
       else {
         ctx.onOpenCase(id)
-        ctx.notify('info', `Case ${id} has no run to replay`)
+        ctx.notify('info', `${caseLabel(id)} has no run to replay`)
       }
     },
   },
