@@ -12,7 +12,6 @@ from typing import Dict, List, Mapping, Optional
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
-from core.integrations.mcp.child_env import ca_bundle_env
 from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
@@ -326,31 +325,21 @@ class MCPService:
                     for k, v in (server_config.get("env") or {}).items()
                     if not k.startswith("_")
                 }
-                # Inherit the backend's environment so servers that need
-                # runtime config not declared in mcp-config.json can connect
-                # — notably the POSTGRES_* vars DatabaseService reads for
-                # case/DB tools (vigil). Declared config env
-                # entries still take precedence. Required-credential
-                # detection scans the raw config above, not this spawn env,
-                # so dormancy behavior is unchanged.
-                env = os.environ.copy()  # noqa: ENV001 - MCP child env
+                # Substitution reads this process's environment; the server
+                # keeps only its declared keys. The rest of the child's env is
+                # built at connect time (MCPClient._stdio_env, runner_env).
+                source = dict(os.environ)  # noqa: ENV001 - substitution source
                 # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
                 # would substitute to "" and root child paths at "/".
-                env.setdefault("VIGIL_DIR", str(vigil_path()))
-                # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
-                # not enough.
-                env.update(ca_bundle_env())
-                env.update(
-                    {
-                        k: self._substitute_env_vars(v, env)
-                        for k, v in raw_env_strs.items()
-                    }
-                )
-                env["PYTHONPATH"] = project_path_str
+                source.setdefault("VIGIL_DIR", str(vigil_path()))
+                env = {
+                    k: self._substitute_env_vars(v, source)
+                    for k, v in raw_env_strs.items()
+                }
 
                 # Get args and perform environment variable substitution
                 raw_args = list(server_config.get("args") or [])
-                args = [self._substitute_env_vars(arg, env) for arg in raw_args]
+                args = [self._substitute_env_vars(arg, source) for arg in raw_args]
 
                 # Capture declared credential placeholders *before*
                 # substitution collapses missing vars to empty strings
