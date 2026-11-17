@@ -1942,9 +1942,16 @@ export interface TriageRow {
   description: string | null
   /** What the daemon's triage saved; null on rows that are not alerts. */
   triage: TriageVerdict | null
+  /** What the threat-intel feed said at enrichment; null when no outcome was recorded. */
+  threat_intel_check: ThreatIntelCheck | null
   finding_id: string | null
   created_at: string | null
   decided_at: string | null
+}
+
+export interface ThreatIntelCheck {
+  outcome: 'hit' | 'no_hit' | 'nothing_to_check' | 'could_not_check'
+  detail: string | null
 }
 
 /** A saved verdict reads as stored: a field triage did not give is null, never defaulted. */

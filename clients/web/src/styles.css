@@ -7016,9 +7016,14 @@
       color: var(--tx-2);
    }
 
+   .tq-row > span:first-child {
+      flex-shrink: 0;
+   }
+
    .tq-val {
       font-family: var(--mono);
       color: var(--tx);
+      text-align: right;
    }
 
    .tq-val .not-measured {

@@ -698,6 +698,22 @@ def _triage(finding: Optional[dict]) -> dict:
     return {"state": "none"}
 
 
+_TI_OUTCOMES = ("hit", "no_hit", "nothing_to_check", "could_not_check")
+
+
+def _threat_intel_check(finding: Optional[dict]) -> Optional[dict]:
+    """The daemon's threat-intel outcome as stored; None when none was recorded."""
+    enrichment = ((finding or {}).get("ai_enrichment") or {}).get("enrichment")
+    check = (enrichment or {}).get("threat_intel_check")
+    if not isinstance(check, dict) or check.get("outcome") not in _TI_OUTCOMES:
+        return None
+    detail = check.get("detail")
+    return {
+        "outcome": check["outcome"],
+        "detail": detail if isinstance(detail, str) and detail else None,
+    }
+
+
 def _present(
     row: dict,
     finding: Optional[dict],
@@ -753,6 +769,9 @@ def _present(
         "title": finding.get("title") if finding else None,
         "description": finding.get("description") if finding else None,
         "triage": _triage(finding) if kind == "detection" else None,
+        "threat_intel_check": (
+            _threat_intel_check(finding) if kind == "detection" else None
+        ),
         "finding_id": row.get("finding_id"),
         "created_at": _iso(created if isinstance(created, datetime) else None),
         "decided_at": _iso(decided if isinstance(decided, datetime) else None),

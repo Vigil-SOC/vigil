@@ -179,18 +179,49 @@ UNGROUNDED_NOTE = (
 )
 
 
-def not_offered_reason(action: str, band: str, confidence: float, bar: float) -> str:
+# What the threat-intel feed said, stored at enrichment["threat_intel_check"]
+# beside the hits in enrichment["threat_indicators"] (#4612).
+TI_CHECK_KEY = "threat_intel_check"
+TI_HIT = "hit"
+TI_NO_HIT = "no_hit"
+TI_NOTHING = "nothing_to_check"
+TI_FAILED = "could_not_check"
+
+
+def threat_intel_phrase(check: Optional[Dict[str, Any]], feed_on: bool) -> str:
+    """The threat-intel outcome in the words a not-offered reason uses."""
+    if not feed_on:
+        return "no threat-intel feed checked"
+    outcome = (check or {}).get("outcome")
+    if outcome == TI_NO_HIT:
+        return "threat-intel check found no match"
+    if outcome == TI_NOTHING:
+        return "no IPs, domains or hashes to check against threat intel"
+    if outcome == TI_HIT:
+        return "threat-intel hit"
+    detail = (check or {}).get("detail") or "enrichment did not reach the feed"
+    return f"threat-intel check could not run ({detail})"
+
+
+def not_offered_reason(
+    action: str,
+    band: str,
+    confidence: Optional[float],
+    bar: float,
+    threat_intel: str = "no threat-intel hit",
+) -> str:
     """Why the gate turned an alert down, in the terms of the gate's own test."""
+    conf = "unknown" if confidence is None else f"{confidence:.0%}"
     if action == "dismiss":
         # Confidence in a dismissal is not a shortfall against the bar.
         return (
             f"Not offered: triage said dismiss. Severity {band}, "
-            f"confidence {confidence:.0%}, no threat-intel hit."
+            f"confidence {conf}, {threat_intel}."
         )
     return (
         f"Not offered: this install does not investigate that severity. "
-        f"Severity {band}, confidence {confidence:.0%} "
-        f"is under the {bar:.0%} bar, no threat-intel hit."
+        f"Severity {band}, confidence {conf} "
+        f"is under the {bar:.0%} bar, {threat_intel}."
     )
 
 
@@ -569,7 +600,9 @@ class FindingProcessor:
                     # longer counts). Empty enrichment is a valid clean result,
                     # indistinguishable from a lookup failure here, so the
                     # breaker keys off triage success and the except-path below.
-                    if self.config.auto_enrich_enabled and finding.get("enrichment"):
+                    # The threat-intel outcome alone is not enrichment data.
+                    produced = set(finding.get("enrichment") or ()) - {TI_CHECK_KEY}
+                    if self.config.auto_enrich_enabled and produced:
                         self.stats["enriched"] += 1
 
                     if triaged_ok:
@@ -1137,9 +1170,11 @@ REASONING: one sentence summing up the verdict
 
         # Cloudforce One (and any future feed-driven sources) — batch lookup
         # against the locally maintained threat_indicators table.
-        feed_hits = self._lookup_threat_indicators(entity_context, hashes)
+        feed_hits, feed_check = self._lookup_threat_indicators(entity_context, hashes)
         if feed_hits:
             enrichment["threat_indicators"] = feed_hits
+        if feed_check:
+            enrichment[TI_CHECK_KEY] = feed_check
 
         # enriched_at is always stamped as an "attempt" marker (one of
         # DAEMON_ENRICHMENT_KEYS): a clean finding with no hits must still leave
@@ -1152,15 +1187,14 @@ REASONING: one sentence summing up the verdict
 
     def _lookup_threat_indicators(
         self, entity_context: Dict[str, Any], hashes: List[str]
-    ) -> Dict[str, Any]:
-        """Match finding IOCs against the local threat_indicators feed table."""
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Match finding IOCs against the local threat_indicators feed table.
+
+        Returns the hits and the check's outcome; the outcome is None when the
+        feed is not enabled, which is not a failed check.
+        """
         if not self._enrichment_services.get("cloudforce_one", {}).get("enabled"):
-            return {}
-        try:
-            from core.threat_intel.threat_feed_service import lookup_indicators
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"threat_feed_service unavailable: {e}")
-            return {}
+            return {}, None
 
         ips = list(
             (entity_context.get("src_ips") or [])
@@ -1172,27 +1206,52 @@ REASONING: one sentence summing up the verdict
             ips.append(entity_context["dst_ip"])
         domains = list(entity_context.get("domains") or [])
 
-        hits: Dict[str, Any] = {}
+        lookups = [("ip", ips), ("domain", domains)] + [
+            (t, hashes) for t in ("hash_sha256", "hash_sha1", "hash_md5")
+        ]
+        # str() so a stray None or number in the context cannot break the dedupe
+        lookups = [(t, sorted({str(x) for x in v if x})) for t, v in lookups]
+        lookups = [(t, v) for t, v in lookups if v]
+        if not lookups:
+            return {}, {"outcome": TI_NOTHING}
+
+        # error text -> the lookups that hit it, so one outage reads as one line
+        failures: Dict[str, List[str]] = {}
+
+        def failed(what: str, e: Exception) -> None:
+            # The driver's message, first line only: a database error carries
+            # the whole statement.
+            text = str(getattr(e, "orig", None) or e) or type(e).__name__
+            text = text.splitlines()[0][:160]
+            failures.setdefault(text, []).append(what)
+            record_vendor_error("cloudforce_one", "error", detail=f"{what}: {text}")
+
+        def detail() -> str:
+            return "; ".join(f"{', '.join(w)}: {t}" for t, w in failures.items())
+
         try:
-            if ips:
-                hits.update(
-                    self._wrap_hits("ip", lookup_indicators("ip", list(set(ips))))
-                )
-            if domains:
+            from core.threat_intel.threat_feed_service import lookup_indicators
+        except Exception as e:  # noqa: BLE001
+            failed("feed service", e)
+            return {}, {"outcome": TI_FAILED, "detail": detail()}
+
+        # Each lookup on its own: one that raises keeps the others' hits.
+        hits: Dict[str, Any] = {}
+        for indicator_type, values in lookups:
+            try:
                 hits.update(
                     self._wrap_hits(
-                        "domain", lookup_indicators("domain", list(set(domains)))
+                        indicator_type, lookup_indicators(indicator_type, values)
                     )
                 )
-            if hashes:
-                for hash_type in ("hash_sha256", "hash_sha1", "hash_md5"):
-                    rows = lookup_indicators(hash_type, list(set(hashes)))
-                    if rows:
-                        hits.update(self._wrap_hits(hash_type, rows))
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"threat_indicators lookup failed: {e}")
-            return {}
-        return hits
+            except Exception as e:  # noqa: BLE001
+                failed(indicator_type, e)
+
+        outcome = TI_HIT if hits else TI_FAILED if failures else TI_NO_HIT
+        check: Dict[str, Any] = {"outcome": outcome}
+        if failures:
+            check["detail"] = detail()
+        return hits, check
 
     @staticmethod
     def _wrap_hits(indicator_type: str, rows: Dict[str, Any]) -> Dict[str, Any]:
@@ -1301,7 +1360,27 @@ REASONING: one sentence summing up the verdict
         """Evaluate if finding needs autonomous response."""
         severity = finding.get("severity", "").lower()
         recommended_action = finding.get("recommended_action", "").lower()
-        confidence = finding.get("triage_confidence", 0.5)
+        # No usable confidence stays unknown; it never reaches the bar.
+        confidence = finding.get("triage_confidence")
+
+        enrichment = finding.get("enrichment") or {}
+        # A threat-intel feed hit (stamped by _enrich_finding) offers the same
+        # Finding to intake as a detection.
+        feed_hit = bool(enrichment.get("threat_indicators"))
+        check = enrichment.get(TI_CHECK_KEY)
+        # A dismissal stands only when the feed that could override it answered;
+        # a feed that is off or not configured is not a failed check.
+        feed_on = bool(
+            self.config.auto_enrich_enabled
+            and self._enrichment_services.get("cloudforce_one", {}).get("enabled")
+        )
+        if (
+            recommended_action == "dismiss"
+            and feed_on
+            and not feed_hit
+            and (check or {}).get("outcome") not in (TI_NO_HIT, TI_NOTHING)
+        ):
+            recommended_action = ""
 
         # Offer to intake if high severity or action recommended
         should_respond = (
@@ -1310,13 +1389,10 @@ REASONING: one sentence summing up the verdict
             # Confidence in a dismissal is confidence there is nothing to look at.
             or (
                 recommended_action != "dismiss"
+                and confidence is not None
                 and confidence >= self.response_config.review_threshold
             )
         )
-
-        # A threat-intel feed hit (stamped by _enrich_finding) offers the same
-        # Finding to intake as a detection.
-        feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
 
         from services.daemon.orchestrator import (
             insert_intake_trigger,
@@ -1353,5 +1429,6 @@ REASONING: one sentence summing up the verdict
                     band,
                     confidence,
                     self.response_config.review_threshold,
+                    threat_intel_phrase(check, feed_on),
                 ),
             )
