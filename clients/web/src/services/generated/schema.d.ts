@@ -15233,6 +15233,8 @@ export interface components {
             max_severity?: string | null;
             /** Recommendation */
             recommendation?: string | null;
+            /** Scan Mode */
+            scan_mode?: string | null;
             /** Scanned At */
             scanned_at?: string | null;
             /** Scanner Version */
