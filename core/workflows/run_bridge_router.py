@@ -781,6 +781,21 @@ def _may_close(run_id: str) -> bool:
         return False
 
 
+def _already_closed(case_id: str) -> bool:
+    """True when the case is gone or closed; False when it can't be read, so
+    the close path decides with its own read."""
+    from core.cases.agent_closure import service_session
+    from core.storage.models import Case
+
+    try:
+        with service_session() as session:
+            status = session.query(Case.status).filter(Case.case_id == case_id).scalar()
+    except Exception:  # noqa: BLE001 — the close path reads it again
+        logger.exception("could not read the status of case %s", case_id)
+        return False
+    return status is None or status == "closed"
+
+
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
@@ -789,6 +804,11 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
 
     disposition = (update.disposition or "").strip().lower()
     if disposition not in DISMISSALS:
+        return
+    # close_case overwrites a standing false_positive close, an analyst's
+    # included, so a case closed already, by anyone, is left as it is, and
+    # with nothing said about leaving it open.
+    if _already_closed(case_id):
         return
     if not _may_close(run_id):
         _add_activity(
@@ -802,8 +822,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     try:
         with service_session() as session:
             case = session.query(Case).filter(Case.case_id == case_id).first()
-            # close_case overwrites a standing false_positive close, an analyst's
-            # included, so a case closed already, by anyone, is left as it is.
+            # Checked again on the session that closes: it may have closed since.
             if case is None or case.status == "closed":
                 return
             CaseWorkflowService().close_case(
