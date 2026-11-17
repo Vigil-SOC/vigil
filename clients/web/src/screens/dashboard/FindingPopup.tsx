@@ -6,7 +6,6 @@ import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, rankTechniques, type ApiFinding } from '../../data/mappers'
-import { NO_CONFIDENCE } from '../../data/data'
 import { techniqueName } from '../../data/mitre'
 import { CauseSelect } from '../../shared/falsePositiveCause'
 import { EmptyState, Popup } from '../../shared/ui'
@@ -344,20 +343,6 @@ export default function FindingPopup({
       )}
       {phase === 'ready' && f && raw && (
         <>
-          {/* hero — top technique + tactic on the left, key metrics on the right */}
-          <div className="fp-hero">
-            <div className="fp-hero-main">
-              <div className="fp-tech"><span className="tag">{f.tech}</span> {techniqueName(f.tech)}</div>
-              <div className="fp-tactic">{f.tactic}</div>
-            </div>
-            <div className="fp-metrics">
-              <div className="fp-metric">{f.conf === null
-                ? <span className="muted fp-m-none">{NO_CONFIDENCE}</span>
-                : <span className="fp-m-val">{f.conf}%</span>}<span className="fp-m-lab">confidence</span></div>
-              <div className="fp-metric"><span className="fp-m-val">{formatFindingScore(f.score)}</span><span className="fp-m-lab">anomaly</span></div>
-            </div>
-          </div>
-
           <div className="kv-grid fp-grid">
             <span className="k">Source</span><span className="v"><SourceChip source={f.src} /></span>
             {raw.detection_rule && (
@@ -366,6 +351,9 @@ export default function FindingPopup({
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
             <span className="k">Time</span><span className="v">{f.time}</span>
+            {typeof f.score === 'number' && (
+              <><span className="k">Score</span><span className="v mono">{formatFindingScore(f.score)}</span></>
+            )}
             <span className="k" style={{ alignSelf: 'center' }}>Status</span>
             <span className="v flex items-center gap-2 flex-wrap">
               <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
