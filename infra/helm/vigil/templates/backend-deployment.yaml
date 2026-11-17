@@ -27,6 +27,9 @@ spec:
                again on every include. */}}
         checksum/mcp-runner-token: {{ .Values.secrets.mcpRunnerToken | default "" | sha256sum }}
         {{- end }}
+        {{- if .Values.agentShell.enabled }}
+        checksum/agent-shell-token: {{ .Values.secrets.agentShellToken | default "" | sha256sum }}
+        {{- end }}
         {{- with .Values.backend.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -70,6 +73,14 @@ spec:
             # read_case_shell's sidecar; unset, the tool leaves the catalogue.
             - name: SHELL_URL
               value: {{ printf "http://%s:6992" (include "vigil.agentShell.fullname" .) | quote }}
+            # Optional: an existingSecret without the key leaves only the shell
+            # unready, and read_case_shell unavailable, not the backend.
+            - name: SHELL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.agentShell.tokenSecret" . }}
+                  key: SHELL_TOKEN
+                  optional: true
             {{- end }}
             {{- range $k, $v := .Values.backend.env }}
             - name: {{ $k }}

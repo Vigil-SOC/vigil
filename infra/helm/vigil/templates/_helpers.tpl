@@ -95,6 +95,17 @@ Never the app Secret the chart templates itself.
 {{- end -}}
 
 {{/*
+Secret holding SHELL_TOKEN, chosen as vigil.mcpRunner.tokenSecret chooses.
+*/}}
+{{- define "vigil.agentShell.tokenSecret" -}}
+{{- if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
+{{- include "vigil.secret.fullname" . -}}
+{{- else -}}
+{{- include "vigil.agentShell.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 MCP_RUNNER_URL and MCP_RUNNER_TOKEN for the backend and daemon; nothing when the
 runner is off. The token ref is optional so an existingSecret without the key
 leaves only the runner unready, not the app (the runner's own ref is required).
