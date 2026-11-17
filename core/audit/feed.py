@@ -550,6 +550,10 @@ def maintenance_and_send(
         trail.drain_late(session)
         trail.close_windows(session)
         retention.apply_due(session, wall)
+        # Emailed by _tx once this commits.
+        session.info.setdefault("notices", []).extend(
+            retention.sweep_reservations(session, wall)
+        )
         _checkpoint(session, state)
         state.history_offset = _import_history(session, state.history_offset)
         session.execute(

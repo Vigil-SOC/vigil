@@ -72,7 +72,7 @@ from core.secrets_manager import EncryptedFileBackend
 from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
 from core.storage.connection import DatabaseConfig, get_db_manager
-from core.storage.models import ApprovalAction, SignIn, User
+from core.storage.models import ApprovalAction, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.version import __version__
@@ -225,20 +225,32 @@ def restore_snapshot(
                 # The restored database is the live name. Point this process at
                 # it before blanking, or the erasure list is applied nowhere.
                 _point_at_live(cfg)
-                reapplied_at = utcnow()
-                _reapply_erased(root, dump_in_snapshot)
-                lines.extend(
-                    _settle_restored(
-                        cfg,
-                        manifest,
-                        snapshot_id,
-                        restoring_user,
-                        abandoned,
-                        reapplied_at,
-                        paired_key,
-                        live_ring,
+                settle_error: BackupError | None = None
+                try:
+                    lines.extend(
+                        _settle_restored(
+                            cfg,
+                            manifest,
+                            snapshot_id,
+                            restoring_user,
+                            abandoned,
+                            paired_key,
+                            live_ring,
+                        )
                     )
-                )
+                except BackupError as exc:
+                    settle_error = exc
+                # After the settle, which leaves the ring the reservations are
+                # keyed under. It runs even when the settle failed, so an erased
+                # person is never left active; the settle error is still raised.
+                try:
+                    _reapply_erased(root, dump_in_snapshot)
+                except BackupError as exc:
+                    raise BackupError(
+                        f"{settle_error}\n{exc}" if settle_error else str(exc)
+                    ) from exc
+                if settle_error is not None:
+                    raise settle_error
                 if discarded is None:
                     raise BackupError("queued agent runs were not discarded")
                 _record_restored(manifest, snapshot_id, reason, discarded)
@@ -754,12 +766,22 @@ def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
 
 
 def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
-    """Union the snapshot's erasure list with the outside file and blank each id."""
+    """Union the snapshot's erasure list with the outside file, then blank each
+    id and reserve its username and email."""
     path = _under_target(root, str(Path(dump_in_snapshot).parent / retention.LIST_NAME))
     try:
         with unit_of_work() as session:
+            ringed = _ring_present(session)
+        if ringed:
+            # A backup from before the identifier key has none: add it, committed
+            # first so the re-apply reads it. A restored ring with no rows is left
+            # to the API's first adopt, so no reservation is written for it.
+            key_ring.adopt()
+        with unit_of_work() as session:
             retention.reapply(
-                session, retention.read_ids(path) if path.is_file() else []
+                session,
+                retention.read_ids(path) if path.is_file() else [],
+                reserve=ringed,
             )
     except Exception as exc:
         raise BackupError(f"could not reapply erased principals: {exc}") from exc
@@ -1266,7 +1288,6 @@ def _settle_restored(
     snapshot_id: str,
     actor: str,
     abandoned: dict | None,
-    reapplied_at: datetime,
     paired_key: str | None,
     live_ring: dict,
 ) -> list[str]:
@@ -1314,9 +1335,7 @@ def _settle_restored(
     # Apart from the key step: a failed key step still ends the sign-ins, and a
     # failed ending is still reported and recorded.
     try:
-        ended, stopped = _end_restored_sessions(
-            created_at, reapplied_at, apps_cleared, resets_needed
-        )
+        ended, stopped = _end_restored_sessions(created_at, apps_cleared, resets_needed)
     except Exception as exc:
         ending = BackupError(f"could not end the restored sign-ins: {exc}")
         failure = BackupError(f"{failure}\n{ending}") if failure else ending
@@ -1369,7 +1388,6 @@ def _settle_restored(
 
 def _end_restored_sessions(
     created_at: str,
-    reapplied_at: datetime,
     apps_cleared: int = 0,
     resets_needed: int = 0,
 ) -> tuple[int, int]:
@@ -1388,21 +1406,11 @@ def _end_restored_sessions(
     with unit_of_work() as session:
         ended = sign_ins.end_every_open(session, sign_ins.RESTORE)
         dormancy.start_grace(session)
-        # People erased by this restore's own reapply were ended before this step.
-        erased = (
-            session.query(SignIn)
-            .filter(
-                SignIn.end_reason == sign_ins.ERASED, SignIn.ended_at >= reapplied_at
-            )
-            .count()
-        )
     stopped = sign_in_runs._stop(runs)
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
-    _tell_session_holders(
-        created_at, ended + erased, len(stopped), apps_cleared, resets_needed
-    )
-    return ended + erased, len(stopped)
+    _tell_session_holders(created_at, ended, len(stopped), apps_cleared, resets_needed)
+    return ended, len(stopped)
 
 
 def _tell_session_holders(
