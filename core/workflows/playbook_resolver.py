@@ -109,9 +109,10 @@ class Candidate:
         return tuple(f"{self.server}_{tool}" for tool in self.tools)
 
 
-# What an arch means when it asks for a capability, in the order a deployment
-# should prefer. First present wins; none present drops the capability, which the hunt
-# journals as a visibility gap rather than running blind.
+# What an arch means when it asks for a capability. Each connected server answers,
+# with its first present tool in its own preference order, and the agent picks between
+# them; none present drops the capability, which the hunt journals as a visibility gap
+# rather than running blind.
 CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "telemetry_search": (
         # In-repo servers, whose list_tools() names these tools.
@@ -184,20 +185,23 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
 
 
 # The tools that answer each capability the arch asked for, bound to what this
-# deployment reports. provides is what the agent layer matches a role's needs on.
-# A need that is not a capability but names a catalogue tool binds that tool.
+# deployment reports: one per connected server, its first present name in its own
+# preference order, so the agent picks between servers. provides is what the agent
+# layer matches a role's needs on. A need that is not a capability but names a
+# catalogue tool binds that tool.
 def _bound_capabilities(
     needs: List[str], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
     for capability in needs:
-        candidates = _candidates_by_name(capability)
-        if capability not in CAPABILITIES:
-            candidates = ((capability, None),)
-        for name, server in candidates:
-            entry = catalogue.get(name)
-            if entry is None:
+        candidates = CAPABILITIES.get(capability) or (Candidate(None, (capability,)),)
+        found = False
+        for candidate in candidates:
+            name = next((n for n in candidate.names() if n in catalogue), None)
+            if name is None:
                 continue
+            found = True
+            entry = catalogue[name]
             bound.append(
                 {
                     "id": name,
@@ -207,12 +211,11 @@ def _bound_capabilities(
                     "parameters": entry.get("input_schema") or {},
                     # The integration behind it, so a hunt can name the system a
                     # row came from. A tool this backend implements names none.
-                    **({"server": server} if server else {}),
+                    **({"server": candidate.server} if candidate.server else {}),
                     **CAPABILITY_BOUNDS.get(capability, {}),
                 }
             )
-            break
-        else:
+        if not found:
             # An opt-in integration that is not connected is the expected case.
             (
                 logger.debug
@@ -239,19 +242,6 @@ def unknown_needs(
 def lead_needs(definition: Any) -> List[str]:
     needs = definition.metadata.get("needs")
     return list(needs) if isinstance(needs, list) else list(INVESTIGATE_CAPABILITIES)
-
-
-# Flattened once, so every caller matching the catalogue reads from one definition.
-def _candidate_names(capability: str) -> Tuple[str, ...]:
-    return tuple(name for name, _server in _candidates_by_name(capability))
-
-
-def _candidates_by_name(capability: str) -> Tuple[Tuple[str, Optional[str]], ...]:
-    return tuple(
-        (name, candidate.server)
-        for candidate in CAPABILITIES.get(capability, ())
-        for name in candidate.names()
-    )
 
 
 # An agent's prompt is rendered now rather than read from a file: the memory block
