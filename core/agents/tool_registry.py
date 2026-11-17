@@ -804,7 +804,7 @@ async def _read_case_shell(args: Args) -> Args:
 
     import httpx
 
-    from core.cases.case_view import render_case_view, shell_address
+    from core.cases.case_view import render_case_view, shell_address, shell_token
 
     case_id = str(args.get("case_id") or "")
     command = str(args.get("command") or "")
@@ -821,11 +821,13 @@ async def _read_case_shell(args: Args) -> Args:
     if view is None:
         raise MCPFailure("invalid_args", f"case {case_id} not found")
     transport = httpx.AsyncHTTPTransport(uds=socket) if socket else None
+    token = shell_token()
     try:
         async with httpx.AsyncClient(
             transport=transport,
             base_url=url or "http://shell",
             timeout=httpx.Timeout(None, connect=5.0),
+            headers={"Authorization": f"Bearer {token}"} if token else None,
         ) as client:
             response = await client.post(
                 "/run",
@@ -842,6 +844,13 @@ async def _read_case_shell(args: Args) -> Args:
     )
     if response.status_code == 400:
         raise MCPFailure("invalid_args", str(answer.get("error") or response.text))
+    if response.status_code == 401:
+        raise MCPFailure(
+            "unavailable",
+            "the case shell refused this backend's SHELL_TOKEN"
+            if token
+            else "the case shell requires a bearer and this backend has no SHELL_TOKEN",
+        )
     if response.status_code != 200:
         raise MCPFailure(
             "unavailable",

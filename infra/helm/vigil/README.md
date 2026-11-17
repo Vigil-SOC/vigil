@@ -86,22 +86,31 @@ their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm)
 
 `agentShell` (on by default) runs the read-only case shell behind the backend's
 `read_case_shell` tool: the agent image's `node dist/shell.js`, on port 6992. The
-backend gets `SHELL_URL`; with the shell off the tool leaves the catalogue.
+backend gets `SHELL_URL` and `SHELL_TOKEN`; with the shell off the tool leaves
+the catalogue.
 
 | Value | Default | |
 |---|---|---|
 | `agentShell.enabled` | `true` | Render the shell Deployment, Service and NetworkPolicy. |
 | `agentShell.replicas` | `1` | Each replica runs up to 8 calls at once. |
 | `agentShell.resources` | 50m / 128Mi requests, 1Gi limit | The limit also bounds `/work`, an in-memory emptyDir. |
+| `secrets.agentShellToken` | generated | The bearer the backend presents to the shell, in `<fullname>-agent-shell`. |
 
 - **No network but the backend's calls.** Its NetworkPolicy admits backend pods
   on 6992 and denies all egress, and renders whatever `networkPolicies.enabled`
   says; the chart's `-deny-all` policy leaves the shell out, as its open egress
   would undo that. Only a network plugin that enforces NetworkPolicy makes this
   real.
+- **Token.** `POST /run` requires `Authorization: Bearer $SHELL_TOKEN`, so a pod
+  the policy fails to keep out still cannot run commands. Generated and kept as
+  `secrets.mcpRunnerToken` is (set it under `helm template` or GitOps). With
+  `secrets.existingSecret` or `secrets.externalSecret.enabled` that Secret must
+  carry a `SHELL_TOKEN` key; without it the shell pod does not start and
+  `read_case_shell` reports unavailable. The token opens nothing but the shell.
 - **Runs as root** with only SETUID, SETGID and KILL, to drop each call to its
   own uid: `baseline` Pod Security admits it, `restricted` does not. No
-  credentials, secrets or service account token are mounted.
+  credentials or service account token are mounted; `SHELL_TOKEN` is its only
+  secret, and no command it runs sees it.
 
 ## MCP runner
 

@@ -758,6 +758,11 @@ secrets:
   # or externalSecret, that Secret must carry MCP_RUNNER_TOKEN instead.
   mcpRunnerToken: ""
 
+  # Bearer the backend presents to the agent shell, in its own Secret
+  # (<fullname>-agent-shell). Empty generates one, kept across upgrades. With
+  # existingSecret or externalSecret, that Secret must carry SHELL_TOKEN instead.
+  agentShellToken: ""
+
   # Optional data-source integrations.
   splunkPassword: ""
   crowdstrikeClientId: ""
