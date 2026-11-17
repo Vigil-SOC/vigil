@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATOR_ACTOR
+from core.agents.lost_runs import end_lost_start_jobs
 from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
@@ -1465,6 +1466,14 @@ class Orchestrator:
                             f"Approval required: {w_inv_id}",
                             f"Investigation {w_inv_id} is paused pending human approval.",
                         )
+
+                # A run whose start job was lost has no lease for the worker's
+                # sweeper to find: ended here, as a failed enqueue is.
+                if not self.config.dry_run:
+                    try:
+                        await end_lost_start_jobs()
+                    except Exception:  # noqa: BLE001 - must not skip the checks below
+                        logger.exception("ending lost start jobs failed")
 
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()
