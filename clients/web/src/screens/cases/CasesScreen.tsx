@@ -1372,7 +1372,7 @@ export function CasesDetail({
   seed?: ChatSeed | null
   onSeedConsumed?: () => void
 }) {
-  const { row: c, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail, refresh } =
+  const { row: c, created, combinedState, investigations, closure, linkedFindings, openedFrom, phase, error, reload: reloadDetail, refresh } =
     useCaseDetail(id)
   const { user, hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
@@ -1423,6 +1423,7 @@ export function CasesDetail({
         investigations={investigations}
         closure={closure}
         linkedFindings={linkedFindings}
+        openedFrom={openedFrom}
         phase={phase}
         error={error}
         pageKey={pageKey}

@@ -16,7 +16,7 @@ from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
-from core.cases.agent_closure import actor, service_session
+from core.cases.agent_closure import actor, service_session, title_edited_activities
 from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
@@ -43,6 +43,7 @@ from core.cases.closure import (
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
+from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -238,6 +239,7 @@ def list_findings(
         "state": state,
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
+        "exclusions": "hide",
     }
     limit = _page_limit(limit)
     data = _data()
@@ -251,17 +253,27 @@ def list_findings(
     )
     return {
         "total": total,
+        **_excluded_note(data, filters, total),
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
+def _excluded_note(data: Any, filters: Args, shown: int) -> Args:
+    """How many matches name an analyst-excluded IP. Those are left out of the
+    page and the counts, as the analysts' own queue leaves them out, and only
+    counted here so the agent knows they exist."""
+    hidden = data.count_findings(**{**filters, "exclusions": "include"}) - shown
+    return {"excluded_ip_findings": hidden} if hidden > 0 else {}
+
+
 # The counts cover every match, not the page, and come before it so a capped
-# result keeps them (#2312).
+# result keeps them (#2312). Findings on an excluded IP are left out of both.
 def search_findings(**args: Any) -> Args:
     filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
     if (bad := _bad_state(filters["state"])) is not None:
         return bad
     filters["search_query"] = args.get("query", "")
+    filters["exclusions"] = "hide"
     limit = _page_limit(args.get("limit", 20))
     offset = args.get("offset", 0)
     data = _data()
@@ -277,6 +289,7 @@ def search_findings(**args: Any) -> Args:
     return {
         "query": filters["search_query"],
         "total": total,
+        **_excluded_note(data, filters, total),
         **counts,
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }
@@ -611,6 +624,10 @@ def update_case(
     updates: Args = {}
     if title:
         updates["title"] = title
+        # Marked only when a principal stands behind the call (chat, /mcp): a run's
+        # own agent renaming the case must not hold off the run's retitle.
+        if current_caller() and (edited := title_edited_activities(case, title)):
+            updates["activities"] = edited
     if description:
         updates["description"] = description
     if status is not None:

@@ -200,15 +200,6 @@ export const findingsApi = {
   getSummary: (params?: { exclusions?: ExclusionView }) =>
     api.get('/findings/stats/summary', { params }),
   
-  getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    // May restart the Bifrost gateway, then wait on the configured model. A local
-    // model can take minutes and the server bounds the call, so wait for its answer:
-    // giving up first reports a summary it goes on to write and cache as failed.
-    api.post(`/findings/${id}/enrich`, null, {
-      params: { force_regenerate },
-      timeout: 0,
-    }),
-
   deleteAll: () => api.delete('/findings/all'),
 
   // A body only when a cause was chosen. No body stores no cause, and the mark still lands.

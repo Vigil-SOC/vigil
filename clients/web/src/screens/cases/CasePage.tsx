@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
+import { CopyButton } from '../../shared/CopyButton'
 import { analyticsApi, approvalsApi, auditApi, autonomyApi, casesApi, workflowApi, type CaseRecordRow, type Ceiling, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
 import { actsByDefault, agreementText, falseCloseText, uncheckedText, workflowTier } from '../../shared/autonomy'
 import { AUTONOMY_CHANGED, notifyAutonomyChanged } from '../settings/useSettings'
@@ -43,6 +44,7 @@ import {
   closureFlag,
   chainOldestFirst,
   endedRun,
+  runReport,
   EVIDENCE_PAGE,
   EXPLANATION_TONE,
   explanationWord,
@@ -76,6 +78,7 @@ import {
 } from './caseFold'
 import './cases.css'
 import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
+import { caseLabel } from '../../shared/caseLabel'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -878,7 +881,7 @@ function AnsweredCard({ answer, watch }: { answer: 'approve' | 'reject' | null; 
   )
 }
 
-/** A run that has ended: its verdicts in one statement, the run's own words behind the ⓘ, and the open
+/** A run that has ended: its verdicts in one statement and the open
  *  question it could not conclude past put to you as a decision rather than buried in prose. */
 function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNode; onAsk: (text: string) => void }) {
   return (
@@ -887,7 +890,6 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
         <div className="stopped-line">
           <b>Ended</b>
           <span className="clamp2" title={ended.line}>{ended.line}</span>
-          {ended.raw && <InfoTip label="What the run reported" text={ended.raw} align="start" />}
           {watch}
         </div>
         {ended.cause && (
@@ -918,6 +920,23 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
         </section>
       )}
     </>
+  )
+}
+
+/** What the latest concluded run reported, in full: collapsed to a few lines when long. */
+function ReportCard({ report }: { report: string }) {
+  const [open, setOpen] = useState(false)
+  const long = report.length > 400 || report.split('\n').length > 6
+  return (
+    <section className="case-card" aria-label="Report">
+      <h3>Report</h3>
+      <div className={`case-report${long && !open ? ' case-report-clamped' : ''}`}>{report}</div>
+      {long && (
+        <button type="button" className="btn neutral case-report-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </section>
   )
 }
 
@@ -1020,6 +1039,7 @@ export function CasePage({
   investigations,
   closure,
   linkedFindings,
+  openedFrom = null,
   phase,
   error,
   pageKey,
@@ -1050,6 +1070,8 @@ export function CasePage({
   investigations: CaseInvestigationRef[]
   closure: CaseClosureView | null
   linkedFindings: CaseLinkedFinding[]
+  /** The finding the case was opened from (the first linked). */
+  openedFrom?: string | null
   phase: Phase
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
@@ -1640,6 +1662,7 @@ export function CasePage({
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
   const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
   const ended = closed || needsShown > 0 ? null : endedRun(fold)
+  const report = runReport(fold)
   const pillState = closed ? 'closed' : answeredHere ? (answer === 'reject' ? 'stopped' : 'executing') : stopped?.state ?? pill
   // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
   // else took the key (a menu or dialog is showing, or a text field has focus). A closed dialog that
@@ -1707,7 +1730,8 @@ export function CasePage({
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
           <span aria-hidden>›</span>
-          <span className="mono">{id.startsWith('case-') ? id : `Case ${id}`}</span>
+          <span className="mono">{caseLabel(id)}</span>
+          <CopyButton text={id} label="case id" />
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
@@ -1839,6 +1863,7 @@ export function CasePage({
                     </div>
                   )}
                 </section>
+                {report && <ReportCard key={runId} report={report} />}
                 {startedCard}
                 {disagree}
                 {doors}
@@ -1852,6 +1877,7 @@ export function CasePage({
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, seed: { text } })} />}
+                {report && <ReportCard key={runId} report={report} />}
                 {rootCauseNotStarted && (
                   <section className="case-stopped" aria-label="Root cause">
                     <div className="stopped-line">
@@ -2010,7 +2036,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c ? c.ownerName || 'Unassigned' : '—'} ownerStale={c?.ownerStale ?? false} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} openedFrom={openedFrom} owner={c ? c.ownerName || 'Unassigned' : '—'} ownerStale={c?.ownerStale ?? false} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" onWritten={onSideWrite} />

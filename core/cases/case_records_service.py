@@ -7,7 +7,17 @@ router owns the status code.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
@@ -113,14 +123,41 @@ def run_liveness(session: Session, case_ids: Iterable[str]) -> Dict[str, bool]:
     return live
 
 
-def alerts_since_last_run(session: Session, case_id: str) -> int:
-    """Alerts merged after a case's newest run started, so that run did not read them.
+def _merged_in_finding_ids(session: Session, case_id: str, since: datetime) -> Set[str]:
+    """Finding ids a case merge moved onto this case after ``since``.
 
-    Read from the intake ledger rather than kept as a count, so a restart or a merge
-    during a live run needs no bookkeeping. A case with no run has no last run and
-    reads 0. Noise-marked alerts do not count. An alert merged twice counts once. A
-    person-started run has a ``WorkflowRun`` and no ``Investigation``, and it counts
-    as the case's last run all the same.
+    Read from the ``case_merged`` activities the merge writes on the target. A
+    merge made before the activity carried ``finding_ids`` has none to read.
+    """
+    activities = session.query(Case.activities).filter(Case.case_id == case_id).scalar()
+    ids: Set[str] = set()
+    for activity in activities or []:
+        details = activity.get("details") or {}
+        if (
+            activity.get("activity_type") != "case_merged"
+            or details.get("target_case_id") != case_id
+        ):
+            continue
+        try:
+            at = datetime.fromisoformat(str(activity["timestamp"]).rstrip("Z"))
+        except (KeyError, ValueError):
+            continue
+        if at > since:
+            ids.update(details.get("finding_ids") or [])
+    return ids
+
+
+def alerts_since_last_run(session: Session, case_id: str) -> int:
+    """Alerts that joined a case after its newest run started, so that run did not read them.
+
+    Two ways in: the intake ledger (an alert the matcher merged in) and a case
+    merge (the findings it moved onto this case, recorded on the merge's
+    ``case_merged`` activity). Read from those records rather than kept as a
+    count, so a restart or a merge during a live run needs no bookkeeping. A case
+    with no run has no last run and reads 0. Noise-marked alerts do not count. An
+    alert that arrived both ways, or twice, counts once. A person-started run has
+    a ``WorkflowRun`` and no ``Investigation``, and it counts as the case's last
+    run all the same.
     """
     starts = [
         session.query(func.max(Investigation.created_at))
@@ -136,15 +173,24 @@ def alerts_since_last_run(session: Session, case_id: str) -> int:
     starts = [at for at in starts if at is not None]
     if not starts:
         return 0
-    return (
-        session.query(func.count(distinct(IntakeTrigger.finding_id)))
-        .join(Finding, Finding.finding_id == IntakeTrigger.finding_id)
-        .join(case_findings, case_findings.c.finding_id == IntakeTrigger.finding_id)
-        .filter(
-            case_findings.c.case_id == case_id,
+    since = max(starts)
+    arrived = _merged_in_finding_ids(session, case_id, since)
+    arrived.update(
+        row[0]
+        for row in session.query(IntakeTrigger.finding_id).filter(
             IntakeTrigger.merged_into == case_id,
             IntakeTrigger.state == "merged",
-            IntakeTrigger.decided_at > max(starts),
+            IntakeTrigger.decided_at > since,
+        )
+    )
+    if not arrived:
+        return 0
+    return (
+        session.query(func.count(distinct(Finding.finding_id)))
+        .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+        .filter(
+            case_findings.c.case_id == case_id,
+            Finding.finding_id.in_(arrived),
             Finding.noise_marked_at.is_(None),
         )
         .scalar()

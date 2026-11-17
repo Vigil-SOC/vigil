@@ -454,6 +454,7 @@
 .side-kv dt { color: var(--tx2); }
 .side-kv dd { margin: 0; overflow-wrap: anywhere; }
 .side-kv .case-sla { white-space: nowrap; }
+.side-kv .side-opened { text-align: left; overflow-wrap: anywhere; }
 
 /* Entities: one per line; a long value loses its middle to an ellipsis, the whole of it stays in the DOM to copy.
    Inline, not flex: a flex item copies as its own line, which would split a hash in two. */
@@ -838,6 +839,11 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+
+/* The run's report: plain text as written, a few lines until opened. */
+.case-page .case-report { font-size: 13px; line-height: 1.5; color: var(--tx1); white-space: pre-wrap; overflow-wrap: anywhere; }
+.case-page .case-report-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+.case-page .case-report-toggle { align-self: flex-start; }
 
 /* Paused or stopped: the Now card's place, without its accent or breathing dot. */
 .case-page .case-stopped {

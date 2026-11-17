@@ -14,6 +14,7 @@ import {
 } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
 import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
+import { caseLabel } from '../../shared/caseLabel'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
@@ -412,7 +413,7 @@ function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy 
               <span key={k}>
                 {i > 0 && ', '}
                 {what === 'case'
-                  ? <Link className="de-link" to={`/cases?case=${encodeURIComponent(ref)}`}>Case {ref}</Link>
+                  ? <Link className="de-link" to={`/cases?case=${encodeURIComponent(ref)}`}>{caseLabel(ref)}</Link>
                   : <>{what === 'hunt' ? 'Hunt' : what} <span className="mono">{ref}</span></>}
               </span>
             )

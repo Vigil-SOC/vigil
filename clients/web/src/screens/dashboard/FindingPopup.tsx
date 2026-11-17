@@ -2,19 +2,19 @@
    the VStrike provider, which isn't mounted under the console shell. */
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
+import { CopyButton } from '../../shared/CopyButton'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
+import { ipRoleLabels } from '../../data/ipRoles'
 import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, rankTechniques, type ApiFinding } from '../../data/mappers'
-import { NO_CONFIDENCE } from '../../data/data'
 import { techniqueName } from '../../data/mitre'
 import { CauseSelect } from '../../shared/falsePositiveCause'
-import { EmptyState, Popup } from '../../shared/ui'
+import { Popup } from '../../shared/ui'
 import { stateWord } from '../../shared/findingState'
-import { Icon } from '../../shared/icons'
 import { SEND_TO_TRIAGE_FAILED, sendFindingToTriage } from '../../shared/sendToTriage'
 import SourceChip from '../../shared/SourceChip'
-import { useFindingEnrichment, type Enrichment } from '../../shared/useFindingEnrichment'
 import type { Phase } from '../cases/useCases'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from './SourceEvidenceSection'
@@ -32,7 +32,6 @@ interface DetectionRuleRef {
 interface RawFinding extends ApiFinding {
   description?: string
   cluster_id?: string | null
-  ai_enrichment?: Enrichment | null
   detection_rule?: DetectionRuleRef | null
 }
 
@@ -52,143 +51,19 @@ function RuleLine({ rule }: { rule: DetectionRuleRef }) {
   )
 }
 
-const ENRICHMENT_PROGRESS = [
-  'Preparing the AI analysis…',
-  'Reviewing the finding with your configured model…',
-  'Still analysing — this can take a minute or two.',
-  'Checking the AI gateway and automatically retrying if needed. Please keep this window open…',
-  'Gateway recovery can take up to a minute. The analysis is still running…',
-]
-
-const RISK_COLOR: Record<string, string> = {
-  critical: 'var(--crit)',
-  high: 'var(--crit)',
-  medium: 'var(--high)',
-  low: 'var(--ok)',
-}
-
-function EnrichmentView({ e }: { e: Enrichment }) {
-  return (
-    <>
-      {e.threat_summary && (
-        <div className="modal-section">
-          <h4><Icon name="info" size={14} /> Threat summary</h4>
-          <p style={{ fontSize: 13, color: 'var(--tx-2)', margin: 0, lineHeight: 1.5 }}>{e.threat_summary}</p>
-          {e.threat_type && <span className="tag" style={{ marginTop: 8, display: 'inline-block', color: 'var(--crit)' }}>{e.threat_type}</span>}
-        </div>
-      )}
-
-      <div className="kv-grid fp-grid">
-        {e.risk_level && (
-          <>
-            <span className="k">Risk level</span>
-            <span className="v"><span className="tag" style={{ color: RISK_COLOR[e.risk_level.toLowerCase()] || 'var(--tx-2)' }}>{e.risk_level}</span></span>
-          </>
-        )}
-        {typeof e.confidence_score === 'number' && (
-          <>
-            <span className="k">AI confidence</span>
-            <span className="v mono">{Math.round(e.confidence_score * 100)}%</span>
-          </>
-        )}
-      </div>
-
-      {e.potential_impact && (
-        <div className="modal-section">
-          <h4><Icon name="alert" size={14} /> Potential impact</h4>
-          <p style={{ fontSize: 13, color: 'var(--tx-2)', margin: 0, lineHeight: 1.5 }}>{e.potential_impact}</p>
-        </div>
-      )}
-
-      {!!e.recommended_actions?.length && (
-        <div className="modal-section">
-          <h4><Icon name="check2" size={14} /> Recommended actions</h4>
-          <ul className="fp-list">{e.recommended_actions.map((a, i) => <li key={i}>{a}</li>)}</ul>
-        </div>
-      )}
-
-      {!!e.investigation_questions?.length && (
-        <div className="modal-section">
-          <h4>Investigation questions</h4>
-          <ul className="fp-list">{e.investigation_questions.map((q, i) => <li key={i}>{q}</li>)}</ul>
-        </div>
-      )}
-
-      {!!e.related_techniques?.length && (
-        <div className="modal-section">
-          <h4>Related MITRE techniques</h4>
-          <div className="fp-preds">
-            {e.related_techniques.map((t, i) => (
-              <div className="fp-pred" key={i}>
-                <span className="tag">{t.technique_id}</span>
-                <span className="fp-pred-name">{t.technique_name}{t.relevance ? ` — ${t.relevance}` : ''}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(e.timeline_context || e.business_context) && (
-        <div className="modal-section">
-          <h4>Additional context</h4>
-          {e.timeline_context && <p style={{ fontSize: 13, color: 'var(--tx-2)', margin: '0 0 8px', lineHeight: 1.5 }}><strong className="text-tx">Timeline:</strong> {e.timeline_context}</p>}
-          {e.business_context && <p style={{ fontSize: 13, color: 'var(--tx-2)', margin: 0, lineHeight: 1.5 }}><strong className="text-tx">Business:</strong> {e.business_context}</p>}
-        </div>
-      )}
-
-      {(!!e.indicators?.malicious_ips?.length || !!e.indicators?.suspicious_domains?.length) && (
-        <div className="modal-section">
-          <h4>Indicators of compromise</h4>
-          {!!e.indicators?.malicious_ips?.length && (
-            <div className="fp-ent-row"><span className="fp-ent-lab">Malicious IPs</span><div className="fp-chips">{e.indicators.malicious_ips.map((ip) => <span className="chip mono" key={ip}>{ip}</span>)}</div></div>
-          )}
-          {!!e.indicators?.suspicious_domains?.length && (
-            <div className="fp-ent-row"><span className="fp-ent-lab">Domains</span><div className="fp-chips">{e.indicators.suspicious_domains.map((d) => <span className="chip mono" key={d}>{d}</span>)}</div></div>
-          )}
-        </div>
-      )}
-
-      {e.analysis_notes && (
-        <div className="modal-section">
-          <p className="muted" style={{ fontSize: 12.5, margin: 0 }}><strong>Analyst notes:</strong> {e.analysis_notes}</p>
-        </div>
-      )}
-
-      {e.raw_response && (
-        <div className="modal-section">
-          <h4>Raw model output</h4>
-          <pre className="fp-raw-ai-output">{e.raw_response}</pre>
-        </div>
-      )}
-    </>
-  )
-}
-
 export default function FindingPopup({
   id,
   onClose,
   onChanged,
-  onConfigureAi,
 }: {
   id: string | null
   onClose: () => void
   onChanged?: () => void
-  onConfigureAi?: () => void
 }) {
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
-
-  // on-demand: a getEnrichment call may invoke an LLM
-  const {
-    enrichment,
-    phase: enrichPhase,
-    error: enrichError,
-    seed: seedEnrichment,
-    load: loadEnrichment,
-  } = useFindingEnrichment(id)
-  const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
   const [acting, setActing] = useState(false)
   const [cause, setCause] = useState('')
@@ -228,7 +103,6 @@ export default function FindingPopup({
         if (cancelled) return
         const data = res.data as RawFinding
         setRaw(data)
-        seedEnrichment(data.ai_enrichment)
         setPhase('ready')
       })
       .catch((e) => {
@@ -244,19 +118,7 @@ export default function FindingPopup({
     return () => {
       cancelled = true
     }
-  }, [id, loadAttempt, seedEnrichment])
-
-  useEffect(() => {
-    if (enrichPhase !== 'loading') {
-      setEnrichmentProgressIndex(0)
-      return
-    }
-
-    const timers = [4_000, 15_000, 45_000, 75_000].map((delay, index) =>
-      window.setTimeout(() => setEnrichmentProgressIndex(index + 1), delay),
-    )
-    return () => timers.forEach(window.clearTimeout)
-  }, [enrichPhase])
+  }, [id, loadAttempt])
 
   const submitExclusion = () => {
     if (!id || !excludeIp || !excludeReason.trim()) return
@@ -314,6 +176,7 @@ export default function FindingPopup({
   const ec = raw?.entity_context || {}
   const sourceEvidence = parseSourceEvidence(ec.source_evidence)
   const ips = findingIps(ec)
+  const ipRoles = ipRoleLabels(ec)
   const excludedSet = new Set((raw?.excluded_ips ?? []).map((ip) => ip.toLowerCase()))
 
   const title =
@@ -321,6 +184,7 @@ export default function FindingPopup({
       <span className="fp-title">
         <span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span>
         <span className="mono fp-id">{id}</span>
+        {id && <CopyButton text={id} label="finding id" />}
       </span>
     ) : (
       id || 'Finding'
@@ -344,20 +208,6 @@ export default function FindingPopup({
       )}
       {phase === 'ready' && f && raw && (
         <>
-          {/* hero — top technique + tactic on the left, key metrics on the right */}
-          <div className="fp-hero">
-            <div className="fp-hero-main">
-              <div className="fp-tech"><span className="tag">{f.tech}</span> {techniqueName(f.tech)}</div>
-              <div className="fp-tactic">{f.tactic}</div>
-            </div>
-            <div className="fp-metrics">
-              <div className="fp-metric">{f.conf === null
-                ? <span className="muted fp-m-none">{NO_CONFIDENCE}</span>
-                : <span className="fp-m-val">{f.conf}%</span>}<span className="fp-m-lab">confidence</span></div>
-              <div className="fp-metric"><span className="fp-m-val">{formatFindingScore(f.score)}</span><span className="fp-m-lab">anomaly</span></div>
-            </div>
-          </div>
-
           <div className="kv-grid fp-grid">
             <span className="k">Source</span><span className="v"><SourceChip source={f.src} /></span>
             {raw.detection_rule && (
@@ -366,9 +216,18 @@ export default function FindingPopup({
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
             <span className="k">Time</span><span className="v">{f.time}</span>
+            {typeof f.score === 'number' && (
+              <><span className="k">Score</span><span className="v mono">{formatFindingScore(f.score)}</span></>
+            )}
             <span className="k" style={{ alignSelf: 'center' }}>Status</span>
             <span className="v flex items-center gap-2 flex-wrap">
-              <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
+              {raw.case_id && !raw.case_restricted && stateWord(raw.terminal_state, raw.case_id).startsWith('Case ') ? (
+                <Link className="underline" to={`/cases?case=${encodeURIComponent(raw.case_id)}`}>
+                  {stateWord(raw.terminal_state, raw.case_id)}
+                </Link>
+              ) : (
+                <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
+              )}
               {!dismissed && <CauseSelect value={cause} onSelect={setCause} />}
               <button type="button" className="btn ghost" onClick={toggleDismiss} disabled={acting}>
                 {dismissed ? 'Undo' : 'Dismiss'}
@@ -427,6 +286,7 @@ export default function FindingPopup({
                   return (
                     <li key={ip} className="fp-ip">
                       <span className="chip mono">{ip}</span>
+                      {ipRoles.get(ip.toLowerCase()) && <span className="fp-ip-role mono">{ipRoles.get(ip.toLowerCase())}</span>}
                       {excluded ? (
                         <span className="tag excluded-tag" title="Findings naming this address are hidden from the queue">excluded</span>
                       ) : (
@@ -475,68 +335,6 @@ export default function FindingPopup({
           )}
 
           <SourceEvidenceSection evidence={sourceEvidence} />
-
-          {/* AI enrichment — on-demand */}
-          <div className="modal-section">
-            <div className="flex items-center gap-2" style={{ justifyContent: 'space-between' }}>
-              <h4 style={{ margin: 0 }}><Icon name="sparkle" size={14} /> AI analysis</h4>
-              {enrichPhase === 'ready' && (
-                <button className="btn ghost" onClick={() => loadEnrichment(true)} disabled={enrichPhase !== 'ready'}>
-                  <Icon name="refresh" size={14} /> Regenerate
-                </button>
-              )}
-            </div>
-
-            {enrichPhase === 'idle' && (
-              <button className="btn primary" style={{ marginTop: 10 }} onClick={() => loadEnrichment(false)}>
-                <Icon name="sparkle" size={15} /> Generate AI analysis
-              </button>
-            )}
-            {enrichPhase === 'loading' && (
-              <div className="fp-ai-progress muted flex items-center gap-2" style={{ marginTop: 10 }} aria-live="polite">
-                <span className="spin" aria-hidden="true" />
-                <span>{ENRICHMENT_PROGRESS[enrichmentProgressIndex]}</span>
-              </div>
-            )}
-            {enrichPhase === 'error' && enrichError === 'not_configured' && (
-              <EmptyState
-                compact
-                icon="sparkle"
-                title="AI enrichment is not configured"
-                body="Add an AI provider and assign a chat/enrichment model before generating finding analysis."
-                primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
-              />
-            )}
-            {enrichPhase === 'error' && enrichError === 'forbidden' && (
-              <EmptyState
-                compact
-                icon="lock"
-                title="Your role can’t generate AI analysis"
-                body="Generating an analysis writes to the finding, so it needs findings write access."
-              />
-            )}
-            {enrichPhase === 'error' && enrichError === 'budget' && (
-              <EmptyState
-                compact
-                icon="alert"
-                title="Virtual-key budget spent"
-                body="The virtual-key budget is spent. Raise its ceiling under AI models → Spending limit."
-                primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
-              />
-            )}
-            {enrichPhase === 'error' && enrichError === 'failed' && (
-              <EmptyState
-                error
-                compact
-                icon="alert"
-                title="AI enrichment failed"
-                body="The analysis request did not complete."
-                primary={{ label: 'Retry', onClick: () => loadEnrichment(false), icon: 'refresh' }}
-              />
-            )}
-            {enrichPhase === 'ready' && enrichment && <div style={{ marginTop: 10 }}><EnrichmentView e={enrichment} /></div>}
-            {enrichPhase === 'ready' && !enrichment && <div className="muted" style={{ marginTop: 10 }}>No enrichment returned for this finding.</div>}
-          </div>
 
           {/* actions */}
           <div className="fp-actions">
