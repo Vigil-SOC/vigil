@@ -43,6 +43,7 @@ from core.cases.closure import (
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
+from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
@@ -611,7 +612,9 @@ def update_case(
     updates: Args = {}
     if title:
         updates["title"] = title
-        if edited := title_edited_activities(case, title):
+        # Marked only when a principal stands behind the call (chat, /mcp): a run's
+        # own agent renaming the case must not hold off the run's retitle.
+        if current_caller() and (edited := title_edited_activities(case, title)):
             updates["activities"] = edited
     if description:
         updates["description"] = description
