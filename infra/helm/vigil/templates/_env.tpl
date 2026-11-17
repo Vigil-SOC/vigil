@@ -147,6 +147,33 @@ helper. Prefer the Secret when both are set.
 {{- end -}}
 
 {{/*
+vigil.env for agent-serve and agent-worker: the same, but logging in as
+vigil_agent, which holds only the agent tables (0081_agent_role).
+*/}}
+{{- define "vigil.agentEnv" -}}
+{{- $env := include "vigil.env" . -}}
+{{- $agent := replace "- name: POSTGRES_USER\n  value: \"vigil_app\"" "- name: POSTGRES_USER\n  value: \"vigil_agent\"" $env -}}
+{{- if eq $env $agent }}{{ fail "vigil.env no longer sets POSTGRES_USER to vigil_app; update vigil.agentEnv" }}{{ end -}}
+{{- $agent -}}
+{{- end -}}
+
+{{/*
+The agent pods' own secret entries. POSTGRES_PASSWORD is vigil_agent's, and
+POSTGRES_APP_PASSWORD, which vigil.envFrom brings in with the rest of the
+chart's Secret, is blanked: env wins over envFrom, so the agent containers
+hold no vigil_app login.
+*/}}
+{{- define "vigil.agentPostgresEnv" -}}
+- name: POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vigil.postgres.appPasswordSecret" . }}
+      key: {{ include "vigil.postgres.agentPasswordSecretKey" . }}
+- name: POSTGRES_APP_PASSWORD
+  value: ""
+{{- end -}}
+
+{{/*
 Discrete Redis parts for the agent pods, for the reason vigil.env ships discrete
 POSTGRES_*: the kubelet substitutes $(REDIS_PASSWORD) into a URL unencoded, so one
 holding @ / : or # misparses. Only the agent reads these, and only when REDIS_HOST

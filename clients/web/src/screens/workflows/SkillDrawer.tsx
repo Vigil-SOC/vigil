@@ -3,12 +3,37 @@ import { useAuth } from '../../contexts/AuthContext'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { OverlayPortal, Popup } from '../../shared/ui'
-import { skillsApi, type ApiSkillDetail, type ApiSkillTest } from '../../services/skillsApi'
+import { skillsApi, type ApiSkillDetail, type ApiSkillScanDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
+import { SkillLibraryDialog } from './SkillLibraryDialog'
 
 const PATH_OFF = 'Skills are off (VIGIL_SKILLS_PATH is empty). Unset it, or set it to a directory, to save skills.'
 // The API answers 403 without it: a skill's description reaches every agent's prompt.
 const READ_ONLY = 'Your role can read skills but not save them. Saving needs the automation.write permission.'
+
+/** What the scan section says; null when the skill is not held and was not approved. */
+function scanText(scan: ApiSkillScanDetail, canApprove: boolean): string | null {
+  const verdict = [scan.recommendation, scan.score != null ? `score ${scan.score}` : null].filter(Boolean).join(', ')
+  const release = canApprove
+    ? ' Approve anyway releases this version to agents; editing it starts a new scan.'
+    : ' Someone with the skills.approve permission can release it anyway.'
+  switch (scan.state) {
+    case 'pending':
+      return 'Held from agents until its scan finishes. Agents can use it once the scan clears it.'
+    case 'flagged':
+      return `Held from agents: the scan flagged it${verdict ? ` (${verdict})` : ''}. Read the findings below.${release}`
+    case 'failed':
+      return `Held from agents: the scan could not finish${scan.error ? ` (${scan.error})` : ''}.${release}`
+    case 'refused':
+      return 'Held from agents: the folder contains a symlink, which is never allowed. Remove the link to have it scanned.'
+    case 'approved':
+      // approved_by is an account id, not a name; the audit trail names who approved.
+      // approved_at is UTC sent without a zone, as the database stores it.
+      return `Approved${scan.approved_at ? ` on ${new Date(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(scan.approved_at) ? scan.approved_at : scan.approved_at + 'Z').toLocaleString()}` : ''}${verdict ? ` (scan: ${verdict})` : ''}. Agents can use this version; editing it starts a new scan.`
+    default:
+      return null
+  }
+}
 
 function errMsg(e: unknown): string {
   const r = e as { response?: { data?: { detail?: string } }; message?: string }
@@ -28,7 +53,10 @@ export function SkillDrawer({
   onSaved: () => void
 }) {
   const creating = name === null
-  const canWrite = useAuth().hasPermission('automation.write')
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('automation.write')
+  const canApprove = hasPermission('skills.approve')
+  const [approving, setApproving] = useState(false)
   const [detail, setDetail] = useState<ApiSkillDetail | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [skillName, setSkillName] = useState(name ?? '')
@@ -48,6 +76,9 @@ export function SkillDrawer({
   const [aiText, setAiText] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiErr, setAiErr] = useState<string | null>(null)
+  // A repo-installed skill's repo commit now, checked when the panel opens; null until known.
+  const [latest, setLatest] = useState<string | null>(null)
+  const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -76,6 +107,17 @@ export function SkillDrawer({
       cancelled = true
     }
   }, [name])
+
+  const source = detail?.source ?? null
+  useEffect(() => {
+    if (name === null || !source || !canWrite) return
+    let cancelled = false
+    skillsApi
+      .latest(name)
+      .then((commit) => { if (!cancelled) setLatest(commit) })
+      .catch(() => undefined) // the button still works; it just cannot say "new version"
+    return () => { cancelled = true }
+  }, [name, source, canWrite])
 
   useEffect(() => {
     if (name === null || openFile === null) return
@@ -160,8 +202,30 @@ export function SkillDrawer({
       .finally(() => setTesting(false))
   }
 
-  const origin = creating || !detail?.bundled ? 'Yours' : 'Built in'
-  const subtitle = detail ? `${origin} · version ${detail.version} · ${skillUsageText(detail.reads_7d ?? 0, detail.agents_7d ?? 0)}` : origin
+  // A flagged or failed verdict can be released; pending has no verdict yet and refused never can.
+  const scan = detail?.scan
+  const approvable = canApprove && !!scan?.digest && (scan.state === 'flagged' || scan.state === 'failed')
+  const scanLine = scan ? scanText(scan, approvable) : null
+
+  const approveSkill = () => {
+    if (!detail || !scan?.digest || approving) return
+    setApproving(true)
+    setError(null)
+    skillsApi
+      .approve(detail.name, scan.digest)
+      .then(onSaved)
+      .catch((e) => {
+        setError(errMsg(e))
+        setApproving(false)
+      })
+  }
+
+  const origin = source
+    ? `From ${source.label} · commit ${source.commit.slice(0, 7)}`
+    : creating || !detail?.bundled ? 'Yours' : 'Built in'
+  const behind = source !== null && latest !== null && latest !== source.commit
+  const held = scan?.held ? ' · held' : ''
+  const subtitle = detail ? `${origin}${held} · version ${detail.version} · ${skillUsageText(detail.reads_7d ?? 0, detail.agents_7d ?? 0)}` : origin
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
 
   return (
@@ -190,6 +254,21 @@ export function SkillDrawer({
           {!ready && !loadError && <p className="text-[13px] text-tx-3">Loading skill…</p>}
           {ready && (
             <>
+              {scan && scanLine && (
+                <div className="vg-side-field" aria-label="Scan">
+                  <span className="vg-skill-files-title">Scan</span>
+                  <span className="text-[13px] text-tx-2 leading-[1.5]">{scanLine}</span>
+                  {scan.findings.map((f, i) => (
+                    <div key={`${f.rule_id}-${i}`} className="vg-skill-result" data-passed={false}>
+                      <span className="vg-skill-result-head">
+                        <span className="vg-skill-result-mark">{f.severity}</span>
+                        <span className="min-w-0 break-words">{f.message}</span>
+                      </span>
+                      <span className="vg-skill-missing">{f.rule_id}{f.file ? ` · ${f.file}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {!canWrite && <p className="text-[13px] text-tx-2 leading-[1.5]">{READ_ONLY}</p>}
               {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_OFF}</p>}
               {detail?.bundled && (
@@ -334,8 +413,19 @@ export function SkillDrawer({
                     {testing ? 'Testing…' : 'Test with a sample'}
                   </button>
                 )}
+                {source && canWrite && (
+                  <button type="button" className="vg-side-btn" onClick={() => setUpdating(true)}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5" />
+                    </svg>
+                    {behind ? 'Update library · new version' : 'Update library'}
+                  </button>
+                )}
                 <span className="vg-skill-foot-end">
                   <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
+                  {approvable && (
+                    <HoldButton label={approving ? 'Approving…' : 'Approve anyway'} name={`Approve ${detail?.name}`} disabled={approving} onConfirm={approveSkill} />
+                  )}
                   {canWrite && (
                     <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
                       {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
@@ -347,6 +437,9 @@ export function SkillDrawer({
           )}
         </aside>
       </div>
+      {updating && source && name && (
+        <SkillLibraryDialog name={name} label={source.label} onClose={() => setUpdating(false)} onUpdated={onSaved} />
+      )}
     </OverlayPortal>
   )
 }
@@ -362,24 +455,49 @@ export function SkillDeleteModal({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Only a skill that came with others from a repo offers the whole library.
+  const library = skill.library && skill.library.skills > 1 ? skill.library : null
+  const [whole, setWhole] = useState(false)
 
   const del = () => {
     setBusy(true)
     setError(null)
-    skillsApi
-      .delete(skill.name)
+    ;(whole ? skillsApi.deleteLibrary(skill.name) : skillsApi.delete(skill.name))
       .then(onDeleted)
       .catch((e) => { setError(errMsg(e)); setBusy(false) })
   }
 
   return (
-    <Popup open onClose={onClose} title="Delete skill" width={460}>
+    <Popup open onClose={onClose} title="Delete skill" width={library ? 560 : 460}>
       <div className="flex flex-col gap-3.5">
-        <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This removes the skill directory from the operator root.</p>
+        {library ? (
+          <>
+            <p className="text-[13px] text-tx-2 leading-[1.5]"><strong>{skill.name}</strong> came from <strong>{library.label}</strong>.</p>
+            <fieldset className="sk-pick">
+              <legend>What to delete</legend>
+              <label>
+                <input type="radio" name="sk-del" checked={!whole} disabled={busy} onChange={() => setWhole(false)} />
+                <span>
+                  <b>This skill</b>
+                  <span>An update offers it again as new</span>
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="sk-del" checked={whole} disabled={busy} onChange={() => setWhole(true)} />
+                <span>
+                  <b>The whole library</b>
+                  <span>{library.skills} {library.skills === 1 ? 'skill' : 'skills'} from {library.label}; Vigil stops tracking the repo</span>
+                </span>
+              </label>
+            </fieldset>
+          </>
+        ) : (
+          <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This removes the skill directory from the operator root.</p>
+        )}
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <HoldButton label="Delete" disabled={busy} onConfirm={del} />
+          <HoldButton label={whole && library ? `Delete ${library.skills} skills` : 'Delete'} disabled={busy} onConfirm={del} />
         </div>
       </div>
     </Popup>

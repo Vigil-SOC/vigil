@@ -4,7 +4,10 @@ A skill is ``<root>/<name>/SKILL.md`` conforming to the public Agent Skills
 spec (agentskills.io/specification): YAML frontmatter naming the skill and a
 Markdown body telling the agent how to do the thing. Roots are the bundled
 ``core/skills/library/`` plus the operator root: ``VIGIL_SKILLS_PATH``, else
-the State Directory's ``skills/`` folder.
+the State Directory's ``skills/`` folder. A top-level folder without its own
+``SKILL.md`` is searched where the ``npx skills`` CLI searches a repo, so a
+library grouped in category folders, or a whole cloned skills repo, loads
+as-is. A skill folder's subfolders are never skills.
 
 No database, no module state: ``load_skills`` takes its roots so tests can
 point it at ``tmp_path``. An invalid skill is logged and skipped so one bad
@@ -13,11 +16,13 @@ directory cannot take the library down with it.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import logging
 import lzma
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -26,7 +31,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Collection, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -48,9 +53,83 @@ _COMPATIBILITY_MAX = 500
 _FILES_MAX = 200
 UPLOAD_MAX = 5 * 1024 * 1024  # bytes read from an upload
 _UNPACKED_MAX = 5 * 1024 * 1024  # bytes across a zip's files once unpacked
-# Skill folders under the operator root. Each description is in every agent's
-# system prompt, so the count bounds what operators can add to it.
+# Skill folders the skills API may hold under the operator root: a save or
+# upload past it is refused. Each description is in every agent's system
+# prompt. Folders copied in by hand are not capped.
 OPERATOR_SKILLS_MAX = 100
+# The constants below are where a skill may sit inside a top-level folder of a
+# skills root: the places the ``npx skills`` CLI (1.8.1) searches in a repo, so
+# a folder copied or cloned in loads what ``npx skills add`` would install.
+_SKIP_DIRS = frozenset({"node_modules", ".git", "dist", "build", "__pycache__"})
+_SKILLS_DIRS = ("skills", "skills/.curated", "skills/.experimental", "skills/.system")
+_AGENT_SKILL_DIRS = (
+    ".adal/skills",
+    ".agents/skills",
+    ".aider-desk/skills",
+    ".augment/skills",
+    ".autohand/skills",
+    ".bob/skills",
+    ".claude/skills",
+    ".cline/skills",
+    ".codeartsdoer/skills",
+    ".codebuddy/skills",
+    ".codemaker/skills",
+    ".codestudio/skills",
+    ".codex/skills",
+    ".commandcode/skills",
+    ".continue/skills",
+    ".cortex/skills",
+    ".crush/skills",
+    ".devin/skills",
+    ".factory/skills",
+    ".forge/skills",
+    ".github/skills",
+    ".goose/skills",
+    ".grok/skills",
+    ".hermes/skills",
+    ".iflow/skills",
+    ".inferencesh/skills",
+    ".jazz/skills",
+    ".junie/skills",
+    ".kilo/skills",
+    ".kilocode/skills",
+    ".kimchi/skills",
+    ".kiro/skills",
+    ".kode/skills",
+    ".lingma/skills",
+    ".mcpjam/skills",
+    ".minimax/skills",
+    ".moxby/skills",
+    ".mux/skills",
+    ".neovate/skills",
+    ".ona/skills",
+    ".opencode/skills",
+    ".openhands/skills",
+    ".pi/skills",
+    ".pochi/skills",
+    ".posit/assistant/skills",
+    ".qoder/skills",
+    ".qwen/skills",
+    ".reasonix/skills",
+    ".roo/skills",
+    ".rovodev/skills",
+    ".tabnine/agent/skills",
+    ".terramind/skills",
+    ".tinycloud/skills",
+    ".trae/skills",
+    ".vibe/skills",
+    ".windsurf/skills",
+    ".zcode/skills",
+    ".zencoder/skills",
+    "agent/skills",
+    "data/skills",
+)
+_CONTAINER_DEPTH = 3  # skills/<category>/<category>/<name>/SKILL.md
+_FALLBACK_DEPTH = 5  # how deep a folder with none of those places is searched
+# Folders the fallback looks in per top-level folder, and the bytes of a manifest
+# read. Not npx limits: this search runs on every load, not once at install.
+_FALLBACK_DIRS_MAX = 1000
+_MANIFEST_MAX = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -100,12 +179,13 @@ def _check_optional(frontmatter: Dict[str, Any]) -> None:
         raise SkillError("`metadata` must be a map of string to string")
 
 
-def parse_skill(skill_dir: Path) -> Skill:
+def parse_skill(skill_dir: Path, *, match_dir: bool = True) -> Skill:
     """Validate ``skill_dir/SKILL.md`` against the spec and return the skill.
 
     Raises :class:`SkillError` for anything the spec forbids. Keys the spec does
     not name are left alone: rejecting them would make the loader stricter than
-    the format it claims to read.
+    the format it claims to read. ``match_dir`` off skips the folder-name rule,
+    for a SKILL.md at a repo's root, which is installed under its own name.
     """
     skill_file = skill_dir / SKILL_FILE
     if not skill_file.is_file():
@@ -123,7 +203,7 @@ def parse_skill(skill_dir: Path) -> Skill:
             f"`name` {name!r} must be lowercase letters, digits and single "
             "hyphens, not starting or ending with one"
         )
-    if name != skill_dir.name:
+    if match_dir and name != skill_dir.name:
         raise SkillError(f"`name` {name!r} does not match directory {skill_dir.name!r}")
     description = _require_str(frontmatter, "description", _DESCRIPTION_MAX)
     _check_optional(frontmatter)
@@ -137,12 +217,194 @@ def as_user_turn(user_input: Any) -> str:
     )
 
 
+def _subdirs(folder: Path) -> List[Path]:
+    """``folder``'s real subfolders, sorted. Symlinks are not followed: one could
+    reach outside the root that writes and deletes are confined to."""
+    try:
+        with os.scandir(folder) as it:
+            return sorted(Path(e.path) for e in it if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+
+
+def _inside(base: Path, rel: Any) -> Optional[Path]:
+    """``base/rel`` for a ``./`` path that stays inside ``base`` once
+    normalized, when that is a real folder reached without a symlink; ``./`` is
+    ``base`` itself. A manifest written by anyone can name it, so any odd path
+    is None rather than an error."""
+    if not isinstance(rel, str) or not rel.startswith("./") or "\\" in rel:
+        return None
+    norm = posixpath.normpath(rel)
+    if norm == ".." or norm.startswith("../"):
+        return None
+    path = base
+    try:
+        for part in [] if norm == "." else norm.split("/"):
+            path = path / part
+            if path.is_symlink():
+                return None
+        return path if path.is_dir() else None
+    except (OSError, ValueError):  # a name too long, or holding a NUL
+        return None
+
+
+def _json(path: Path) -> Any:
+    """A manifest's JSON, or None. One over ``_MANIFEST_MAX`` is ignored: a
+    cloned repo's manifest is read on every load."""
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(_MANIFEST_MAX + 1)
+        if len(raw) > _MANIFEST_MAX:
+            return None
+        return json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):  # nested past the parser's limit
+        return None
+
+
+def _listed_dirs(top: Path) -> tuple[List[Path], List[Path]]:
+    """Folders ``top``'s own manifests point at, as ``npx skills`` reads them.
+
+    ``skills.sh.json`` ``paths`` are searched like ``skills/``. A
+    ``.claude-plugin`` ``plugin.json`` or ``marketplace.json`` plugin's
+    ``skills`` entries name skill folders, whose parent folder is searched
+    one level, as is the plugin's ``skills/`` folder. Only ``./`` paths that
+    stay inside ``top`` count.
+    """
+    containers: List[Path] = []
+    plugin_dirs: List[Path] = []
+    config = _json(top / "skills.sh.json")
+    if isinstance(config, dict) and isinstance(config.get("paths"), list):
+        for rel in config["paths"]:
+            folder = _inside(top, rel)
+            # npx skips a path that is the repo, and a path listed twice.
+            if folder and folder != top and folder not in containers:
+                containers.append(folder)
+
+    def add_plugin(base: Optional[Path], skills: Any) -> None:
+        if base is None:
+            return
+        for rel in skills if isinstance(skills, list) else []:
+            if isinstance(rel, str) and rel.startswith("./"):
+                parent = posixpath.dirname(posixpath.normpath(rel))
+                folder = _inside(base, f"./{parent}")
+                if folder and folder not in plugin_dirs:
+                    plugin_dirs.append(folder)
+        folder = _inside(base, "./skills")
+        if folder and folder not in plugin_dirs:
+            plugin_dirs.append(folder)
+
+    market = _json(top / ".claude-plugin" / "marketplace.json")
+    if isinstance(market, dict):
+        meta = market.get("metadata")
+        plugin_root = meta.get("pluginRoot", "./") if isinstance(meta, dict) else "./"
+        root = _inside(top, plugin_root)
+        for item in market.get("plugins") or []:
+            if isinstance(item, dict) and root is not None:
+                add_plugin(_inside(root, item.get("source", "./")), item.get("skills"))
+    manifest = _json(top / ".claude-plugin" / "plugin.json")
+    if isinstance(manifest, dict):
+        add_plugin(top, manifest.get("skills"))
+    return containers, plugin_dirs
+
+
+def _parses(folder: Path) -> bool:
+    try:
+        parse_skill(folder)
+    except SkillError:
+        return False
+    return True
+
+
+def _source_skill_dirs(top: Path) -> List[Path]:
+    """The skill folders ``npx skills`` would find in ``top`` taken as a repo.
+
+    Its children; ``skills/`` (with ``.curated``, ``.experimental`` and
+    ``.system``), each agent's ``.<agent>/skills`` and any ``skills.sh.json``
+    path down to two category folders; folders a plugin manifest names. Only
+    when none of those holds a valid skill is ``top`` searched down to
+    ``_FALLBACK_DEPTH`` folders, looking in at most ``_FALLBACK_DIRS_MAX``.
+    ``_SKIP_DIRS`` are never searched, a skill folder's own subfolders are its
+    files, never skills, and a symlinked ``SKILL.md`` is not a skill.
+    """
+    found: List[Path] = []
+    seen: set[Path] = set()
+
+    def add(folder: Path) -> bool:
+        skill_md = os.path.join(folder, SKILL_FILE)  # os.path: called per folder
+        # A symlinked SKILL.md could read a file outside the root into a prompt.
+        if os.path.islink(skill_md) or not os.path.isfile(skill_md):
+            return False
+        if folder not in seen:
+            seen.add(folder)
+            found.append(folder)
+        return True
+
+    checked = [0]  # folders the fallback has looked in
+
+    def walk(
+        folder: Path, max_depth: int, depth: int = 1, fallback: bool = False
+    ) -> None:
+        for child in _subdirs(folder):
+            if fallback:
+                checked[0] += 1
+                if checked[0] > _FALLBACK_DIRS_MAX or child.name in _SKIP_DIRS:
+                    continue
+            if add(child) or depth >= max_depth or child.name in _SKIP_DIRS:
+                continue
+            walk(child, max_depth, depth + 1, fallback)
+
+    walk(top, 1)
+    present = {child.name for child in _subdirs(top)}
+    for rel in _SKILLS_DIRS + _AGENT_SKILL_DIRS:
+        # Probe only what ``top`` holds: this runs for every folder on every load.
+        folder = _inside(top, "./" + rel) if rel.split("/")[0] in present else None
+        if folder:
+            walk(folder, _CONTAINER_DEPTH)
+    containers, plugin_dirs = _listed_dirs(top)
+    for folder in containers:
+        walk(folder, _CONTAINER_DEPTH)
+    for folder in plugin_dirs:
+        walk(folder, 1)
+    if not any(_parses(folder) for folder in found):
+        walk(top, _FALLBACK_DEPTH, fallback=True)
+    return found
+
+
+def _skill_dirs(root: Path) -> tuple[List[Path], List[tuple[Path, str]]]:
+    """The folders under ``root`` holding ``SKILL.md``, in load order, and those skipped.
+
+    A top-level folder holding ``SKILL.md`` is a skill; any other is searched
+    as ``npx skills`` searches a repo (``_source_skill_dirs``), so a library
+    grouped in category folders, or a whole cloned skills repo, loads as-is.
+    Dot folders at the top are a write's scratch copies and are left out. A
+    raise means ``root`` itself could not be read. Nothing is logged here, so
+    the writes that walk the root stay quiet; ``load_skills`` logs once.
+    """
+    found: List[Path] = []
+    skipped: List[tuple[Path, str]] = []
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        if child.name.startswith("."):
+            continue
+        if os.path.lexists(child / SKILL_FILE):
+            found.append(child)
+        elif child.is_symlink():
+            skipped.append((child, "a symlinked folder"))
+        else:
+            inner = _source_skill_dirs(child)
+            if inner:
+                found += inner
+            else:
+                skipped.append((child, f"no {SKILL_FILE} where npx skills would look"))
+    return found, skipped
+
+
 def load_skills(roots: Iterable[Path]) -> List[Skill]:
-    """Every valid skill under ``roots``, in root then name order.
+    """Every valid skill under ``roots``, in root then folder order.
 
     Roots earlier in the list win a name clash, so the bundled library cannot be
-    shadowed by the setting root. A missing root is not an error: the bundled
-    directory may be empty and the setting root is optional.
+    shadowed by the setting root; within a root the first folder wins. A missing
+    root is not an error: the bundled directory may be empty and the setting
+    root is optional.
     """
     loaded: Dict[str, Skill] = {}
     for root in roots:
@@ -150,7 +412,10 @@ def load_skills(roots: Iterable[Path]) -> List[Skill]:
         if not root.is_dir():
             logger.debug("Skills root %s is not a directory; skipping", root)
             continue
-        for skill_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        skill_dirs, skipped = _skill_dirs(root)
+        for path, reason in skipped:
+            logger.warning("Skipping folder at %s: %s", path, reason)
+        for skill_dir in skill_dirs:
             try:
                 skill = parse_skill(skill_dir)
             except SkillError as exc:
@@ -329,6 +594,55 @@ def _skill_dir(root: Path, name: str) -> Path:
     return candidate
 
 
+def _loaded_dir(root: Path, skill: Skill) -> Path:
+    """A loaded operator skill's real folder: ``root/[<folder>/...]name``.
+
+    Refused when a folder on the way is a symlink, the top one is a dot folder,
+    or it would resolve outside ``root``, so an edit or delete acts only inside
+    the operator root.
+    """
+    try:
+        parts = skill.path.relative_to(root).parts
+    except ValueError:
+        parts = ()
+    if not parts or parts[-1] != skill.name or parts[0].startswith("."):
+        raise SkillError("refusing to touch a skill outside the operator root")
+    parent = Path(os.path.realpath(root))
+    for part in parts[:-1]:
+        parent = parent / part
+        if parent.is_symlink() or not parent.is_dir():
+            raise SkillError("refusing to follow a symlink")
+    return _skill_dir(parent, skill.name)
+
+
+def _operator_skill_dir(root: Path, name: str) -> Path:
+    """Where operator skill ``name`` lives, else ``root/name`` for a new one.
+
+    An existing skill is found where it loaded from, so editing one inside a
+    category writes to that folder rather than starting a second copy at the
+    top. A category folder of the same name is refused: a ``SKILL.md`` written
+    into it would hide every skill under it. Only folders named ``name`` are
+    parsed, since ``parse_skill`` refuses any other, so the first one that
+    parses is the one ``load_skills`` would have kept.
+    """
+    top = _skill_dir(root, name)
+    for skill_dir in _skill_dirs(root)[0]:
+        if skill_dir.name != name:
+            continue
+        try:
+            skill = parse_skill(skill_dir)
+        except SkillError:
+            continue
+        return _loaded_dir(root, skill)
+    if (
+        top.is_dir()
+        and not os.path.lexists(top / SKILL_FILE)
+        and _source_skill_dirs(top)
+    ):
+        raise SkillConflict(f"{name} is a folder of skills, not a skill.")
+    return top
+
+
 def _write_new_file(path: Path, data: bytes) -> None:
     """Create ``path`` as a new regular file. A symlink is left untouched."""
     if path.is_symlink():
@@ -366,17 +680,30 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
     return root.resolve()
 
 
-def _require_room(root: Path) -> None:
-    """Refuse a new skill once ``root`` holds ``OPERATOR_SKILLS_MAX`` folders.
+# Public names for core.skills.skill_sources, which installs from a git repo.
+writable_operator_root = _require_operator_root
+repo_skill_dirs = _source_skill_dirs
+inside = _inside
 
-    Dot folders are skipped: they are the scratch copies a write leaves only
-    while it runs.
+
+def _require_room(root: Path, adding: int = 1) -> None:
+    """Refuse ``adding`` new skills that would take ``root`` past ``OPERATOR_SKILLS_MAX``.
+
+    A skill folder is one holding ``SKILL.md``, at the top or inside a
+    category; categories and empty folders do not count. Dot folders are
+    skipped: they are the scratch copies a write leaves only while it runs.
     """
-    held = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    held = len(_skill_dirs(root)[0])
     if held >= OPERATOR_SKILLS_MAX:
         raise SkillConflict(
             f"There are already {OPERATOR_SKILLS_MAX} custom skills, the most "
             "allowed. Delete one before adding another."
+        )
+    if held + adding > OPERATOR_SKILLS_MAX:
+        raise SkillConflict(
+            f"The upload holds {adding} skills but there is room for "
+            f"{OPERATOR_SKILLS_MAX - held} more (the most allowed is "
+            f"{OPERATOR_SKILLS_MAX}). Nothing was installed."
         )
 
 
@@ -416,12 +743,13 @@ def write_operator_skill(
     source: Optional[str] = None,
     expected_version: Optional[int] = None,
 ) -> Skill:
-    """Write ``<vigil_skills_path>/<name>/SKILL.md`` that ``parse_skill`` accepts.
+    """Write ``<root>/[<category>/...]<name>/SKILL.md`` that ``parse_skill`` accepts.
 
     A name the bundled library already owns is refused: ``load_skills`` would
     skip the operator copy, so the file would be invisible. An existing
-    operator skill is overwritten in place: only SKILL.md changes, its other
-    frontmatter keys carry over and ``metadata.version`` goes up by one.
+    operator skill, top-level or in a category, is overwritten in its own
+    folder: only SKILL.md changes, its other frontmatter keys carry over and
+    ``metadata.version`` goes up by one.
     With ``source`` (a loaded skill's name) and no skill of this name yet, the
     source's whole folder is copied first and the copy starts at version 1.
     An overwrite must send the ``expected_version`` it opened: a folder that
@@ -430,7 +758,7 @@ def write_operator_skill(
     atomic. ``expected_version`` is ignored when copying.
     """
     root = _require_operator_root(settings)
-    skill_dir = _skill_dir(root, name)
+    skill_dir = _operator_skill_dir(root, name)
     if name in _library_names():
         raise SkillError(
             f"name {name!r} belongs to the bundled library; save it under a new name"
@@ -501,62 +829,212 @@ def _install_copy(root: Path, origin: Skill, name: str, content: str) -> None:
 
 
 def _zip_files(zf: zipfile.ZipFile) -> Dict[str, zipfile.ZipInfo]:
-    """The regular files to install, by path, judged from the entry list alone.
+    """The zip's regular files, by path, judged from the entry list alone.
 
     An unsafe entry refuses the whole zip, even one that would be skipped.
-    Directories, dotfiles and ``__MACOSX`` are dropped.
+    ``.`` path parts, as tar-to-zip tools write them, are dropped from names.
+    Directories, ``.git`` and ``__MACOSX`` are dropped. Other dot paths are
+    kept for finding skills (``.claude/skills``, ``.claude-plugin``); a
+    skill's own dotfiles are dropped when it is unpacked. The file count and
+    size caps apply to the skills installed (``_unpack``), so a repo's docs
+    beside them do not count; ``_ZIP_ENTRIES_MAX`` bounds the search.
     """
     kept: Dict[str, zipfile.ZipInfo] = {}
     for info in zf.infolist():
-        name = info.filename
-        parts = name.rstrip("/").split("/")
+        raw = info.filename
+        parts = [p for p in raw.rstrip("/").split("/") if p != "."]
+        name = "/".join(parts)
+        if not parts and info.is_dir():  # "./" itself
+            continue
         if (
-            "\\" in name
-            or "\0" in name
-            or name.startswith("/")
-            or re.match(r"^[A-Za-z]:", name)
+            not parts
+            or "\\" in raw
+            or "\0" in raw
+            or raw.startswith("/")
+            or re.match(r"^[A-Za-z]:", raw)
             or ".." in parts
+            or "" in parts  # "a//x" would rejoin as the absolute "/x"
         ):
-            raise SkillError(f"the zip has an unsafe path: {name!r}")
+            raise SkillError(f"the zip has an unsafe path: {raw!r}")
         mode = info.external_attr >> 16
         if stat.S_ISLNK(mode):
-            raise SkillError(f"the zip has a symlink: {name!r}")
+            raise SkillError(f"the zip has a symlink: {raw!r}")
         if info.is_dir():
             continue
         if stat.S_IFMT(mode) not in (0, stat.S_IFREG):
-            raise SkillError(f"the zip has a non-regular file: {name!r}")
-        if any(p.startswith(".") or p == "__MACOSX" for p in parts):
+            raise SkillError(f"the zip has a non-regular file: {raw!r}")
+        if any(p in (".git", "__MACOSX") for p in parts):
             continue
         if name in kept:
             raise SkillError(f"the zip lists {name!r} twice")
         kept[name] = info
-    if len(kept) > _FILES_MAX:
-        raise SkillError(f"the zip has more than {_FILES_MAX} files")
-    if sum(i.file_size for i in kept.values()) > _UNPACKED_MAX:
-        raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
+        if len(kept) > _ZIP_ENTRIES_MAX:
+            raise SkillError(f"the zip has more than {_ZIP_ENTRIES_MAX} files")
     return kept
 
 
-def _unpack(zf: zipfile.ZipFile) -> tuple[Optional[str], Dict[str, bytes]]:
-    """``(folder, {relative path: bytes})``; ``folder`` is None for a root SKILL.md."""
+def skipped_note(skipped: int) -> Optional[str]:
+    """One short clause saying how many ``SKILL.md`` a zip upload skipped and why."""
+    if not skipped:
+        return None
+    files = "file was" if skipped == 1 else "files were"
+    return (
+        f"{skipped} {SKILL_FILE} {files} skipped: not where npx skills looks, "
+        "or a skill name already taken in the zip"
+    )
+
+
+_MANIFESTS = ("skills.sh.json", "plugin.json", "marketplace.json")
+_OUTLINE_READ = 64 * 1024  # of each SKILL.md and manifest, for the outline
+_ZIP_ENTRIES_MAX = 5000  # files in a zip at all; each is an empty file in the outline
+
+
+def _skill_folders(
+    zf: zipfile.ZipFile, kept: Dict[str, zipfile.ZipInfo]
+) -> tuple[List[str], int]:
+    """The zip folders holding a skill, ``""`` for the root, and how many
+    ``SKILL.md`` were skipped.
+
+    Found as ``npx skills`` finds skills in a repo (``_source_skill_dirs``),
+    the repo being the zip's root, or its one top-level folder when that is not
+    itself a skill (a GitHub "download zip" wrapper). A ``SKILL.md`` at that
+    root is the one skill. Of two skill folders with one name the first found
+    wins. The search runs on an outline of the zip on disk: its paths as empty
+    files, except each ``SKILL.md`` (the fallback search needs to know whether
+    one is valid) and the manifests that point at skills.
+    A skill folder inside another one is refused: it would otherwise be stored
+    as a supporting file of the outer skill and never load.
+    """
+    every = [
+        p[: -len(SKILL_FILE)].rstrip("/")
+        for p in kept
+        if p == SKILL_FILE or p.endswith(f"/{SKILL_FILE}")
+    ]
+    if not every:
+        raise SkillError(f"no {SKILL_FILE} in the zip")
+    try:
+        outline = tempfile.TemporaryDirectory(prefix="vigil-zip-")
+    except OSError as exc:
+        raise SkillError(f"could not search the zip: {exc.strerror}") from exc
+    with outline as tmp:
+        tree = Path(tmp)
+        try:
+            for name, info in kept.items():
+                path = tree / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+                if path.name == SKILL_FILE or path.name in _MANIFESTS:
+                    with zf.open(info) as handle:
+                        path.write_bytes(handle.read(_OUTLINE_READ))
+        except OSError as exc:
+            if exc.errno in (errno.EEXIST, errno.ENOTDIR, errno.EISDIR):
+                raise SkillError("the zip has a file and a folder at one path") from exc
+            raise SkillError(f"could not search the zip: {exc.strerror}") from exc
+        top = tree
+        children = list(tree.iterdir())
+        if (
+            len(children) == 1
+            and children[0].is_dir()
+            and not (children[0] / SKILL_FILE).exists()
+        ):
+            top = children[0]
+        if (top / SKILL_FILE).exists():
+            dirs = [top]
+        else:
+            dirs = _source_skill_dirs(top)
+        folders: List[str] = []
+        for d in dirs:
+            rel = d.relative_to(tree).as_posix()
+            rel = "" if rel == "." else rel
+            if all(rel.rsplit("/", 1)[-1] != f.rsplit("/", 1)[-1] for f in folders):
+                folders.append(rel)
+    for inner in every:
+        for outer in folders:
+            if inner != outer and (outer == "" or inner.startswith(f"{outer}/")):
+                where = (
+                    f"inside the skill folder {outer!r}"
+                    if outer
+                    else "below a root SKILL.md"
+                )
+                raise SkillError(
+                    f"{inner!r} is a skill folder {where}; a skill cannot hold another skill"
+                )
+    skipped = len(every) - len(folders)
+    if not folders:
+        raise SkillError(f"no skill to install: {skipped_note(skipped)}")
+    return folders, skipped
+
+
+def _unpack(
+    zf: zipfile.ZipFile,
+) -> tuple[List[tuple[Optional[str], Dict[str, bytes]]], int]:
+    """Each skill in the zip as ``(folder, {path within it: bytes})``, and how
+    many ``SKILL.md`` were skipped.
+
+    ``folder`` is the skill folder's own name, or None for a SKILL.md at the
+    zip's root, which takes every file. Files outside any skill folder, such as
+    a README beside several skills, and a skill's own dotfiles are left out.
+    """
     kept = _zip_files(zf)
-    folder: Optional[str] = None
-    if SKILL_FILE not in kept:
-        tops = {name.split("/")[0] for name in kept}
-        if len(tops) != 1 or f"{next(iter(tops))}/{SKILL_FILE}" not in kept:
-            raise SkillError(f"no {SKILL_FILE} at the root of the zip")
-        folder = tops.pop()
-    prefix = f"{folder}/" if folder else ""
+    folders, skipped = _skill_folders(zf, kept)
+    chosen: List[tuple[Optional[str], Dict[str, zipfile.ZipInfo]]] = []
+    for folder in folders:
+        prefix = f"{folder}/" if folder else ""
+        infos = {
+            name[len(prefix) :]: info
+            for name, info in kept.items()
+            if name.startswith(prefix)
+            and not any(p.startswith(".") for p in name[len(prefix) :].split("/"))
+        }
+        chosen.append((folder.rsplit("/", 1)[-1] if folder else None, infos))
+    count = sum(len(infos) for _, infos in chosen)
+    if count > _FILES_MAX:
+        raise SkillError(f"the skills in the zip hold more than {_FILES_MAX} files")
+    if sum(i.file_size for _, infos in chosen for i in infos.values()) > _UNPACKED_MAX:
+        raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
     budget = _UNPACKED_MAX  # the headers' sizes can lie; bound what is really read
+    skills: List[tuple[Optional[str], Dict[str, bytes]]] = []
+    for skill_folder, infos in chosen:
+        files: Dict[str, bytes] = {}
+        for rel, info in infos.items():
+            with zf.open(info) as handle:
+                data = handle.read(budget + 1)
+            budget -= len(data)
+            if budget < 0:
+                raise SkillError(
+                    f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB"
+                )
+            files[rel] = data
+        skills.append((skill_folder, files))
+    return skills, skipped
+
+
+def folder_files(folder: Path) -> Dict[str, bytes]:
+    """A skill folder on disk as ``{path within it: bytes}``, for install.
+
+    The same files an upload keeps: dotfiles and dot-folders are left out, and
+    so is anything that is not a regular file, a symlink above all, so nothing
+    outside the folder is read. Bounded as an upload is.
+    """
     files: Dict[str, bytes] = {}
-    for name, info in kept.items():
-        with zf.open(info) as handle:
-            data = handle.read(budget + 1)
-        budget -= len(data)
-        if budget < 0:
-            raise SkillError(f"the zip unpacks to more than {_UNPACKED_MAX // 1024} KB")
-        files[name[len(prefix) :]] = data
-    return folder, files
+    budget = _UNPACKED_MAX
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if name.startswith("."):
+                continue
+            path = Path(dirpath) / name
+            if not stat.S_ISREG(path.lstat().st_mode):
+                continue
+            if len(files) >= _FILES_MAX:
+                raise SkillError(f"it holds more than {_FILES_MAX} files")
+            with path.open("rb") as handle:
+                data = handle.read(budget + 1)
+            budget -= len(data)
+            if budget < 0:
+                raise SkillError(f"it is larger than {_UNPACKED_MAX // 1024} KB")
+            files[path.relative_to(folder).as_posix()] = data
+    return files
 
 
 def _declared_name(skill_md: bytes) -> str:
@@ -574,26 +1052,82 @@ def _declared_name(skill_md: bytes) -> str:
     return name if ok else "invalid-name"
 
 
-def install_uploaded_skill(
-    filename: str, data: bytes, settings: Optional[Settings] = None
-) -> Skill:
-    """Install an uploaded ``SKILL.md`` or skill ``.zip`` under the operator root.
+def _stage_upload(
+    scratch: Path,
+    root: Path,
+    library: set[str],
+    name: str,
+    files: Dict[str, bytes],
+    replacing: bool = False,
+) -> tuple[Path, Path]:
+    """Write one skill under ``scratch``; return it and where it goes.
 
-    A bare file lands in a folder named by its frontmatter ``name``. A zip holds
-    ``SKILL.md`` at its root (named the same way) or inside one top-level folder,
-    whose name must then equal ``name``. Nothing is overwritten: a name the
-    library or the operator root already holds raises :class:`SkillConflict`.
-    The skill is built and validated in a scratch directory under the root and
-    moved into place whole, so a refused upload leaves nothing behind.
+    A new skill's name must be free. One ``replacing`` must be an operator
+    skill already, and goes where that one loaded from.
+    """
+    staged = scratch / name
+    try:
+        staged.mkdir()
+        for rel, content in files.items():
+            target = staged / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _write_new_file(target, content)
+    except OSError as exc:
+        raise SkillError(f"could not install {name!r}: {exc}") from exc
+    skill = parse_skill(staged)
+    if skill.name in library:
+        raise SkillConflict(
+            f"name {skill.name!r} belongs to the bundled library; choose another name"
+        )
+    if replacing:
+        final = _operator_skill_dir(root, skill.name)
+        if not (final / SKILL_FILE).is_file():
+            raise SkillNotFound(f"No skill named {skill.name!r} to replace")
+        return staged, final
+    final = _skill_dir(root, skill.name)
+    if os.path.lexists(final) or _operator_skill_dir(root, skill.name) != final:
+        raise SkillConflict(
+            f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
+        )
+    return staged, final
+
+
+def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
+    """One error for every skill refused; a lone skill keeps its own message."""
+    if total == 1:
+        return failures[0][1]
+    detail = "; ".join(f"{name!r}: {exc}" for name, exc in failures[:5])
+    if len(failures) > 5:
+        detail += f"; and {len(failures) - 5} more"
+    conflict = all(isinstance(exc, SkillConflict) for _, exc in failures)
+    return (SkillConflict if conflict else SkillError)(
+        f"Nothing was installed: {len(failures)} of the {total} skills "
+        f"failed. {detail}"
+    )
+
+
+def install_uploaded_skills(
+    filename: str, data: bytes, settings: Optional[Settings] = None
+) -> tuple[List[Skill], int]:
+    """Install an uploaded ``SKILL.md`` or ``.zip`` of skills under the operator root.
+
+    Returns the skills installed and how many ``SKILL.md`` in the zip were
+    skipped. A bare file lands in a folder named by its frontmatter ``name``.
+    A zip holds ``SKILL.md`` at its root (named the same way), or skill
+    folders named for their skills, found where ``npx skills`` looks in a repo
+    (``_skill_folders``). Nothing is overwritten: a name the library or the
+    operator root already holds raises :class:`SkillConflict`. All or nothing:
+    every skill is built and checked in a scratch directory under the root
+    before any moves into place, and a skill already moved is taken out again
+    if a later move fails, so a refused upload leaves nothing behind.
     """
     root = _require_operator_root(settings)
-    _require_room(root)  # an upload never overwrites, so it is always a new skill
     if len(data) > UPLOAD_MAX:
         raise SkillError(f"the file is larger than {UPLOAD_MAX // 1024} KB")
     if filename.lower().endswith(".zip") or data.startswith(b"PK\x03\x04"):
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                folder, files = _unpack(zf)
+                unpacked, skipped = _unpack(zf)
         except (
             zipfile.BadZipFile,
             RuntimeError,
@@ -605,61 +1139,127 @@ def install_uploaded_skill(
         ) as exc:
             raise SkillError(f"not a readable zip archive: {exc}") from exc
     else:
-        folder, files = None, {SKILL_FILE: data}
-    name = folder or _declared_name(files[SKILL_FILE])
+        unpacked, skipped = [(None, {SKILL_FILE: data})], 0
+    named = [
+        (folder or _declared_name(files[SKILL_FILE]), files)
+        for folder, files in unpacked
+    ]
+    names = [name for name, _ in named]
+    for name in names:
+        if names.count(name) > 1:
+            raise SkillError(f"the zip holds more than one skill folder named {name!r}")
+    return install_skill_files(root, named), skipped
+
+
+def install_skill_files(
+    root: Path,
+    named: List[tuple[str, Dict[str, bytes]]],
+    replace: Collection[str] = (),
+    freeing: int = 0,
+) -> List[Skill]:
+    """Install skills given as ``(folder name, {path within it: bytes})``.
+
+    Nothing is overwritten except the names in ``replace``, which must be
+    operator skills already and are swapped for the new files where they live;
+    any other name the library or the operator root holds raises
+    :class:`SkillConflict`. All or nothing: every skill is built and checked in
+    a scratch directory under the root before any moves into place, and if a
+    later move fails each one already made is undone, a replaced skill put back.
+    ``freeing`` counts skills the caller deletes right after, so the cap on
+    custom skills is checked against what is left, and a replace alone never
+    hits it.
+    """
+    growth = sum(1 for name, _ in named if name not in replace) - freeing
+    if growth > 0:
+        _require_room(root, growth)
     try:
         scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
     except OSError as exc:
         raise SkillError(f"could not write under {root}: {exc}") from exc
-    final: Optional[Path] = None
+    library = _library_names()
+    moved: List[Path] = []  # new skills now in place
+    swapped: List[tuple[Path, Path]] = []  # (a replaced skill's place, its old copy)
+    installed = False
     try:
-        staged = scratch / name
-        staged.mkdir()
-        for rel, content in files.items():
-            target = staged / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _write_new_file(target, content)
-        skill = parse_skill(staged)
-        if skill.name in _library_names():
-            raise SkillConflict(
-                f"name {skill.name!r} belongs to the bundled library; choose another name"
-            )
-        final = _skill_dir(root, skill.name)
-        if os.path.lexists(final):
-            raise SkillConflict(
-                f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
-            )
-        os.replace(staged, final)
-    except OSError as exc:
-        if final and os.path.lexists(final):  # lost a race for the name
-            raise SkillConflict(f"A skill named {name!r} already exists.") from exc
-        raise SkillError(f"could not install {name!r}: {exc}") from exc
+        staged: List[tuple[Path, Path, bool]] = []
+        failures: List[tuple[str, SkillError]] = []
+        for name, files in named:
+            replacing = name in replace
+            try:
+                path, final = _stage_upload(
+                    scratch, root, library, name, files, replacing
+                )
+                staged.append((path, final, replacing))
+            except SkillError as exc:
+                failures.append((name, exc))
+        if failures:
+            raise _refusal(failures, len(named))
+        for path, final, replacing in staged:
+            try:
+                if replacing:
+                    old = scratch / f".old-{path.name}"
+                    os.replace(final, old)
+                    swapped.append((final, old))
+                elif os.path.lexists(final):
+                    raise FileExistsError(final)
+                os.replace(path, final)
+            except OSError as exc:
+                if not replacing and os.path.lexists(final):  # lost a race
+                    raise SkillConflict(
+                        f"A skill named {path.name!r} already exists."
+                    ) from exc
+                raise SkillError(f"could not install {path.name!r}: {exc}") from exc
+            moved.append(final)
+        installed = True
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
-    return parse_skill(final)
+        keep = False  # a backup that could not be put back is left in scratch
+        if not installed:
+            replaced = {final for final, _ in swapped}
+            for final in moved:
+                if final not in replaced:
+                    shutil.rmtree(final, ignore_errors=True)
+            for final, old in swapped:
+                shutil.rmtree(final, ignore_errors=True)
+                try:
+                    os.replace(old, final)
+                except OSError:
+                    keep = True
+                    logger.exception("could not put %s back; it is at %s", final, old)
+        if not keep:
+            shutil.rmtree(scratch, ignore_errors=True)
+    return [parse_skill(final) for final in moved]
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
-    """Remove an operator skill directory. Bundled skills are refused."""
+    """Remove an operator skill directory. Bundled skills are refused.
+
+    A skill inside other folders goes, and so does each folder above it that
+    is left empty, up to the root: an empty top-level folder would otherwise
+    be logged on every load.
+    """
     root = _require_operator_root(settings)
-    skill = {item.name: item for item in load_skills(skill_roots(settings))}.get(name)
+    # The resolved root, so a loaded path lines up with it for _loaded_dir.
+    skill = {item.name: item for item in load_skills([LIBRARY_ROOT, root])}.get(name)
     if skill is None:
         raise SkillNotFound(f"No skill named {name!r}")
     if is_bundled(skill):
         raise SkillError("bundled skills cannot be deleted")
     if skill.path.is_symlink():
         raise SkillError("refusing to follow a symlink")
-    target = skill.path.resolve()
-    if (
-        target.parent != root
-        or target.name != skill.name
-        or not _contained(root, target)
-    ):
+    target = _loaded_dir(root, skill)
+    if not _contained(root, target):
         raise SkillError("refusing to delete a skill outside the operator root")
     library = LIBRARY_ROOT.resolve()
     if target == library or target.is_relative_to(library):
         raise SkillError("refusing to delete a bundled skill")
     shutil.rmtree(target)
+    parent = target.parent
+    while parent != root:
+        try:
+            parent.rmdir()  # only succeeds when the folder is empty
+        except OSError:
+            break
+        parent = parent.parent
 
 
 def _confined(skill_dir: Path, file: str) -> Optional[Path]:
@@ -680,19 +1280,25 @@ def _confined(skill_dir: Path, file: str) -> Optional[Path]:
 
 
 def read_skill(
-    name: Any, file: Any = None, roots: Optional[Iterable[Path]] = None
+    name: Any,
+    file: Any = None,
+    roots: Optional[Iterable[Path]] = None,
+    skills: Optional[Iterable[Skill]] = None,
 ) -> Dict[str, Any]:
     """The tool body. Without ``file``, the SKILL.md body; with it, that file.
 
     Answers ``{"error": ...}`` rather than raising, as ``_replay_hunt`` does: a
     model that asked for a file the skill does not carry needs to be told so.
     Nothing is executed: a script under ``scripts/`` is returned as text like
-    any other file.
+    any other file. ``skills``, when given, is the whole set that can be read,
+    instead of what ``roots`` loads: the agent tool passes the skills that are
+    not held.
     """
     if not isinstance(name, str) or not name:
         return {"error": "read_skill requires a skill `name`"}
-    skills = {s.name: s for s in load_skills(skill_roots() if roots is None else roots)}
-    skill = skills.get(name)
+    if skills is None:
+        skills = load_skills(skill_roots() if roots is None else roots)
+    skill = {s.name: s for s in skills}.get(name)
     if skill is None:
         return {"error": f"No skill named {name!r}"}
     if file is not None and not isinstance(file, str):

@@ -22,6 +22,9 @@ LIST_RUNS_MAX = 200
 
 IN_FLIGHT_STATUSES = ("running", "paused")
 
+# duration_ms columns are int4; a longer duration (~24.8 days) is stored as NULL.
+DURATION_MS_MAX = 2_147_483_647
+
 _runs_finished: Any = None
 
 
@@ -68,6 +71,14 @@ def run_hidden(session, run_id: str) -> bool:
             select(exists().where(WorkflowRun.run_id == run_id, _unreadable()))
         ).scalar()
     )
+
+
+def run_unreadable(run_id: str) -> bool:
+    """``run_hidden`` in its own session, for a caller holding none. A run id
+    read by a tool or forwarded to agent-serve, which keys reads by run id
+    alone, is checked here first."""
+    with get_db_manager().session_scope() as session:
+        return run_hidden(session, run_id)
 
 
 class WorkflowRunService:
@@ -243,8 +254,7 @@ class WorkflowRunService:
                 row.status = status
                 row.finished_at = now
                 # Truncate result_summary to avoid committing megabyte
-                # prompt transcripts to the DB — full transcripts live
-                # in the reasoning_traces table.
+                # prompt transcripts to the DB.
                 if result_summary is not None:
                     row.result_summary = result_summary[:50_000]
                 if error is not None:
@@ -257,8 +267,8 @@ class WorkflowRunService:
                 if cost_usd is not None:
                     row.total_cost_usd = cost_usd
                 if row.started_at is not None:
-                    delta = now - row.started_at
-                    row.duration_ms = int(delta.total_seconds() * 1000)
+                    ms = int((now - row.started_at).total_seconds() * 1000)
+                    row.duration_ms = ms if ms <= DURATION_MS_MAX else None
         except SQLAlchemyError as e:
             logger.error("Could not finalise workflow run %s: %s", run_id, e)
             return False
@@ -502,8 +512,10 @@ class WorkflowRunService:
                     if finished_at is not None:
                         row.finished_at = finished_at
                         if row.started_at:
-                            delta = finished_at - row.started_at
-                            row.duration_ms = int(delta.total_seconds() * 1000)
+                            ms = int(
+                                (finished_at - row.started_at).total_seconds() * 1000
+                            )
+                            row.duration_ms = ms if ms <= DURATION_MS_MAX else None
             return True
         except SQLAlchemyError as e:
             logger.warning(

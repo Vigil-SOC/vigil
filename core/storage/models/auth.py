@@ -106,7 +106,8 @@ class SignIn(Base):
             "end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',"
             " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased',"
             " 'ended_by_person', 'ended_by_admin', 'everyone_signed_out',"
-            " 'sign_in_limit', 'too_many_confirmations', 'restore')",
+            " 'sign_in_limit', 'too_many_confirmations', 'restore',"
+            " 'recovery', 'mfa_reset')",
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),
@@ -191,10 +192,10 @@ class SsoLink(Base):
 
 
 class AuthLink(Base):
-    """A single-use link that reaches a public screen: an invite (#4226) or, for
-    the recovery sibling, a reset. Only the SHA-256 of the random value is kept;
-    the value itself is shown once and never stored. ``core/auth/invites.py``
-    owns it.
+    """A single-use link that reaches a public screen: an invite (#4226), a
+    password reset, or a confirmation of an address the person changed. Only
+    the SHA-256 of the random value is kept; the value itself is shown once
+    and never stored. ``core/auth/invites.py`` owns it.
     """
 
     __tablename__ = "auth_links"
@@ -233,7 +234,9 @@ class AuthLink(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("kind IN ('invite', 'reset')", name="auth_links_kind_check"),
+        CheckConstraint(
+            "kind IN ('invite', 'reset', 'email')", name="auth_links_kind_check"
+        ),
         Index("uq_auth_links_token_hash", "token_hash", unique=True),
         # One open invite per address, whatever its expiry: replacing closes it.
         Index(
@@ -242,6 +245,15 @@ class AuthLink(Base):
             unique=True,
             postgresql_where=text(
                 "kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL"
+            ),
+        ),
+        # One open email-confirmation link per account: a new one closes the last.
+        Index(
+            "uq_auth_links_open_email",
+            "principal_id",
+            unique=True,
+            postgresql_where=text(
+                "kind = 'email' AND used_at IS NULL AND revoked_at IS NULL"
             ),
         ),
     )
@@ -327,6 +339,12 @@ class User(Base):
     dormancy_held_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
     )
+
+    # Break-glass (#4532): when the host marked this account. Set and cleared only
+    # by scripts/reset_password.py. A marked account signs in under Require SSO
+    # with its password, a code and a reason; its lock is always timed, and it is
+    # left out of dormancy and password expiry.
+    break_glass_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.
@@ -491,4 +509,24 @@ class BreachedPassword(Base):
     entry: Mapped[str] = mapped_column(Text, primary_key=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+
+
+class IdentifierReservation(Base):
+    """An erased person's username or email, kept as a keyed hash of its folded
+    form so nobody else can take it. Never the value, its kind or the person.
+    ``key_version`` is the key-ring ``identifier`` key that made the hash.
+    ``core/auth/identity.py`` reads it and ``core/audit/retention.py`` writes it.
+    """
+
+    __tablename__ = "identifier_reservations"
+
+    hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Naive UTC, as everywhere else (core/time.py).
+    reserved_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        server_default=text("(now() AT TIME ZONE 'utc')"),
     )

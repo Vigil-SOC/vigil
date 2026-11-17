@@ -23,7 +23,7 @@ from typing import Any, Optional
 from sqlalchemy import bindparam, event, text
 
 from core.audit import trail
-from core.auth import mcp_credential_service, principals, sign_ins
+from core.auth import identity, key_ring, mcp_credential_service, principals, sign_ins
 from core.config import get_settings
 from core.storage.connection import get_db_manager
 
@@ -48,6 +48,8 @@ UNSET_MESSAGE = (
 ERASED_PREFIX = "erased-"
 ERASED_DOMAIN = "erased.invalid"
 ERASED_NAME = "Erased account"
+# What an erased account's token labels become: a free-text label can name a person.
+ERASED_LABEL = "Erased account's token"
 # Queued on the session until the transaction commits. A rollback must not
 # leave an id in the file: restore would blank that principal anyway.
 _QUEUED = "erasure_file_ids"
@@ -115,6 +117,25 @@ def free_identifiers(session, principal_id: str) -> None:
     )
 
 
+def drop_personal_rows(session, user_id: str) -> None:
+    """Delete the account's preferences row and blank the label of each token it
+    owns, revoked or not: a label is free text and may name the person. Plain
+    SQL: an upgrade step runs it on its own connection too."""
+    params = {"user_id": user_id, "label": ERASED_LABEL}
+    if _table(session, "user_preferences"):
+        session.execute(
+            text("DELETE FROM public.user_preferences WHERE user_id = :user_id"),
+            params,
+        )
+    if _table(session, "mcp_credentials"):
+        session.execute(
+            text(
+                "UPDATE public.mcp_credentials SET label = :label WHERE user_id = :user_id"
+            ),
+            params,
+        )
+
+
 def outside_path() -> Optional[Path]:
     """The erasure list: in ``VIGIL_ERASURE_DIR``, else ``VIGIL_UPGRADE_DIR``. None when both are unset."""
     settings = get_settings()
@@ -178,7 +199,8 @@ def erase(
     """Blank ``principal_id``, or announce it when that principal can manage the trail.
 
     Refuses, before any blanking, when the erasure list has no directory or
-    can't be written, when ``actor`` is erasing their own principal, or when the target is the last
+    can't be written, when the key that hashes the username and email can't be
+    read, when ``actor`` is erasing their own principal, or when the target is the last
     active principal holding ``audit.manage``.
     """
     now = _aware(now)
@@ -187,6 +209,7 @@ def erase(
     if not principal_id:
         raise RetentionError("a principal is required")
     _check_writable()
+    _check_key()
     if not _exists(session, principal_id):
         raise RetentionError("unknown principal")
     # Holding the permission is the role grant on a principal that still exists.
@@ -227,6 +250,106 @@ def apply_due(session, now: datetime) -> None:
     now = _aware(now)
     _apply_period(session, now)
     _apply_erasures(session, now)
+
+
+# How long an erased person's username and email stay reserved.
+RESERVATION_TTL = timedelta(days=730)
+ACTION_RESERVATIONS_DROPPED = "auth.identifier_reservations_dropped"
+
+
+def sweep_reservations(session, now: datetime) -> list[int]:
+    """Drop reservations older than two years, and those whose key can't be
+    read, with one system entry. Returns the ids of notices to email once the
+    caller commits: a lost key tells each ``users.write`` holder.
+
+    Then retires an ``identifier`` key no remaining row names; rotation never
+    does. With no reservations and no old key this reads two small queries and
+    writes nothing. The entry holds a count and a reason, never an identifier.
+    """
+    if not _table(session, "identifier_reservations"):
+        return []
+    # Naive UTC, as the column is.
+    cutoff = _aware(now).replace(tzinfo=None) - RESERVATION_TTL
+    expired = session.execute(
+        text("DELETE FROM public.identifier_reservations WHERE reserved_at < :c"),
+        {"c": cutoff},
+    ).rowcount
+    lost = 0
+    named = set(
+        session.execute(
+            text("SELECT DISTINCT key_version FROM public.identifier_reservations")
+        )
+        .scalars()
+        .all()
+    )
+    for version in sorted(named):
+        try:
+            usable = key_ring.find("identifier", version) is not None
+        except key_ring.KeyRingError:
+            usable = False
+        if not usable:
+            lost += session.execute(
+                text(
+                    "DELETE FROM public.identifier_reservations"
+                    " WHERE key_version = :v"
+                ),
+                {"v": version},
+            ).rowcount
+            named.discard(version)
+    # Only an old version: erasure and identity.reserve need the current key.
+    for version in session.execute(
+        text(
+            "SELECT version FROM public.auth_keys WHERE purpose = 'identifier'"
+            " AND state IN ('verify_only', 'decrypt_only')"
+        )
+    ).scalars():
+        if version not in named:
+            key_ring._retire(session, "identifier", version, reason="unreferenced")
+            key_ring.forget()
+    if not (expired or lost):
+        return []
+    reason = (
+        "expired_and_key_lost"
+        if expired and lost
+        else ("expired" if expired else "key_lost")
+    )
+    trail.append(
+        session,
+        {
+            trail.ACTION: ACTION_RESERVATIONS_DROPPED,
+            trail.ACTOR: trail.SYSTEM,
+            "count": expired + lost,
+            "reason": reason,
+        },
+        gated=False,
+    )
+    return _tell_key_lost(session, lost) if lost else []
+
+
+def _tell_key_lost(session, lost: int) -> list[int]:
+    # Imported here: auth_service pulls auth, and auth imports this module.
+    from core.auth.auth_service import _manager_rows
+    from core.platform.notices import notify
+
+    message = (
+        f"{lost} reserved sign-in name{'s' if lost != 1 else ''} could not be "
+        "kept, because the key that protected them is gone. Someone else may now "
+        "register a username or email an erased person used."
+    )
+    ids = []
+    for principal, _, _ in _manager_rows("", session):
+        notice = notify(
+            principal,
+            "identifier_reservations_lost",
+            "Reserved sign-in names were dropped",
+            message,
+            link="/settings?section=users",
+            priority="high",
+            session=session,
+        )
+        if notice is not None:
+            ids.append(notice)
+    return ids
 
 
 def carried(session, seqs: list[int]) -> None:
@@ -296,10 +419,11 @@ def cover_through(session, seq: int) -> None:
     )
 
 
-def reapply(session, snapshot_ids: list[str]) -> None:
+def reapply(session, snapshot_ids: list[str], *, reserve: bool = True) -> None:
     """Blank the union of ``snapshot_ids`` and the outside file, then write that union back.
 
-    Used after a restore, once the restored database is the live one. An id that
+    Used after a restore, once the restored database is live and its key ring
+    is settled, so each person's username and email are reserved. An id that
     exists only in the outside file is blanked again, because the snapshot was
     taken before that erasure.
     """
@@ -315,9 +439,20 @@ def reapply(session, snapshot_ids: list[str]) -> None:
     path = outside_path()
     if path is None:
         raise RetentionError(UNSET_MESSAGE)
+    # A backup from before the table existed is reserved by no one: its upgrade
+    # creates the table empty, and the names can't be hashed afterwards.
+    reserve = reserve and _table(session, "identifier_reservations")
+    # Before anything is blanked: an unreadable ring would roll the whole
+    # re-apply back at the first reservation, so refuse with nothing touched.
+    try:
+        if reserve:
+            key_ring.current("identifier")
+    except key_ring.KeyRingError as exc:
+        raise RetentionError(f"the identifier key can't be read: {exc}") from exc
     for pid in union:
         _blank_label(session, pid)
-        _revoke(session, pid)
+        # Dated now, the re-apply time. _revoke skips service and erased accounts.
+        _revoke(session, pid, reserve=reserve)
     trail._lock(session)
     for pid in union:
         _blank_beside(session, pid)
@@ -357,8 +492,9 @@ def _apply_period(session, now: datetime) -> None:
 
 
 def _apply_erasures(session, now: datetime) -> None:
-    # An id that can't reach the list would be undone by a restore, so a due
-    # erasure stays pending until the list is writable again.
+    # An id that can't reach the list would be undone by a restore, and a
+    # username that can't be hashed is lost, so a due erasure stays pending until
+    # the list is writable and the identifier key reads.
     if _blocked() is not None:
         return
     stored = _load(session, lock=True)
@@ -368,13 +504,19 @@ def _apply_erasures(session, now: datetime) -> None:
     # The request-time guard is not enough: the others may have been disabled
     # during the wait. Blanking the one who is now last is still refused.
     active = _managers(session, active_only=True)
+    # Nor may it take the last active role manager: the request checked that,
+    # and the wait may have changed it.
+    roles = _managers(session, active_only=True, permission="roles.manage")
     gone = set()
     for item in due:
         principal_id = item["principal_id"]
         if principal_id in active and len(active) == 1:
             continue
+        if roles == {principal_id}:
+            continue
         _perform(session, principal_id)
         active.discard(principal_id)
+        roles.discard(principal_id)
         gone.add((principal_id, item["set_at"]))
     stored["erasures"] = [
         item
@@ -474,15 +616,63 @@ def _drop_notices(session, principal_id: str) -> None:
         )
 
 
-def _revoke(session, principal_id: str) -> None:
-    """Deactivate the account, free its username and email, revoke MCP credentials
-    and end sign-ins, and keep those rows.
+def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:
+    """Drop synced-team membership. A hand remove of that team is refused."""
+    if not _table(session, "team_memberships"):
+        return
+    # Imported here: teams pulls auth, and auth imports this module.
+    from core import teams
+
+    mapped = teams.mapped_team_ids(session)
+    if not mapped:
+        return
+    held = session.execute(
+        text("SELECT team_id FROM public.team_memberships WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).scalars()
+    for team_id in list(held):
+        if team_id in mapped:
+            teams.remove_member(
+                session, team_id, user_id, actor=trail.SYSTEM, by_mapping=True
+            )
+
+
+def _revoke(session, principal_id: str, *, reserve: bool = True) -> None:
+    """Deactivate the account, keep its username and email as keyed hashes
+    (``reserve``), free them, revoke MCP credentials
+    and blank their labels, drop its preferences, and end sign-ins, and keep the
+    other rows.
 
     The user row stays, and the principal is not marked deleted. Deactivating
     is what stops the password signing in again and the role being honoured.
     """
     if not _table(session, "users"):
         return
+    # Pushes waiting for a link to this account carry its names: read them first.
+    names = session.execute(
+        text(
+            "SELECT username, email, service_account FROM public.users"
+            " WHERE principal_id = :id"
+        ),
+        {"id": principal_id},
+    ).first()
+    # A service account's names are made up, and an erased one is already placeholders.
+    if (
+        names
+        and reserve
+        and not names.service_account
+        and not is_erased(names.username, principal_id)
+    ):
+        identity.reserve(session, names.username, names.email)
+    if names and _table(session, "directory_pending"):
+        session.execute(
+            text("""
+                DELETE FROM public.directory_pending
+                WHERE lower(username) IN (lower(:u), lower(:e))
+                   OR lower(email) IN (lower(:u), lower(:e))
+                """),
+            {"u": names.username, "e": names.email},
+        )
     free_identifiers(session, principal_id)
     user_id = session.execute(
         text(
@@ -495,8 +685,12 @@ def _revoke(session, principal_id: str) -> None:
         return
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
+    drop_personal_rows(session, user_id)
     sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
-    for table in ("security_keys", "sso_links"):
+    # A synced team refuses a hand remove. Leave it here, while the user row
+    # still answers remove_member, before the group rows that named them are gone.
+    _leave_mapped_teams(session, principal_id, user_id)
+    for table in ("security_keys", "sso_links", "directory_group_members"):
         if _table(session, table):
             # {table} is one of the fixed names above.
             session.execute(
@@ -557,10 +751,20 @@ def _check_writable() -> None:
         raise RetentionError(f"the erasure list is not writable: {path}") from exc
 
 
+def _check_key() -> None:
+    """Refuse before blanking when the username and email can't be hashed: the
+    originals are overwritten, so nothing could be hashed later."""
+    try:
+        key_ring.current("identifier")
+    except key_ring.KeyRingError as exc:
+        raise RetentionError(f"the identifier key can't be read: {exc}") from exc
+
+
 def _blocked() -> Optional[str]:
     """Why an erasure can't be recorded now, or None."""
     try:
         _check_writable()
+        _check_key()
     except RetentionError as exc:
         return str(exc)
     return None
@@ -627,8 +831,10 @@ def _exists(session, principal_id: str) -> bool:
     )
 
 
-def _managers(session, *, active_only: bool) -> set[str]:
-    """Principals whose role holds ``audit.manage``.
+def _managers(
+    session, *, active_only: bool, permission: str = "audit.manage"
+) -> set[str]:
+    """Principals whose role holds ``permission`` (``audit.manage``).
 
     ``active_only`` is the last-manager guard. A disabled account still holds
     the permission, so erasing it waits seven days like any other holder. A
@@ -647,9 +853,9 @@ def _managers(session, *, active_only: bool) -> set[str]:
             WHERE p.deleted_at IS NULL
               AND p.kind = :person
               {active}
-              AND (r.permissions -> 'audit.manage') = 'true'::jsonb
+              AND (r.permissions -> :permission) = 'true'::jsonb
             """),
-        {"person": principals.PERSON},
+        {"person": principals.PERSON, "permission": permission},
     ).scalars()
     found = set(rows)
     if active_only:

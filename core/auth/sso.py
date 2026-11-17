@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
 import threading
 import uuid
@@ -33,6 +34,8 @@ from core.config import get_settings
 from core.secrets import get_secret
 from core.storage.models import SsoLink
 
+logger = logging.getLogger(__name__)
+
 COOKIE = "vigil_sso"
 LIFE = timedelta(minutes=5)
 TIMEOUT = 5.0
@@ -48,7 +51,13 @@ FAILED = "failed"
 DEACTIVATED = "deactivated"
 EMAIL_NOT_VERIFIED = "email_not_verified"
 NOT_PROVISIONED = "not_provisioned"
-CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED)
+# A break-glass account is never signed into through the provider (#4534).
+BREAK_GLASS_EMAIL = "break_glass_email"
+BREAK_GLASS_LINKED = "break_glass_linked"
+CODES = (
+    FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED,
+    BREAK_GLASS_EMAIL, BREAK_GLASS_LINKED,
+)  # fmt: skip
 
 
 class Refused(Exception):
@@ -84,10 +93,29 @@ def is_on(current: Optional[sso_settings.SsoSettings] = None) -> bool:
     )
 
 
+_broken_logged = False
+
+
 def required(current: Optional[sso_settings.SsoSettings] = None) -> bool:
-    """Require single sign-on in force: on, and SSO itself working, so a broken row locks nobody out."""
+    """Require single sign-on in force: the stored setting alone.
+
+    It stays in force while SSO itself is broken (its secret unreadable), so a
+    fault never lets passwords back in. Break-glass accounts and the host's
+    ``python -m core.auth.require_sso_off`` are the way back (#4532, #4286).
+    """
+    global _broken_logged
     s = current or sso_settings.settings()
-    return bool(s.require_sso and is_on(s))
+    if s.require_sso and not is_on(s):
+        if not _broken_logged:
+            logger.error(
+                "Require single sign-on is on but single sign-on can't be used "
+                "(client secret unreadable?): only break-glass accounts can sign "
+                "in. Re-save the client secret, or run python -m core.auth.require_sso_off"
+            )
+        _broken_logged = True
+    elif s.require_sso:
+        _broken_logged = False
+    return s.require_sso
 
 
 # The one detail a refused password sign-in gets while it is required.
@@ -289,6 +317,16 @@ def groups_of(claims: dict, claim: str) -> Optional[list[str]]:
 
 def linked_principals(session: Session) -> set[str]:
     return {pid for (pid,) in session.query(SsoLink.principal_id).all()}
+
+
+def sso_only(session: Session, user) -> bool:
+    """No local password and linked to a provider: it signs in only through SSO."""
+    if user.password_hash:
+        return False
+    q = session.query(SsoLink.principal_id).filter(
+        SsoLink.principal_id == user.principal_id
+    )
+    return q.first() is not None
 
 
 def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:

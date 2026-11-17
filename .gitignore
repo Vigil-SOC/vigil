@@ -256,7 +256,8 @@ claude_analysis_*.txt
 # Autostart list, written by Settings -> Services (see services/autostart_config.py)
 .vigil-autostart
 
-# Local tooling artifacts / personal MCP config
+# Local tooling artifacts / personal MCP config. This rule also drops a plugin's
+# .mcp.json, so clients/claude-code declares its server in plugin.json instead.
 .mcp.json
 index.scip
 index.scip.stamp
@@ -302,6 +303,9 @@ index.scip.stamp
 
 # Repo-local uv install, created by scripts/lib.sh when the host has no uv.
 /.uv/
+
+# Pinned MCP connectors start.sh installs from infra/docker/mcp-packages.
+/.mcp/
 
 # Timestamped .env copies left by setup and migration scripts.
 .env.*

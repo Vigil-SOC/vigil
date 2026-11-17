@@ -82,7 +82,7 @@ except Exception:
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
-from core.agents.operator_manifest import operator_request
+from core.agents.operator_manifest import added_request, operator_request
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
@@ -335,6 +335,37 @@ def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
     return username, principal
 
 
+def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
+    """What the daily gaps run's intake handed the investigation it launched: no
+    Case, and its gap proposals. None for any other run, or when the row is gone.
+
+    A restart of a gaps run queues it as one, so it opens no Case and the rules it
+    saves still attach to the gaps it was handed.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    with get_db_manager().session_scope() as session:
+        row = (
+            session.query(IntakeTrigger)
+            .filter(
+                IntakeTrigger.investigation_id == investigation_id,
+                IntakeTrigger.kind == "schedule",
+            )
+            .order_by(IntakeTrigger.id.desc())
+            .first()
+        )
+        payload = row.payload if row is not None else None
+    if not isinstance(payload, dict) or not payload.get("no_case"):
+        return None
+    return {
+        "no_case": True,
+        "gap_proposal_ids": [
+            i for i in payload.get("gap_proposal_ids") or () if isinstance(i, str) and i
+        ],
+    }
+
+
 def _stamp_phases(context: Dict[str, Any], workflow_id: str, workflows) -> None:
     """The phase agents as the definition names them now, stored on the run."""
     from core.agents.attribution import phase_actors
@@ -486,6 +517,16 @@ def insert_intake_trigger(
         return None
 
 
+def _note_gap_run(proposal_ids: List[str], run_id: str) -> None:
+    """Record on the gaps run's proposals the run they were handed to."""
+    from core.detections.engineering import proposals
+
+    try:
+        proposals.gap_run_started(proposal_ids, run_id)
+    except Exception as exc:  # noqa: BLE001 -- the run starts without the record
+        logger.warning("could not record run %s on its gap proposals: %s", run_id, exc)
+
+
 def insert_not_offered(*, finding_id: str, priority: str, reason: str) -> None:
     """Put the gate's no on the ledger. The row is never queued, so nothing drains it.
 
@@ -522,7 +563,6 @@ class CaseSpec:
     finding_ids: List[str]
     priority: str
     case_id: Optional[str] = None
-    mitre_techniques: Optional[List[str]] = None
 
 
 def _new_case_id() -> str:
@@ -545,6 +585,8 @@ def _human_ask_case_title(
 # rather than by a column. A uuid5 of the suffixed id rather than a suffixed uuid:
 # agent_events.run_id is a uuid column and would refuse the string.
 SHADOW_HYPOTHESIS_FILE = "shadow_hypothesis.txt"
+# The detection proposals the daily gaps run opened for the run it queued.
+GAP_PROPOSALS_FILE = "gap_proposals.json"
 
 
 def shadow_run_id_for(investigation_id: str) -> str:
@@ -597,7 +639,6 @@ def _mint_case(session, spec: CaseSpec) -> str:
         status="open",
         priority=spec.priority,
         timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
-        mitre_techniques=spec.mitre_techniques or None,
         finding_ids=spec.finding_ids,
     )
     return case.case_id
@@ -789,6 +830,7 @@ class Orchestrator:
             "_intake_loop": self._intake_loop,
             "_supervision_loop": self._supervision_loop,
             "_distil_loop": self._distil_loop,
+            "_run_retry_loop": self._run_retry_loop,
         }
         tasks = []
         for name, loop in loops.items():
@@ -1105,6 +1147,11 @@ class Orchestrator:
             item["priority"] = row.get("priority") or item.get("priority") or "medium"
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
+            else:
+                # Only the daily gaps run hands a run its gap proposals, and only it
+                # runs with no Case.
+                item.pop("gap_proposal_ids", None)
+                item.pop("no_case", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1168,13 +1215,13 @@ class Orchestrator:
         findings = [f for f in map(_load_finding, finding_ids) if f]
 
         mint = None
-        if not case_id:
+        # The daily gaps run keeps its record on the run and its detection
+        # proposals; every other intake with no case_id gets a Case of its own.
+        if not case_id and not item.get("no_case"):
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
                 finding_ids=list(finding_ids),
                 priority=item.get("priority") or "medium",
-                # The daily gaps run names the techniques its Case is about.
-                mitre_techniques=list(item.get("case_techniques") or []) or None,
             )
 
         await self._create_investigation(
@@ -1190,6 +1237,7 @@ class Orchestrator:
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
             document=item.get("document"),
+            gap_proposal_ids=item.get("gap_proposal_ids"),
         )
 
     async def _create_investigation(
@@ -1205,6 +1253,7 @@ class Orchestrator:
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
         document: Optional[str] = None,
+        gap_proposal_ids: Optional[List[str]] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -1248,6 +1297,12 @@ class Orchestrator:
         if hypothesis and hypothesis_subjects:
             self.workdir.write_file(
                 inv_id, "hypothesis_subjects.json", json.dumps(hypothesis_subjects)
+            )
+        # The daily gaps run's proposals, read back at enqueue onto the run's
+        # trigger_context, where a rule the run saves finds the gap it answers.
+        if gap_proposal_ids:
+            self.workdir.write_file(
+                inv_id, GAP_PROPOSALS_FILE, json.dumps(list(gap_proposal_ids))
             )
         # The shadow run's one hypothesis, derived here where the finding is in
         # hand and read back at enqueue, which sees only ids. Only a detection
@@ -1541,6 +1596,12 @@ class Orchestrator:
         declared = self._read_sidecar_json(inv_id, "hypothesis_subjects.json")
         return {} if declared is None else kept_subjects(declared, stated)
 
+    def _gap_proposal_ids(self, inv_id: str) -> List[str]:
+        held = self._read_sidecar_json(inv_id, GAP_PROPOSALS_FILE)
+        if not isinstance(held, list):
+            return []
+        return [i for i in held if isinstance(i, str) and i]
+
     # normalise_keys carries the absent, the non-list and the unusable to the same
     # empty answer, which is what a run that recalls nothing is.
     def _recall_keys(self, inv_id: str) -> List[str]:
@@ -1624,6 +1685,9 @@ class Orchestrator:
                     case_id = inv_record.get("case_id")
                     if case_id:
                         context["case_id"] = case_id
+                    gap_proposal_ids = self._gap_proposal_ids(inv_id)
+                    if gap_proposal_ids:
+                        context["gap_proposal_ids"] = gap_proposal_ids
                     _stamp_phases(context, inv_record["workflow_id"], self._workflows)
                     row = runs.begin_run(
                         run_id=run_id,
@@ -1640,6 +1704,8 @@ class Orchestrator:
                     )
                     if row is None:
                         logger.warning("no workflow_runs row for %s", run_id)
+                    elif gap_proposal_ids:
+                        _note_gap_run(gap_proposal_ids, run_id)
                 else:
                     logger.info("run %s already recorded; not rewriting", run_id)
             except Exception as exc:  # noqa: BLE001 — a refused row still enqueues
@@ -1656,7 +1722,14 @@ class Orchestrator:
             job = build_start_job(
                 run_id,
                 run_kind,
-                {**request, **operator_request(workflow.metadata if workflow else {})},
+                {
+                    **request,
+                    **await asyncio.to_thread(
+                        operator_request,
+                        workflow.metadata if workflow else {},
+                        run_kind,
+                    ),
+                },
                 enqueued_by=started_by or "orchestrator",
                 principal=token,
                 actor=actor,
@@ -1779,7 +1852,8 @@ class Orchestrator:
         job = build_start_job(
             shadow_id,
             "adjudicate",
-            shadow,
+            # The skills an operator added ride the job, not the trail entry.
+            {**shadow, **await asyncio.to_thread(added_request, "adjudicate")},
             enqueued_by=started_by or "orchestrator",
             principal=token,
             actor=actor,
@@ -2007,6 +2081,78 @@ class Orchestrator:
                 logger.error(f"Distil loop error: {e}", exc_info=True)
 
             await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _run_retry_loop(self, shutdown_event: asyncio.Event):
+        """Run again each case investigation that failed for a passing reason."""
+        while not shutdown_event.is_set():
+            try:
+                # A dry run opens no runs, so a retry would never stop being due.
+                if self._enabled and not self.config.dry_run:
+                    settings = get_settings()
+                    await self._run_retry_tick(
+                        timedelta(seconds=settings.case_run_retry_after_seconds),
+                        settings.case_run_retries,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Run retry loop error: {e}", exc_info=True)
+
+            await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _run_retry_tick(self, after: timedelta, attempts: int) -> int:
+        """Launch again each case investigation that failed for a passing reason
+        (core/cases/run_retry.py), through the same path intake uses, while there
+        is capacity and budget."""
+        from core.cases.run_retry import note_retry, retries_due
+
+        def due():
+            with get_db_manager().session_scope() as session:
+                return retries_due(session, after, attempts)
+
+        launched = 0
+        for item in await asyncio.to_thread(due):
+            if self._running() >= self.config.max_concurrent_agents:
+                break
+            if self._hourly_budget_exhausted():
+                break
+            findings = [
+                lift_ai_enrichment(f)
+                for f in await asyncio.to_thread(
+                    lambda: [_load_finding(i) for i in item["finding_ids"]]
+                )
+                if f
+            ]
+            if not findings:
+                continue
+            workflow_id = item["workflow_id"]
+            if not is_enabled(workflow_id):
+                workflow_id = FALLBACK_WORKFLOW
+            await self._create_investigation(
+                workflow_id=workflow_id,
+                findings=findings,
+                trigger_type="finding",
+                priority=item["priority"],
+                case_id=item["case_id"],
+                shutdown_event=self._shutdown_event,
+            )
+
+            def note():
+                with get_db_manager().session_scope() as session:
+                    note_retry(session, item)
+
+            try:
+                await asyncio.to_thread(note)
+            except Exception:  # noqa: BLE001 — the run launched either way
+                logger.warning("could not note the retry on %s", item["case_id"])
+            logger.info(
+                "Case %s run %s failed (%s); launched again",
+                item["case_id"],
+                item["run_id"],
+                str(item["reason"])[:120],
+            )
+            launched += 1
+        return launched
 
     async def _case_distil_tick(self):
         """Turn closed Cases into Verdicts (#733).

@@ -19,6 +19,7 @@ from core.storage.models.ai import (
 from core.storage.models.auth import (
     AuthLink,
     BreachedPassword,
+    IdentifierReservation,
     McpCredential,
     Principal,
     Role,
@@ -71,6 +72,11 @@ from core.storage.models.detection_rule import (
     DetectionRuleVersion,
     SiemSearch,
 )
+from core.storage.models.directory import (
+    DirectoryGroup,
+    DirectoryGroupMember,
+    DirectoryPending,
+)
 from core.storage.models.episodic import (
     EpisodicDistilFailure,
     EpisodicDistilMarker,
@@ -87,7 +93,7 @@ from core.storage.models.medic import (
     MedicLastSeen,
     MedicWatchState,
 )
-from core.storage.models.skill import SkillRead
+from core.storage.models.skill import SkillInstall, SkillRead, SkillScan
 from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -136,6 +142,9 @@ __all__ = [
     "DETECTION_RULE_STATUSES",
     "DetectionProposal",
     "DetectionProposalEvent",
+    "DirectoryGroup",
+    "DirectoryGroupMember",
+    "DirectoryPending",
     "DetectionRule",
     "DetectionRuleCheckChange",
     "DetectionRuleStage",
@@ -165,6 +174,7 @@ __all__ = [
     "LLMInteractionLog",
     "LLMProviderConfig",
     "BreachedPassword",
+    "IdentifierReservation",
     "McpCredential",
     "Principal",
     "SiemSearch",
@@ -180,7 +190,9 @@ __all__ = [
     "SLAPolicy",
     "SharedIOC",
     "SketchMapping",
+    "SkillInstall",
     "SkillRead",
+    "SkillScan",
     "SystemConfig",
     "Team",
     "TeamMembership",

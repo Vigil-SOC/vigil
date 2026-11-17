@@ -373,6 +373,33 @@ async def post_fix(
     return err or _passthrough(r)
 
 
+@router.post("/fix-level")
+async def post_fix_level(
+    request: Request,
+    user: User = Depends(require_person_permission(MEDIC_ADMIN_PERMISSION)),
+) -> Response:
+    """Raise one step (with a reason) or lower a fix type's level. The admin is the session."""
+    admin = f"user:{user.user_id}"
+    if not _ADMIN_LABEL.fullmatch(admin):
+        return _problem(422, "missing_admin_identity")
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != (
+        "application/json"
+    ):
+        return _problem(415, "unsupported_media_type")
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > _MAX_FEEDBACK:
+            return _problem(413, "payload_too_large")
+    r, err = await _call(
+        "POST",
+        "/v1/fix-level",
+        extra_headers={"X-Medic-Admin": admin, "Content-Type": "application/json"},
+        content=body,
+    )
+    return err or _passthrough(r)
+
+
 @router.get("/decisions", dependencies=[_read])
 async def list_decisions(request: Request) -> Response:
     params, err = _query(request, _DECISION_QUERY)

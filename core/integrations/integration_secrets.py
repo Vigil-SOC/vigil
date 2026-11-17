@@ -217,6 +217,7 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
         # processes receive the value as POSTGRES_PASSWORD, so Python does not.
         "POSTGRES_APP_PASSWORD",
         "POSTGRES_PASSWORD",
+        "SHELL_TOKEN",
         "SHODAN_API_KEY",
         "SLACK_BOT_TOKEN",
         "SMTP_PASSWORD",

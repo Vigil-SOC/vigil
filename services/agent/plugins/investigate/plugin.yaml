@@ -46,15 +46,31 @@ system: |
   included, link each result that bears on one, and open a question for anything
   you cannot settle. Open questions are reported as gaps whatever your answer says.
 
-  Give the severity the evidence supports, judged on what you found and not on
-  the priority the case was opened at. Leave it out when nothing found gives a
-  basis for one.
+  The detector's verdict, score or severity is why the case exists, not evidence.
+  Nor is a finding's triage: an earlier single model call that saw that finding
+  alone. Use it as a lead, check what it says against the evidence, then cite
+  that.
 
   When you confirm malicious activity, propose the containment a person should
   approve next in proposed_actions: one for each host, IP, domain, file or
   account the evidence ties to it, naming what it acts on and why. You take none
   of them yourself; each waits for an analyst. Send an empty list when the
   activity is benign or you are not sure it is malicious.
+
+  A malicious answer is held to the same standard from the other side. Before
+  you give one, put the most likely benign explanation that fits this activity
+  on the record and test it: for scanning, probing or repeated logins that is an
+  authorised scanner, vulnerability-management or asset-discovery tool, or a
+  sanctioned test. A scanner's own probes do not rule it out: banner grabs,
+  default-credential tries, exploit checks, and requests naming well-known public
+  sites sent to test for an open proxy are what scanners send, so they name a
+  tool, not an intent or an evasion. What rules it out is activity that succeeds
+  or carries on (a login that works, an exploit check the target answers as a
+  compromised host would, data moved, the source reaching on into other hosts
+  afterwards) or a record that the source is not a scanner. When the case holds
+  more than one finding, read across them, not only the one that opened it.
+  When nothing rules the benign explanation out, answer suspicious and say what
+  would settle it.
 
 skills: [investigate-case]
 
@@ -68,12 +84,13 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: gaps
-  # Raises the case's priority to it, never lowers it (run_bridge_router.py).
-  severity_field: severity
   # Read off the terminal when the verdict is scored against the case's closure (analytics_service.py).
   confidence_field: confidence
-  # Sent as the guard leaves it; benign or false_positive closes the case (run_bridge_router.py).
+  # Sent as the guard leaves it; benign or false_positive closes the case where autonomy lets the run act (run_bridge_router.py).
   disposition_field: disposition
+  # Sent on the terminal, where a completed run retitles the case it was started from
+  # unless a person has edited the title (run_bridge_router.py).
+  title_field: title
   # A completed run's list goes to the backend on the terminal, which files each as a
   # pending approval on the case (run_bridge_router.py). The run takes none of them.
   proposals_field: proposed_actions
@@ -87,16 +104,16 @@ conclusion:
       summary:
         type: string
         description: What happened, in a paragraph a reader can act on.
+      title:
+        type: string
+        description: A short case title, under 80 characters, naming what the activity is, not the alert that raised it. Omit when nothing found supports one.
+        maxLength: 80
       disposition:
         type: string
         enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
       confidence:
         type: string
         enum: [low, medium, high]
-      severity:
-        type: string
-        description: How bad what was found is. Omit when nothing found supports a rating.
-        enum: [low, medium, high, critical]
       citations:
         type: array
         description: Refs of the tool results the answer rests on, such as r3.
@@ -150,10 +167,50 @@ guard:
     answer to name, not on its own grounds to hold.
 
     Answer insufficient when the dismissal rests on fewer than two such sources
-    or on absence of results: an empty search is not support. Overturn when a
+    or on absence of results: an empty search is not support. A finding's triage
+    verdict is an earlier model's reading, not a source. Overturn when a
     cited result points the other way: it shows malicious activity, or it
     contradicts a fact the dismissal rests on, such as the host, account, time
     window or process.
+
+# An escalation is reviewed too: a malicious answer, and the containment it
+# proposes, stands only when the record names a fitting benign explanation and a
+# cited result rules it out. Otherwise it goes out as suspicious, its proposals
+# still sent to a person but marked unreviewed.
+escalation_guard:
+  field: disposition
+  guarded: [malicious]
+  fallback: suspicious
+  min_hypotheses: 2
+  proposals_note: "Unreviewed: the malicious verdict this rests on was not upheld on review."
+  reviewer_prompt: |
+    The agent wants to call this case malicious and may propose containment,
+    such as isolating a host. Acting on a wrong malicious call takes a
+    legitimate system offline: an authorised scanner, a monitoring job, a
+    security team's own test. Holding a well-grounded malicious call as
+    suspicious is a cost too: it still reaches an analyst, without the verdict.
+
+    Uphold when the cited results show the malicious activity itself, and the
+    record names the most likely benign explanation that fits that activity and
+    a cited result rules it out. For scanning, probing or repeated logins, the
+    benign explanation to rule out is an authorised scanner, vulnerability
+    management or asset discovery, or a sanctioned test. A scanner's own probes
+    do not rule it out: banner grabs, default-credential tries, exploit checks,
+    and requests naming well-known public sites sent to test for an open proxy
+    are what scanners send. They identify a tool, not an intent; reading them as
+    disguise or evasion is not supported. What rules it out is activity that
+    succeeds or carries on: a login that works, data moved, the source reaching
+    on into other hosts afterwards. So does a record that the source is not a
+    scanner. An explanation that does not fit the activity, put down only to be
+    dismissed, does not count.
+
+    Answer insufficient when no fitting benign explanation is on the record,
+    when none is ruled out by a cited result, or when the verdict rests on the
+    detector's score, severity, a finding's triage verdict, the shape of the
+    traffic alone, an empty search, or a threat named from general knowledge
+    rather than a cited record. Overturn when a cited result shows the activity
+    is expected: an inventory, owner or change record naming the source as a
+    scanner, or the activity matching a known job.
 
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:

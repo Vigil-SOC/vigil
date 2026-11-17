@@ -40,6 +40,7 @@ from sqlalchemy import text
 
 from core.audit import narrow, retention, trail
 from core.config import get_settings
+from core.platform.notices import send_notices
 from core.secrets_manager import delete_secret, get_secret, set_secret
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager, get_db_session
@@ -177,6 +178,44 @@ def _when(value) -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Keys a host recovery writes into ``personal``. Other actions keep an email
+# there, and that must not leave on this path.
+_HOST_CEF = (
+    ("reason", "reason", None),
+    ("identity_confirmed_by", "cs3", "verification"),
+    ("verification_note", "cs4", "verificationNote"),
+    ("os_user", "cs5", "osUser"),
+    ("invoking_user", "cs6", "invokingUser"),
+    ("host", "shost", None),
+)
+
+
+def _personal_dict(row: dict) -> dict:
+    raw = row.get("personal")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _host_recovery(row: dict) -> list[str]:
+    """The host-recovery strings in ``personal``, as CEF extension fields."""
+    personal = _personal_dict(row)
+    if "os_user" not in personal and "identity_confirmed_by" not in personal:
+        return []
+    parts: list[str] = []
+    for key, field, label in _HOST_CEF:
+        value = personal.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        parts.append(f"{field}={_esc(value)}")
+        if label:
+            parts.append(f"{field}Label={label}")
+    return parts
+
+
 def cef(row: dict) -> bytes:
     """One RFC 5424 syslog message whose MSG is a CEF record of ``row``."""
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
@@ -207,6 +246,8 @@ def cef(row: dict) -> bytes:
     if row.get("operator_text"):
         parts.append(f"cs2={_esc(str(row['operator_text']))}")
         parts.append("cs2Label=operatorText")
+    # Host recovery keeps the reason beside the hash, not in the payload.
+    parts.extend(_host_recovery(row))
     msg = json.dumps(payload, separators=(",", ":"), default=str)
     if len(msg) > _MSG_MAX:
         msg = msg[: _MSG_MAX - 1] + "…"
@@ -268,6 +309,8 @@ def _tx() -> Iterator:
     try:
         with session.begin():
             yield session
+        # Notices a failure queued are emailed once it has committed.
+        send_notices(session.info.pop("notices", []))
     finally:
         session.close()
 
@@ -452,6 +495,24 @@ def pause_after_restore(session, seq: int) -> None:
     )
 
 
+def _tell_failed(session, what: str) -> None:
+    """Once per failure (the caller's ``failing`` check): tell the trail's
+    administrators. Best effort: the failure is marked either way."""
+    try:
+        with session.begin_nested():
+            ids = trail.tell_administrators(
+                session,
+                "audit_feed_failed",
+                f"The audit {what} failed",
+                f"The audit {what} started failing at "
+                f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC. Open "
+                "Settings › Audit to see the error.",
+            )
+        session.info.setdefault("notices", []).extend(ids)  # emailed by _tx
+    except Exception:  # noqa: BLE001
+        logger.exception("could not tell the trail's administrators of a failure")
+
+
 def _fail(session, state: State, error: str) -> None:
     if not state.failing:
         trail.append(
@@ -460,6 +521,7 @@ def _fail(session, state: State, error: str) -> None:
             gated=False,
         )
         state.failing = True
+        _tell_failed(session, "feed")
     session.execute(_MARK_FAIL, {"error": error})
 
 
@@ -488,6 +550,10 @@ def maintenance_and_send(
         trail.drain_late(session)
         trail.close_windows(session)
         retention.apply_due(session, wall)
+        # Emailed by _tx once this commits.
+        session.info.setdefault("notices", []).extend(
+            retention.sweep_reservations(session, wall)
+        )
         _checkpoint(session, state)
         state.history_offset = _import_history(session, state.history_offset)
         session.execute(
@@ -692,6 +758,7 @@ def health(session) -> dict:
     tip = trail.current_tip(session) if trail.trail_ready(session) else trail.Tip(0, "")
     delivered = row["last_delivered_seq"] if row else None
     behind = max(0, tip.seq - (delivered or 0))
+    held, held_since = trail.held_waiting(session)
     return {
         "enabled": dest.enabled,
         "host": dest.host,
@@ -705,6 +772,8 @@ def health(session) -> dict:
         "tip_seq": tip.seq,
         "unconfirmed": unconfirmed,
         "paused": paused,
+        "held": held,
+        "held_since": _iso(held_since),
     }
 
 
@@ -941,6 +1010,7 @@ def _hook_fail(session, state: HookState, error: str, pending: Optional[int]) ->
             },
             gated=False,
         )
+        _tell_failed(session, "webhook")
     session.execute(
         text("""
             UPDATE public.audit_webhook_state

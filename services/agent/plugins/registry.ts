@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
-import { CONFIDENCES, SEVERITIES } from "../contracts/events.js";
+import { CONFIDENCES, DISPOSITIONS } from "../contracts/events.js";
 
 // A plugin is a directory holding plugin.yaml; its skills come from the repo's one library,
 // core/skills/library, resolved against the package: dist/skills in the image, else three levels up.
@@ -38,15 +38,26 @@ export function operatorPlugin(text: unknown, carried: unknown): PluginManifest 
   return parsePlugin(text, [...carriedSkills(carried), ...loadSkills(SKILLS)], OPERATOR_MANIFEST, { operator: true });
 }
 
-export function carriedSkills(value: unknown): SkillSpec[] {
+export function carriedSkills(value: unknown, of: string = OPERATOR_MANIFEST): SkillSpec[] {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new SpecError(`${OPERATOR_MANIFEST}: skills must be a list`);
+  if (!Array.isArray(value)) throw new SpecError(`${of}: skills must be a list`);
   return value.map((one: unknown, i) => {
-    if (typeof one !== "object" || one === null) throw new SpecError(`${OPERATOR_MANIFEST}: skill ${i} must be a mapping`);
+    if (typeof one !== "object" || one === null) throw new SpecError(`${of}: skill ${i} must be a mapping`);
     const raw = one as Record<string, unknown>;
-    const where = `${OPERATOR_MANIFEST}: skill ${i}`;
+    const where = `${of}: skill ${i}`;
     return { name: text_(raw, "name", where), description: text_(raw, "description", where), body: text_(raw, "body", where) };
   });
+}
+
+// The skills an operator added, carried on a start job: resolved Python-side, with
+// the ones a content scan holds already left out. Every run is offered them beside
+// its plugin's own, which win a name clash.
+export const ADDED_SKILLS = "added_skills";
+
+export function withAddedSkills(plugin: PluginManifest, carried: unknown): PluginManifest {
+  const own = new Set(plugin.skills.map((skill) => skill.name));
+  const added = carriedSkills(carried, ADDED_SKILLS).filter((skill) => !own.has(skill.name) && own.add(skill.name));
+  return added.length === 0 ? plugin : { ...plugin, skills: [...plugin.skills, ...added] };
 }
 
 export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml", options: { operator?: boolean } = {}): PluginManifest {
@@ -72,15 +83,21 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
 
   const conclusion = conclusionOf(raw["conclusion"], where);
   const guard = raw["guard"] === undefined ? undefined : guardOf(raw["guard"], conclusion, where);
-  // A dismissal closes the case without the ceiling, so a verdict that can dismiss
-  // must pass the reviewer's second look first.
+  const escalation_guard = raw["escalation_guard"] === undefined ? undefined : guardOf(raw["escalation_guard"], conclusion, `${where}: escalation_guard`);
+  // One answer, one reviewer: a value both guards claim would be read by whichever came first.
+  if (guard !== undefined && escalation_guard !== undefined && guard.field === escalation_guard.field) {
+    const both = escalation_guard.guarded.filter((one) => guard.guarded.includes(one));
+    if (both.length > 0) throw new SpecError(`${where}: ${both.join(", ")} is guarded by both guard and escalation_guard`);
+  }
+  // A dismissal closes the case with no person looking where autonomy lets the run
+  // act, so a verdict that can dismiss must pass the reviewer's second look first.
   if (isStructured(conclusion) && conclusion.disposition_field !== undefined) {
     const field = conclusion.disposition_field;
     const allowed = ((conclusion.schema["properties"] as Record<string, { enum?: unknown }>)[field]?.enum ?? []) as unknown[];
     // Both, when the enum holds both; a guard may not name a value outside the enum.
     const dismissals = ["benign", "false_positive"].filter((one) => allowed.includes(one));
     if (dismissals.length > 0 && (guard?.field !== field || !dismissals.every((one) => guard.guarded.includes(one)))) {
-      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which closes a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
+      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which can close a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
     }
   }
   const max_turns = raw["max_turns"];
@@ -113,6 +130,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     skills,
     conclusion,
     ...(guard === undefined ? {} : { guard }),
+    ...(escalation_guard === undefined ? {} : { escalation_guard }),
     ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
     ...(record === undefined ? {} : { record }),
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
@@ -152,20 +170,13 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
   const summary_field = text_(raw, "summary_field", `${where}: conclusion`);
   const citations_field = raw["citations_field"] === undefined ? undefined : text_(raw, "citations_field", `${where}: conclusion`);
   const open_questions_field = raw["open_questions_field"] === undefined ? undefined : text_(raw, "open_questions_field", `${where}: conclusion`);
-  const severity_field = raw["severity_field"] === undefined ? undefined : text_(raw, "severity_field", `${where}: conclusion`);
   const confidence_field = raw["confidence_field"] === undefined ? undefined : text_(raw, "confidence_field", `${where}: conclusion`);
   const disposition_field = raw["disposition_field"] === undefined ? undefined : text_(raw, "disposition_field", `${where}: conclusion`);
+  const title_field = raw["title_field"] === undefined ? undefined : text_(raw, "title_field", `${where}: conclusion`);
   const proposals_field = raw["proposals_field"] === undefined ? undefined : text_(raw, "proposals_field", `${where}: conclusion`);
   // A field the schema never asks for is one the run can never fill.
-  for (const field of [summary_field, citations_field, open_questions_field, severity_field, confidence_field, disposition_field, proposals_field]) {
+  for (const field of [summary_field, citations_field, open_questions_field, confidence_field, disposition_field, title_field, proposals_field]) {
     if (field !== undefined && !(field in properties)) throw new SpecError(`${where}: conclusion names ${field}, which the schema does not declare`);
-  }
-  // Rated in case priorities, so the far side applies it without a mapping.
-  if (severity_field !== undefined) {
-    const allowed = (properties[severity_field] as { enum?: unknown } | undefined)?.enum;
-    if (!Array.isArray(allowed) || !allowed.every((one) => (SEVERITIES as readonly unknown[]).includes(one))) {
-      throw new SpecError(`${where}: ${severity_field} must be an enum drawn from ${SEVERITIES.join(", ")}`);
-    }
   }
   if (confidence_field !== undefined) {
     const allowed = (properties[confidence_field] as { enum?: unknown } | undefined)?.enum;
@@ -173,14 +184,21 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
       throw new SpecError(`${where}: ${confidence_field} must be an enum drawn from ${CONFIDENCES.join(", ")}`);
     }
   }
+  // Exact words only, so the dismissal guard below sees every value that can close a case.
+  if (disposition_field !== undefined) {
+    const allowed = (properties[disposition_field] as { enum?: unknown } | undefined)?.enum;
+    if (!Array.isArray(allowed) || !allowed.every((one) => (DISPOSITIONS as readonly unknown[]).includes(one))) {
+      throw new SpecError(`${where}: ${disposition_field} must be an enum drawn from ${DISPOSITIONS.join(", ")}`);
+    }
+  }
   return {
     schema: schema as Record<string, unknown>,
     summary_field,
     ...(citations_field === undefined ? {} : { citations_field }),
     ...(open_questions_field === undefined ? {} : { open_questions_field }),
-    ...(severity_field === undefined ? {} : { severity_field }),
     ...(confidence_field === undefined ? {} : { confidence_field }),
     ...(disposition_field === undefined ? {} : { disposition_field }),
+    ...(title_field === undefined ? {} : { title_field }),
     ...(proposals_field === undefined ? {} : { proposals_field }),
   };
 }
@@ -203,8 +221,24 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
       if (!allowed.has(one)) throw new SpecError(`${where}: guard value ${one} is not in ${field}'s enum`);
     }
   }
+  // A held dismissal must land somewhere that keeps the case open.
+  if (field === conclusion.disposition_field && (fallback === "benign" || fallback === "false_positive")) {
+    throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which can close the case`);
+  }
   if (guarded.includes(fallback)) throw new SpecError(`${where}: guard.fallback ${fallback} is itself guarded`);
-  return { field, guarded, fallback, reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`) };
+  const min_hypotheses = raw["min_hypotheses"];
+  if (min_hypotheses !== undefined && (typeof min_hypotheses !== "number" || !Number.isInteger(min_hypotheses) || min_hypotheses < 1)) {
+    throw new SpecError(`${where}: guard.min_hypotheses must be a positive integer`);
+  }
+  const proposals_note = raw["proposals_note"] === undefined ? undefined : text_(raw, "proposals_note", `${where}: guard`);
+  return {
+    field,
+    guarded,
+    fallback,
+    reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`),
+    ...(min_hypotheses === undefined ? {} : { min_hypotheses: min_hypotheses as number }),
+    ...(proposals_note === undefined ? {} : { proposals_note }),
+  };
 }
 
 // SKILL.md: a front matter block naming the skill and saying what it is for, then

@@ -4,6 +4,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { HoldButton } from '../../shared/HoldButton'
 import { ConfirmDialog, EmptyState, Popup } from '../../shared/ui'
 import { utcDayClock } from '../../shared/utc'
+import { FixTypes } from './FixTypes'
 import type { PackFacts, PackState } from './medicTypes'
 import { safeText } from './safeText'
 import { importPack, packProblem, revertPack, switchToBundled, usePack } from './useMedic'
@@ -221,6 +222,8 @@ export function PackTab({ running, reloadStatus }: { running: boolean; reloadSta
         {pack.suppression_7d.length === 0 ? <p className="mdc-quiet">No incidents were suppressed.</p>
           : <ul className="mdc-list">{pack.suppression_7d.map((s) => <li key={s.rule}>{s.suppressed} incident{s.suppressed === 1 ? '' : 's'} suppressed by rule <span className="mdc-mono">{safeText(s.rule)}</span> (last 7 d)</li>)}</ul>}
       </section>
+
+      <FixTypes types={pack.fix_types} admin={admin} onChanged={(next) => set({ ...pack, fix_types: (pack.fix_types ?? []).map((f) => (f.fix_type === next.fix_type ? next : f)) })} />
 
       <ConfirmDialog
         open={action === 'import'} danger={false} busy={busy} confirmLabel="Import pack"

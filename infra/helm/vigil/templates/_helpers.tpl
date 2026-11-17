@@ -95,6 +95,17 @@ Never the app Secret the chart templates itself.
 {{- end -}}
 
 {{/*
+Secret holding SHELL_TOKEN, chosen as vigil.mcpRunner.tokenSecret chooses.
+*/}}
+{{- define "vigil.agentShell.tokenSecret" -}}
+{{- if or .Values.secrets.existingSecret .Values.secrets.externalSecret.enabled -}}
+{{- include "vigil.secret.fullname" . -}}
+{{- else -}}
+{{- include "vigil.agentShell.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 MCP_RUNNER_URL and MCP_RUNNER_TOKEN for the backend and daemon; nothing when the
 runner is off. The token ref is optional so an existingSecret without the key
 leaves only the runner unready, not the app (the runner's own ref is required).
@@ -383,6 +394,11 @@ when the operator brings their own: that Secret must also hold this key.
 
 {{- define "vigil.postgres.appPasswordSecretKey" -}}
 POSTGRES_APP_PASSWORD
+{{- end -}}
+
+{{/* vigil_agent's password, in the same Secret. Only the agent pods and the upgrade Job get it. */}}
+{{- define "vigil.postgres.agentPasswordSecretKey" -}}
+POSTGRES_AGENT_PASSWORD
 {{- end -}}
 
 {{/*

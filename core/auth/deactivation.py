@@ -11,7 +11,7 @@ import logging
 from typing import Callable, Union
 from urllib.parse import quote
 
-from sqlalchemy import event, func, or_
+from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
 from core.auth import invites, mcp_credential_service, sign_ins, trail_events
@@ -119,19 +119,26 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
         .filter(Case.assignee == user.username, Case.status != "closed")
         .all()
     )
+    # Each open task with its case's reader lists: a task is read as its case is.
     tasks = (
-        session.query(func.count())
+        session.query(Case.reader_principal_ids, Case.reader_team_ids)
         .select_from(CaseTask)
+        .join(Case, Case.case_id == CaseTask.case_id)
         .filter(CaseTask.assignee == user.username, OPEN_TASKS)
-        .scalar()
+        .all()
     )
     if not (cases or tasks):
         return
 
-    def message(principal: str) -> str:
+    def message(principal: str) -> str | None:
         reader = case_reader_for(principal, session)
         shown = sum(1 for case in cases if may_read_case(case, reader))
-        return _work_message(user.username, shown, len(cases) - shown, tasks)
+        hidden = len(cases) - shown
+        # Tasks on a case they can't read are left out, not counted.
+        readable_tasks = sum(1 for task in tasks if may_read_case(task, reader))
+        if not (shown or hidden or readable_tasks):
+            return None  # nothing they may know of: no notice
+        return _work_message(user.username, shown, hidden, readable_tasks)
 
     link = f"/cases?owner={quote(user.username, safe='')}" if cases else None
     title = f"{user.username} was deactivated and owns open work"
@@ -168,11 +175,12 @@ def tell_managers(
     user: User,
     kind: str,
     title: str,
-    message: Union[str, Callable[[str], str]],
+    message: Union[str, Callable[[str], str | None]],
     **notice,
 ) -> None:
     """A notice about ``user`` to each manager, once ``session`` commits.
-    ``message`` may be worded per manager: a callable given their principal id."""
+    ``message`` may be worded per manager: a callable given their principal id,
+    which returns ``None`` for a manager who is not to be told."""
     # Read now: the row is expired once the commit has happened.
     about = user.principal_id
 
@@ -182,6 +190,8 @@ def tell_managers(
         for principal in managers(about):
             try:
                 text = message(principal) if callable(message) else message
+                if text is None:
+                    continue
                 notify(principal, kind, title, text, **notice)
             except Exception:  # noqa: BLE001 - the others are still told
                 logger.exception("could not send a %s notice to %s", kind, principal)

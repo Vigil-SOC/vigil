@@ -1,7 +1,8 @@
 """Single-use links: an invite (#4226) by which a person sets up their own
-account, and a password reset (#4227) for an existing one.
+account, a password reset (#4227) for an existing one, and a confirmation of
+an address the person changed themselves.
 
-One ``auth_links`` row per link, kind ``invite`` or ``reset``. Only the SHA-256 of a random value is stored; the value is shown once
+One ``auth_links`` row per link, kind ``invite``, ``reset`` or ``email``. Only the SHA-256 of a random value is stored; the value is shown once
 (the response, or the email) and never goes into a log, the trail or a notice.
 A link is used up by the submission that completes it, not by opening it.
 Nothing runs on a timer: an expired link is recorded on the trail the first time
@@ -17,17 +18,20 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func, update
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core.audit.retention import ERASED_PREFIX
 from core.audit.trail import SYSTEM
 from core.auth import trail_events
+from core.auth.identity import fold, sql_fold
 from core.auth.password_reset import RESET_TTL_SECONDS
 from core.storage.models import AuthLink
 from core.time import utcnow
 
-INVITE, RESET = "invite", "reset"
+INVITE, RESET, CONFIRM = "invite", "reset", "email"
+# A confirmation link's lifetime. Fixed, like an emailed invite.
+CONFIRM_TTL = timedelta(hours=24)
 EMAIL, COPY = "email", "copy"
 # A reset's channel says who asked for it. Only SELF, the self-service request,
 # is held to the minimum password age; sign-in's forced change, an
@@ -63,6 +67,11 @@ def username_problem(username: str) -> Optional[str]:
 def link_url(base: str, token: str) -> str:
     """The console URL that opens the accept screen for ``token``."""
     return f"{base.rstrip('/')}/accept-invite?token={token}"
+
+
+def confirm_link(base: str, token: str) -> str:
+    """The console URL that opens the email-confirmation screen for ``token``."""
+    return f"{base.rstrip('/')}/confirm-email?token={token}"
 
 
 def _open(session: Session, kind: str = INVITE):
@@ -110,7 +119,7 @@ def usable(row: Optional[AuthLink]) -> bool:
 
 def _about(row: AuthLink) -> tuple[Optional[dict], dict]:
     """The trail's beside-column and fields that name who a link is for."""
-    if row.kind == RESET:
+    if row.kind in (RESET, CONFIRM):
         return None, {"principal": row.principal_id}
     return {"personal": {"email": row.email}}, {}
 
@@ -168,7 +177,7 @@ def revoke(
 
 def open_for(session: Session, email: str, lock: bool = False) -> Optional[AuthLink]:
     """The email's open invite: at most one, by the table's unique index."""
-    query = _open(session).filter(func.lower(AuthLink.email) == email.casefold())
+    query = _open(session).filter(sql_fold(AuthLink.email) == fold(email))
     return (query.with_for_update() if lock else query).first()
 
 
@@ -213,10 +222,34 @@ def issue(
     return row, token
 
 
+def cancel_pending(session: Session, email: str, reason: str) -> None:
+    """An account is being created for ``email`` by a route other than accepting
+    its invite. The pending invite is moot, and its sender is told once that
+    commits — a refusal rolls the cancellation back and tells no one."""
+    if row := open_for(session, email, lock=True):
+        inviter, address = row.invited_by, row.email
+        revoke(session, row, SYSTEM, reason)
+        if inviter and address:
+            # deactivation imports this module at load, so these cannot be
+            # top-level: that cycle leaves when_committed undefined.
+            from core.auth.deactivation import when_committed
+            from core.platform.notices import notify
+
+            when_committed(
+                session,
+                lambda: notify(
+                    inviter,
+                    "invite_cancelled",
+                    "Invite cancelled",
+                    f"{address} now has an account.",
+                    link="/settings",
+                ),
+            )
+
+
 def revoke_for_sso(session: Session, email: str) -> None:
     """The address signed in through single sign-on: its pending invite is moot."""
-    if row := open_for(session, email, lock=True):
-        revoke(session, row, SYSTEM, "sso")
+    cancel_pending(session, email, "sso")
 
 
 # --- resets (#4227) ------------------------------------------------------------
@@ -248,11 +281,20 @@ def revoke_resets(
 
 
 def issue_reset(
-    session: Session, user, channel: str, actor: str, **trail: object
+    session: Session,
+    user,
+    channel: str,
+    actor: str,
+    *,
+    beside: Optional[dict] = None,
+    **trail: object,
 ) -> tuple[AuthLink, str]:
     """A one-hour reset link for ``user``. Returns the row and the value, which
     is not kept anywhere. It replaces the open ones, except that the account's
-    own request (or sign-in's) never cancels a link an administrator issued."""
+    own request (or sign-in's) never cancels a link an administrator issued.
+
+    ``beside`` is the columns erasure can blank (a host recovery's operator
+    name and the reason). ``trail`` is hashed, so it stays free of those strings."""
     own = (SELF, SIGNIN)
     revoke_resets(
         session,
@@ -279,6 +321,7 @@ def issue_reset(
     trail_events.record(
         session,
         "reset.sent",
+        beside,
         actor=actor,
         principal=user.principal_id,
         link_id=row.link_id,
@@ -291,3 +334,57 @@ def issue_reset(
 def forced(row: AuthLink) -> bool:
     """Whether the minimum password age is waived: anything but a self-service request."""
     return row.channel != SELF
+
+
+# --- email confirmation -------------------------------------------------------
+
+
+def open_confirms(session: Session, principal_id: str, lock: bool = False):
+    """The account's email-confirmation links not yet used or revoked."""
+    query = _open(session, CONFIRM).filter(AuthLink.principal_id == principal_id)
+    query = query.order_by(AuthLink.issued_at.desc())
+    return (query.with_for_update() if lock else query).all()
+
+
+def revoke_confirms(
+    session: Session,
+    principal_id: str,
+    actor: str,
+    reason: str,
+    record: bool = True,
+) -> list[str]:
+    """Close the account's open email-confirmation links. Returns their ids."""
+    rows = open_confirms(session, principal_id, lock=True)
+    for row in rows:
+        revoke(session, row, actor, reason, record)
+    return [r.link_id for r in rows]
+
+
+def issue_confirm(session: Session, user, actor: str) -> tuple[AuthLink, str]:
+    """A 24-hour confirmation link for ``user``, replacing any open one.
+
+    Returns the row and the value, which is not kept anywhere."""
+    revoke_confirms(session, user.principal_id, actor, "replaced")
+    token = secrets.token_urlsafe(32)  # 256 bits
+    now = utcnow()
+    row = AuthLink(
+        link_id=f"link-{uuid.uuid4().hex[:12]}",
+        kind=CONFIRM,
+        token_hash=digest(token),
+        principal_id=user.principal_id,
+        invited_by=actor,
+        channel=EMAIL,
+        issued_at=now,
+        expires_at=now + CONFIRM_TTL,
+    )
+    session.add(row)
+    session.flush()
+    trail_events.record(
+        session,
+        "email.sent",
+        actor=actor,
+        principal=user.principal_id,
+        link_id=row.link_id,
+        channel=EMAIL,
+    )
+    return row, token

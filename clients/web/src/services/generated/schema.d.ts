@@ -638,7 +638,9 @@ export interface paths {
          * Erase Principal
          * @description Blank one principal's label and trail details, deactivate their account, and end their sign-in and credentials.
          *
-         *     An audit manager waits seven days and needs a reason.
+         *     An audit manager waits seven days and needs a reason. Erasing an account
+         *     deactivates it, so it takes what deactivating does: users.write (and
+         *     "Confirm it's you"), a role covering the target's, and a role manager left.
          */
         post: operations["post_api_audit_erasure"];
         delete?: never;
@@ -918,6 +920,49 @@ export interface paths {
          *     answer is a 400; the third in a row ends the sign-in (401, never a lock).
          */
         post: operations["post_api_auth_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend Email Confirmation
+         * @description Send another confirmation link for the signed-in person's address.
+         *
+         *     Replaces the open one. Mail and the install's public address both have to
+         *     be set; otherwise the address stays unconfirmed and the response says so.
+         */
+        post: operations["post_api_auth_email-confirmation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-confirmation/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Email Address
+         * @description Confirm the address. The link is used up by this request, not by opening it.
+         */
+        post: operations["post_api_auth_email-confirmation_confirm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1440,6 +1485,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sso/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mapping
+         * @description Pushed groups and the role and team lines. The version is the settings version.
+         */
+        get: operations["get_api_auth_sso_mapping"];
+        put?: never;
+        /**
+         * Post Mapping
+         * @description Save the group mapping, or count what saving it would change.
+         *
+         *     ``dry_run`` writes nothing. The real save is the one that sets
+         *     ``mapping_author`` and applies roles and team membership. Needs
+         *     roles.manage, users.write and teams.manage, and one step-up.
+         */
+        post: operations["post_api_auth_sso_mapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sso/settings": {
         parameters: {
             query?: never;
@@ -1509,6 +1582,50 @@ export interface paths {
          */
         put: operations["put_api_autonomy"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/held/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Held
+         * @description Clear the hold on every held action this person may decide.
+         *
+         *     Executes nothing. Each released row writes one trail entry.
+         */
+        post: operations["post_api_autonomy_held_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy/held/{action_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Action
+         * @description Clear the hold on one action. The next executor pass runs it.
+         *
+         *     Executes nothing itself.
+         */
+        post: operations["post_api_autonomy_held_action_id_release"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2235,6 +2352,7 @@ export interface paths {
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
          *     shadow adjudication. ``linked_findings`` is one entry per linked finding
          *     that still exists, with ``source_link`` when the resolver can fill one.
+         *     ``opened_from`` is the first finding linked to the case.
          *
          *     Args:
          *         case_id: The case ID
@@ -4133,6 +4251,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rule
+         * @description One listed rule copy: its latest version's query, parsed content and
+         *     description, and that version's stored checks (lint, replay, runs, shadow
+         *     and the rest); an overlay copy also carries its stage rows with their proof.
+         *     Read-only.
+         */
+        get: operations["get_api_detection-rules_rules_rule_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/rules/{rule_id}/detection-skill": {
         parameters: {
             query?: never;
@@ -4274,12 +4415,35 @@ export interface paths {
         /**
          * Get Rule Stages
          * @description A rule's stage rows, newest first: version, from and to stage, actor,
-         *     reason and time; and ``held``, whether a person's Revert holds it in shadow.
-         *     Read-only.
+         *     reason, the earlier copies that version was saved to replace, and time;
+         *     ``held``, whether a person's Revert holds it in shadow; and ``replaced_by``,
+         *     the rules saved to replace it. Read-only.
          */
         get: operations["get_api_detection-rules_rules_rule_id_stages"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/switch-off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Off Rule
+         * @description Switches a shadow rule off and holds it there: a signed-in person's own
+         *     decision, refused to an API token, a service account and an agent's
+         *     credential. A rule that is not in shadow is refused with 409.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_switch-off"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4699,36 +4863,6 @@ export interface paths {
          *         Updated finding
          */
         patch: operations["patch_api_findings_finding_id"];
-        trace?: never;
-    };
-    "/api/findings/{finding_id}/enrich": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Get Or Generate Enrichment
-         * @description Get or generate AI enrichment for a finding.
-         *
-         *     Returns cached enrichment if present, otherwise generates, caches, and
-         *     returns new enrichment from the configured reporting model.
-         *
-         *     Args:
-         *         finding_id: The finding ID to enrich
-         *         force_regenerate: Force regeneration even if enrichment exists
-         *
-         *     Returns:
-         *         AI enrichment data with threat analysis, impact, recommendations, etc.
-         */
-        post: operations["post_api_findings_finding_id_enrich"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/findings/{finding_id}/intake": {
@@ -5396,6 +5530,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/medic/fix-level": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Fix Level
+         * @description Raise one step (with a reason) or lower a fix type's level. The admin is the session.
+         */
+        post: operations["post_api_medic_fix-level"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/incidents": {
         parameters: {
             query?: never;
@@ -5918,6 +6072,7 @@ export interface paths {
          *     A run's id is derived from its investigation id and its ledger is terminal
          *     once finished, so the same investigation cannot run twice. The failure stays
          *     on record; the restart is a fresh Human Ask over the same workflow and findings.
+         *     A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -6060,71 +6215,6 @@ export interface paths {
          *     seconds old.
          */
         get: operations["get_api_processes"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reasoning/{session_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Session Summary
-         * @description Summary rollup for a chat session or agent session.
-         *
-         *     Returns total interactions, cumulative cost of priced calls, how many
-         *     calls had no price, token totals, time range, and a per-agent breakdown.
-         *     A session with no rows stays at zero; a session whose rows are all
-         *     unpriced reports a null cost.
-         */
-        get: operations["get_api_reasoning_session_id"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reasoning/{session_id}/interactions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Interactions
-         * @description Paginated list of interactions in a session. Excludes heavy text fields.
-         */
-        get: operations["get_api_reasoning_session_id_interactions"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/reasoning/{session_id}/interactions/{interaction_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Interaction
-         * @description Full detail for a single interaction (thinking, tools, messages).
-         */
-        get: operations["get_api_reasoning_session_id_interactions_interaction_id"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6430,7 +6520,7 @@ export interface paths {
         put?: never;
         /**
          * Save Skill
-         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+         * @description Write ``<root>/[<category>/...]<name>/SKILL.md``, bumping its version.
          *
          *     An existing operator skill is overwritten when ``version`` is the one on disk
          *     (409 otherwise); ``source`` copies that skill's folder.
@@ -6464,6 +6554,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/repo/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Repo
+         * @description Install the picked skills from a git repo at the commit the preview read.
+         *
+         *     As an upload: all or nothing, nothing overwritten, each scanned and held.
+         *     409 when the repo has moved since the preview, or a name is taken.
+         */
+        post: operations["post_api_skills_repo_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/repo/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Repo
+         * @description Fetch a git repo and list the skills it holds, installing nothing.
+         *
+         *     The host must be in ``VIGIL_SKILL_SOURCE_HOSTS``. Each skill that cannot be
+         *     installed says why: it does not parse, or its name is taken.
+         */
+        post: operations["post_api_skills_repo_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/upload": {
         parameters: {
             query?: never;
@@ -6475,9 +6611,12 @@ export interface paths {
         put?: never;
         /**
          * Upload Skill
-         * @description Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+         * @description Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
          *
-         *     A name already taken is refused (409); nothing is overwritten.
+         *     All or nothing: a skill refused refuses the upload, and a name already
+         *     taken is refused (409); nothing is overwritten. Skills are found where
+         *     ``npx skills`` looks in a repo; any other ``SKILL.md`` is skipped and
+         *     counted, not installed.
          */
         post: operations["post_api_skills_upload"];
         delete?: never;
@@ -6510,6 +6649,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Skill
+         * @description Release a held skill's current content to agents.
+         *
+         *     Needs ``skills.approve``, which ``automation.write`` does not carry, so the
+         *     uploader cannot approve their own skill. 409 when the skill needs no
+         *     approval, has no verdict yet, or its content is no longer ``digest``.
+         */
+        post: operations["post_api_skills_name_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/{name}/files/{path}": {
         parameters: {
             query?: never;
@@ -6524,6 +6687,89 @@ export interface paths {
         get: operations["get_api_skills_name_files_path"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Library
+         * @description Delete every skill installed with ``name`` from its repo, and stop tracking it.
+         */
+        delete: operations["delete_api_skills_name_library"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Latest
+         * @description The commit the repo of a repo-installed skill is at now, cloning nothing.
+         */
+        get: operations["get_api_skills_name_library_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Library Preview
+         * @description What updating the library ``name`` came with would change, changing nothing.
+         */
+        post: operations["post_api_skills_name_library_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Library Update
+         * @description Take the picked changes from the repo at the commit the preview read.
+         *
+         *     409 when the repo has moved since, a pick is no longer offered, or a pick
+         *     was edited here and not listed in ``edited``.
+         */
+        post: operations["post_api_skills_name_library_update"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7194,6 +7440,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/sync/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pending Pushes
+         * @description Pushes refused because their username or email is in use, oldest first.
+         */
+        get: operations["get_api_users_sync_pending"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/pending/{pending_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Pending Push
+         * @description Attach one waiting push to one existing person account. The provider's
+         *     next retry matches the link and takes the account over. The password stays.
+         */
+        post: operations["post_api_users_sync_pending_pending_id_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/sync/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Sync Window
+         * @description How many accounts a window reactivation would bring back. Changes nothing.
+         */
+        get: operations["get_api_users_sync_window"];
+        put?: never;
+        /**
+         * Reactivate Sync Window
+         * @description Reactivate every account directory sync deactivated in the window. Other
+         *     routes stay deactivated, tokens stay revoked, nobody is sent a notice.
+         */
+        post: operations["post_api_users_sync_window"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/teams": {
         parameters: {
             query?: never;
@@ -7486,6 +7798,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/remove-unused": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Unused Sync Account
+         * @description Remove an account a push created for the wrong person: its username and
+         *     email are freed, its link and pushed groups go, and it is deactivated. The
+         *     principal stays. The provider's next push creates a new account.
+         */
+        post: operations["post_api_users_user_id_remove-unused"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/reset-link": {
         parameters: {
             query?: never;
@@ -7501,9 +7835,10 @@ export interface paths {
         put?: never;
         /**
          * Issue Reset Link
-         * @description A one-hour, single-use reset link for the person, replacing any open one:
-         *     emailed to their address, or returned once to hand over. It never touches
-         *     two-step sign-in. They and the other holders of users.write are told.
+         * @description A one-hour, single-use reset link for the person, replacing any open one,
+         *     and their open sign-ins ended, with a typed reason: emailed to their address,
+         *     or returned once to hand over. It never touches two-step sign-in. They and
+         *     the other holders of users.write are told.
          */
         post: operations["post_api_users_user_id_reset-link"];
         /**
@@ -7610,9 +7945,10 @@ export interface paths {
         put?: never;
         /**
          * Unlock User
-         * @description End a lock and the failure count. users.write over the account, a role the
-         *     caller covers, and a person's own act, not a playbook's. A lock ends no
-         *     sign-in, so a locked caller's open session may not unlock anyone, itself included.
+         * @description End a lock, the failure count and the person's open sign-ins, with a typed
+         *     reason. users.write over the account, a role the caller covers, and a person's
+         *     own act, not a playbook's. A lock ends no sign-in, so a locked caller's open
+         *     session may not unlock anyone, itself included.
          */
         post: operations["post_api_users_user_id_unlock"];
         delete?: never;
@@ -7942,6 +8278,50 @@ export interface paths {
          */
         put: operations["put_api_v1_autonomy"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/held/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Held
+         * @description Clear the hold on every held action this person may decide.
+         *
+         *     Executes nothing. Each released row writes one trail entry.
+         */
+        post: operations["post_api_v1_autonomy_held_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/autonomy/held/{action_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Release Action
+         * @description Clear the hold on one action. The next executor pass runs it.
+         *
+         *     Executes nothing itself.
+         */
+        post: operations["post_api_v1_autonomy_held_action_id_release"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8338,6 +8718,7 @@ export interface paths {
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
          *     shadow adjudication. ``linked_findings`` is one entry per linked finding
          *     that still exists, with ``source_link`` when the resolver can fill one.
+         *     ``opened_from`` is the first finding linked to the case.
          *
          *     Args:
          *         case_id: The case ID
@@ -9440,6 +9821,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/tools/skill-reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Note Skill Read
+         * @description Count a skill a run loaded with load_skill, which the agent layer answers itself.
+         *
+         *     The same count a read_skill call through ``/invoke`` makes, for the skill
+         *     bodies a run reads without coming here. A failed insert is logged and
+         *     swallowed, as there.
+         */
+        post: operations["post_internal_tools_skill-reads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scim/v2/Groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Groups */
+        get: operations["get_scim_v2_Groups"];
+        put?: never;
+        /** Create Group */
+        post: operations["post_scim_v2_Groups"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scim/v2/Groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Group */
+        get: operations["get_scim_v2_Groups_group_id"];
+        put?: never;
+        post?: never;
+        /** Delete Group */
+        delete: operations["delete_scim_v2_Groups_group_id"];
+        options?: never;
+        head?: never;
+        /** Patch Group */
+        patch: operations["patch_scim_v2_Groups_group_id"];
+        trace?: never;
+    };
     "/scim/v2/ResourceTypes": {
         parameters: {
             query?: never;
@@ -9449,6 +9891,23 @@ export interface paths {
         };
         /** Resource Types */
         get: operations["get_scim_v2_ResourceTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scim/v2/ResourceTypes/Group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resource Type Group */
+        get: operations["get_scim_v2_ResourceTypes_Group"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9761,6 +10220,10 @@ export interface components {
             behind?: number | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Held */
+            held?: number | null;
+            /** Held Since */
+            held_since?: string | null;
             /** Last Delivered At */
             last_delivered_at?: string | null;
             /** Last Delivered Seq */
@@ -9980,6 +10443,13 @@ export interface components {
              * @default 0
              */
             restricted_not_counted: number;
+        };
+        /** BrokenLine */
+        BrokenLine: {
+            /** External Id */
+            external_id: string;
+            /** On */
+            on: string;
         };
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
@@ -10212,6 +10682,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Opened From */
+            opened_from?: string | null;
             /** Owner Cannot Read */
             owner_cannot_read?: boolean | null;
             /** Owner On Team */
@@ -11340,12 +11812,23 @@ export interface components {
             environment_locked: boolean;
             /** Four Eyes */
             four_eyes: boolean;
+            /**
+             * Held
+             * @default []
+             */
+            held: components["schemas"]["HeldAction"][];
             /** Propose */
             propose: boolean;
             /** Read */
             read: boolean;
             /** Stopped */
             stopped: boolean;
+            /** Stopped At */
+            stopped_at?: string | null;
+            /** Stopped By */
+            stopped_by?: string | null;
+            /** Stopped By Label */
+            stopped_by_label?: string | null;
             /**
              * Workflows
              * @default {}
@@ -11889,6 +12372,14 @@ export interface components {
             sigma: string;
         };
         /**
+         * EmailConfirmation
+         * @description The value from the confirmation link. Opening the page does not send it.
+         */
+        EmailConfirmation: {
+            /** Token */
+            token: string;
+        };
+        /**
          * EndSignInsRequest
          * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
          */
@@ -12269,6 +12760,38 @@ export interface components {
             all: boolean;
             /** Change Ids */
             change_ids?: number[] | null;
+        };
+        /**
+         * HeldAction
+         * @description One approved outside action a stop is still holding.
+         */
+        HeldAction: {
+            /** Action Id */
+            action_id: string;
+            /**
+             * Action Type
+             * @default
+             */
+            action_type: string;
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /**
+             * Restricted
+             * @default false
+             */
+            restricted: boolean;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
         };
         /**
          * HuntCoverageRequest
@@ -12879,6 +13402,11 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** LinkRequest */
+        LinkRequest: {
+            /** User Id */
+            user_id: string;
+        };
         /** ListStatus */
         ListStatus: {
             /** Imported Count */
@@ -12915,6 +13443,8 @@ export interface components {
             mfa_code?: string | null;
             /** Password */
             password: string;
+            /** Reason */
+            reason?: string | null;
             /** Username Or Email */
             username_or_email: string;
             /** Webauthn */
@@ -12991,6 +13521,58 @@ export interface components {
             code?: string | null;
             /** Password */
             password?: string | null;
+        };
+        /** MappingEffect */
+        MappingEffect: {
+            /** Applied */
+            applied: boolean;
+            /**
+             * Memberships Added
+             * @default 0
+             */
+            memberships_added: number;
+            /**
+             * Memberships Removed
+             * @default 0
+             */
+            memberships_removed: number;
+            /**
+             * Roles Default
+             * @default 0
+             */
+            roles_default: number;
+            /**
+             * Roles Fall
+             * @default 0
+             */
+            roles_fall: number;
+            /**
+             * Roles Rise
+             * @default 0
+             */
+            roles_rise: number;
+            /** Version */
+            version: number;
+        };
+        /** MappingIn */
+        MappingIn: {
+            /** Group Roles */
+            group_roles?: components["schemas"]["GroupRole"][];
+            /** Team Lines */
+            team_lines?: components["schemas"]["TeamLine"][];
+        };
+        /** MappingOut */
+        MappingOut: {
+            /** Group Roles */
+            group_roles: components["schemas"]["GroupRole"][];
+            /** Groups */
+            groups: components["schemas"]["PushedGroup"][];
+            /** Mapping Author */
+            mapping_author?: string | null;
+            /** Team Lines */
+            team_lines: components["schemas"]["TeamLine"][];
+            /** Version */
+            version: number;
         };
         /**
          * MergeRequest
@@ -13520,6 +14102,42 @@ export interface components {
             /** Workflow Run Id */
             workflow_run_id?: string | null;
         };
+        /** PendingHolder */
+        PendingHolder: {
+            /** Full Name */
+            full_name?: string | null;
+            /** User Id */
+            user_id: string;
+            /** Username */
+            username: string;
+        };
+        /**
+         * PendingPush
+         * @description A pushed person whose username or email an existing account holds.
+         */
+        PendingPush: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email: string;
+            /** External Id */
+            external_id: string;
+            /** Holders */
+            holders: components["schemas"]["PendingHolder"][];
+            /** Pending Id */
+            pending_id: string;
+            /** Received At */
+            received_at: string;
+            /** Username */
+            username: string;
+        };
+        /** PendingPushes */
+        PendingPushes: {
+            /** Pending */
+            pending: components["schemas"]["PendingPush"][];
+            /** Sync Enabled */
+            sync_enabled: boolean;
+        };
         /** PeriodIn */
         PeriodIn: {
             /**
@@ -13802,6 +14420,15 @@ export interface components {
          * @enum {string}
          */
         ProposalState: "draft" | "linted" | "replayed" | "converted" | "shadow" | "live" | "rejected";
+        /** PushedGroup */
+        PushedGroup: {
+            /** Display Name */
+            display_name: string;
+            /** External Id */
+            external_id: string;
+            /** Id */
+            id: string;
+        };
         /** Range */
         Range: {
             /** Max */
@@ -13952,8 +14579,8 @@ export interface components {
         };
         /**
          * ResetLinkRequest
-         * @description Send the person a reset link, or copy one to hand over. A copied link
-         *     needs how their identity was confirmed.
+         * @description A typed reason, and a reset link emailed or copied to hand over. A copied
+         *     link needs how their identity was confirmed.
          */
         ResetLinkRequest: {
             /**
@@ -13963,6 +14590,8 @@ export interface components {
             channel: "email" | "copy";
             /** Identity Confirmed By */
             identity_confirmed_by?: ("in_person" | "video_call" | "phone_call_back" | "other_verified_channel") | null;
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false
@@ -14563,6 +15192,11 @@ export interface components {
             /** Started At */
             started_at: string;
         };
+        /** SkillApproveRequest */
+        SkillApproveRequest: {
+            /** Digest */
+            digest: string;
+        };
         /** SkillCaseResult */
         SkillCaseResult: {
             /** Missing */
@@ -14598,6 +15232,8 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanDetail"];
+            source?: components["schemas"]["SkillSource"] | null;
             /** Source Path */
             source_path: string;
             /** Version */
@@ -14635,6 +15271,107 @@ export interface components {
         SkillGenerateResponse: {
             draft: components["schemas"]["SkillDraft"];
         };
+        /** SkillLatest */
+        SkillLatest: {
+            /** Commit */
+            commit?: string | null;
+        };
+        /** SkillLibraryChange */
+        SkillLibraryChange: {
+            /**
+             * Edited
+             * @default false
+             */
+            edited: boolean;
+            /** Folder */
+            folder: string;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string;
+            /** Problem */
+            problem?: string | null;
+        };
+        /** SkillLibraryPreview */
+        SkillLibraryPreview: {
+            /** Changed */
+            changed: components["schemas"]["SkillLibraryChange"][];
+            /** Commit */
+            commit: string;
+            /** Gone */
+            gone: components["schemas"]["SkillLibraryChange"][];
+            /** Label */
+            label: string;
+            /** Latest */
+            latest: string;
+            /** New */
+            new: components["schemas"]["SkillLibraryChange"][];
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+        };
+        /** SkillLibraryUpdateRequest */
+        SkillLibraryUpdateRequest: {
+            /** Commit */
+            commit: string;
+            /** Edited */
+            edited?: string[];
+            /** Take */
+            take: string[];
+        };
+        /** SkillLibraryUpdated */
+        SkillLibraryUpdated: {
+            /** Removed */
+            removed: string[];
+            /** Skills */
+            skills: components["schemas"]["SkillResponse"][];
+        };
+        /** SkillReadRequest */
+        SkillReadRequest: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Name */
+            name: string;
+        };
+        /** SkillRepoFound */
+        SkillRepoFound: {
+            /** Description */
+            description: string;
+            /** Folder */
+            folder: string;
+            /** Name */
+            name: string;
+            /** Problem */
+            problem?: string | null;
+        };
+        /** SkillRepoInstallRequest */
+        SkillRepoInstallRequest: {
+            /** Commit */
+            commit: string;
+            /** Names */
+            names: string[];
+            /** Source */
+            source: string;
+        };
+        /** SkillRepoPreview */
+        SkillRepoPreview: {
+            /** Commit */
+            commit: string;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+            /** Skills */
+            skills: components["schemas"]["SkillRepoFound"][];
+        };
+        /** SkillRepoRequest */
+        SkillRepoRequest: {
+            /** Source */
+            source: string;
+        };
         /** SkillResponse */
         SkillResponse: {
             /**
@@ -14655,8 +15392,80 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
+            source?: components["schemas"]["SkillSource"] | null;
             /** Source Path */
             source_path: string;
+        };
+        /** SkillScanDetail */
+        SkillScanDetail: {
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Digest */
+            digest?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["SkillScanFinding"][];
+            /** Held */
+            held: boolean;
+            /** Max Severity */
+            max_severity?: string | null;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Scan Mode */
+            scan_mode?: string | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+            /** Scanner Version */
+            scanner_version?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
+        };
+        /** SkillScanFinding */
+        SkillScanFinding: {
+            /** File */
+            file?: string | null;
+            /** Message */
+            message: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Severity */
+            severity: string;
+        };
+        /** SkillScanSummary */
+        SkillScanSummary: {
+            /** Held */
+            held: boolean;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
+        };
+        /**
+         * SkillSource
+         * @description The repo a skill was installed from, and how many came with it.
+         */
+        SkillSource: {
+            /** Commit */
+            commit: string;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+            /** Skills */
+            skills: number;
         };
         /** SkillTestResponse */
         SkillTestResponse: {
@@ -14666,6 +15475,47 @@ export interface components {
             no_cases: boolean;
             /** Results */
             results: components["schemas"]["SkillCaseResult"][];
+        };
+        /**
+         * SkillUploadResponse
+         * @description The first skill installed, as a single upload always returned, plus all of them.
+         *
+         *     A zip may hold several skills; ``skills`` lists every skill installed, and
+         *     ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+         *     explains.
+         */
+        SkillUploadResponse: {
+            /**
+             * Agents 7D
+             * @default 0
+             */
+            agents_7d: number;
+            /** Bundled */
+            bundled: boolean;
+            /** Description */
+            description: string;
+            /** File Count */
+            file_count: number;
+            /** Name */
+            name: string;
+            /**
+             * Reads 7D
+             * @default 0
+             */
+            reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
+            /** Skills */
+            skills: components["schemas"]["SkillResponse"][];
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Skipped Note */
+            skipped_note?: string | null;
+            source?: components["schemas"]["SkillSource"] | null;
+            /** Source Path */
+            source_path: string;
         };
         /** SkillWriteRequest */
         SkillWriteRequest: {
@@ -14802,6 +15652,8 @@ export interface components {
             groups_claim: string;
             /** Issuer */
             issuer?: string | null;
+            /** Mapping Author */
+            mapping_author?: string | null;
             /** Provider Changed At */
             provider_changed_at?: string | null;
             /** Redirect Url */
@@ -14821,6 +15673,8 @@ export interface components {
              * @default false
              */
             sync_enabled: boolean;
+            /** Team Lines */
+            team_lines?: components["schemas"]["TeamLine"][];
             /** Updated At */
             updated_at?: string | null;
             /** Updated By */
@@ -14838,7 +15692,7 @@ export interface components {
         };
         /**
          * StageChangeRequest
-         * @description Why a person reverts a rule, or releases it.
+         * @description Why a person reverts a rule, switches it off, or releases it.
          */
         StageChangeRequest: {
             /** Reason */
@@ -14937,6 +15791,11 @@ export interface components {
         };
         /** SyncOut */
         SyncOut: {
+            /**
+             * Broken Lines
+             * @default []
+             */
+            broken_lines: components["schemas"]["BrokenLine"][];
             /** Directory Id Claim */
             directory_id_claim: string;
             /** Failed Authentications */
@@ -14945,14 +15804,58 @@ export interface components {
             last_manager_refusals: string[];
             /** Last Push */
             last_push?: string | null;
+            /** Mapping Note */
+            mapping_note?: string | null;
+            /**
+             * Pending Links
+             * @default 0
+             */
+            pending_links: number;
+            /**
+             * Role Refusals
+             * @default []
+             */
+            role_refusals: string[];
             /** Scim Path */
             scim_path: string;
+            /**
+             * Skipped Joins
+             * @default 0
+             */
+            skipped_joins: number;
             /** Sync Enabled */
             sync_enabled: boolean;
             /** Token */
             token?: string | null;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /** SyncWindow */
+        SyncWindow: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            until: string;
+        };
+        /** SyncWindowCount */
+        SyncWindowCount: {
+            /** Count */
+            count: number;
+            /** Skipped */
+            skipped: number;
+        };
+        /** SyncWindowResult */
+        SyncWindowResult: {
+            /** Reactivated */
+            reactivated: number;
+            /** Skipped */
+            skipped: number;
         };
         /**
          * TaskAdd
@@ -15011,6 +15914,21 @@ export interface components {
             members: components["schemas"]["TeamMemberOut"][];
             /** Name */
             name: string;
+            /**
+             * Synced
+             * @default false
+             */
+            synced: boolean;
+        };
+        /**
+         * TeamLine
+         * @description A pushed group's externalId, and the team its members join.
+         */
+        TeamLine: {
+            /** Group */
+            group: string;
+            /** Team Id */
+            team_id: string;
         };
         /** TeamMemberAdd */
         TeamMemberAdd: {
@@ -15048,6 +15966,11 @@ export interface components {
             is_default: boolean;
             /** Name */
             name: string;
+            /**
+             * Synced
+             * @default false
+             */
+            synced: boolean;
         };
         /**
          * TemplateCreate
@@ -15146,8 +16069,6 @@ export interface components {
              * @default
              */
             reason: string;
-            /** Severity */
-            severity?: string | null;
             /** Stop Cause */
             stop_cause?: string | null;
             /**
@@ -15155,6 +16076,8 @@ export interface components {
              * @default
              */
             summary: string;
+            /** Title */
+            title?: string | null;
         };
         /**
          * ThemeConfig
@@ -15245,8 +16168,8 @@ export interface components {
         };
         /**
          * UnlockRequest
-         * @description How the manager confirmed the person is who they say. Kept in the trail.
-         *     ``suspected_compromise`` also revokes the person's API tokens.
+         * @description A typed reason and how the manager confirmed the person is who they say,
+         *     both kept. ``suspected_compromise`` also revokes the person's API tokens.
          */
         UnlockRequest: {
             /**
@@ -15254,6 +16177,8 @@ export interface components {
              * @enum {string}
              */
             identity_confirmed_by: "in_person" | "video_call" | "phone_call_back" | "other_verified_channel";
+            /** Reason */
+            reason: string;
             /**
              * Suspected Compromise
              * @default false
@@ -17367,6 +18292,70 @@ export interface operations {
             };
         };
     };
+    "post_api_auth_email-confirmation": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_auth_email-confirmation_confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailConfirmation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_auth_invite: {
         parameters: {
             query?: never;
@@ -18101,6 +19090,75 @@ export interface operations {
             };
         };
     };
+    get_api_auth_sso_mapping: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_sso_mapping: {
+        parameters: {
+            query?: {
+                dry_run?: boolean;
+            };
+            header?: {
+                "if-match"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingEffect"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_auth_sso_settings: {
         parameters: {
             query?: never;
@@ -18295,6 +19353,70 @@ export interface operations {
                 "application/json": components["schemas"]["CeilingBody"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_held_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_autonomy_held_action_id_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -23096,6 +24218,39 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-rules_rules_rule_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "post_api_detection-rules_rules_rule_id_detection-skill": {
         parameters: {
             query?: never;
@@ -23354,6 +24509,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_switch-off": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -24126,41 +25318,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FindingUpdateResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_findings_finding_id_enrich: {
-        parameters: {
-            query?: {
-                force_regenerate?: boolean;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -25377,6 +26534,37 @@ export interface operations {
             };
         };
     };
+    "post_api_medic_fix-level": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_medic_incidents: {
         parameters: {
             query?: never;
@@ -26479,109 +27667,6 @@ export interface operations {
             };
         };
     };
-    get_api_reasoning_session_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_reasoning_session_id_interactions: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_reasoning_session_id_interactions_interaction_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                session_id: string;
-                interaction_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_search: {
         parameters: {
             query: {
@@ -27284,6 +28369,76 @@ export interface operations {
             };
         };
     };
+    post_api_skills_repo_install: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRepoInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_repo_preview: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRepoPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_skills_upload: {
         parameters: {
             query?: never;
@@ -27305,7 +28460,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SkillResponse"];
+                    "application/json": components["schemas"]["SkillUploadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27385,6 +28540,43 @@ export interface operations {
             };
         };
     };
+    post_api_skills_name_approve: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_skills_name_files_path: {
         parameters: {
             query?: never;
@@ -27406,6 +28598,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillFileContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_skills_name_library: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_skills_name_library_latest: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLatest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_library_preview: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibraryPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_library_update: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillLibraryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibraryUpdated"];
                 };
             };
             /** @description Validation Error */
@@ -28519,6 +29847,143 @@ export interface operations {
             };
         };
     };
+    get_api_users_sync_pending: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPushes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_pending_pending_id_link: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                pending_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_users_sync_window: {
+        parameters: {
+            query: {
+                since: string;
+                until: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowCount"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_users_sync_window: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncWindow"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncWindowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_users_teams: {
         parameters: {
             query?: never;
@@ -28999,6 +30464,39 @@ export interface operations {
         };
     };
     post_api_users_user_id_reactivate: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_users_user_id_remove-unused": {
         parameters: {
             query?: never;
             header?: {
@@ -30016,6 +31514,70 @@ export interface operations {
                 "application/json": components["schemas"]["CeilingBody"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_held_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_autonomy_held_action_id_release: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -32579,7 +34141,236 @@ export interface operations {
             };
         };
     };
+    "post_internal_tools_skill-reads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scim_v2_Groups: {
+        parameters: {
+            query?: {
+                filter?: string | null;
+                startIndex?: number;
+                count?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_scim_v2_Groups: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_scim_v2_Groups_group_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_scim_v2_ResourceTypes: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scim_v2_ResourceTypes_Group: {
         parameters: {
             query?: never;
             header?: {

@@ -145,7 +145,7 @@ class ClaudeService:
         return blocks or None
 
     # ------------------------------------------------------------------
-    # Reasoning-trace persistence (GH #79)
+    # Interaction-log persistence (one llm_interaction_logs row per completion)
     # ------------------------------------------------------------------
 
     @staticmethod

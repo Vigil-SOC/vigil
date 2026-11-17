@@ -14,6 +14,7 @@ import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
+import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -4075,7 +4076,7 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
   )
 }
 
-const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. How much each skill is used is on its card.'
+const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. Every workflow run except root cause and playbooks is also offered the skills you add, beside the built-in ones its kind uses. How much each skill is used is on its card.'
 const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
 
 // The card's usage line (#1560): skill reads are recorded now, so this
@@ -4097,7 +4098,10 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  // One line under the bar: the import's error, or which skills a zip of several installed
+  // and how many it skipped.
+  const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const offered = workflows.phase === 'ready' && agents.phase === 'ready'
     ? workflowsOffered(workflows.rows, agents.grants)
@@ -4107,11 +4111,18 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const importFile = (file: File | undefined) => {
     if (!file) return
     setImporting(true)
-    setImportError(null)
+    setImportNotice(null)
     skillsApi
       .upload(file)
-      .then((skill) => { reload(); setEditName(skill.name) })
-      .catch((e) => setImportError(e?.response?.data?.detail || e?.message || 'Could not import the skill'))
+      .then(({ skills, skipped_note }) => {
+        reload()
+        if (skills.length === 1) setEditName(skills[0].name)
+        if (skills.length > 1 || skipped_note) {
+          const names = `Imported ${skills.length} skill${skills.length === 1 ? '' : 's'}: ${skills.map((s) => s.name).join(', ')}`
+          setImportNotice({ text: skipped_note ? `${names}; ${skipped_note}` : names, error: false })
+        }
+      })
+      .catch((e) => setImportNotice({ text: e?.response?.data?.detail || e?.message || 'Could not import the skill', error: true }))
       .finally(() => setImporting(false))
   }
 
@@ -4129,12 +4140,14 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
         {canWrite && (
           <>
             <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
-            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
+            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => setImportOpen(true)}><Icon name="upload" /> {importing ? 'Importing…' : 'Import'}</button>
             <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
           </>
         )}
       </div>
-      {importError && <div role="alert" className="px-[22px] pt-2 text-[12.5px]" style={{ color: 'var(--crit)' }}>{importError}</div>}
+      {importNotice && (
+        <div role={importNotice.error ? 'alert' : 'status'} className={`px-[22px] pt-2 text-[12.5px]${importNotice.error ? '' : ' text-tx-2'}`} style={importNotice.error ? { color: 'var(--crit)' } : undefined}>{importNotice.text}</div>
+      )}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
@@ -4147,7 +4160,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   <span className="sk-tab" />
                   <span className="sk-back" />
                   <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
-                  <span className="sk-flap"><span className="sk-origin">{s.bundled ? 'Built in' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
+                  <span className="sk-flap"><span className="sk-origin" title={s.held ? 'Held: agents cannot use this skill until its scan clears it or someone approves it. Open it for the scan.' : undefined}>{s.bundled ? 'Built in' : s.held ? 'Held' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
                 </span>
                 <span className="sk-text">
                   <span className="sk-name" title={s.name}>{s.name}</span>
@@ -4172,6 +4185,17 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           existingNames={rows.map((r) => r.name)}
           onClose={() => { setEditName(null); setBuilding(false) }}
           onSaved={() => { setEditName(null); setBuilding(false); reload() }}
+        />
+      )}
+      {importOpen && (
+        <SkillImportDialog
+          onClose={() => setImportOpen(false)}
+          onChooseFile={() => { setImportOpen(false); fileInput.current?.click() }}
+          onInstalled={({ skills }, label) => {
+            setImportOpen(false)
+            reload()
+            setImportNotice({ text: `Installed ${skills.length} skill${skills.length === 1 ? '' : 's'} from ${label}: ${skills.map((s) => s.name).join(', ')}`, error: false })
+          }}
         />
       )}
       {deleteSkill && (

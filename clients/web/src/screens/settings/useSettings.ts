@@ -255,6 +255,8 @@ export function useFederation() {
 }
 
 export type AccountStatus = 'active' | 'locked' | 'deactivated' | 'deleted' | 'erased'
+/** A sign-in method type, named once. Details stay on the Sign-in methods dialog. */
+export type MfaMethodType = 'authenticator_app' | 'security_key' | 'recovery_codes'
 /** list_users' status filter: "current" is every account not deleted or erased */
 export type AccountFilter = 'current' | 'all' | AccountStatus
 
@@ -272,13 +274,19 @@ export interface User {
   is_active: boolean
   is_verified: boolean
   mfa_enabled: boolean
+  /** method types this account has, in dialog order; empty when it has none */
+  mfa_method_types: MfaMethodType[]
   /** signs in with a password, and/or through the SSO provider (a linked subject) */
   has_password: boolean
   has_sso: boolean
+  /** a directory-managed account nobody signed in to and no case or task names: Remove frees its names */
+  unused_sync?: boolean
   last_login: string | null
   login_count: number
   principal_kind: 'person' | 'service_account'
   managed_by_medic: boolean
+  /** marked break-glass at the host; shown, never changed here */
+  break_glass?: boolean
   /** a service account's purpose, and the person answerable for it (never Medic's) */
   purpose: string | null
   accountable: { user_id: string; username: string; full_name: string } | null
@@ -650,6 +658,25 @@ export function useCeiling() {
     }
   }, [refresh])
   const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
+  const releaseHeld = useCallback(
+    async (actionId: string) => {
+      try {
+        return apply((await autonomyApi.releaseHeld(actionId)).data)
+      } catch (err) {
+        refresh()
+        throw err
+      }
+    },
+    [apply, refresh],
+  )
+  const releaseAllHeld = useCallback(async () => {
+    try {
+      return apply((await autonomyApi.releaseAllHeld()).data)
+    } catch (err) {
+      refresh()
+      throw err
+    }
+  }, [apply, refresh])
   const setWorkflow = useCallback(
     async (id: string, body: Schema<'WorkflowAutonomyBody'>) => {
       try {
@@ -662,7 +689,7 @@ export function useCeiling() {
     [apply, refresh],
   )
 
-  return { ceiling, phase, save, stop, resume, refresh, setWorkflow }
+  return { ceiling, phase, save, stop, resume, refresh, setWorkflow, releaseHeld, releaseAllHeld }
 }
 
 export interface InvestigateWorkflow {

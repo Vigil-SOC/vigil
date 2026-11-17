@@ -13,6 +13,7 @@ from core.audit import trail
 from core.cases.closure import CHANNEL_AGENT, CHANNEL_COOKIE
 from core.integrations.mcp.surface import current_caller
 from core.storage.connection import get_db_session
+from core.time import utcnow
 
 # No principal bound: nobody is behind the call, as in a hunt.
 CALLER_UNAUTHENTICATED = "agent"
@@ -185,6 +186,30 @@ def acting_principal() -> Optional[str]:
     if claims is not None:
         return claims.person_id or claims.agent_id
     return actor_identity()[0]
+
+
+# The activity a title edit by a person (the API, or an agent acting for one)
+# leaves; its presence on a case means the title is a person's, and an
+# investigation's retitle leaves it alone.
+TITLE_EDITED = "case_title_edited"
+
+
+def title_edited_activities(case: dict, title: str) -> Optional[list]:
+    """The case's activities plus a TITLE_EDITED entry, for an update that
+    changes the title; None when ``title`` is the title already."""
+    old = case.get("title")
+    if title == old:
+        return None
+    return [
+        *(case.get("activities") or []),
+        {
+            "timestamp": utcnow().isoformat() + "Z",
+            "activity_type": TITLE_EDITED,
+            "description": f"Title edited: {old} \u2192 {title}",
+            "details": {},
+            **activity_actor(),
+        },
+    ]
 
 
 def activity_actor(

@@ -57,17 +57,20 @@ class AutonomousResponseService:
             List of execution results
         """
         try:
-            # Stop holds every approved row, including one a person released.
+            # While stopped, nothing runs, released or not.
             if execution_held():
                 return []
 
-            # Get approved but not executed actions
+            # Held rows wait for a person after the resume. A row approved
+            # after the resume is not held and runs as it does today.
             approved_actions = self.approval_service.list_actions(
-                status=ActionStatus.APPROVED
+                status=ActionStatus.APPROVED, held=False
             )
             results = []
 
             for action in approved_actions:
+                if action.held:
+                    continue
                 # Released by a confidence figure and no person: whoever
                 # supplied that figure also chose the outcome.
                 if not action.requires_approval and not action.approved_by:

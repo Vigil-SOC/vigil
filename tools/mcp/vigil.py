@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Optional
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from core.agents import tool_registry
@@ -42,6 +43,25 @@ from core.workflows.workflows_service import WorkflowsService
 
 logger = logging.getLogger(__name__)
 mcp = MCPServer("vigil")
+
+
+def tool(title: str, *, reads: bool = False, destructive: bool = False):
+    """``@mcp.tool()`` with the annotations a client reads before it calls.
+
+    ``reads``: the tool changes nothing. ``destructive``: it changes or removes
+    what exists, as against adding to it; ignored when ``reads``. Every tool
+    acts on this Vigil alone, so none is open-world.
+    """
+    return mcp.tool(
+        title=title,
+        annotations=ToolAnnotations(
+            title=title,
+            read_only_hint=reads,
+            destructive_hint=False if reads else destructive,
+            open_world_hint=False,
+        ),
+    )
+
 
 # The frozen tools: names and input schemas promised to external callers, held
 # by tools/mcp/frozen_tools.snapshot.json. Rule: a tool is frozen when the HTTP
@@ -154,7 +174,7 @@ def get_data_service():
     return _data_service
 
 
-@mcp.tool()
+@tool("List findings", reads=True)
 @requires("findings.read")
 def list_findings(
     severity: Optional[str] = None,
@@ -185,7 +205,7 @@ def list_findings(
     )
 
 
-@mcp.tool()
+@tool("Get finding", reads=True)
 @requires("findings.read")
 def get_finding(finding_id: str) -> str:
     """Get a specific finding by ID: its stored triage under ``triage``, then
@@ -194,7 +214,7 @@ def get_finding(finding_id: str) -> str:
     return _call(tool_registry.get_finding, finding_id=finding_id)
 
 
-@mcp.tool()
+@tool("Dismiss finding", destructive=True)
 @requires("findings.write")
 def dismiss_finding(
     finding_id: str, reason: str, noise_cause: Optional[str] = None
@@ -212,7 +232,7 @@ def dismiss_finding(
     )
 
 
-@mcp.tool()
+@tool("List completed hunts", reads=True)
 @requires("automation.read")
 async def list_completed_hunts(
     start: str,
@@ -225,7 +245,7 @@ async def list_completed_hunts(
     )
 
 
-@mcp.tool()
+@tool("Replay a hunt's steps", reads=True)
 @requires("automation.read")
 async def replay_hunt(
     run_id: str,
@@ -247,7 +267,7 @@ async def replay_hunt(
     )
 
 
-@mcp.tool()
+@tool("Technique rollup", reads=True)
 @requires("findings.read")
 def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
     """Roll up ATT&CK techniques by finding count and severity. min_confidence applies only to techniques with a confidence: at 0 an occurrence with no confidence is counted, above 0 it is excluded and counted in excluded_occurrences on the response."""
@@ -258,7 +278,7 @@ def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -
     )
 
 
-@mcp.tool()
+@tool("List cases", reads=True)
 @requires("cases.read")
 def list_cases(
     status: Optional[str] = None,
@@ -276,14 +296,14 @@ def list_cases(
     )
 
 
-@mcp.tool()
+@tool("Get case", reads=True)
 @requires("cases.read")
 def get_case(case_id: str) -> str:
     """Get one case. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0."""
     return _call(tool_registry.get_case, case_id=case_id)
 
 
-@mcp.tool()
+@tool("Create case")
 @requires("cases.write")
 def create_case(
     title: str,
@@ -309,7 +329,7 @@ def create_case(
     )
 
 
-@mcp.tool()
+@tool("Update case", destructive=True)
 @requires("cases.write")
 def update_case(
     case_id: str,
@@ -333,7 +353,7 @@ def update_case(
     )
 
 
-@mcp.tool()
+@tool("Restrict case", destructive=True)
 @requires("cases.write")
 def restrict_case(
     case_id: str, readers: Optional[list] = None, reader_teams: Optional[list] = None
@@ -349,7 +369,7 @@ def restrict_case(
     )
 
 
-@mcp.tool()
+@tool("Remove case readers", destructive=True)
 @requires("cases.write")
 def change_case_readers(
     case_id: str,
@@ -378,7 +398,7 @@ def _not_found(case_id: str) -> Optional[str]:
     return None if readable(case_id) else jdump({"error": f"Case {case_id} not found"})
 
 
-@mcp.tool()
+@tool("Add finding to case")
 @requires("cases.write")
 def add_finding_to_case(case_id: str, finding_id: str) -> str:
     """Attach a finding to a case."""
@@ -387,7 +407,7 @@ def add_finding_to_case(case_id: str, finding_id: str) -> str:
     )
 
 
-@mcp.tool()
+@tool("Remove finding from case", destructive=True)
 @requires("cases.write")
 def remove_finding_from_case(case_id: str, finding_id: str) -> str:
     try:
@@ -412,7 +432,7 @@ def remove_finding_from_case(case_id: str, finding_id: str) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case activity")
 @requires("cases.write")
 def add_case_activity(
     case_id: str,
@@ -458,7 +478,7 @@ def add_case_activity(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add timeline entry")
 @requires("cases.write")
 def add_case_timeline_entry(
     case_id: str,
@@ -506,7 +526,7 @@ def add_case_timeline_entry(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add MITRE techniques")
 @requires("cases.write")
 def add_case_mitre_techniques(case_id: str, technique_ids: list) -> str:
     """
@@ -539,7 +559,7 @@ def add_case_mitre_techniques(case_id: str, technique_ids: list) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add resolution step")
 @requires("cases.write")
 def add_resolution_step(
     case_id: str,
@@ -557,7 +577,7 @@ def add_resolution_step(
     )
 
 
-@mcp.tool()
+@tool("Add findings to case")
 @requires("cases.write")
 def bulk_add_findings_to_case(
     case_id: str, finding_ids: list, note: Optional[str] = None
@@ -609,7 +629,7 @@ def bulk_add_findings_to_case(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Create case from kill chain")
 @requires("cases.write")
 def create_case_from_killchain(
     title: str,
@@ -705,7 +725,7 @@ def create_case_from_killchain(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case comment")
 @requires("cases.write")
 def add_case_comment(
     case_id: str,
@@ -756,7 +776,7 @@ def add_case_comment(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Case comments", reads=True)
 @requires("cases.read")
 def get_case_comments(case_id: str) -> str:
     """Get all comments for a case."""
@@ -782,7 +802,7 @@ def get_case_comments(case_id: str) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case evidence")
 @requires("cases.write")
 def add_case_evidence(
     case_id: str,
@@ -845,7 +865,7 @@ def add_case_evidence(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case IOC")
 @requires("cases.write")
 def add_case_ioc(
     case_id: str,
@@ -913,7 +933,7 @@ def add_case_ioc(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case IOCs")
 @requires("cases.write")
 def bulk_add_iocs(case_id: str, iocs: list) -> str:
     """
@@ -974,7 +994,7 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Case IOCs", reads=True)
 @requires("cases.read")
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
@@ -1000,7 +1020,7 @@ def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Add case task")
 @requires("cases.write")
 def add_case_task(
     case_id: str,
@@ -1063,7 +1083,7 @@ def add_case_task(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Update case task", destructive=True)
 @requires("cases.write")
 def update_case_task(
     task_id: int,
@@ -1145,7 +1165,7 @@ def update_case_task(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Case tasks", reads=True)
 @requires("cases.read")
 def get_case_tasks(case_id: str) -> str:
     """Get all tasks for a case."""
@@ -1173,7 +1193,7 @@ def get_case_tasks(case_id: str) -> str:
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Link related cases")
 @requires("cases.write")
 def link_related_cases(
     case_id: str,
@@ -1235,7 +1255,7 @@ def link_related_cases(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Move case to a team", destructive=True)
 @requires("cases.write")
 def move_case(
     case_id: str,
@@ -1274,7 +1294,7 @@ def move_case(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Escalate case (replaced by move_case)", reads=True)
 def escalate_case(
     case_id: str,
     escalated_to: str,
@@ -1290,7 +1310,7 @@ def escalate_case(
     )
 
 
-@mcp.tool()
+@tool("Close case", destructive=True)
 @requires("cases.write")
 def close_case(
     case_id: str,
@@ -1407,7 +1427,7 @@ def close_case(
 # --- Approval queue -------------------------------------------------------
 
 
-@mcp.tool()
+@tool("Propose an action for approval")
 @requires("ai_chat.use")
 def create_approval_action(
     action_type: str,
@@ -1454,7 +1474,7 @@ def create_approval_action(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("List approval actions", reads=True)
 @requires("ai_decisions.read")
 def list_approval_actions(
     status: Optional[str] = None,
@@ -1496,21 +1516,21 @@ def list_approval_actions(
         return jdump({"error": str(e)})
 
 
-@mcp.tool()
+@tool("Get approval action", reads=True)
 @requires("ai_decisions.read")
 def get_approval_action(action_id: str) -> str:
     """Get action details."""
     return _call(tool_registry.get_approval_action, action_id=action_id)
 
 
-@mcp.tool()
+@tool("Approve action (confirmed in Approvals)", reads=True)
 @requires("ai_decisions.approve")
 def approve_action(action_id: str) -> str:
     """Leave a pending action pending. Confirm it in Approvals."""
     return _call(tool_registry.approve_action, action_id=action_id)
 
 
-@mcp.tool()
+@tool("Reject action", destructive=True)
 @requires("ai_decisions.approve")
 async def reject_action(
     action_id: str,
@@ -1524,7 +1544,7 @@ async def reject_action(
 # checks the permission that route checks.
 
 
-@mcp.tool()
+@tool("List workflows", reads=True)
 @requires("automation.read")
 def list_workflows() -> str:
     """List the workflows, file-based and custom, as GET /api/v1/workflows does:
@@ -1532,7 +1552,7 @@ def list_workflows() -> str:
     return _call(catalog.listing, service=WorkflowsService())
 
 
-@mcp.tool()
+@tool("Get workflow", reads=True)
 @requires("automation.read")
 def get_workflow(workflow_id: str) -> str:
     """Get one workflow in full, as GET /api/v1/workflows/{workflow_id} does."""
@@ -1558,7 +1578,7 @@ def _agent(row: dict) -> dict:
     }
 
 
-@mcp.tool()
+@tool("List operator agents", reads=True)
 @requires("automation.read")
 def list_operator_agents() -> str:
     """List the operator agents (stored plugin manifests), as GET /api/v1/agents
@@ -1571,7 +1591,7 @@ def list_operator_agents() -> str:
     return _call(listing)
 
 
-@mcp.tool()
+@tool("Get operator agent", reads=True)
 @requires("automation.read")
 def get_operator_agent(agent_id: str) -> str:
     """Get one operator agent's manifest, as GET /api/v1/agents/{agent_id} does."""
@@ -1585,12 +1605,13 @@ def get_operator_agent(agent_id: str) -> str:
     return jdump(_agent(row))
 
 
-@mcp.tool()
+@tool("Autonomy ceiling", reads=True)
 @requires("ai_autonomy.read")
 def get_autonomy_ceiling() -> str:
     """Read the autonomy ceiling, as GET /api/v1/autonomy does: the stored act
-    flags, the effective read/write/propose state, environment_locked, four_eyes
-    and each workflow's own tier. Read only."""
+    flags, who stopped it, the actions that stop is holding, the effective
+    read/write/propose state, environment_locked, four_eyes and each workflow's
+    own tier. Read only."""
     try:
         return jdump(ceiling_read())
     except Exception as e:
@@ -1598,7 +1619,7 @@ def get_autonomy_ceiling() -> str:
         return jdump({"error": "Could not read the autonomy ceiling"})
 
 
-@mcp.tool()
+@tool("Audit trail", reads=True)
 @requires("audit.read")
 def list_audit_entries(
     since: Optional[datetime] = None,
@@ -1658,7 +1679,7 @@ def _person() -> tuple[Optional[str], str]:
     return actor_identity()
 
 
-@mcp.tool()
+@tool("Start a run")
 @requires("ai_chat.use")
 async def start_run(
     workflow_id: str,
@@ -1712,7 +1733,7 @@ async def start_run(
     return await _acall(start)
 
 
-@mcp.tool()
+@tool("List runs", reads=True)
 @requires("ai_chat.use")
 def list_runs(
     case_id: Optional[str] = None,
@@ -1756,7 +1777,7 @@ def list_runs(
     return _call(runs)
 
 
-@mcp.tool()
+@tool("Get run", reads=True)
 @requires("ai_chat.use")
 async def get_run(run_id: str) -> str:
     """A run's status. While paused, the pending approval ids it waits on; once
@@ -1814,7 +1835,7 @@ async def get_run(run_id: str) -> str:
     return await _acall(read)
 
 
-@mcp.tool()
+@tool("Steer a run", destructive=True)
 @requires("ai_chat.use")
 def send_directive(
     run_id: str,

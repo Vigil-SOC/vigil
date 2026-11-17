@@ -12,7 +12,8 @@ import {
   TextInput,
 } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
-import { signInsApi } from '../../services/api'
+import { directoryPushesApi, signInsApi } from '../../services/api'
+import DirectoryPushesCard from './DirectoryPushesCard'
 import InvitesCard from './InvitesCard'
 import TeamsCard from './TeamsCard'
 import { CONFIRMED_BY, CompromiseBox, ResetLinkDialog } from './RecoveryDialogs'
@@ -25,6 +26,7 @@ import {
   useUsers,
   type AccountFilter,
   type AccountStatus,
+  type MfaMethodType,
   type Role,
   type RolePayload,
   type RolesMeta,
@@ -43,6 +45,40 @@ const EMPTY_FORM: UserPayload = {
 // mirrors what the backend's Pydantic EmailStr accepts, so this fails fast
 // inline instead of round-tripping to a 422
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function mfaTypeLabel(type: MfaMethodType): string {
+  switch (type) {
+    case 'authenticator_app':
+      return 'Authenticator app'
+    case 'security_key':
+      return 'Security key'
+    case 'recovery_codes':
+      return 'Recovery codes'
+    default: {
+      const unexpected: never = type
+      return unexpected
+    }
+  }
+}
+
+function mfaMarks(u: User) {
+  // An account that signs in only through SSO, with no Vigil method, stays "At provider".
+  if (u.has_sso && !u.has_password && u.mfa_method_types.length === 0) {
+    return (
+      <span className="status dropped" title="Two-step sign-in is up to the SSO provider">
+        At provider
+      </span>
+    )
+  }
+  if (u.mfa_method_types.length === 0) {
+    return <span className="chip">None</span>
+  }
+  return u.mfa_method_types.map((type) => (
+    <span className="chip" key={type}>
+      {mfaTypeLabel(type)}
+    </span>
+  ))
+}
 
 function errText(e: unknown, fallback: string): string {
   const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -113,6 +149,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const [dialogError, setDialogError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<User | null>(null)
+  const [removeOf, setRemoveOf] = useState<User | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [signInsOf, setSignInsOf] = useState<User | null>(null)
   const [methodsOf, setMethodsOf] = useState<User | null>(null)
@@ -121,6 +158,7 @@ function PeopleAndRoles({ notify }: SectionProps) {
   const [signingOut, setSigningOut] = useState(false)
   const [unlockOf, setUnlockOf] = useState<User | null>(null)
   const [confirmedBy, setConfirmedBy] = useState('')
+  const [unlockReason, setUnlockReason] = useState('')
   const [unlocking, setUnlocking] = useState(false)
   const [unlockCompromise, setUnlockCompromise] = useState(false)
   const [resetOf, setResetOf] = useState<User | null>(null)
@@ -195,13 +233,14 @@ function PeopleAndRoles({ notify }: SectionProps) {
   }
 
   const handleUnlock = async () => {
-    if (!unlockOf || !confirmedBy) return
+    if (!unlockOf || !confirmedBy || !unlockReason.trim()) return
     setUnlocking(true)
     try {
-      await signInsApi.unlock(unlockOf.user_id, confirmedBy, unlockCompromise)
+      await signInsApi.unlock(unlockOf.user_id, confirmedBy, unlockReason.trim(), unlockCompromise)
       notify('ok', `Unlocked ${unlockOf.username}.${unlockCompromise ? ' Their API tokens were revoked.' : ''}`)
       setUnlockOf(null)
       setConfirmedBy('')
+      setUnlockReason('')
       setUnlockCompromise(false)
       reload()
     } catch (e) {
@@ -288,6 +327,21 @@ function PeopleAndRoles({ notify }: SectionProps) {
       setConfirmDelete(null)
     } catch (e) {
       notify('err', errText(e, 'Failed to delete user'))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleRemove = async () => {
+    if (!removeOf) return
+    setDeleting(true)
+    try {
+      await directoryPushesApi.removeUnused(removeOf.user_id)
+      notify('ok', `Removed ${removeOf.username}. Its username and email are free for the next push.`)
+      setRemoveOf(null)
+      reload()
+    } catch (e) {
+      notify('err', errText(e, 'Failed to remove'))
     } finally {
       setDeleting(false)
     }
@@ -381,6 +435,9 @@ function PeopleAndRoles({ notify }: SectionProps) {
                   <td>
                     <div className="flex flex-col items-start gap-1">
                       <span className="chip">{roleName(u.role_id)}</span>
+                      {u.break_glass && (
+                        <span className="chip" title="Marked break-glass at the host">Break-glass</span>
+                      )}
                       {u.principal_kind === 'service_account' && (
                         <span className="text-xs text-tx-3 whitespace-nowrap">
                           {u.managed_by_medic ? 'Managed by Medic' : 'Service account'}
@@ -388,20 +445,13 @@ function PeopleAndRoles({ notify }: SectionProps) {
                       )}
                     </div>
                   </td>
-                  <td>
-                    <div className="flex items-center gap-1.5">
+                  <td style={{ whiteSpace: 'normal' }}>
+                    <div className="flex flex-wrap items-center gap-1.5 max-w-72">
                       {u.has_sso && <span className="chip sel">SSO</span>}
                       {u.has_password && <span className="chip">Password</span>}
                       {u.principal_kind === 'service_account' && !u.has_password && <span className="chip">Token only</span>}
                       {!u.has_sso && !u.has_password && u.principal_kind !== 'service_account' && <span className="muted">—</span>}
-                      {/* the provider carries the second step for an account that signs in only there */}
-                      {!u.mfa_enabled && u.has_sso && !u.has_password ? (
-                        <span className="status dropped" title="Two-step sign-in is up to the SSO provider">At provider</span>
-                      ) : (
-                        <span className={`status ${u.mfa_enabled ? 'closed' : 'open'}`} title={`Two-step sign-in ${u.mfa_enabled ? 'enabled' : 'disabled'}`}>
-                          {u.mfa_enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      )}
+                      {mfaMarks(u)}
                     </div>
                   </td>
                   <td>
@@ -453,6 +503,10 @@ function PeopleAndRoles({ notify }: SectionProps) {
                         items.push({ label: 'Restore', icon: 'refresh', onSelect: () => setStatusAct({ user: u, act: 'restore' }) })
                       }
                       if (canDelete && (live(u) || u.status === 'deactivated')) items.push({ label: 'Delete', icon: 'trash', onSelect: () => setConfirmDelete(u) })
+                      // a pushed account nobody used: its names go back to the provider
+                      if (canDelete && u.unused_sync && covers(u.role_id) && (live(u) || u.status === 'deactivated')) {
+                        items.push({ label: 'Remove unused account', icon: 'close', onSelect: () => setRemoveOf(u) })
+                      }
                       return (
                         <div className="inline-flex gap-1.5">
                           {canWrite && (live(u) || u.status === 'deactivated') && (
@@ -599,8 +653,16 @@ function PeopleAndRoles({ notify }: SectionProps) {
             <div className="flex flex-col gap-3.5">
               <span>
                 {unlockOf?.username} {unlockOf?.locked_at ? lockedFrom(unlockOf) : 'is locked.'} Unlocking lets them
-                sign in again and starts their failure count over. Confirm it is them first.
+                sign in again, starts their failure count over, and ends their open sign-ins. Confirm it is them first.
               </span>
+              <Field label="Reason" hint="Kept in the audit trail.">
+                <TextInput
+                  maxLength={500}
+                  value={unlockReason}
+                  disabled={unlocking}
+                  onChange={(e) => setUnlockReason(e.target.value)}
+                />
+              </Field>
               <Field label="How you confirmed it is them" hint="Kept in the audit trail.">
                 <Select
                   value={confirmedBy}
@@ -615,11 +677,13 @@ function PeopleAndRoles({ notify }: SectionProps) {
           }
           confirmLabel="Unlock"
           busy={unlocking}
-          confirmDisabled={!confirmedBy}
+          confirmDisabled={!confirmedBy || !unlockReason.trim()}
           onConfirm={handleUnlock}
           onClose={() => {
             if (unlocking) return
             setUnlockOf(null)
+            setConfirmedBy('')
+            setUnlockReason('')
             setUnlockCompromise(false)
           }}
         />
@@ -661,7 +725,25 @@ function PeopleAndRoles({ notify }: SectionProps) {
           onConfirm={handleDelete}
           onClose={() => setConfirmDelete(null)}
         />
+
+        <ConfirmDialog
+          open={!!removeOf}
+          title={removeOf ? `Remove ${removeOf.username}?` : ''}
+          body={
+            <span>
+              Directory sync created this account and nobody has used it. Removing it can’t be undone: its username and
+              email are freed, its link to the provider goes, and it is deactivated. The provider’s next push of this
+              person creates a new account.
+            </span>
+          }
+          confirmLabel="Remove"
+          busy={deleting}
+          onConfirm={handleRemove}
+          onClose={() => !deleting && setRemoveOf(null)}
+        />
       </SettingsCard>
+
+      {canWrite && <DirectoryPushesCard notify={notify} onChanged={reload} />}
 
       <TeamsCard notify={notify} />
 

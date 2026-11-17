@@ -52,6 +52,8 @@ export interface MfaOffer {
   methods: string[];
   securityKey: { options: Record<string, unknown>; challenge: string } | null;
   detail: string;
+  /** A break-glass account: the code goes with a reason, in the same request. */
+  breakGlass: boolean;
 }
 
 export interface LoginResult {
@@ -72,7 +74,7 @@ interface AuthContextType {
   /** Re-reads /auth/me in place, without the loading screen that unmounts the console. */
   refreshUser: () => Promise<void>;
   /** Resolves to fresh recovery codes when the sign-in replaced an old set (show them once), and whether a recovery code removed the person's methods (setup comes next). */
-  login: (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer) => Promise<LoginResult>;
+  login: (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer, reason?: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -166,7 +168,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // person, so re-read who they are and the console moves to setup.
   useEffect(() => onMfaSetupRequired(() => void refreshUser()), [refreshUser]);
 
-  const login = async (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer): Promise<LoginResult> => {
+  const login = async (
+    usernameOrEmail: string,
+    password: string,
+    mfaCode?: string,
+    key?: KeyAnswer,
+    reason?: string,
+  ): Promise<LoginResult> => {
     if (DEV_MODE) {
       console.log('DEV_MODE: Bypassing login, using mock user');
       retainChatCache(DEV_USER.user_id);
@@ -182,6 +190,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         mfa_code: mfaCode,
         webauthn: key?.assertion,
         webauthn_challenge: key?.challenge,
+        reason,
       });
 
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
@@ -201,6 +210,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           methods: body?.methods ?? ['authenticator_app'],
           securityKey: body?.security_key ?? null,
           detail: body?.detail ?? '',
+          breakGlass: !!body?.break_glass,
         };
         throw Object.assign(new Error('MFA_REQUIRED', { cause: error }), { offer });
       }

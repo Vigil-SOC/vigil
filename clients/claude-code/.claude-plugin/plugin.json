@@ -1,7 +1,8 @@
 {
-  "name": "vigil",
+  "name": "vigil-soc",
+  "displayName": "Vigil SOC",
   "version": "1.1.2",
-  "description": "Work your own Vigil SOC from Claude Code: read the queue and cases, start and steer investigations and hunts, see what waits on a person, and read the trail. Vigil's kernel does the work; the session starts, steers and reads it.",
+  "description": "Work your team's Vigil, the open source AI SOC you run yourself, from Claude Code. Start investigations and hunts that run in Vigil, share cases, hunts and verdicts with colleagues, and begin each run from what the team already concluded. Your roles, approvals and audit trail apply to each call.",
   "author": {
     "name": "Vigil-SOC",
     "url": "https://github.com/Vigil-SOC"
@@ -9,6 +10,10 @@
   "homepage": "https://vigilsoc.org",
   "repository": "https://github.com/Vigil-SOC/vigil",
   "license": "Apache-2.0",
+  "privacyPolicyUrl": "https://vigilsoc.org/privacy/",
+  "termsOfServiceUrl": "https://vigilsoc.org/terms/",
+  "documentationUrl": "https://vigilsoc.org/docs/",
+  "supportUrl": "https://github.com/Vigil-SOC/vigil/issues/new",
   "keywords": [
     "security",
     "soc",
@@ -16,6 +21,15 @@
     "incident-response",
     "threat-hunting"
   ],
+  "mcpServers": {
+    "vigil": {
+      "type": "http",
+      "url": "${user_config.vigil_url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.credential}"
+      }
+    }
+  },
   "userConfig": {
     "vigil_url": {
       "type": "string",

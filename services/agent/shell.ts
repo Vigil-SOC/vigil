@@ -9,9 +9,11 @@
 // chmod its way out because it owns none of it. No network, credentials or
 // packages: the container is the boundary for those (network_mode: none).
 //
-// Runs as root with SETUID, SETGID and KILL only, as the MCP runner does.
+// Runs as root with SETUID, SETGID and KILL only, as the MCP runner does. Over TCP
+// (Helm) POST /run takes `Authorization: Bearer $SHELL_TOKEN`; a token that only
+// opens this shell, which no child ever sees.
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { constants } from "node:os";
@@ -30,6 +32,8 @@ const num = (name: string, fallback: number): number => {
 };
 
 const SOCKET = env["SHELL_SOCKET"] ?? "";
+// The backend's bearer in TCP mode (#4570). Socket mode leaves it to the socket's volume.
+const TOKEN = SOCKET ? "" : (env["SHELL_TOKEN"] ?? "");
 const PORT = num("SHELL_PORT", 6992);
 const WORK = env["SHELL_WORK_DIR"] ?? "/work";
 const POOL = num("SHELL_POOL", 8);
@@ -231,9 +235,25 @@ async function body(req: IncomingMessage): Promise<Buffer | null> {
   return Buffer.concat(chunks);
 }
 
+const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
+const EXPECTED = digest(`Bearer ${TOKEN}`);
+
+// Digests, so the comparison takes the same time whatever length was presented.
+function authorised(req: IncomingMessage): boolean {
+  if (!TOKEN) return true;
+  if (timingSafeEqual(digest(req.headers.authorization ?? ""), EXPECTED)) return true;
+  log.warn("shell call refused", { reason: req.headers.authorization ? "wrong token" : "missing token" });
+  return false;
+}
+
 const server = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/healthz" || req.url === "/readyz")) return reply(res, 200, { ok: true, free: free.length });
   if (req.method !== "POST" || req.url !== "/run") return reply(res, 404, { error: "not found" });
+  // Before the body is read: an unauthenticated caller never gets a slot or a buffer.
+  if (!authorised(req)) {
+    res.setHeader("connection", "close"); // the unread body is not drained
+    return reply(res, 401, { error: "missing or wrong SHELL_TOKEN bearer" });
+  }
   void (async () => {
     // A client gone mid-upload must not take the process, and every call, with it.
     try {
@@ -261,6 +281,11 @@ const server = createServer((req, res) => {
 
 if (process.getuid?.() !== 0) {
   log.error("the shell runs as root to drop each call to its own uid; refusing to start");
+  process.exit(1);
+}
+
+if (!SOCKET && !TOKEN) {
+  log.error("SHELL_TOKEN is empty: TCP mode takes calls only with a bearer; refusing to start");
   process.exit(1);
 }
 

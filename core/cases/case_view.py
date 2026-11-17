@@ -57,6 +57,11 @@ def shell_address() -> Tuple[Optional[str], Optional[str]]:
     return os.getenv("SHELL_SOCKET") or None, os.getenv("SHELL_URL") or None
 
 
+def shell_token() -> str:
+    """The bearer the shell requires over TCP (#4570); empty over its socket."""
+    return os.environ.get("SHELL_TOKEN", "")  # noqa: ENV001 - shell bearer
+
+
 class EvidenceUnreadable(Exception):
     """A missing file, a failed extraction, or an item with nothing to read."""
 

@@ -8,6 +8,7 @@ const METHODS: Record<string, string> = {
   mfa_step_down: 'Password and authenticator app (security keys unavailable)',
   recovery_step_down: 'Password and recovery code (security keys unavailable)',
   sso: 'Single sign-on',
+  break_glass: 'Break-glass: password, second factor and a reason',
 }
 const method = (m: string) => METHODS[m] ?? 'Password'
 

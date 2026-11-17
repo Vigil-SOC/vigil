@@ -38,7 +38,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.auth import key_age, mfa_coverage, password_validator, token_expiry
+from core.auth import (
+    break_glass,
+    key_age,
+    mfa_coverage,
+    password_validator,
+    token_expiry,
+)
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
@@ -230,6 +236,7 @@ mfa_coverage.register()
 password_validator.register()
 token_expiry.register()
 key_age.register()
+break_glass.register()
 register_medic_notices()
 app.add_middleware(CSRFMiddleware)
 
@@ -687,6 +694,10 @@ async def _startup(app: FastAPI):
 
         app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
+        from services.api.skill_sweep import run as skill_sweeper
+
+        app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
+
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
@@ -718,11 +729,17 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
+    # Cancelling the task cannot stop the thread a sweep runs in; this does, at
+    # the next skill, so shutdown is not held for the rest of a long sweep.
+    from core.skills import skill_hold
+
+    skill_hold.cancel.set()
     for name in (
         "key_ring_task",
         "key_age_task",
         "setup_code_task",
         "dormancy_task",
+        "skill_sweep_task",
     ):
         task = getattr(app.state, name, None)
         if task is None:

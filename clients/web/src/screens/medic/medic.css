@@ -178,3 +178,12 @@
 .mdc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .mdc-list { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--tx1); overflow-wrap: anywhere; }
 .mdc-confirm { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+
+/* fix types: track record under the level, the admin's controls under that (UX-28) */
+.mdc-card .mdc-sub { margin: 12px 0 6px; font-size: 12px; font-weight: 650; color: var(--tx2); }
+.mdc-level { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 640px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--ln0); }
+.mdc-level .field-input { max-width: 100%; }
+.mdc-level p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.mdc-facts .mdc-list { padding-left: 16px; }
+.mdc-fix { grid-template-columns: 9.5rem minmax(0, 1fr); }
+.mdc-card > p.mdc-saved, .mdc-card > p.mdc-save-failed { margin: 10px 0 0; }

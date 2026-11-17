@@ -15,6 +15,7 @@ usage() {
 Usage: $0 [--daemon|-d] [--with <profile>] [--all]
        $0 backup --repo PATH --passphrase-file PATH
        $0 restore --repo PATH --passphrase-file PATH [--snapshot ID] [--test]
+                  [--reason TEXT]
 
   -d, --daemon      Run in the background (logs/ + pidfiles)
       --with NAME   Also start a profiled service (splunk, kafka, pgadmin,
@@ -24,8 +25,9 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
                     start the API, frontend, or agent layer.
       restore       Swap a snapshot in from the backup image and exit. Stop the
                     Bifrost container first. --test runs the checks and leaves
-                    live state untouched. Pass JWT_SECRET_KEY in the shell when
-                    Compose, not .env, holds it.
+                    live state untouched. --reason is recorded in the upgrade
+                    history. Pass JWT_SECRET_KEY in the shell when Compose, not
+                    .env, holds it.
 
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
@@ -88,10 +90,10 @@ prepare_backup_run() {
         --bifrost-data /var/lib/vigil/bifrost)
 }
 
-# Sets repo, passfile, snapshot and test from `backup`/`restore` arguments.
+# Sets repo, passfile, snapshot, test and reason from `backup`/`restore` arguments.
 parse_backup_args() {
     local cmd="$1"; shift
-    repo="" passfile="" snapshot="" test=0
+    repo="" passfile="" snapshot="" test=0 reason=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --repo)
@@ -107,6 +109,10 @@ parse_backup_args() {
             --test)
                 [ "$cmd" = "restore" ] || { echo "Unknown argument: $1" >&2; usage >&2; exit 1; }
                 test=1; shift ;;
+            --reason)
+                [ "$cmd" = "restore" ] || { echo "Unknown argument: $1" >&2; usage >&2; exit 1; }
+                [ -n "${2:-}" ] || { echo "$cmd: --reason requires text" >&2; exit 1; }
+                reason="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
         esac
@@ -119,7 +125,7 @@ parse_backup_args() {
 }
 
 run_backup() {
-    local repo passfile snapshot test
+    local repo passfile snapshot test reason
     parse_backup_args backup "$@"
     prepare_backup_run backup "$repo" "$passfile" ro
     dc "${BACKUP_RUN_ARGS[@]}"
@@ -129,7 +135,7 @@ run_backup() {
 # JWT rotation edits it) and Bifrost stopped (its SQLite files are replaced).
 # --test leaves live state alone, so Bifrost may keep running for it.
 run_restore() {
-    local repo passfile snapshot test
+    local repo passfile snapshot test reason
     parse_backup_args restore "$@"
     if [ "$test" -eq 0 ]; then
         ensure_docker || exit 1
@@ -143,6 +149,7 @@ run_restore() {
     prepare_backup_run restore "$repo" "$passfile" rw
     [ -n "$snapshot" ] && BACKUP_RUN_ARGS+=(--snapshot "$snapshot")
     [ "$test" -eq 1 ] && BACKUP_RUN_ARGS+=(--test)
+    [ -n "$reason" ] && BACKUP_RUN_ARGS+=("--reason=$reason")
     dc "${BACKUP_RUN_ARGS[@]}"
 }
 
@@ -247,6 +254,10 @@ if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale cli
     fi
 fi
 
+# --- MCP connectors (the runner image's pinned tree; exports VIGIL_MCP_PREFIX) ---
+MCP_CONNECTORS_PROBLEM=""
+install_mcp_connectors "$NODE_PROBLEM"
+
 # --- Launch ---
 export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 LOGS_DIR="${PWD}/logs"
@@ -264,6 +275,7 @@ print_ready() {
         echo "Frontend: not started ($NODE_PROBLEM), and neither is the agent layer"
     fi
     echo "Docs:     http://localhost:6987/docs"
+    [ -n "$MCP_CONNECTORS_PROBLEM" ] && echo "MCP:      connectors $MCP_CONNECTORS_PROBLEM"
     echo ""
     if [ "$SKIP_FRONTEND" -eq 1 ]; then
         echo "Install Node.js 20 or later (Ubuntu's apt package is older; nvm works:"

@@ -18,6 +18,7 @@ Bifrost starts a fresh, empty log. Copy it back from there to keep the history.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import getpass
 import json
@@ -33,12 +34,16 @@ from pathlib import Path
 from urllib.parse import quote
 
 import psycopg2
+import redis
+import redis.asyncio
+from bullmq import Queue
 from cryptography.fernet import Fernet, InvalidToken
 from psycopg2 import sql
 from sqlalchemy import create_engine
 from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
+from core.agents.queue import RUN_QUEUE
 from core.audit import feed, retention, trail
 from core.auth import dormancy, key_ring, sign_in_runs, sign_ins
 from core.auth.mfa_coverage import SETTINGS_LINK
@@ -61,12 +66,13 @@ from core.backup.create import (
 )
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
+from core.redis_client import effective_redis_url, redact_logged_text
 from core.response.approval_service import ActionStatus
 from core.secrets_manager import EncryptedFileBackend
 from core.skills.skill_library import operator_skills_root
 from core.storage.config_service import get_config_service
 from core.storage.connection import DatabaseConfig, get_db_manager
-from core.storage.models import ApprovalAction, SignIn, User
+from core.storage.models import ApprovalAction, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.version import __version__
@@ -125,7 +131,7 @@ def restore_snapshot(
     test: bool,
     actor: str | None = None,
     bifrost_data: str | None = None,
-    discarded: list[str] | None = None,
+    reason: str | None = None,
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -195,6 +201,7 @@ def restore_snapshot(
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
             _check_erasure_list(root, dump_in_snapshot)
+            _check_redis()
             paired_key = _paired_wrapping_key(restic, passphrase, snapshot_id, priority)
             swap_lines, abandoned, live_ring = _swap(
                 cfg, staged_name, pre_name, placed, stamp
@@ -202,6 +209,14 @@ def restore_snapshot(
             lines.extend(swap_lines)
             swapped = True
             created = False
+            # Right after the swap, so a failed settle still empties the queue;
+            # a failed discard still lets the settle run, then is raised.
+            discarded: list[str] | None = None
+            try:
+                discarded = _discard_queued_runs()
+                lines.append(f"queued jobs discarded: {len(discarded)}")
+            except BackupError as exc:
+                lines.append(str(exc))
             # The swap stays even when this fails. --test returned above. The
             # lines naming what it moved aside go out with the error. History
             # is recorded after settle so a missing history file does not skip
@@ -210,21 +225,35 @@ def restore_snapshot(
                 # The restored database is the live name. Point this process at
                 # it before blanking, or the erasure list is applied nowhere.
                 _point_at_live(cfg)
-                reapplied_at = utcnow()
-                _reapply_erased(root, dump_in_snapshot)
-                lines.extend(
-                    _settle_restored(
-                        cfg,
-                        manifest,
-                        snapshot_id,
-                        restoring_user,
-                        abandoned,
-                        reapplied_at,
-                        paired_key,
-                        live_ring,
+                settle_error: BackupError | None = None
+                try:
+                    lines.extend(
+                        _settle_restored(
+                            cfg,
+                            manifest,
+                            snapshot_id,
+                            restoring_user,
+                            abandoned,
+                            paired_key,
+                            live_ring,
+                        )
                     )
-                )
-                _record_restored(manifest, snapshot_id, discarded)
+                except BackupError as exc:
+                    settle_error = exc
+                # After the settle, which leaves the ring the reservations are
+                # keyed under. It runs even when the settle failed, so an erased
+                # person is never left active; the settle error is still raised.
+                try:
+                    _reapply_erased(root, dump_in_snapshot)
+                except BackupError as exc:
+                    raise BackupError(
+                        f"{settle_error}\n{exc}" if settle_error else str(exc)
+                    ) from exc
+                if settle_error is not None:
+                    raise settle_error
+                if discarded is None:
+                    raise BackupError("queued agent runs were not discarded")
+                _record_restored(manifest, snapshot_id, reason, discarded)
             except BackupError as exc:
                 raise BackupError("\n".join([*lines, str(exc)])) from exc
             return "\n".join(lines)
@@ -737,19 +766,93 @@ def _check_erasure_list(root: Path, dump_in_snapshot: str) -> None:
 
 
 def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
-    """Union the snapshot's erasure list with the outside file and blank each id."""
+    """Union the snapshot's erasure list with the outside file, then blank each
+    id and reserve its username and email."""
     path = _under_target(root, str(Path(dump_in_snapshot).parent / retention.LIST_NAME))
     try:
         with unit_of_work() as session:
+            ringed = _ring_present(session)
+        if ringed:
+            # A backup from before the identifier key has none: add it, committed
+            # first so the re-apply reads it. A restored ring with no rows is left
+            # to the API's first adopt, so no reservation is written for it.
+            key_ring.adopt()
+        with unit_of_work() as session:
             retention.reapply(
-                session, retention.read_ids(path) if path.is_file() else []
+                session,
+                retention.read_ids(path) if path.is_file() else [],
+                reserve=ringed,
             )
     except Exception as exc:
         raise BackupError(f"could not reapply erased principals: {exc}") from exc
 
 
+def _check_redis() -> None:
+    """Refuse before the swap when the agent-run queue can't be reached."""
+    client = redis.Redis.from_url(
+        effective_redis_url(), socket_connect_timeout=5, socket_timeout=5
+    )
+    try:
+        client.ping()
+    except Exception as exc:
+        raise BackupError(
+            "Redis is not answering, so queued agent runs can't be discarded; "
+            f"start Redis and restore again ({redact_logged_text(str(exc))})"
+        ) from exc
+    finally:
+        client.close()
+
+
+# Waiting (and paused), delayed, prioritized, and active jobs a stopped worker left.
+_QUEUED_STATES = ["waiting", "delayed", "prioritized", "active"]
+
+
+def _discard_queued_runs() -> list[str]:
+    """Empty ``agent-runs`` and return the ids of the queued jobs it held.
+
+    The restored database stopped every run it knows of, so any job left
+    would only start or resume a run that is gone or cancelled. The queue has
+    no repeatable jobs. Obliterating also drops its finished and failed jobs,
+    which name runs the restored database no longer has.
+    """
+
+    async def discard() -> list[str]:
+        # Timeouts and no long retry: Redis answered before the swap.
+        client = redis.asyncio.from_url(
+            effective_redis_url(),
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=30,
+        )
+        queue = Queue(RUN_QUEUE, {"connection": client})
+        try:
+            # Ids only: getJobs fails on an id whose job hash is gone.
+            ids = await queue.scripts.getRanges(
+                queue.sanitizeJobTypes(_QUEUED_STATES), 0, -1, False
+            )
+            try:
+                # force: a stopped worker's lock on an active job may linger.
+                # A string: bullmq 2.15 hands the flag to Redis as-is, and
+                # redis-py refuses a bool.
+                await queue.obliterate(force="1")
+            except Exception:
+                # obliterate pauses first; don't leave the queue stuck paused.
+                await queue.resume()
+                raise
+            return sorted(set(map(str, ids)))
+        finally:
+            await queue.close()
+
+    try:
+        return asyncio.run(discard())
+    except Exception as exc:
+        raise BackupError(
+            f"could not discard queued agent runs: {redact_logged_text(str(exc))}"
+        ) from exc
+
+
 def _record_restored(
-    manifest: dict, snapshot_id: str, discarded: list[str] | None
+    manifest: dict, snapshot_id: str, reason: str | None, discarded: list[str]
 ) -> None:
     """One history line, same keys as ``core.upgrade.command._record``.
 
@@ -766,8 +869,8 @@ def _record_restored(
         "to": version if isinstance(version, str) else None,
         "outcome": "restored",
         "restore_point": snapshot_id,
-        "reason": "",
-        "discarded": list(discarded or []),
+        "reason": reason or "",
+        "discarded": discarded,
     }
     path = Path(raw)
     try:
@@ -1185,7 +1288,6 @@ def _settle_restored(
     snapshot_id: str,
     actor: str,
     abandoned: dict | None,
-    reapplied_at: datetime,
     paired_key: str | None,
     live_ring: dict,
 ) -> list[str]:
@@ -1233,9 +1335,7 @@ def _settle_restored(
     # Apart from the key step: a failed key step still ends the sign-ins, and a
     # failed ending is still reported and recorded.
     try:
-        ended, stopped = _end_restored_sessions(
-            created_at, reapplied_at, apps_cleared, resets_needed
-        )
+        ended, stopped = _end_restored_sessions(created_at, apps_cleared, resets_needed)
     except Exception as exc:
         ending = BackupError(f"could not end the restored sign-ins: {exc}")
         failure = BackupError(f"{failure}\n{ending}") if failure else ending
@@ -1288,7 +1388,6 @@ def _settle_restored(
 
 def _end_restored_sessions(
     created_at: str,
-    reapplied_at: datetime,
     apps_cleared: int = 0,
     resets_needed: int = 0,
 ) -> tuple[int, int]:
@@ -1307,21 +1406,11 @@ def _end_restored_sessions(
     with unit_of_work() as session:
         ended = sign_ins.end_every_open(session, sign_ins.RESTORE)
         dormancy.start_grace(session)
-        # People erased by this restore's own reapply were ended before this step.
-        erased = (
-            session.query(SignIn)
-            .filter(
-                SignIn.end_reason == sign_ins.ERASED, SignIn.ended_at >= reapplied_at
-            )
-            .count()
-        )
     stopped = sign_in_runs._stop(runs)
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
-    _tell_session_holders(
-        created_at, ended + erased, len(stopped), apps_cleared, resets_needed
-    )
-    return ended + erased, len(stopped)
+    _tell_session_holders(created_at, ended, len(stopped), apps_cleared, resets_needed)
+    return ended, len(stopped)
 
 
 def _tell_session_holders(

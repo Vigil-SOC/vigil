@@ -238,6 +238,28 @@
             ],
             "title": "Enabled"
           },
+          "held": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held"
+          },
+          "held_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held Since"
+          },
           "last_delivered_at": {
             "anyOf": [
               {
@@ -1027,6 +1049,17 @@
             "items": {},
             "title": "Notes",
             "type": "array"
+          },
+          "opened_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened From"
           },
           "owner_cannot_read": {
             "anyOf": [
@@ -3093,6 +3126,14 @@
             "title": "Four Eyes",
             "type": "boolean"
           },
+          "held": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HeldAction"
+            },
+            "title": "Held",
+            "type": "array"
+          },
           "propose": {
             "title": "Propose",
             "type": "boolean"
@@ -3104,6 +3145,39 @@
           "stopped": {
             "title": "Stopped",
             "type": "boolean"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "stopped_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped By"
+          },
+          "stopped_by_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped By Label"
           },
           "workflows": {
             "additionalProperties": {
@@ -3860,6 +3934,62 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeldAction": {
+        "description": "One approved outside action a stop is still holding.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "action_type": {
+            "default": "",
+            "title": "Action Type",
+            "type": "string"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "restricted": {
+            "default": false,
+            "title": "Restricted",
+            "type": "boolean"
+          },
+          "target": {
+            "default": "",
+            "title": "Target",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "HeldAction",
         "type": "object"
       },
       "IOCAdd": {
@@ -7142,6 +7272,113 @@
           }
         },
         "summary": "Put Ceiling",
+        "tags": [
+          "autonomy"
+        ]
+      }
+    },
+    "/api/v1/autonomy/held/release": {
+      "post": {
+        "operationId": "post_api_v1_autonomy_held_release",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CeilingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Release Held",
+        "tags": [
+          "autonomy"
+        ]
+      }
+    },
+    "/api/v1/autonomy/held/{action_id}/release": {
+      "post": {
+        "operationId": "post_api_v1_autonomy_held_action_id_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "title": "Action Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CeilingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Release Action",
         "tags": [
           "autonomy"
         ]

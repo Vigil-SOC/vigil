@@ -14,7 +14,6 @@ import type {
   RunOutcome,
   RunPayload,
   Confidence,
-  Severity,
   TerminalHandoff,
   TerminalPayload,
   UnboundPayload,
@@ -26,6 +25,7 @@ import { announceOpen, noAnnounce, type Announce } from "./checkpoints.js";
 import type { Harness, Outcome, TurnConfig } from "./loop.js";
 import type { Message } from "./provider.js";
 import { registryOf, type Registry } from "./registry.js";
+import { ADDED_SKILLS, withAddedSkills } from "../plugins/registry.js";
 import { DENIAL_RECHECK_MS } from "./leases.js";
 import { logger } from "./log.js";
 import { scrub } from "./security.js";
@@ -34,8 +34,8 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { bridgeHeaders } from "./principal.js";
-import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
-import { CONFIDENCES, SEVERITIES, type RunEventKind, type StopCause } from "../contracts/events.js";
+import { claimCount, classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
+import { CONFIDENCES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -77,8 +77,6 @@ export interface Ending {
   summary?: string | null;
   // Work the run finished by giving away, carried out on the terminal.
   handoffs?: TerminalHandoff[];
-  // The case priority the run proved, raised to on a completed terminal (run_bridge_router.py).
-  severity?: Severity;
 }
 
 // Not an ending: the run stops here and waits, on a question it has raised or on
@@ -272,7 +270,9 @@ export async function runAgent(harness: Harness<Kinds>, options: AgentOptions): 
 
 // The run as it happens: every event the loop yields, after the kernel has
 // journaled its own, then the report. A conversation streams this to its reader.
-export async function* streamAgent(harness: Harness<Kinds>, options: AgentOptions): AsyncGenerator<StreamEvent<unknown>, AgentReport> {
+export async function* streamAgent(harness: Harness<Kinds>, given: AgentOptions): AsyncGenerator<StreamEvent<unknown>, AgentReport> {
+  // Read off the spec, never the request: a resume has none, and the run event holds it.
+  const options = { ...given, plugin: withAddedSkills(given.plugin, given.spec.sections[ADDED_SKILLS]) };
   const { run_id } = options;
   if ((await harness.state.latestSeq(run_id)) === null) await open(harness, options);
   await journalAnswers(harness.state, run_id, options.run_kind, options.answers ?? noAnswers);
@@ -335,11 +335,11 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     if (loop.conclusion !== null) await harness.state.append(run_id, [event(options, "conclusion", await withGaps(ctx, loop.conclusion))]);
     if (ending !== null) {
       // A plugin that ends the run itself still holds its guarded answer to the second look.
-      if (loop.conclusion !== null && options.plugin.guard !== undefined) {
+      if (loop.conclusion !== null && guardsOf(options.plugin).length > 0) {
         const answered = await harness.state.read(run_id);
         await harness.state.append(run_id, [event(options, "review", await reviewOf(ctx, loop.conclusion, callsIn(answered)))]);
       }
-      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, severity: ending.severity, stop_cause: causeOfEnding(ending, loop.outcome.stop_cause) });
+      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, stop_cause: causeOfEnding(ending, loop.outcome.stop_cause) });
     }
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
       return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason, { stop_cause: loop.outcome.stop_cause });
@@ -362,9 +362,9 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
   const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
   return end(ctx, blind ? "data_starved" : "completed", summaryOf(options.plugin, conclusion, review), {
-    severity: severityOf(options.plugin, conclusion),
-    proposed: proposalsOf(options.plugin, conclusion),
+    proposed: proposalsOf(options.plugin, conclusion, review),
     disposition: dispositionOf(options.plugin, conclusion, review),
+    title: titleOf(options.plugin, conclusion),
     confidence: confidenceOf(options.plugin, conclusion),
   });
 }
@@ -412,6 +412,8 @@ function concludeToolFor(ctx: PluginContext): RegisteredTool[] {
               return { ok: false, failure: { kind: "refused", detail: persistAsk(typeof said === "string" ? said : "", looked, null, CONCLUDE_TOOL) } };
             }
           }
+          const alternatives = alternativesAsk(guardFor(plugin, args), await ctx.harness.state.read(ctx.options.run_id));
+          if (alternatives !== null) return { ok: false, failure: { kind: "refused", detail: alternatives } };
           return { ok: true, rows: [{ concluded: true }], rowCount: 1, capped: false, sourceSystem: "kernel" };
         },
       },
@@ -419,6 +421,25 @@ function concludeToolFor(ctx: PluginContext): RegisteredTool[] {
       true,
     ),
   ];
+}
+
+// Said once at conclude to an answer whose guard wants more than one claim on the record
+// first: the run names the other readings and checks them before it answers, rather
+// than the reviewer finding them missing afterwards.
+const ALTERNATIVES_ASK = "put the other explanations on the record first";
+
+function alternativesAsk(guard: GuardSpec | undefined, events: readonly { kind: string; payload: unknown }[]): string | null {
+  const min = guard?.min_hypotheses;
+  if (guard === undefined || min === undefined) return null;
+  const held = claimCount(events);
+  if (held >= min) return null;
+  if (callsIn(events).some((call) => call.tool === CONCLUDE_TOOL && call.result.includes(ALTERNATIVES_ASK))) return null;
+  return (
+    `Not yet: ${ALTERNATIVES_ASK}. The record holds ${held} claim${held === 1 ? "" : "s"}; ` +
+    `an answer of ${guard.guarded.join(" or ")} needs at least ${min}, one of them the most likely ` +
+    "harmless explanation that fits what you saw. Put it on the record, look for what would confirm or " +
+    "rule it out, link what you find, then conclude again. If nothing you can query settles it, open a question for it."
+  );
 }
 
 // The record's tools (core/record.ts), unless the plugin keeps none.
@@ -1161,11 +1182,11 @@ export async function reviewOf(ctx: PluginContext, conclusion: ConclusionPayload
   const unknown_refs = cited.filter((ref) => !known.has(ref));
   const real = cited.filter((ref) => known.has(ref));
 
-  const guard = plugin.guard;
-  const asked = guard === undefined ? null : String(conclusion.value[guard.field] ?? "");
-  if (guard === undefined || asked === null || !guard.guarded.includes(asked)) {
+  const guard = guardFor(plugin, conclusion.value);
+  if (guard === undefined) {
     return { stance: "skipped", reasons: "no guarded value was asked for", missing: [], cited, unknown_refs };
   }
+  const asked = String(conclusion.value[guard.field] ?? "");
 
   // A required record holds a guarded answer to it too: the answer has to stand on
   // a cited result the record links to one of its claims, not on prose alone.
@@ -1273,11 +1294,33 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
-// The rating the answer gave, when its plugin asks for one and it is a case priority.
-export function severityOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Severity | undefined {
-  const field = isStructured(plugin.conclusion) ? plugin.conclusion.severity_field : undefined;
-  const rated = field === undefined ? undefined : conclusion.value[field];
-  return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
+const SHOWN_FAILURES = 5;
+
+// Vigil's own line under an answer: each write the run asked for whose call failed,
+// with no later call of the same tool that worked. Such a write changed nothing,
+// whatever the answer says, and the model is not trusted to say so itself. Which
+// tools write is the deployment's word (`writes` on a tool spec). Null when none failed.
+export function unwrittenNote(calls: readonly CallPayload[], tools: readonly ToolSpec[]): string | null {
+  const writes = new Set(tools.filter((tool) => tool["writes"] === true).map((tool) => tool.id));
+  const failed = calls.filter(
+    (call, index) => !call.ok && writes.has(call.tool) && !calls.slice(index + 1).some((later) => later.ok && later.tool === call.tool),
+  );
+  if (failed.length === 0) return null;
+  // A run that failed every save could list dozens; the first few say what happened.
+  const lines = failed.slice(0, SHOWN_FAILURES).map((call) => `- ${call.tool} (${call.role === undefined ? "" : `${call.role} `}${call.ref}): ${failureText(call)}`);
+  if (failed.length > SHOWN_FAILURES) lines.push(`- and ${failed.length - SHOWN_FAILURES} more`);
+  return `**Not saved.** Vigil checked the run's calls: these writes failed and were not made good by a later call, so what they would have saved does not exist, whatever the answer above says.\n${lines.join("\n")}`;
+}
+
+// Why a call failed, as the model read it: the result already carries the kind and
+// the backend's reason, scrubbed. Only the kind when the result says nothing more.
+// Under the experimental guards the model read shown, and result stays raw.
+function failureText(call: CallPayload): string {
+  const said = (call.shown ?? call.result).replace(/<\/?vigil:tool_result[^>]*>/g, "").trim().replace(/^failed:\s*/, "").replace(/\s+/g, " ");
+  const text = said === "" ? (call.failure ?? "failed, no reason given") : said;
+  // By code point, so a cut never splits a surrogate pair.
+  const points = Array.from(text);
+  return points.length > 240 ? `${points.slice(0, 239).join("")}…` : text;
 }
 
 // How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
@@ -1295,12 +1338,35 @@ export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayl
   return typeof given === "string" && given !== "" ? given : undefined;
 }
 
+// The short case title the answer gave, when its plugin names a field for one. Blank is none.
+export function titleOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): string | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.title_field : undefined;
+  const given = field === undefined ? undefined : conclusion.value[field];
+  return typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
+}
+
+// The guards a plugin declares: the dismissal guard, then the escalation guard.
+export function guardsOf(plugin: PluginManifest): GuardSpec[] {
+  return [plugin.guard, plugin.escalation_guard].filter((one): one is GuardSpec => one !== undefined);
+}
+
+// The guard that reads this answer: the first whose field holds one of its guarded values.
+export function guardFor(plugin: PluginManifest, value: Record<string, unknown>): GuardSpec | undefined {
+  return guardsOf(plugin).find((guard) => guard.guarded.includes(String(value[guard.field] ?? "")));
+}
+
 // The actions the answer asks a person to approve, when its plugin names a field for
-// them. The backend checks each one on its own and files the valid ones.
-export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayload): ProposedAction[] {
+// them. The backend checks each one on its own and files the valid ones. Held by a
+// guard that notes proposals, each still goes to a person, marked as unreviewed.
+export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayload, review?: ReviewPayload): ProposedAction[] {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.proposals_field : undefined;
   const listed = field === undefined ? undefined : conclusion.value[field];
-  return Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
+  const proposals = Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
+  const note = review === undefined || heldBecause(review) === null ? undefined : guardFor(plugin, conclusion.value)?.proposals_note;
+  // A proposal with no reason stays without one, so the backend still drops it.
+  return note === undefined
+    ? proposals
+    : proposals.map((one) => (typeof one.reason === "string" && one.reason.trim() ? { ...one, reason: `${note} ${one.reason}` } : one));
 }
 
 // Why the guard moved the answer off what was asked; null when it did not.
@@ -1411,9 +1477,9 @@ function causeOfEnding(ending: Ending, cause: StopCause | undefined): StopCause 
 interface EndFields {
   summary?: string | null | undefined;
   handoffs?: readonly TerminalHandoff[] | undefined;
-  severity?: Severity | undefined;
   proposed?: readonly ProposedAction[] | undefined;
   disposition?: string | undefined;
+  title?: string | undefined;
   confidence?: Confidence | undefined;
   stop_cause?: StopCause | undefined;
 }
@@ -1422,7 +1488,7 @@ async function end(
   ctx: PluginContext,
   outcome: RunOutcome,
   reason: string,
-  { summary, handoffs, severity, proposed = [], disposition, confidence, stop_cause }: EndFields = {},
+  { summary, handoffs, proposed = [], disposition, title, confidence, stop_cause }: EndFields = {},
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1431,6 +1497,11 @@ async function end(
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
   let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  // Only under an answer the run gave: a bare reason claims no save.
+  if (typeof summary === "string" && summary.trim() !== "" && typeof deliver === "string") {
+    const note = unwrittenNote(callsIn(await ctx.harness.state.read(ctx.options.run_id)), ctx.options.spec.tools);
+    if (note !== null) deliver = `${deliver}\n\n${note}`;
+  }
   // After every charge this ending still takes, so the sealed header and the row agree.
   let finished_at: string | undefined;
   if (typeof deliver === "string" && ctx.options.hooks?.seal !== undefined) {
@@ -1444,10 +1515,10 @@ async function end(
     ...(stop_cause === undefined ? {} : { stop_cause }),
     ...(deliver === undefined ? {} : { summary: deliver }),
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
-    ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
     ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
+    ...(title === undefined ? {} : { title }),
     ...(confidence === undefined ? {} : { confidence }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);

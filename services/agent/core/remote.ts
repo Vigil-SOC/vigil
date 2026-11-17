@@ -2,6 +2,10 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
 import type { CallApproval, ToolDispatch } from "./seams.js";
 import { capture, traceHeaders, traced } from "./tracing.js";
+import { SKILL_TOOL } from "./record.js";
+import { errorFields, logger } from "./log.js";
+
+const log = logger("agent.remote");
 
 export interface RemoteOptions {
   url: string;
@@ -77,7 +81,11 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   ): Promise<ToolResult> => {
     // A tool the registry answers itself never leaves the process: every call routes
     // through this dispatch, so a local implementation was otherwise unreachable.
-    if (tool.local) return tool.invoke(args);
+    if (tool.local) {
+      const result = await tool.invoke(args);
+      if (tool.id === SKILL_TOOL && result.ok) noteSkillRead(args["name"], agentId);
+      return result;
+    }
 
     // The tool's timeout and the run's abort both end this call, so whichever
     // fires first does: a lost lease must not wait out a 30s tool.
@@ -126,6 +134,24 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
     } finally {
       held.release();
     }
+  };
+
+  // A skill a run loaded counts as a use of it, like a read_skill call the backend
+  // answers (core/skills/skill_usage.py). The backend owns that count, so it is told;
+  // not awaited, since a usage count must never slow or fail the call it counts.
+  const reads = new URL("skill-reads", options.url).toString();
+  const noteSkillRead = (name: unknown, agentId?: string): void => {
+    if (typeof name !== "string" || name === "") return;
+    call(reads, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+      body: JSON.stringify({ name, ...(agentId === undefined ? {} : { agent_id: agentId }) }),
+      signal: AbortSignal.timeout(5_000),
+    })
+      .then((response) => {
+        if (!response.ok) log.warn("recording a skill read was refused", { skill: name, status: response.status });
+      })
+      .catch((error: unknown) => log.warn("recording a skill read failed", { skill: name, ...errorFields(error) }));
   };
 
   return {

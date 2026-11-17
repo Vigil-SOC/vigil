@@ -1687,6 +1687,7 @@ input.vg-side-input {
 
 .vg-side-foot {
   display: flex;
+  flex-wrap: wrap; /* a full skill footer is wider than the panel */
   justify-content: flex-end;
   gap: 8px;
   padding-top: 6px;

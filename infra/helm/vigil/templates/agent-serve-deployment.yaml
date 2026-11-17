@@ -54,17 +54,13 @@ spec:
           envFrom:
             {{- include "vigil.envFrom" . | nindent 12 }}
           env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "vigil.postgres.appPasswordSecret" . }}
-                  key: {{ include "vigil.postgres.appPasswordSecretKey" . }}
+            {{- include "vigil.agentPostgresEnv" . | nindent 12 }}
             - name: AGENT_HTTP_PORT
               value: {{ .Values.agentServe.service.port | toString | quote }}
             {{- /* vigil.env supplies POSTGRES_* and REDIS_URL. Serve ignores
                    every Redis variable -- it never touches the queue -- but the
                    block is shared, and one it does not read costs nothing. */}}
-            {{- include "vigil.env" . | nindent 12 }}
+            {{- include "vigil.agentEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}
             {{- with .Values.agentServe.extraEnv }}
             {{- toYaml . | nindent 12 }}

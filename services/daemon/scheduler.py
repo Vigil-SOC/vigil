@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Each sync reads every repo in full; hourly sees a deleted rule soon enough.
 DETECTION_RULES_SYNC_INTERVAL = 3600
-# Once a day, mitre_analyst turns the listed detection gaps into Cases (#3755).
+# Once a day, mitre_analyst drafts and checks rules for the listed detection gaps.
 DETECTION_GAPS_WORKFLOW = "agent-run-mitre_analyst"
 DETECTION_GAPS_INTERVAL = 86400
 
@@ -280,14 +280,20 @@ class TaskScheduler:
     async def _run_detection_gaps(self):
         """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
         WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
-        floor and not already carried by an open Case, biggest first; none when there
-        are none. With OpenCTI configured, the techniques its newest intrusion sets
-        and reports name are checked here too, in code, and each one with no proven
-        rule is a gap raised once.
+        floor and not on a technique a rule is already proposed or in shadow for
+        (proposals.worked_techniques), biggest first; none when there are none.
+        With OpenCTI configured, the techniques its newest intrusion sets and
+        reports name are checked here too, in code, and each one with no proven rule
+        is a gap raised once.
 
-        A schedule intake with no case_id mints a Case, so a day with no new gaps
-        queues nothing. What was raised is remembered only once the run has queued,
-        or found nothing to queue.
+        The run opens no Case: each raised gap a rule can answer is a detection
+        proposal holding the gap and its evidence ids, the run carries their ids in
+        its trigger_context, and the rules it saves are attached to them. A blind
+        spot is a missing data source no rule answers, shown on the Detections page:
+        it is never handed to the run, and is logged as new the day it is raised (it
+        is remembered as raised while it stays open), so a day that raises only blind
+        spots, or nothing, queues nothing. What was raised is remembered
+        only once the run has queued, or found nothing to queue.
         """
         if not is_enabled(DETECTION_GAPS_WORKFLOW):
             logger.info(
@@ -296,6 +302,7 @@ class TaskScheduler:
             )
             return
         from core.detections import gap_run
+        from core.detections.engineering import proposals
         from core.detections.tools import get_security_detection_tools
 
         started = datetime.now(timezone.utc)
@@ -313,37 +320,69 @@ class TaskScheduler:
         )
         alerts = await asyncio.to_thread(gap_run.alert_ids, window_start)
         gaps = gap_run.gaps_in(report, alerts, before, intel)
-        raised, held = gap_run.to_raise(
-            gaps, before, gap_run.open_case_techniques(), window_start=window_start
-        )
+        worked = await asyncio.to_thread(proposals.worked_techniques)
+        raised, held = gap_run.to_raise(gaps, before, worked, window_start=window_start)
         after = gap_run.after_run(before, started, window_start, gaps, raised, held)
-        if not raised:
+        to_draft = gap_run.rule_gaps(raised)
+        blind = [g for g in raised if g.kind == gap_run.BLIND]
+        if blind:
+            # Not handed to the run, so this line is where a new one shows.
             logger.info(
-                "Daily detection gaps run: no new gaps at or above %d, nothing queued",
+                "Daily detection gaps run: new blind spots, no rule drafted: %s",
+                "; ".join(g.line() for g in blind),
+            )
+        if not to_draft:
+            logger.info(
+                "Daily detection gaps run: no new gaps a rule can answer at or above "
+                "%d, nothing queued",
                 gap_run.GAP_FLOOR,
             )
             gap_run.write_raised(after)
             return
 
         hypothesis = (
-            "Turn the detection gaps identify_gaps lists into Cases with checked "
-            "rule drafts, so each real gap is tracked and has a rule in shadow."
+            "Draft a detection rule for each detection gap below that you judge "
+            "real, check it with check_detection_candidate and save it with "
+            "save_detection_rule. Each gap is tracked as a detection proposal and "
+            "the rules you save attach to it; open no Case."
         )
-        hypothesis += " New gaps, biggest first: " + "; ".join(g.line() for g in raised)
+        hypothesis += " New gaps, biggest first: " + "; ".join(
+            g.line() for g in to_draft
+        )
         from services.daemon.orchestrator import insert_intake_trigger
 
-        queued = insert_intake_trigger(
-            kind="schedule",
-            priority="low",
-            payload={
-                "workflow_id": DETECTION_GAPS_WORKFLOW,
-                "trigger_type": "scheduled",
-                "finding_ids": [],
-                "hypothesis": hypothesis,
-                # The minted Case carries them, so the next run sees them covered.
-                "case_techniques": gap_run.case_techniques(raised),
-            },
-        )
+        # Each gap a rule can answer, with its evidence, as a proposal the run's saves
+        # attach to. A record that fails costs the record, not the run.
+        try:
+            proposal_ids = proposals.for_gaps(to_draft)
+        except Exception:  # noqa: BLE001
+            logger.exception("Daily detection gaps run: the gaps were not recorded")
+            proposal_ids = []
+        queued = None
+        try:
+            queued = insert_intake_trigger(
+                kind="schedule",
+                priority="low",
+                payload={
+                    "workflow_id": DETECTION_GAPS_WORKFLOW,
+                    "trigger_type": "scheduled",
+                    "finding_ids": [],
+                    "hypothesis": hypothesis,
+                    # The run's record is the run and its proposals, not a Case.
+                    "no_case": True,
+                    # Read off the run's trigger_context when it saves a rule.
+                    "gap_proposal_ids": proposal_ids,
+                },
+            )
+        finally:
+            if queued is None and proposal_ids:
+                try:
+                    proposals.withdraw_gaps(
+                        proposal_ids,
+                        "The gaps run was not queued; it raises this again.",
+                    )
+                except Exception:  # noqa: BLE001 -- never hides why it was not queued
+                    logger.exception("Daily detection gaps run: drafts not withdrawn")
         if queued is None:
             # Nothing was queued: remember nothing, so the next run raises it again.
             logger.error("Daily detection gaps run: the intake row was not queued")

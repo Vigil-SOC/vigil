@@ -4,7 +4,8 @@ read_case_shell posts one case's view and one command to it on TCP 6992 (its
 SHELL_URL); each call runs as a pool uid that can read the view and write only
 its scratch directory. Mirrors the agent-shell service in docker-compose.yml.
 
-No credentials: no envFrom, no secrets, no service account token. No network but
+No credentials: no envFrom, no service account token, and of secrets only
+SHELL_TOKEN, the bearer the backend presents here (#4570), which no command sees. No network but
 the backend's calls in: agent-shell-networkpolicy.yaml, rendered whenever this is.
 */ -}}
 {{- if .Values.agentShell.enabled }}
@@ -27,6 +28,10 @@ spec:
     metadata:
       labels:
         {{- include "vigil.componentLabels" (dict "context" . "component" "agent-shell") | nindent 8 }}
+      annotations:
+        {{- /* The set value, not the rendered Secret: a generated token is drawn
+               again on every include. */}}
+        checksum/agent-shell-token: {{ .Values.secrets.agentShellToken | default "" | sha256sum }}
     spec:
       automountServiceAccountToken: false
       {{- include "vigil.imagePullSecrets" . | nindent 6 }}
@@ -62,6 +67,13 @@ spec:
           imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "agentWorker") }}
           {{- /* No SHELL_SOCKET, so it listens on SHELL_PORT's default, 6992. */}}
           command: ["node", "dist/shell.js"]
+          {{- /* Required: without it the shell refuses to start over TCP. */}}
+          env:
+            - name: SHELL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.agentShell.tokenSecret" . }}
+                  key: SHELL_TOKEN
           ports:
             - name: http
               containerPort: 6992

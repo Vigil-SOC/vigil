@@ -80,6 +80,21 @@ def required_permission(name: str) -> Optional[str]:
     return None if tool is None else getattr(tool.fn, "permission", None)
 
 
+def changes(name: str) -> Optional[bool]:
+    """Whether one of Vigil's tools changes something, by its read-only hint.
+
+    None for any other name.
+    """
+    try:
+        tool = _server()._tool_manager.get_tool(name)
+    except Exception:  # noqa: BLE001 - a server that cannot be read names none
+        logger.exception("Vigil's tool %s was not read", name)
+        return None
+    if tool is None or tool.annotations is None:
+        return None
+    return not tool.annotations.read_only_hint
+
+
 async def call_tool(
     name: str, args: Dict[str, Any], timeout: float = 30.0
 ) -> Dict[str, Any]:

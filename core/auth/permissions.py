@@ -76,6 +76,9 @@ CATALOG = {
         "ai_decisions.read": _SIGNED_IN_READ,
         # Held only by the directory-sync account, on no built-in role (#4423).
         "directory.sync": _NEW_CAPABILITY,
+        # Releases a held operator skill to agents. Apart from automation.write
+        # so whoever uploads a skill cannot also approve it.
+        "skills.approve": _NEW_CAPABILITY,
     },
     "builtins": {
         "role-admin": {
@@ -110,6 +113,7 @@ CATALOG = {
             "platform.write": True,
             "roles.manage": True,
             "sessions.manage": True,
+            "skills.approve": True,
             "teams.manage": True,
             "users.delete": True,
             "users.read": True,
@@ -225,6 +229,9 @@ PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
 # ``deny_unless`` asks by itself, so ``require_permission`` and an inline check
 # are covered alike; a handler that records its own 403s adds ``step_up.gate``.
 # Never ai_decisions.approve: routine approvals must not ask.
+# Never detections.write: only reverting a live rule and removing a source ask,
+# and those routes gate themselves. Minting a token asks when the holder has
+# any permission in this set.
 # Machines are never asked, whatever they hold.
 STEP_UP = {
     "platform.write": "change settings",
@@ -233,6 +240,7 @@ STEP_UP = {
     "ai_autonomy.write": "change AI autonomy",
     "sessions.manage": "change session settings",
     "roles.manage": "change roles",
+    "skills.approve": "approve a skill",
     "users.write": "change users",
     "users.delete": "delete a user",
 }
@@ -573,7 +581,13 @@ def current_case_reader() -> CaseReader:
 
     claims = current_claims()
     if claims is not None:
-        return CaseReader(claims.person_id, builtin=not claims.person_id)
+        if claims.person_id:
+            return CaseReader(claims.person_id)
+        from core.response.ceiling import execution_held
+
+        # A run no person started reads open cases only while stopped, or while
+        # the ceiling can't be read; Vigil's own non-run work keeps every case.
+        return CaseReader() if execution_held() else CaseReader(builtin=True)
     if _builtin_reader.get():
         return CaseReader(builtin=True)
     caller = current_caller()

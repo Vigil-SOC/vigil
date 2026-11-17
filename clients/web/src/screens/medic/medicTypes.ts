@@ -123,8 +123,31 @@ export interface PackFacts {
   rules_skipped: number
 }
 
+export type FixLevelName = 'L0' | 'L1' | 'L2'
+
+/** One fix type from the pack read (FixLevel); every count is Medic's, from its decision log. */
+export interface FixLevel {
+  fix_type: string
+  level: FixLevelName
+  unreadable: boolean
+  raised_on: { at: string; revision: number; pack_id: string } | null
+  track_record: {
+    since: string | null
+    proposed: number
+    ran: { person: number; medic: number }
+    cleared: number
+    failed: number
+    not_back: number
+    not_verified: number
+    escalations: number
+    lowered_by_medic: number
+    resets: { kind: 'store_reset' | 'early_purge'; at: string }[]
+  } | null
+}
+
 /** GET /api/medic/pack, and what each pack write returns (PackState). */
 export interface PackState {
+  fix_types?: FixLevel[]
   active: PackFacts | null
   previous: PackFacts | null
   bundled: PackFacts | null

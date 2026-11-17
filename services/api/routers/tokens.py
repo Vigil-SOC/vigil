@@ -13,12 +13,13 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from core.auth import break_glass
 from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
 from core.auth import step_up, trail_events
-from core.auth.auth_service import AuthService, _is_service_account
-from core.auth.permissions import STEP_UP, deny_unless, missing_permission
+from core.auth.auth_service import _is_service_account, with_dispute
+from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
 from core.platform.notices import notify
 from core.routing import Auth, RouterMeta
@@ -54,6 +55,12 @@ class RotateRequest(BaseModel):
     )
 
 
+def _refuse_marked(holder: User) -> None:
+    """No token for a break-glass account: its sign-in is the safe's codes alone."""
+    if holder.break_glass_at is not None:
+        raise HTTPException(status_code=403, detail=break_glass.MARKED)
+
+
 def _holder(user: User) -> dict:
     return {
         "user_id": user.user_id,
@@ -78,6 +85,10 @@ def _tell(holder: User, title: str, message: str, priority: str = "normal") -> N
     if to is None:
         return
     try:
+        message = with_dispute(to, message, "")
+    except Exception:  # noqa: BLE001 - the notice still goes, in today's wording
+        logger.exception("could not name the managers on a token notice")
+    try:
         notify(
             to,
             "api_token",
@@ -96,12 +107,9 @@ def _refuse_token_request(request: Request, what: str) -> None:
 
 
 def _confirm(request: Request, user: User, action: str) -> None:
-    """A token is never asked to confirm it's you, so a new one asks as its holder's
-    own privileged writes would: inside the window, for whoever holds such a permission.
-    """
-    held = AuthService.get_user_permissions(user.user_id)
-    if any(held.get(permission) for permission in STEP_UP):
-        step_up.check(request, user.user_id, action)
+    """Creating or rotating a token asks "Confirm it's you" of the person calling,
+    whatever their role holds (#4434). A machine caller is never asked."""
+    step_up.check(request, user.user_id, action)
 
 
 def _may_mint_for(caller: User, holder: User) -> bool:
@@ -210,6 +218,7 @@ def mint(
                 detail="Directory sync's token is minted from Single sign-on",
             )
         _check_holder(current_user, holder)
+    _refuse_marked(holder)
     _confirm(request, current_user, "create a token")
     minted = tokens.mint(
         holder.user_id,
@@ -261,6 +270,7 @@ def rotate(
             status_code=403, detail="Only whoever mints for the holder can rotate this"
         )
     _check_holder(current_user, holder)
+    _refuse_marked(holder)
     _confirm(request, current_user, "rotate a token")
     try:
         rotated = tokens.rotate(

@@ -5,7 +5,7 @@ import pg from "pg";
 import { archFor } from "./plugins/kinds.js";
 import { deniedPark, runAgent, type AgentKinds } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
-import { operatorPlugin } from "./plugins/registry.js";
+import { ADDED_SKILLS, carriedSkills, operatorPlugin } from "./plugins/registry.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
@@ -72,6 +72,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
     if (entry.plugin !== "investigate") throw new SpecError(`an operator manifest runs only as investigate, not ${job.run_kind}`);
     operatorPlugin(manifest, manifestSkills);
   }
+  const added = carriedSkills(job.request.added_skills, ADDED_SKILLS);
   const tighten = (spec: RunSpec): RunSpec =>
     withOverrides(
       {
@@ -83,6 +84,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
           ...(Object.keys(refs).length === 0 ? {} : { refs }),
           ...(manifest === undefined ? {} : { operator_manifest: manifest, operator_skills: manifestSkills }),
+          ...(added.length === 0 ? {} : { [ADDED_SKILLS]: added }),
           ...(Object.keys(gate).length === 0
             ? {}
             : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
@@ -513,8 +515,8 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         ...(terminal.finished_at === undefined ? {} : { finished_at: terminal.finished_at }),
         handoffs: terminal.handoffs ?? [],
         proposed_actions: terminal.proposed_actions ?? [],
-        ...(terminal.severity === undefined ? {} : { severity: terminal.severity }),
         ...(terminal.disposition === undefined ? {} : { disposition: terminal.disposition }),
+        ...(terminal.title === undefined ? {} : { title: terminal.title }),
       });
     }
     told.delete(job.run_id);

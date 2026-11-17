@@ -48,14 +48,19 @@ def turn_off(reason: str) -> int:
         raise ValueError("a reason is required")
 
     with unit_of_work() as session:
-        old, found = sso_settings.read_row(session, lock=True)
-        if not found or not old.settings.require_sso:
+        row = (
+            session.query(SystemConfig)
+            .filter(SystemConfig.key == sso_settings.KEY)
+            .with_for_update()
+            .first()
+        )
+        # Read raw: a row too broken to validate still holds Require on (see sso_settings.settings).
+        value = dict(row.value or {}) if row is not None else {}
+        if value.get("require_sso") is not True:
             raise AlreadyOff("Require single sign-on is already off")
-        version = old.version + 1
-        new = old.settings.model_copy(update={"require_sso": False})
-        row = session.get(SystemConfig, sso_settings.KEY)
+        version = int(value.get("version", 0) or 0) + 1
         # updated_by stays: it names a user, and system is not one.
-        row.value = {**new.model_dump(mode="json"), "version": version}
+        row.value = {**value, "require_sso": False, "version": version}
         row.updated_at = utcnow()
         session.flush()
         if trail.trail_ready(session):

@@ -262,6 +262,7 @@ type CaseDetailBody = Parameters<typeof mapApiCase>[0] & {
   investigations?: unknown
   closure?: unknown
   linked_findings?: unknown
+  opened_from?: unknown
 }
 
 export function useCaseDetail(id: string | null) {
@@ -271,6 +272,7 @@ export function useCaseDetail(id: string | null) {
   const [investigations, setInvestigations] = useState<CaseInvestigationRef[]>([])
   const [closure, setClosure] = useState<CaseClosureView | null>(null)
   const [linkedFindings, setLinkedFindings] = useState<CaseLinkedFinding[]>([])
+  const [openedFrom, setOpenedFrom] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -285,6 +287,7 @@ export function useCaseDetail(id: string | null) {
     setInvestigations(asInvestigations(data.investigations))
     setClosure(asClosure(data.closure))
     setLinkedFindings(asLinkedFindings(data.linked_findings))
+    setOpenedFrom(typeof data.opened_from === 'string' && data.opened_from ? data.opened_from : null)
     setCreated(utcDayClock(data.created_at) ?? '—')
   }, [])
 
@@ -298,6 +301,7 @@ export function useCaseDetail(id: string | null) {
     setInvestigations([])
     setClosure(null)
     setLinkedFindings([])
+    setOpenedFrom(null)
     casesApi
       .getById(id)
       .then((res) => {
@@ -325,5 +329,5 @@ export function useCaseDetail(id: string | null) {
       .catch(() => undefined)
   }, [id, apply])
 
-  return { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload, refresh }
+  return { row, created, combinedState, investigations, closure, linkedFindings, openedFrom, phase, error, reload, refresh }
 }

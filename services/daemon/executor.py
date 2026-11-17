@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 class ApprovedActionExecutor:
     """Carries out actions a person approved, from any source, every 30 seconds.
 
-    ``execution_held()`` (Stop) inside ``execute_approved_actions`` is the only hold.
+    While stopped, ``execute_approved_actions`` runs nothing. After a resume,
+    a row a stop marked held still waits until a person releases it.
     """
 
     def __init__(self, response_service: AutonomousResponseService):

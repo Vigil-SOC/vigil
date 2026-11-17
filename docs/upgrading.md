@@ -35,7 +35,7 @@ helm upgrade vigil infra/helm/vigil -n vigil --reuse-values --timeout 30m \
 
 `upgrade.acknowledgeVersion` must equal the chart's `appVersion`, and the backend image must be that version. A value left over from an earlier upgrade (with `--reuse-values`, the previous one) refuses, as does an empty reason. That way each upgrade is acknowledged separately.
 
-**Install.** A post-install Job takes the empty database to head and sets `vigil_app`'s password. App pods fail their startup check until it finishes, then become Ready. Do not pass `--wait` on the first install. Helm waits for Ready before it runs post-install hooks, so the install would time out.
+**Install.** A post-install Job takes the empty database to head and sets `vigil_app`'s and `vigil_agent`'s passwords. App pods fail their startup check until it finishes, then become Ready. Do not pass `--wait` on the first install. Helm waits for Ready before it runs post-install hooks, so the install would time out.
 
 **Upgrade.** Two pre-upgrade Jobs run before Helm changes any manifest:
 
@@ -52,6 +52,8 @@ When the upgrade fails:
 A 0.7.0 or 0.8.0 Helm database is adopted by the command, as described below. A database with any other stamp refuses at the weight -10 check, and the previous release keeps serving.
 
 Rotating `AGENT_INTERNAL_TOKEN` is not an upgrade step. Finish that rotation, or undo it completely, before an upgrade or a rollback. A rollback of a chart-rendered Secret restores that revision's value. The procedure is [Rotating AGENT_INTERNAL_TOKEN](agent-internal-token.md).
+
+A rollback restores the pre-upgrade database, so it loses the reservations of erased people's usernames and emails written since. Vigil's restore re-applies the erasures themselves and reserves those names again from the erasure list.
 
 **Check only.** To see what an upgrade would do, run `--check` once as a Job of the new backend image, logged in as the owner. Do not use `helm upgrade` for this. Without the acknowledgement, a pending upgrade answers `needs_restore_point` and exits 1. With it, the answer is `apply`. For the in-chart Postgres, with release `vigil` in namespace `vigil`:
 
@@ -124,6 +126,10 @@ If the drift report names something you did not change, or a change you need to 
 
 Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at least six months after the release that introduced `0001_baseline`. From that release on, an install still on 0.7.0 or 0.8.0 must first upgrade through a release that still adopts.
 
+## Email addresses already on file
+
+Revision `0077_email_confirmed` marks every account's email confirmed (`users.is_verified = true`). An address already on the account when you upgrade can be used for a password reset straight away. After the upgrade, only a person changing their own email leaves the new address unconfirmed, until they open the 24-hour link mailed to it. A new account's email, and an email an identity provider sets, counts as confirmed and is not sent that link.
+
 ## What the sign-in changes do on upgrade day
 
 An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.
@@ -133,6 +139,8 @@ An upgrade from a database older than these changes does the following. Everythi
 **Dormancy clocks start at the upgrade.** Revision `0048_dormancy` sets every account's `dormancy_floor` to the time it ran. An account's idle time is counted from the latest of its last sign-in, its credentials' last use, its creation and that floor, so nobody is deactivated for time that passed before the rule existed. The first account can be deactivated once the session policy's `dormancy_days` (default 35) have passed since the upgrade. `null` turns the sweep off.
 
 **Failure counts reset.** Revision `0047_lockout_policy` sets every account's failed-login count to 0. Locks are the session policy's now (`auth.session_policy`).
+
+**A saved lockout count outside 3–10 moves to the nearest bound.** Revision `0079_lockout_threshold` sets a saved `lockout_threshold` of 1 or 2 to 3, and of 11 through 20 to 10, and increments that policy's version. `updated_by` is left as it was. The audit trail records the move once, as the upgrade's act (`session_policy.changed`, actor `system`), with the old and the new value. A value already from 3 to 10, no saved policy, and a value outside 1–20 stay as they are, and no entry is written. From then on the setting is 3–10.
 
 **The first sign-in of each person, in order:**
 
@@ -166,6 +174,8 @@ Run scoping refuses an agent run's calls unless the run's own principal (the cre
 - gets a ledger end with outcome `failed` and the same reason, unless it already has one;
 - has its pending approvals rejected by `system` with that reason, each recorded on the case trail.
 
+A run ended this way that had been running for longer than about 24 days gets no duration.
+
 A run whose principal names it and is still live is left alone and resumes after the upgrade. So does a run queued but not yet started (it has no ledger yet), and a child run, which has no console row and follows its parent. The upgrade's history record counts the runs it ended under `reports`, as `{"revision": "0065_end_unscoped_runs", "report": {"ended_runs": N}}`. Running the upgrade again ends nothing more.
 
 **A run outlives its credential at 30 days.** A run's principal lasts 31 days from its start, and a run may park for up to 30 days at a time, so a run still unfinished after about 30 days is near or past its credential's end. In practice the parked runs this ends are those started more than 31 days ago, plus runs from older releases on installs that skip releases.
@@ -176,9 +186,22 @@ A run whose principal names it and is still live is left alone and resumes after
 
 **Rolling back.**
 
-- Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272).
+- Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272) and discards agent runs still queued.
 - Helm rolls back by restoring the operator's own database backup and running `helm rollback` (see [Helm](#helm)). Vigil's run-stopping restore doesn't run, and the restored runs carry on under the older release, which doesn't check principals.
 
 ## Restricted cases and restores
 
 A restricted case's reader list is part of the case row, so a restore brings back the list as it was when the backup was taken. **Restoring a backup taken before a case was restricted reopens that case** to everyone who can read cases. Revisions run forward only (`core/upgrade/__init__.py`), so this holds for Vigil's restore and for a Helm rollback from your own backup alike. After a restore, restrict again any case that must stay restricted; the audit trail's `case.restrict` entries name them.
+
+## What teams add to the case API
+
+Teams (1.1.2, epic #4306) keep the case API's routes and tools and add two refusals to them. Nothing is migrated, and a caller that sets no owner and merges within one team sees no change.
+
+**A newly set owner must hold `cases.write` and be on the case's team.** `PATCH /api/v1/cases/{id}` and the frozen `create_case` and `update_case` tools (the agent tools and the MCP ones) check the owner a save newly gives the case. The checks run in this order:
+
+1. No such user, or a user without `cases.write`: 400 `OWNER_CANNOT_WRITE`.
+2. Not a current member of the case's team: 400 `OWNER_OFF_TEAM`. An inactive person whose membership row is still there is not current. The message names `POST /api/v1/cases/{id}/move` and the `move_case` tool, which can carry the owner.
+
+The tools answer `{"error", "code"}` with the same codes instead of an HTTP status. `create_case` judges the default team, and its `OWNER_OFF_TEAM` message holds the literal `{case_id}`, as the case does not exist yet; the route to use is `POST /api/v1/cases/{id}/move` with the real id. Saving the stored owner again, and clearing it, are not checked. `OWNER_CANNOT_WRITE` applies from the upgrade, while everyone is on the default team. `OWNER_OFF_TEAM` applies only once an admin splits teams.
+
+**A cross-team merge needs the source team or `cases.move`.** `POST /api/v1/cases/{id}/merge` (`{id}` is the target; the body's `source_case_id` is the source) is checked only when the two cases are on different teams: the caller must be a member of the source case's team or hold `cases.move`, or the answer is 403 with `Permission denied: cases.move required`. A merge between two cases on one team is unchanged. There is no frozen MCP merge tool. This applies only once teams are split.
