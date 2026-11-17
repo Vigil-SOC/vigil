@@ -84,6 +84,7 @@ interface Config {
   agentInternalToken?: string;
   postgresPassword?: string;
   postgresAppPassword?: string;
+  postgresAgentPassword?: string;
   bifrostAdminPassword?: string;
   redisPassword?: string;
   // Decision 6: an upgrade without a restore point, acknowledged for one app
@@ -151,6 +152,19 @@ function postgresAppPassword(): string {
   let pw = crypto.randomBytes(32).toString("base64url");
   while (pw === owner) pw = crypto.randomBytes(32).toString("base64url");
   writeConfig({ postgresAppPassword: pw });
+  return pw;
+}
+
+// vigil_agent's password, for the agent containers only. Distinct from both
+// others, so an agent container holds no login that can write the identity
+// tables (0081_agent_role).
+function postgresAgentPassword(): string {
+  const taken = [postgresPassword(), postgresAppPassword()];
+  const saved = readConfig().postgresAgentPassword;
+  if (saved && !taken.includes(saved)) return saved;
+  let pw = crypto.randomBytes(32).toString("base64url");
+  while (taken.includes(pw)) pw = crypto.randomBytes(32).toString("base64url");
+  writeConfig({ postgresAgentPassword: pw });
   return pw;
 }
 
@@ -551,6 +565,7 @@ const spawnCompose = (args: string[]) =>
       AGENT_INTERNAL_TOKEN: agentInternalToken(),
       POSTGRES_PASSWORD: postgresPassword(),
       POSTGRES_APP_PASSWORD: postgresAppPassword(),
+      POSTGRES_AGENT_PASSWORD: postgresAgentPassword(),
       BIFROST_ADMIN_PASSWORD: bifrostAdminPassword(),
       REDIS_PASSWORD: redisPassword(),
       ...upgradeAckEnv(),
@@ -714,7 +729,7 @@ async function bringUpStandalone(): Promise<boolean> {
     sendSplash("error", "Could not set the database password. See the log above.");
     return false;
   }
-  // upgrade runs python -m core.upgrade, then sets vigil_app's password.
+  // upgrade runs python -m core.upgrade, then sets vigil_app's and vigil_agent's passwords.
   // The API and the agent processes wait on it; a non-zero exit leaves them down.
   if ((await runCompose(composeArgs("up", "-d", "--wait"))) !== 0) {
     phase("services", "fail");
