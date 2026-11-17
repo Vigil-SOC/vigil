@@ -50,6 +50,7 @@ from core.workflows.playbook_resolver import (
     _bound_capabilities,
     _tool_catalogue,
 )
+from core.workflows.workflow_run_service import run_unreadable
 from core.workflows.workflows_service import WorkflowsService
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_user
@@ -499,7 +500,11 @@ async def chat_stream(
         "actor": agent_principal_id(CHAT_PLUGIN_ID),
         "origin": "person",
     }
-    if request.parent_run_id:
+    # agent-serve recalls any run id it is handed, so a run on a case this
+    # person can't read (#4359) is not passed on.
+    if request.parent_run_id and not await asyncio.to_thread(
+        run_unreadable, request.parent_run_id
+    ):
         payload["parent_run_id"] = request.parent_run_id
     # So a skill this conversation reads is credited to its agent (#1560).
     # A chat with no agent behind it sends nothing, and the read is recorded

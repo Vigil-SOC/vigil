@@ -70,6 +70,14 @@ def run_hidden(session, run_id: str) -> bool:
     )
 
 
+def run_unreadable(run_id: str) -> bool:
+    """``run_hidden`` in its own session, for a caller holding none. A run id
+    read by a tool or forwarded to agent-serve, which keys reads by run id
+    alone, is checked here first."""
+    with get_db_manager().session_scope() as session:
+        return run_hidden(session, run_id)
+
+
 class WorkflowRunService:
     """Persist and query workflow execution history."""
 

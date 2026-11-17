@@ -50,6 +50,7 @@ from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 from core.storage.models import Finding
 from core.teams import default_team
+from core.workflows.workflow_run_service import run_unreadable
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -1017,7 +1018,12 @@ async def replay_hunt(
     only = _step(step, "step")
     if only is not None:
         first = last = only
-    report = await read_replay(str(run_id), decision_id or None)
+    # agent-serve answers any run id, so a run on a case the caller can't read
+    # (#4359) is refused here, worded as one with nothing to replay.
+    if await asyncio.to_thread(run_unreadable, str(run_id)):
+        report = None
+    else:
+        report = await read_replay(str(run_id), decision_id or None)
     if report is None:
         return {"error": f"Nothing to replay for run {run_id}"}
     return _replay_summary(report, first, last)
