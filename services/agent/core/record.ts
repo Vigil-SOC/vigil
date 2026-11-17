@@ -183,6 +183,11 @@ export interface DeclaredGaps {
   visibility: VisibilityGap[];
 }
 
+// How many claims the record holds, whatever became of them.
+export function claimCount(events: readonly { kind: string; payload: unknown }[]): number {
+  return recordOf(events).hypotheses.size;
+}
+
 export function declaredGaps(
   events: readonly { kind: string; payload: unknown }[],
   calls: readonly CallPayload[],

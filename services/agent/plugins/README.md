@@ -53,6 +53,9 @@ guard:                              # optional second look before a guarded answ
   fallback: needs_review
   reviewer_prompt: |
     ...
+  min_hypotheses: 2                 # optional; conclude refuses a guarded answer once while the record holds fewer claims
+  proposals_note: "..."             # optional; prefixed to each proposed action's reason when the guard holds the answer
+escalation_guard: { ... }           # optional; the same shape for the other end (investigate guards malicious, falls back to suspicious); no value may be guarded by both
 max_turns: 24                       # optional; else the deployment's runtime.max_turns
 record: required                    # off | available (the default) | required
 min_results: 4                      # optional; see below
