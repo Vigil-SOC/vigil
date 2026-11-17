@@ -365,6 +365,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
     severity: severityOf(options.plugin, conclusion),
     proposed: proposalsOf(options.plugin, conclusion, review),
     disposition: dispositionOf(options.plugin, conclusion, review),
+    title: titleOf(options.plugin, conclusion),
     confidence: confidenceOf(options.plugin, conclusion),
   });
 }
@@ -1316,6 +1317,13 @@ export function dispositionOf(plugin: PluginManifest, conclusion: ConclusionPayl
   return typeof given === "string" && given !== "" ? given : undefined;
 }
 
+// The short case title the answer gave, when its plugin names a field for one. Blank is none.
+export function titleOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): string | undefined {
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.title_field : undefined;
+  const given = field === undefined ? undefined : conclusion.value[field];
+  return typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
+}
+
 // The guards a plugin declares: the dismissal guard, then the escalation guard.
 export function guardsOf(plugin: PluginManifest): GuardSpec[] {
   return [plugin.guard, plugin.escalation_guard].filter((one): one is GuardSpec => one !== undefined);
@@ -1451,6 +1459,7 @@ interface EndFields {
   severity?: Severity | undefined;
   proposed?: readonly ProposedAction[] | undefined;
   disposition?: string | undefined;
+  title?: string | undefined;
   confidence?: Confidence | undefined;
   stop_cause?: StopCause | undefined;
 }
@@ -1459,7 +1468,7 @@ async function end(
   ctx: PluginContext,
   outcome: RunOutcome,
   reason: string,
-  { summary, handoffs, severity, proposed = [], disposition, confidence, stop_cause }: EndFields = {},
+  { summary, handoffs, severity, proposed = [], disposition, title, confidence, stop_cause }: EndFields = {},
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1485,6 +1494,7 @@ async function end(
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
     ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
+    ...(title === undefined ? {} : { title }),
     ...(confidence === undefined ? {} : { confidence }),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);

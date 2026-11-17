@@ -45,7 +45,7 @@ conclusion:                         # or `conclusion: prose`
   citations_field: citations        # optional; numbers results so the answer can cite them
   severity_field: severity          # optional; an enum of low|medium|high|critical, carried on the terminal (not applied to the case)
   confidence_field: confidence      # optional; an enum of low|medium|high, scored against the case's closure
-  disposition_field: disposition    # optional; an enum drawn from malicious|suspicious|benign|false_positive|inconclusive|needs_review; benign|false_positive closes the case
+  disposition_field: disposition    # optional; an enum drawn from malicious|suspicious|benign|false_positive|inconclusive|needs_review; benign|false_positive closes the case where autonomy lets the run act
   schema: { ... }                   # JSON schema the final answer must match
 guard:                              # optional second look before a guarded answer stands
   field: disposition

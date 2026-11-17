@@ -26,7 +26,9 @@ DEFANGED = "[.]"
 _HELD = "\x00"
 
 _FACT = re.compile(r"([^\[\];]+?)\s*\[([^\]]*)\]")
-_IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+# Four dotted numbers, not inside a longer run of them; a sentence's full stop
+# after the address is not part of it.
+_IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\.?\d)")
 # A dotted name with a letter in its last label: a host or domain, not a number.
 _HOST = re.compile(
     r"(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*[a-z0-9](?![\w-])",
@@ -76,6 +78,17 @@ def _names(claim: str) -> List[str]:
     return ips + hosts
 
 
+def _appears(name: str, text: str) -> bool:
+    """``name`` in ``text`` as a whole address or host, not inside a longer one:
+    10.0.0.1 is not in 10.0.0.15, nor evil.com in notevil.com or evil.com.au. A
+    host is in its subdomains: evil.com is in www.evil.com."""
+    if _IPV4.fullmatch(name):
+        pattern = rf"(?<!\d)(?<!\d\.){re.escape(name)}(?!\.?\d)"
+    else:
+        pattern = rf"(?<![\w-]){re.escape(name)}(?!\.?[\w-])"
+    return re.search(pattern, text) is not None
+
+
 def check(facts: List[Fact], fields: Mapping[str, str]) -> List[str]:
     """What is wrong with the facts against the alert ``fields`` the prompt showed."""
     allowed = ", ".join(f"[{name}]" for name in fields) + f", [{GENERAL_KNOWLEDGE}]"
@@ -95,7 +108,7 @@ def check(facts: List[Fact], fields: Mapping[str, str]) -> List[str]:
             continue
         shown = _refang(" ".join(fields[name] for name in fact.fields)).lower()
         for name in _names(fact.claim):
-            if name.lower() not in shown:
+            if not _appears(name.lower(), shown):
                 errors.append(
                     f"{label} states {name}, which is not in "
                     f"{', '.join(fact.fields)}"

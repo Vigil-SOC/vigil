@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise_run
 from core.auth.permissions import builtin_reader_request
-from core.cases.agent_closure import activity_actor
+from core.cases.agent_closure import TITLE_EDITED, activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.pagerduty.page import page_proposed_containment
@@ -105,6 +105,9 @@ class TerminalUpdate(BaseModel):
     # The run's verdict as its guard left it. A free string: only benign and
     # false_positive act, and anything else leaves the case as it is.
     disposition: Optional[str] = None
+    # A short title for the case, naming what the run found. Loose like the rest:
+    # blank or absent leaves the title as it is.
+    title: Optional[str] = None
     # When the agent sealed the report. The row's finished_at, so Ended and the
     # history agree. Absent, or unreadable, and the row is stamped on arrival.
     finished_at: Optional[str] = None
@@ -294,6 +297,7 @@ def record_terminal(
             _propose_actions(origin, run_id, update.proposed_actions, approvals)
         # Only a run that reached its conclusion can dismiss its case.
         if update.outcome == "completed":
+            _retitle_case(origin, run_id, update.title)
             _close_dismissed(origin, run_id, update)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
@@ -708,6 +712,52 @@ def _record_proposals(case_id: str, run_id: str, action_ids: List[str]) -> None:
         )
 
 
+TITLE_MAX = 200
+
+
+# The case is titled once, from its first alert, so after the run it still reads
+# like that alert. A title a person has edited is never replaced, and a closed
+# case keeps the title it was closed under.
+def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
+    from core.cases.agent_closure import service_session
+    from core.storage.database_data_service import DatabaseDataService
+    from core.storage.models import Case
+
+    new = " ".join((title or "").split())[:TITLE_MAX]
+    if not new:
+        return
+    try:
+        # The case row stays locked from the read to the write, so a person's
+        # edit made meanwhile is waited for and then seen, never overwritten.
+        with service_session() as session:
+            case = session.get(Case, case_id, with_for_update=True)
+            if case is None or str(case.status or "").lower() == "closed":
+                return
+            old = str(case.title or "")
+            if new == old:
+                return
+            activities = list(case.activities or [])
+            if any(a.get("activity_type") == TITLE_EDITED for a in activities):
+                return
+            # The title and its activity in one write, so the write is not taken
+            # for a person's edit.
+            activities.append(
+                {
+                    "timestamp": utcnow().isoformat() + "Z",
+                    "activity_type": "agent_run_retitled",
+                    "description": f"Retitled by the investigation: {old} \u2192 {new}",
+                    "details": {"run_id": run_id, "from": old, "to": new},
+                    **activity_actor(session=session),
+                }
+            )
+            if not DatabaseDataService().update_case(
+                case_id, session=session, title=new, activities=activities
+            ):
+                logger.error("could not retitle case %s", case_id)
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception("could not apply the title of %s to case %s", run_id, case_id)
+
+
 # The verdicts that dismiss a case. Both close it as a false positive, where the run
 # may act: the alert that opened it was not the attack it looked like.
 DISMISSALS = {"benign", "false_positive"}
@@ -731,6 +781,21 @@ def _may_close(run_id: str) -> bool:
         return False
 
 
+def _already_closed(case_id: str) -> bool:
+    """True when the case is gone or closed; False when it can't be read, so
+    the close path decides with its own read."""
+    from core.cases.agent_closure import service_session
+    from core.storage.models import Case
+
+    try:
+        with service_session() as session:
+            status = session.query(Case.status).filter(Case.case_id == case_id).scalar()
+    except Exception:  # noqa: BLE001 — the close path reads it again
+        logger.exception("could not read the status of case %s", case_id)
+        return False
+    return status is None or status == "closed"
+
+
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
@@ -739,6 +804,11 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
 
     disposition = (update.disposition or "").strip().lower()
     if disposition not in DISMISSALS:
+        return
+    # close_case overwrites a standing false_positive close, an analyst's
+    # included, so a case closed already, by anyone, is left as it is, and
+    # with nothing said about leaving it open.
+    if _already_closed(case_id):
         return
     if not _may_close(run_id):
         _add_activity(
@@ -752,8 +822,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     try:
         with service_session() as session:
             case = session.query(Case).filter(Case.case_id == case_id).first()
-            # close_case overwrites a standing false_positive close, an analyst's
-            # included, so a case closed already, by anyone, is left as it is.
+            # Checked again on the session that closes: it may have closed since.
             if case is None or case.status == "closed":
                 return
             CaseWorkflowService().close_case(

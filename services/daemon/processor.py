@@ -69,10 +69,13 @@ TRIAGE_VERDICTS = ("malicious", "suspicious", "benign", "undetermined")
 
 
 def _unbracket(value: str) -> str:
-    """Drop the [ ] a model copies from the prompt's placeholders."""
+    """Drop the [ ] a model copies from the prompt's placeholders. Only a pair
+    around the whole value: "[note] x [Description]" is two bracketed parts,
+    left as it is."""
     value = value.strip()
-    if value.startswith("[") and value.endswith("]"):
-        value = value[1:-1].strip()
+    inner = value[1:-1]
+    if value.startswith("[") and value.endswith("]") and not set("[]") & set(inner):
+        value = inner.strip()
     return value
 
 
@@ -849,7 +852,8 @@ class FindingProcessor:
         self, finding: Dict[str, Any], prompt: str, response: str, errors: List[str]
     ) -> Tuple[str, List[str]]:
         """Ask once more with what was wrong. The answer, and what is still
-        wrong with it; a retry that fails to answer keeps the first reply."""
+        wrong with it; a retry that fails to answer in the line format keeps the
+        first reply."""
         retry = prompt + TRIAGE_CITATION_RETRY.format(
             errors="\n".join(f"- {e}" for e in errors)
         )
@@ -860,7 +864,9 @@ class FindingProcessor:
             )
         except asyncio.TimeoutError:
             again = None
-        if not again:
+        # A retry with no VERDICT line has nothing the check can hold, so it
+        # cannot clear the first reply's errors.
+        if not again or not _reply_fields(again).get("VERDICT"):
             return response, errors
         return again, _citation_errors(finding, again)
 
@@ -1021,6 +1027,10 @@ REASONING: one sentence summing up the verdict
         # the action line said: the two are one decision.
         if verdict == "benign":
             action = "dismiss"
+        # A threat verdict with dismiss is a contradiction; dismiss would keep the
+        # alert out of intake, so the action is set aside and the verdict stands.
+        elif verdict in ("malicious", "suspicious") and action == "dismiss":
+            action = ""
         # No usable verdict: record a failure, not a finished triage, so the
         # backfill sweep asks again.
         if (
