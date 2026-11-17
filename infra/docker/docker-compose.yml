@@ -8,8 +8,9 @@ x-agent-env: &agent-env
   - POSTGRES_HOST=postgres
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
-  - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+  # vigil_agent, not vigil_app: the agent tables and nothing else (0081_agent_role).
+  - POSTGRES_USER=vigil_agent
+  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
   - REDIS_URL=redis://redis:6379/0
   # The agent reads REDIS_PASSWORD only beside REDIS_HOST, and the password is
   # never put in a URL, so the parts are named as the Helm chart names them.
@@ -132,6 +133,7 @@ services:
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
@@ -326,6 +328,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
+      # A restore empties the agent-run queue.
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Inherited by backup-pre-upgrade. History and the no-setup repo live here.
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       # The only bypass: both must be set, and the version must be this image.
@@ -349,6 +354,9 @@ services:
       disable: true
     depends_on:
       postgres:
+        condition: service_healthy
+      # `start.sh restore` runs this service and discards the queue in redis.
+      redis:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
