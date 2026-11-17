@@ -377,7 +377,7 @@ class SecurityDetectionsTools:
         ``proven_event_ids``, Vigil reads the events from the SIEM and proves the
         Sigma form and each Splunk and Elastic copy on them (``save_proof``).
         """
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             save_rule,
             splunk_yaml,
             elastic_toml,
@@ -390,6 +390,13 @@ class SecurityDetectionsTools:
             attack_started_at=attack_started_at,
             attack_ended_at=attack_ended_at,
         )
+        if result.get("gap_proposals"):
+            result["gap_replays"] = list(
+                await asyncio.gather(
+                    *(_gap_replay(pid) for pid in result["gap_proposals"])
+                )
+            )
+        return result
 
     async def detection_rule_exception(
         self,
@@ -427,6 +434,63 @@ class SecurityDetectionsTools:
             timestamp_end=span[1] if span else None,
         )
         return reconstruct(steps, findings)
+
+
+# How long Vigil's replay of a gap proposal may hold up the save's answer.
+GAP_REPLAY_TIMEOUT_S = 120
+
+
+async def _gap_replay(proposal_id: str) -> Dict[str, Any]:
+    """Lint and replay a gap proposal the save just attached to, as Vigil, on the
+    attack its gap's hunts and Cases proved. A failure costs the replay, never the save.
+    """
+    from core.detections.engineering import proposals
+
+    out: Dict[str, Any] = {"proposal_id": proposal_id}
+    try:
+        # Only a draft took this save's text on; one a person converted or rejected,
+        # or one whose text this save left as it was, keeps its own checks.
+        state = (await asyncio.to_thread(proposals.get, proposal_id))["state"]
+        if state != "draft":
+            out.update(
+                state=state,
+                skipped="this save did not change the proposal's rule text",
+            )
+            return out
+        view = await asyncio.to_thread(
+            proposals.lint, proposal_id, proposals.SYSTEM, proposals.SYSTEM
+        )
+        lint = (view["latest"].get("lint") or {}).get("evidence") or {}
+        if not lint.get("passed"):
+            out.update(state=view.get("state"), lint=lint)
+            return out
+        view = await asyncio.wait_for(
+            proposals.replay(proposal_id, proposals.SYSTEM, kind=proposals.SYSTEM),
+            GAP_REPLAY_TIMEOUT_S,
+        )
+        replayed = (view["latest"].get("replay") or {}).get("evidence") or {}
+        out.update(
+            state=view.get("state"),
+            replay={
+                k: replayed.get(k)
+                for k in (
+                    "attack_basis",
+                    "proven",
+                    "hits",
+                    "attack_rows",
+                    "false_positives",
+                    "benign_rows",
+                    "unproven_because",
+                    "fields_absent",
+                    "window",
+                )
+            },
+        )
+    except asyncio.TimeoutError:
+        out["error"] = f"the replay did not finish within {GAP_REPLAY_TIMEOUT_S}s"
+    except Exception as exc:  # noqa: BLE001 -- the save's answer stands
+        out["error"] = str(exc) or type(exc).__name__
+    return out
 
 
 def _rule_id(value: Any) -> Optional[int]:

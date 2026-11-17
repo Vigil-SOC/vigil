@@ -344,7 +344,9 @@ class TaskScheduler:
             "Draft a detection rule for each detection gap below that you judge "
             "real, check it with check_detection_candidate and save it with "
             "save_detection_rule. Each gap is tracked as a detection proposal and "
-            "the rules you save attach to it; open no Case."
+            "the rules you save attach to it; open no Case. The save's gap_replays "
+            "shows whether the rule fired on the attack the gap's hunts proved: if "
+            "not, revise and save again."
         )
         hypothesis += " New gaps, biggest first: " + "; ".join(
             g.line() for g in to_draft
