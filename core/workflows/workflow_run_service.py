@@ -22,6 +22,9 @@ LIST_RUNS_MAX = 200
 
 IN_FLIGHT_STATUSES = ("running", "paused")
 
+# duration_ms columns are int4; a longer duration (~24.8 days) is stored as NULL.
+DURATION_MS_MAX = 2_147_483_647
+
 _runs_finished: Any = None
 
 
@@ -265,8 +268,8 @@ class WorkflowRunService:
                 if cost_usd is not None:
                     row.total_cost_usd = cost_usd
                 if row.started_at is not None:
-                    delta = now - row.started_at
-                    row.duration_ms = int(delta.total_seconds() * 1000)
+                    ms = int((now - row.started_at).total_seconds() * 1000)
+                    row.duration_ms = ms if ms <= DURATION_MS_MAX else None
         except SQLAlchemyError as e:
             logger.error("Could not finalise workflow run %s: %s", run_id, e)
             return False
@@ -510,8 +513,10 @@ class WorkflowRunService:
                     if finished_at is not None:
                         row.finished_at = finished_at
                         if row.started_at:
-                            delta = finished_at - row.started_at
-                            row.duration_ms = int(delta.total_seconds() * 1000)
+                            ms = int(
+                                (finished_at - row.started_at).total_seconds() * 1000
+                            )
+                            row.duration_ms = ms if ms <= DURATION_MS_MAX else None
             return True
         except SQLAlchemyError as e:
             logger.warning(

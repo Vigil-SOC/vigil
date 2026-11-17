@@ -172,6 +172,8 @@ Run scoping refuses an agent run's calls unless the run's own principal (the cre
 - gets a ledger end with outcome `failed` and the same reason, unless it already has one;
 - has its pending approvals rejected by `system` with that reason, each recorded on the case trail.
 
+A run ended this way that had been running for longer than about 24 days gets no duration.
+
 A run whose principal names it and is still live is left alone and resumes after the upgrade. So does a run queued but not yet started (it has no ledger yet), and a child run, which has no console row and follows its parent. The upgrade's history record counts the runs it ended under `reports`, as `{"revision": "0065_end_unscoped_runs", "report": {"ended_runs": N}}`. Running the upgrade again ends nothing more.
 
 **A run outlives its credential at 30 days.** A run's principal lasts 31 days from its start, and a run may park for up to 30 days at a time, so a run still unfinished after about 30 days is near or past its credential's end. In practice the parked runs this ends are those started more than 31 days ago, plus runs from older releases on installs that skip releases.
