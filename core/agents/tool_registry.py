@@ -294,9 +294,12 @@ def search_findings(**args: Any) -> Args:
     }
 
 
+# Counted as list_findings and search_findings count: excluded-IP findings out.
 def get_findings_stats(**_args: Any) -> Args:
-    summary = _data().get_findings_summary()
-    return {"total_findings": summary.pop("total"), **summary}
+    data = _data()
+    summary = data.get_findings_summary(exclusions="hide")
+    total = summary.pop("total")
+    return {"total_findings": total, **summary, **_excluded_note(data, {}, total)}
 
 
 # What an agent reads of one finding (#3276): the small fields and the stored
