@@ -36,10 +36,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from core.config import Settings, get_settings
-from core.skills.skill_library import Skill, is_bundled, load_skills, skill_roots
+from core.skills.skill_library import (
+    Skill,
+    is_bundled,
+    load_skills,
+    operator_skills_root,
+    skill_roots,
+)
 from core.skills.skill_scan import (
     MODE_STATIC,
     STATUS_FAILED,
@@ -303,6 +309,23 @@ def _record(digest: str, name: str, result) -> None:
             setattr(row, key, value)
 
 
+def _prune(current: set) -> None:
+    """Delete the verdicts for content no operator skill has any more.
+
+    Every edit leaves the previous content's row behind. Those are only a cache
+    of scans that can be run again, so they go; an approval is a person's
+    decision, not something a rescan gives back, and is kept.
+    """
+    with unit_of_work() as session:
+        gone = session.execute(
+            delete(SkillScan).where(
+                SkillScan.digest.not_in(current), SkillScan.approved_at.is_(None)
+            )
+        ).rowcount
+    if gone:
+        logger.info("pruned %d skill scan verdicts for content no skill has", gone)
+
+
 def sweep(
     roots: Optional[Iterable[Path]] = None, settings: Optional[Settings] = None
 ) -> int:
@@ -311,7 +334,8 @@ def sweep(
     One at a time. Returns how many scans produced a row. A failed row is tried
     again once ``RETRY_FAILED_AFTER`` has passed; one reached in another scan mode
     than the current setting is rescanned at once, unless it is approved. With the scanner configured but
-    missing, nothing is recorded and the skills stay pending.
+    missing, nothing is recorded and the skills stay pending. Verdicts for
+    content no skill has any more are pruned first, approvals excepted.
     """
     settings = settings or get_settings()
     if not scanning_on(settings):
@@ -321,9 +345,8 @@ def sweep(
         for s in load_skills(skill_roots(settings) if roots is None else roots)
         if not is_bundled(s)
     ]
-    if not skills:
-        return 0
     digests = {}
+    unread = False
     for skill in skills:
         if cancel.is_set():
             return 0
@@ -332,7 +355,13 @@ def sweep(
                 continue  # refused, not scanned: see scan_states
             digests[skill.name] = digest_of(skill.path)
         except OSError as exc:
+            unread = True
             logger.warning("skill %s could not be digested: %s", skill.name, exc)
+    operator = operator_skills_root(settings)
+    if not unread and operator is not None and operator.is_dir():
+        # A folder that could not be read, or a root that is not there (off, or
+        # not mounted yet), may still hold content with a verdict: no pruning.
+        _prune(set(digests.values()))
     with unit_of_work() as session:
         known = {
             d: (status, at, approved, scan_mode)
