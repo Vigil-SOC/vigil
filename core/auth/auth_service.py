@@ -26,6 +26,7 @@ from core.auth import (
     principals,
     security_keys,
     session_policy,
+    trail_events,
 )
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import _settings_env_file, get_settings
@@ -500,6 +501,9 @@ class AuthService:
                     user.username,
                 )
         if locked:
+            # After the lock committed: a lock only reduces access, so the entry is
+            # held to record late if the trail refuses, and never blocks the lock.
+            trail_events.locked(locked[0], locked[2], locked[4], locked[5])
             AuthService._tell_locked(*locked)
 
     @staticmethod

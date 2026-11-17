@@ -23,9 +23,6 @@ Natively, run it through scripts/reset-password.sh; on compose, use
 """
 
 import argparse
-import getpass
-import os
-import socket
 import sys
 from pathlib import Path
 
@@ -50,6 +47,7 @@ from core.auth.auth_service import (  # noqa: E402
     with_dispute,
 )
 from core.auth.deactivation import clear_deactivation  # noqa: E402
+from core.auth.host_operator import Operator, ask_operator  # noqa: E402
 from core.auth.identity import matching_accounts  # noqa: E402
 from core.auth.password_reset import reset_link  # noqa: E402
 from core.auth.password_validator import USERS_LINK  # noqa: E402
@@ -60,49 +58,6 @@ from core.storage.connection import get_db_manager, init_database  # noqa: E402
 from core.storage.models import Principal, User  # noqa: E402
 from core.teams import join_default_if_none  # noqa: E402
 from core.time import utcnow  # noqa: E402
-
-# The console's IdentityConfirmedBy values, and the words the prompt shows.
-METHODS = {
-    "in_person": "in person",
-    "video_call": "on a video call",
-    "phone_call_back": "by calling them back on a number on file",
-    "other_verified_channel": "another verified channel",
-}
-
-
-class _Operator:
-    """Who ran a host act. The name is readable; the rest is erased with it."""
-
-    def __init__(self, name, reason, method, note, behalf, compromise):
-        self.name = name
-        self.reason = reason
-        self.method = method
-        self.note = note
-        self.behalf = behalf
-        self.compromise = compromise
-
-    def beside(self) -> dict:
-        personal = {
-            "reason": self.reason,
-            "identity_confirmed_by": self.method,
-            "os_user": getpass.getuser(),
-            "host": socket.gethostname(),
-        }
-        if self.note:
-            personal["verification_note"] = self.note
-        invoking = os.environ.get("SUDO_USER", "").strip()
-        if invoking:
-            personal["invoking_user"] = invoking
-        return {"operator_text": self.name, "personal": personal}
-
-    def hashed(self) -> dict:
-        """Ids and the compromise choice. Strings that name a person stay beside."""
-        fields = {}
-        if self.behalf:
-            fields["on_behalf_of"] = self.behalf
-        if self.compromise:
-            fields["suspected_compromise"] = True
-        return fields
 
 
 def list_users(session) -> int:
@@ -189,69 +144,9 @@ def _ask(prompt: str) -> str:
     return sys.stdin.readline().strip()
 
 
-def _behalf(session, who: str):
-    """The operator's principal, '' when they left it blank, None to refuse."""
-    who = who.strip()
-    if not who:
-        return ""
-    matches = matching_accounts(session, who)
-    if len(matches) > 1:
-        print(
-            f"{who!r} matches more than one account. Leave it blank, or name one.",
-            file=sys.stderr,
-        )
-        return None
-    user = matches[0] if matches else None
-    principal = user and session.get(Principal, user.principal_id)
-    if (
-        user is None
-        or user.service_account is True
-        or not user.is_active
-        or principal is None
-        or principal.deleted_at is not None
-        or is_erased(user.username, user.principal_id)
-    ):
-        print(f"No active account named {who!r}.", file=sys.stderr)
-        return None
-    return user.principal_id
-
-
 def _ask_operator(session, compromise: bool):
     """Name, reason and verification, before any row changes. None refuses."""
-    name = _ask("Your name: ")
-    if not name:
-        print("error: a name is required", file=sys.stderr)
-        return None
-    reason = _ask("Reason: ")
-    if not reason:
-        print("error: a reason is required", file=sys.stderr)
-        return None
-    method = _ask(
-        "How you confirmed them:\n"
-        + "".join(f"  {key} — {words}\n" for key, words in METHODS.items())
-        + "Verification method: "
-    )
-    if not method:
-        print("error: a verification method is required", file=sys.stderr)
-        return None
-    if method not in METHODS:
-        print(
-            "error: verification method must be one of " + ", ".join(METHODS),
-            file=sys.stderr,
-        )
-        return None
-    note = ""
-    if method == "other_verified_channel":
-        note = _ask("Note for that channel: ")
-        if not note:
-            print("error: that verification method needs a note", file=sys.stderr)
-            return None
-    behalf = _behalf(
-        session, _ask("Your Vigil account (username or email), or leave blank: ")
-    )
-    if behalf is None:
-        return None
-    return _Operator(name, reason, method, note, behalf or None, compromise)
+    return ask_operator(session, compromise)
 
 
 def _lock(session, user_id: str):
@@ -317,7 +212,7 @@ def _token_line(count: int) -> str:
     return f"{count} {noun} revoked."
 
 
-def _record(session, action: str, user, op: _Operator, **fields) -> None:
+def _record(session, action: str, user, op: Operator, **fields) -> None:
     trail_events.record(
         session,
         action,

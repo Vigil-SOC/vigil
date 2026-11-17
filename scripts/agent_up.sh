@@ -30,11 +30,13 @@ export AGENT_INTERNAL_TOKEN
 export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 export POSTGRES_DB="${POSTGRES_DB:-deeptempo_soc}"
-export POSTGRES_USER="${POSTGRES_USER:-vigil_app}"
-# vigil_app's password. POSTGRES_PASSWORD in .env is the owner password; this
-# process logs in as vigil_app and must not take it.
-_app_pw="$(env_file_value POSTGRES_APP_PASSWORD)"
-export POSTGRES_PASSWORD="${POSTGRES_APP_PASSWORD:-${_app_pw:-vigil_app_password_change_me}}"
+export POSTGRES_USER="${POSTGRES_USER:-vigil_agent}"
+# vigil_agent's password: the agent tables and nothing else. POSTGRES_PASSWORD in
+# .env is the owner password and POSTGRES_APP_PASSWORD vigil_app's; this process
+# takes neither.
+_agent_pw="$(env_file_value POSTGRES_AGENT_PASSWORD)"
+export POSTGRES_PASSWORD="${POSTGRES_AGENT_PASSWORD:-${_agent_pw:-vigil_agent_password_change_me}}"
+unset POSTGRES_APP_PASSWORD
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 # Redis requires a password (a REDIS_PASSWORD in .env wins, as for the backend).
 # The agent reads it only alongside REDIS_HOST, so name the parts of a plain

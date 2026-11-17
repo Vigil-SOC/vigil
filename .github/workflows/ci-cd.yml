@@ -59,6 +59,11 @@ jobs:
       - name: Run one-loop gate
         run: python scripts/check_one_loop.py
 
+      # The Claude Code client declares its `vigil` MCP server in plugin.json.
+      # Gates, because a plugin without the entry still installs and validates.
+      - name: Run Claude Code client gate
+        run: python scripts/check_claude_code_client.py
+
       # No comment block over two lines in the agent layer. Advisory for now: #661
       # landed 33 that predate the gate, and they are its author's to rule on.
       - name: Run comment-style gate

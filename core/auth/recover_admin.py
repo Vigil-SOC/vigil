@@ -9,8 +9,16 @@ Run inside the backend's environment by an operator with host access::
     python -m core.auth.recover_admin --lift-by <principal> [--since <time>]
 
 ``<username>`` gives that person the built-in Admin role. The account must be
-an existing, active person: not a service account, not deleted. The change is
-on the audit trail as ``user.role_changed`` by ``system``.
+an existing, active person: not a service account, not deleted. It asks for
+your name, a reason, how you confirmed the person (in person, a video call, a
+call back to a number on file, or another verified channel, with a note for
+that last one) and, optionally, your own Vigil account; an empty or unknown
+answer refuses before anything changes. On Compose that needs an interactive
+terminal: ``docker exec -it``. The change is on the audit trail as
+``user.role_changed`` by ``system``, with your name, the reason, the method,
+this machine's account, the invoking user under sudo and the host kept beside
+the entry, where erasure blanks them. Your Vigil account, when given, is
+``on_behalf_of`` in it.
 
 ``--unread-cases`` lists each restricted case with no active reader: its id,
 title, creation time and reader principal ids. It changes nothing.
@@ -26,8 +34,8 @@ restrictions from then on. A case someone else restricted later is left alone.
 A restrict entry the trail's retention has already removed can't be found, so
 its case is not lifted. Each lift is a ``case.unrestrict`` entry by ``system``.
 
-Every use that changes something asks for a reason and refuses an empty one;
-the reason is on its trail entry, once the trail exists on this database.
+Every other use that changes something asks for a reason and refuses an empty
+one; the reason is on its trail entry, once the trail exists on this database.
 Restricted cases are read straight from the table: this command runs with no
 caller bound, outside the read rule. None of this is an API route: nothing
 reachable over the network can run it.
@@ -47,6 +55,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from core.audit import trail
 from core.auth import principals
+from core.auth.host_operator import Operator, ask_operator
 from core.auth.service_account import (
     EX_OK,
     EX_REFUSED,
@@ -107,15 +116,13 @@ def _active_person(session, user: Optional[User], name: str) -> User:
     return user
 
 
-def _append(session, payload: dict) -> None:
+def _append(session, payload: dict, beside: Optional[dict] = None) -> None:
     if trail.trail_ready(session):
-        trail.append(session, {trail.ACTOR: trail.SYSTEM, **payload})
+        trail.append(session, {trail.ACTOR: trail.SYSTEM, **payload}, **(beside or {}))
 
 
-def recover(username: str, reason: str) -> str:
+def recover(username: str, op: Operator) -> str:
     """Assign built-in Admin to ``username``. Returns the role it held before."""
-    reason = _reason(reason)
-
     with unit_of_work() as session:
         admin = session.get(Role, ADMIN_ROLE_ID)
         if admin is None:
@@ -136,8 +143,9 @@ def recover(username: str, reason: str) -> str:
                 "previous_role_id": previous_role_id,
                 "permissions_before": before,
                 "permissions_after": _granted(admin),
-                "reason": reason,
+                **op.hashed(),
             },
+            op.beside(),
         )
         return previous_role_id
 
@@ -286,9 +294,13 @@ def _print_unread(stdout: TextIO) -> None:
     print(f"{len(rows)} restricted case(s) with no active reader.", file=stdout)
 
 
-def _parse(argv: list[str]) -> tuple[Optional[str], Callable[[str, TextIO], None]]:
-    """``(reason prompt or None, act(reason, stdout))``; None when ``argv`` is
-    not a use of this command. A read-only use has no prompt."""
+# The Admin grant's prompt is the operator's name, reason and verification.
+OPERATOR = object()
+
+
+def _parse(argv: list[str]) -> tuple[object, Callable[[object, TextIO], None]]:
+    """``(prompt, act(answer, stdout))``: a reason prompt, ``OPERATOR``, or None
+    for a read-only use. Raises ``_Usage`` when ``argv`` is not a use."""
     if argv == ["--unread-cases"]:
         return None, lambda _reason, out: _print_unread(out)
     if len(argv) == 3 and argv[0] == "--name-reader":
@@ -315,14 +327,14 @@ def _parse(argv: list[str]) -> tuple[Optional[str], Callable[[str, TextIO], None
     if len(argv) == 1 and not argv[0].startswith("-"):
         username = argv[0]
 
-        def admin(reason: str, out: TextIO) -> None:
-            previous = recover(username, reason)
+        def admin(op: Operator, out: TextIO) -> None:
+            previous = recover(username, op)
             print(
                 f"{username}: {previous} -> {ADMIN_ROLE_ID}. Sign in again to use it.",
                 file=out,
             )
 
-        return f"Reason for giving {username} the Admin role: ", admin
+        return OPERATOR, admin
     raise _Usage()
 
 
@@ -347,16 +359,22 @@ def main(
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_USAGE
-    reason = ""
-    if prompt is not None:
+    answer = ""
+    if isinstance(prompt, str):
         print(prompt, end="", file=stderr)
         stderr.flush()
-        reason = stdin.readline()
+        answer = stdin.readline()
     try:
         manager = get_db_manager()
         if manager.engine is None:
             manager.initialize()
-        act(reason, stdout)
+        if prompt is OPERATOR:
+            # The operator's own account is looked up, so this needs the database.
+            with unit_of_work() as session:
+                answer = ask_operator(session, False, stdin, stderr)
+            if answer is None:
+                return EX_USAGE
+        act(answer, stdout)
     except ValueError as exc:
         print(f"error: {exc}", file=stderr)
         return EX_USAGE

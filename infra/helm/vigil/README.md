@@ -15,20 +15,28 @@ Two passwords, and they must differ.
 and mounted only on the in-chart Postgres and the upgrade Jobs. It is not in the
 application Secret those pods load with `envFrom`.
 
-`secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon, workers
-and agents log in as that role and receive only this password, as
+`secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon and
+workers log in as that role and receive only this password, as
 `POSTGRES_PASSWORD`. The upgrade Jobs set it with `ALTER ROLE vigil_app` on
 install and upgrade.
 
-Neither has a default. Set both (`openssl rand -hex 24`). With
+`secrets.vigilAgentPassword` is the `vigil_agent` role. agent-serve and
+agent-worker log in as that role, which holds only the agent ledger, run leases
+and directives, and receive only this password; `POSTGRES_APP_PASSWORD` is
+blanked in their environment. The upgrade Jobs set it beside `vigil_app`'s.
+
+None has a default, except that an unset `secrets.vigilAgentPassword` is
+generated once and kept across upgrades with `lookup` (set it under
+`helm template` or a GitOps controller, where `lookup` sees nothing). Set all
+three (`openssl rand -hex 24`). With
 `secrets.existingSecret` or `secrets.externalSecret`, that Secret must contain
-`POSTGRES_APP_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
+`POSTGRES_APP_PASSWORD` and `POSTGRES_AGENT_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
 (or `postgresql.external.existingSecret`) rather than in the application Secret.
 If the application Secret also holds `POSTGRES_PASSWORD`, the workload env
 replaces that variable with `POSTGRES_APP_PASSWORD` before the process starts.
 The chart refuses to render the old published default
-`change-me-before-production`, and it refuses to render when the two values
-are equal.
+`change-me-before-production`, and it refuses to render when any two of the
+three values are equal.
 
 A database whose owner password is still that published default must be changed
 in Postgres first (`ALTER ROLE` for `postgresql.auth.username`). The chart does

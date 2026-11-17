@@ -58,6 +58,9 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="recorded as changed_by on the restore audit row (default: the OS user)",
     )
+    restore.add_argument(
+        "--reason", default=None, help="why, recorded in the upgrade history line"
+    )
     run = sub.add_parser(
         "run", help="snapshot destinations in backups.json that are due"
     )
@@ -154,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
                     test=args.test,
                     actor=args.actor,
                     bifrost_data=args.bifrost_data,
+                    reason=args.reason,
                 )
             )
             return 0
