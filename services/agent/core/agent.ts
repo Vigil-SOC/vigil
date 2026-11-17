@@ -1294,12 +1294,12 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
+const SHOWN_FAILURES = 5;
+
 // Vigil's own line under an answer: each write the run asked for whose call failed,
 // with no later call of the same tool that worked. Such a write changed nothing,
 // whatever the answer says, and the model is not trusted to say so itself. Which
 // tools write is the deployment's word (`writes` on a tool spec). Null when none failed.
-const SHOWN_FAILURES = 5;
-
 export function unwrittenNote(calls: readonly CallPayload[], tools: readonly ToolSpec[]): string | null {
   const writes = new Set(tools.filter((tool) => tool["writes"] === true).map((tool) => tool.id));
   const failed = calls.filter(
@@ -1317,7 +1317,9 @@ export function unwrittenNote(calls: readonly CallPayload[], tools: readonly Too
 function failureText(call: CallPayload): string {
   const said = call.result.replace(/<\/?vigil:tool_result[^>]*>/g, "").trim().replace(/^failed:\s*/, "").replace(/\s+/g, " ");
   const text = said === "" ? (call.failure ?? "failed, no reason given") : said;
-  return text.length > 240 ? `${text.slice(0, 239)}…` : text;
+  // By code point, so a cut never splits a surrogate pair.
+  const points = Array.from(text);
+  return points.length > 240 ? `${points.slice(0, 239).join("")}…` : text;
 }
 
 // How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
@@ -1494,7 +1496,8 @@ async function end(
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
   let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
-  if (typeof deliver === "string") {
+  // Only under an answer the run gave: a bare reason claims no save.
+  if (typeof summary === "string" && typeof deliver === "string") {
     const note = unwrittenNote(callsIn(await ctx.harness.state.read(ctx.options.run_id)), ctx.options.spec.tools);
     if (note !== null) deliver = `${deliver}\n\n${note}`;
   }
