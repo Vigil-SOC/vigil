@@ -16,8 +16,16 @@ export type Status = "completed" | "waiting_approval" | "failed";
 
 // Everything the loop is given rather than builds. Provider and registry sit
 // beside the four seams because they are injected on the same terms.
+// Reads an operator skill's current text from the backend, for a run that carries
+// only its digest. The refusal's kind and detail go to the model as the call's failure.
+export type SkillBodies = (
+  name: string,
+) => Promise<{ ok: true; body: string } | { ok: false; kind: "invalid_args" | "refused" | "unavailable"; detail: string }>;
+
 export interface Harness<Kinds extends Record<string, unknown> = Record<never, never>> {
   provider: Provider;
+  // Absent where nothing is behind the run to ask: a skill with no carried body then fails to load.
+  skillBodies?: SkillBodies;
   registry: Registry;
   dispatch: ToolDispatch;
   budget: Budget;

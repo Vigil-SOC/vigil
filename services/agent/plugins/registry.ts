@@ -45,7 +45,12 @@ export function carriedSkills(value: unknown, of: string = OPERATOR_MANIFEST): S
     if (typeof one !== "object" || one === null) throw new SpecError(`${of}: skill ${i} must be a mapping`);
     const raw = one as Record<string, unknown>;
     const where = `${of}: skill ${i}`;
-    return { name: text_(raw, "name", where), description: text_(raw, "description", where), body: text_(raw, "body", where) };
+    const name = text_(raw, "name", where);
+    const description = text_(raw, "description", where);
+    // Either shape: the text itself (a bundled skill, or a run journaled before the
+    // text was left out), or its digest, the text being read when it is loaded.
+    if (raw["body"] === undefined) return { name, description, digest: text_(raw, "digest", where) };
+    return { name, description, body: text_(raw, "body", where) };
   });
 }
 

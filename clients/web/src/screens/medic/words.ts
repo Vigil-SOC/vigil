@@ -125,6 +125,7 @@ const REFUSAL: Record<string, string> = {
   upgrade_window: 'an upgrade is in progress',
   no_container: 'there is no soc-daemon container',
   container_restarted: 'the container already restarted',
+  rollout: 'soc-daemon is mid-rollout',
   fix_running: 'a restart is already waiting to be checked',
   not_compose: 'this install is not Compose',
   restart_failed: 'the restart failed',

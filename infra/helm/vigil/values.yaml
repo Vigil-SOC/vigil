@@ -1098,8 +1098,11 @@ networkPolicies:
 # -----------------------------------------------------------------------------
 # Medic — the install's own ops-health watcher (System Watcher). Off by default.
 # -----------------------------------------------------------------------------
-# Observe-only: it reads pods, logs and the agent worker's /readyz, and reaches
-# the backend only through its read-only gateway (a separate pod). Everything it
+# It reads pods, logs and the agent worker's /readyz, and reaches the backend only
+# through its read-only gateway (a separate pod). Its one action is clearing a hung
+# soc-daemon: with daemon.enabled it can delete the soc-daemon pod (and no other),
+# through a separate ServiceAccount, and only on a click; a raise to "on its own"
+# needs medic.persistence.enabled. Everything it
 # renders carries its own labels, not the chart's selector pair, so the chart's
 # NetworkPolicies never select it, and its own policies render whatever
 # networkPolicies.enabled says.

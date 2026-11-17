@@ -9,8 +9,12 @@ export interface SkillSpec {
   name: string;
   description: string;
   // The playbook itself. Loaded only when asked for, so an unused skill costs
-  // its name and description and nothing else.
-  body: string;
+  // its name and description and nothing else. Absent on a skill an operator
+  // added: a run carries its digest and reads the text from the backend when asked.
+  // A run journaled before that still holds the body, and keeps using it.
+  body?: string;
+  // The hash of the body the run was started with (contentHash).
+  digest?: string;
 }
 
 // A structured answer: validated against `schema` by the loop's emission.

@@ -1418,6 +1418,7 @@
                 "upgrade_window",
                 "no_container",
                 "container_restarted",
+                "rollout",
                 "fix_running",
                 "not_compose",
                 "restart_failed",

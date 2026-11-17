@@ -22,7 +22,12 @@ from services.medic.engine.core import BUILTINS
 ESCALATE_AFTER_FAILURES = 2  # two failed attempts; the lane does not change
 
 # (action type, service, install shape). A runbook off this list is no runbook.
-RUNNABLE = frozenset({("restart_service", "soc-daemon", "compose")})
+RUNNABLE = frozenset(
+    {
+        ("restart_service", "soc-daemon", "compose"),
+        ("restart_service", "soc-daemon", "helm"),
+    }
+)
 # This path runs the restart for real, so R6 does not simulate an escalation.
 NO_ESCALATION = frozenset({"restart-soc-daemon"})
 

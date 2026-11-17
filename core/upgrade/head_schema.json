@@ -1144,6 +1144,21 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column case_finding_removals.case_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column case_finding_removals.finding_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column case_finding_removals.removed_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
  "column case_findings.added_at": {
   "default": null,
   "nullable": false,
@@ -4997,6 +5012,8 @@
  "constraint case_escalations.case_escalations_pkey": "PRIMARY KEY (escalation_id)",
  "constraint case_evidence.case_evidence_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_evidence.case_evidence_pkey": "PRIMARY KEY (evidence_id)",
+ "constraint case_finding_removals.case_finding_removals_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
+ "constraint case_finding_removals.case_finding_removals_pkey": "PRIMARY KEY (case_id, finding_id)",
  "constraint case_findings.case_findings_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint case_findings.case_findings_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint case_findings.case_findings_pkey": "PRIMARY KEY (case_id, finding_id)",
@@ -5347,6 +5364,7 @@
  "index case_comments_pkey": "CREATE UNIQUE INDEX case_comments_pkey ON public.case_comments USING btree (comment_id)",
  "index case_escalations_pkey": "CREATE UNIQUE INDEX case_escalations_pkey ON public.case_escalations USING btree (escalation_id)",
  "index case_evidence_pkey": "CREATE UNIQUE INDEX case_evidence_pkey ON public.case_evidence USING btree (evidence_id)",
+ "index case_finding_removals_pkey": "CREATE UNIQUE INDEX case_finding_removals_pkey ON public.case_finding_removals USING btree (case_id, finding_id)",
  "index case_findings_pkey": "CREATE UNIQUE INDEX case_findings_pkey ON public.case_findings USING btree (case_id, finding_id)",
  "index case_iocs_pkey": "CREATE UNIQUE INDEX case_iocs_pkey ON public.case_iocs USING btree (ioc_id)",
  "index case_metrics_pkey": "CREATE UNIQUE INDEX case_metrics_pkey ON public.case_metrics USING btree (case_id)",
@@ -5432,6 +5450,7 @@
  "index idx_case_evidence_description_trgm": "CREATE INDEX idx_case_evidence_description_trgm ON public.case_evidence USING gin (description gin_trgm_ops)",
  "index idx_case_evidence_name_trgm": "CREATE INDEX idx_case_evidence_name_trgm ON public.case_evidence USING gin (name gin_trgm_ops)",
  "index idx_case_evidence_type": "CREATE INDEX idx_case_evidence_type ON public.case_evidence USING btree (evidence_type)",
+ "index idx_case_finding_removals_finding": "CREATE INDEX idx_case_finding_removals_finding ON public.case_finding_removals USING btree (finding_id)",
  "index idx_case_findings_finding": "CREATE INDEX idx_case_findings_finding ON public.case_findings USING btree (finding_id, case_id)",
  "index idx_case_ioc_case_id": "CREATE INDEX idx_case_ioc_case_id ON public.case_iocs USING btree (case_id)",
  "index idx_case_ioc_is_active": "CREATE INDEX idx_case_ioc_is_active ON public.case_iocs USING btree (is_active)",
@@ -6207,6 +6226,28 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation case_finding_removals": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation case_findings": {
   "acl": [
