@@ -28,6 +28,7 @@ import { openSections, shortLabel, type OpenItem, type V3OpenRef, type V3Questio
 import { explanationColor, explanationWord } from '../cases/caseFold'
 import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
 import { pickId } from './runTarget'
+import { ENTITY_TYPES } from './entityTypes'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -558,13 +559,6 @@ function parsedHypotheses(text: string): string[] {
 function looksUnfinished(line: string): boolean {
   return line.endsWith(':') || /^[a-z]/.test(line)
 }
-
-/** The ten kinds a key can carry, held to the hunt's own closed set by the spec
- *  loader, which refuses anything else rather than coercing it. Spelled here so
- *  the operator is told before submitting, and kept in step with
- *  `plugins/hunt/types.ts` — a list that drifts tells them a key is fine that
- *  no reader will ever query. */
-const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
 
 /** `type:value`, comma separated — the form the hunt already writes an entity in.
  *  Split on the first colon, because a url value carries its own. */

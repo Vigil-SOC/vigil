@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from core.storage.defang import defang
+from core.storage.defang import defang, trim_edges
 from core.storage.entity_context import context_candidates
 from core.storage.models import (
     Case,
@@ -60,7 +60,7 @@ _MAX_VALUE_LEN = 500
 def make_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
     ioc_type = (ioc_type or "").strip().lower()
     ioc_type = ROLE_TYPES.get(ioc_type) or TYPE_ALIASES.get(ioc_type, ioc_type)
-    value = defang((value or "").strip()).lower()
+    value = defang(trim_edges(value or "")).lower()
     if not ioc_type or not value:
         return None
     # Dropped rather than truncated: a truncated indicator joins against

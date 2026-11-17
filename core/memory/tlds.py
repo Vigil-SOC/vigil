@@ -2,7 +2,8 @@
 
 The Python half of ``services/agent/plugins/hunt/tlds.ts``: the same list, the
 same exclusions, so text extracted here and text extracted by the hunt harness
-agree on what is a domain. Re-vendor both files together.
+agree on what is a domain. Re-vendor both files together;
+``scripts/check_entity_key_agreement.py`` fails CI when the two lists differ.
 """
 
 from __future__ import annotations
