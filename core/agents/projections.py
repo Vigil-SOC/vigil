@@ -247,6 +247,7 @@ async def pack_completed_hunts(
         finished_after=started_at,
         finished_at=finished_at,
         limit=cap,
+        readable=True,
     )
     gate = asyncio.Semaphore(PROJECTION_READ_CONCURRENCY)
     projections = await asyncio.gather(
