@@ -1471,7 +1471,12 @@ class Orchestrator:
                 # sweeper to find: ended here, as a failed enqueue is.
                 if not self.config.dry_run:
                     try:
-                        await end_lost_start_jobs()
+                        for lost_inv in await end_lost_start_jobs():
+                            self._update_investigation_status(
+                                lost_inv,
+                                "failed",
+                                "Could not enqueue: the start job is no longer queued",
+                            )
                     except Exception:  # noqa: BLE001 - must not skip the checks below
                         logger.exception("ending lost start jobs failed")
 

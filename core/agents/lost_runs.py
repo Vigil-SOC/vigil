@@ -18,14 +18,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, List, Sequence
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 from sqlalchemy import text
 
 from core.agents.attribution import note_terminal
+from core.agents.projections import run_id_for
 from core.agents.queue import _run_queue, close_run_queue
 from core.storage.connection import get_db_manager
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    DURATION_MS_MAX,
+    _runs_finished_counter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,68 +62,114 @@ _UNSTARTED = (
 )
 
 
-def _candidates(limit: int = 100) -> List[str]:
+PAGE = 100
+# Pages per pass, so a long backlog of merely queued runs is walked across ticks
+# rather than held in one.
+MAX_PAGES = 10
+
+Cursor = Tuple[datetime, str]
+
+
+def _candidates(after: Optional[Cursor]) -> List[Cursor]:
+    """The next page of unstarted runs, oldest first, past ``after``. A keyset, so
+    runs that are queued and kept do not crowd out a lost one behind them."""
     with get_db_manager().session_scope() as session:
-        rows: Sequence[Any] = (
-            session.execute(
-                text(
-                    f"SELECT r.run_id FROM workflow_runs r WHERE {_UNSTARTED} "
-                    "AND r.started_at < timezone('utc', now()) "
-                    "    - make_interval(secs => :grace) "
-                    "ORDER BY r.started_at LIMIT :limit"
-                ),
-                {"uuid": _UUID, "grace": START_GRACE_SECONDS, "limit": limit},
-            )
-            .scalars()
-            .all()
-        )
-        return [str(r) for r in rows]
+        rows = session.execute(
+            text(
+                f"SELECT r.started_at, r.run_id FROM workflow_runs r WHERE {_UNSTARTED} "
+                "AND r.started_at < timezone('utc', now()) "
+                "    - make_interval(secs => :grace) "
+                "AND (CAST(:after_at AS timestamp) IS NULL "
+                "     OR (r.started_at, r.run_id) > (:after_at, :after_id)) "
+                "ORDER BY r.started_at, r.run_id LIMIT :limit"
+            ),
+            {
+                "uuid": _UUID,
+                "grace": START_GRACE_SECONDS,
+                "after_at": after[0] if after else None,
+                "after_id": after[1] if after else None,
+                "limit": PAGE,
+            },
+        ).all()
+        return [(r[0], str(r[1])) for r in rows]
 
 
-def _claim(run_id: str) -> bool:
-    """Leave ``running`` if the run is still unstarted. One caller wins: the write
-    re-reads every condition, so two daemons end a run once."""
+def _claim(run_id: str) -> Optional[Tuple[str, Optional[str]]]:
+    """End the run as failed, whole, if it is still unstarted: the status and the
+    fields ``finalize_run`` would set go in one write, so the row is never left
+    half-ended. One caller wins: the write re-reads every condition, so two daemons
+    end a run once. Returns its run_kind, or None when the run was not won."""
     with get_db_manager().session_scope() as session:
         won = session.execute(
             text(
-                f"UPDATE workflow_runs r SET status = 'failed' "
-                f"WHERE r.run_id = :run_id AND {_UNSTARTED} RETURNING r.run_id"
+                "UPDATE workflow_runs r SET status = 'failed', error = :reason, "
+                "  finished_at = timezone('utc', now()), "
+                "  duration_ms = CASE "
+                "    WHEN extract(epoch FROM timezone('utc', now()) - r.started_at) "
+                "         * 1000 > :int4_max THEN NULL "
+                "    ELSE (extract(epoch FROM timezone('utc', now()) "
+                "          - r.started_at) * 1000)::int END "
+                f"WHERE r.run_id = :run_id AND {_UNSTARTED} "
+                "RETURNING coalesce(r.trigger_context->>'run_kind', 'unknown'), "
+                "          r.trigger_context->>'investigation_id'"
             ),
-            {"uuid": _UUID, "run_id": run_id},
+            {
+                "uuid": _UUID,
+                "run_id": run_id,
+                "reason": REASON,
+                "int4_max": DURATION_MS_MAX,
+            },
         ).first()
-    return won is not None
+    return None if won is None else (won[0], won[1])
 
 
-async def end_lost_start_jobs() -> int:
-    """Fail each run whose start job is gone; returns how many were ended.
+async def end_lost_start_jobs() -> List[str]:
+    """Fail each run whose start job is gone; returns the investigations whose own
+    run it was, for the caller to fail as the enqueue-failure path does.
 
     A queue that cannot be read ends the pass: a job it cannot see is not a job
-    that is gone.
+    that is gone. One run failing to end does not stop the rest.
     """
-    candidates = _candidates()
-    if not candidates:
-        return 0
-    runs = WorkflowRunService()
-    ended = 0
-    for run_id in candidates:
-        try:
-            state = await asyncio.wait_for(
-                _run_queue().getJobState(run_id), QUEUE_READ_TIMEOUT_SECONDS
-            )
-        except Exception as exc:  # noqa: BLE001 - Redis down is not a lost job
-            logger.warning("start-job check skipped, queue unreadable: %s", exc)
-            await close_run_queue()
-            return ended
-        if state not in LOST_STATES:
-            continue
-        try:
-            if not _claim(run_id):
+    investigations: List[str] = []
+    after: Optional[Cursor] = None
+    for _ in range(MAX_PAGES):
+        page = await asyncio.to_thread(_candidates, after)
+        for started_at, run_id in page:
+            after = (started_at, run_id)
+            try:
+                state = await asyncio.wait_for(
+                    _run_queue().getJobState(run_id), QUEUE_READ_TIMEOUT_SECONDS
+                )
+            except Exception as exc:  # noqa: BLE001 - Redis down is not a lost job
+                logger.warning("start-job check skipped, queue unreadable: %s", exc)
+                try:
+                    await asyncio.wait_for(
+                        close_run_queue(), QUEUE_READ_TIMEOUT_SECONDS
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return investigations
+            if state not in LOST_STATES:
                 continue
-            # What the enqueue-failure paths do.
-            runs.finalize_run(run_id, status="failed", error=REASON)
-            note_terminal(run_id, "failed", "")
-            ended += 1
-            logger.warning("ended run %s: its start job was lost (%s)", run_id, state)
-        except Exception:  # noqa: BLE001 - one run must not stop the rest
-            logger.exception("could not end lost run %s", run_id)
-    return ended
+            try:
+                won = await asyncio.to_thread(_claim, run_id)
+                if won is None:
+                    continue
+                run_kind, investigation_id = won
+                # What the enqueue-failure paths do, less the row, written above.
+                _runs_finished_counter().add(
+                    1, {"run_kind": run_kind, "status": "failed"}
+                )
+                await asyncio.to_thread(note_terminal, run_id, "failed", "")
+                logger.warning(
+                    "ended run %s: its start job was lost (%s)", run_id, state
+                )
+                # A shadow run shares its investigation's id in its context; only
+                # the investigation's own run decides the investigation.
+                if investigation_id and run_id == run_id_for(investigation_id):
+                    investigations.append(investigation_id)
+            except Exception:  # noqa: BLE001 - one run must not stop the rest
+                logger.exception("could not end lost run %s", run_id)
+        if len(page) < PAGE:
+            break
+    return investigations
