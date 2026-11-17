@@ -5,6 +5,7 @@ import { Icon } from '../../shared/icons'
 import { OverlayPortal, Popup } from '../../shared/ui'
 import { skillsApi, type ApiSkillDetail, type ApiSkillScanDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
+import { SkillLibraryDialog } from './SkillLibraryDialog'
 
 const PATH_OFF = 'Skills are off (VIGIL_SKILLS_PATH is empty). Unset it, or set it to a directory, to save skills.'
 // The API answers 403 without it: a skill's description reaches every agent's prompt.
@@ -75,6 +76,9 @@ export function SkillDrawer({
   const [aiText, setAiText] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiErr, setAiErr] = useState<string | null>(null)
+  // A repo-installed skill's repo commit now, checked when the panel opens; null until known.
+  const [latest, setLatest] = useState<string | null>(null)
+  const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -103,6 +107,17 @@ export function SkillDrawer({
       cancelled = true
     }
   }, [name])
+
+  const source = detail?.source ?? null
+  useEffect(() => {
+    if (name === null || !source || !canWrite) return
+    let cancelled = false
+    skillsApi
+      .latest(name)
+      .then((commit) => { if (!cancelled) setLatest(commit) })
+      .catch(() => undefined) // the button still works; it just cannot say "new version"
+    return () => { cancelled = true }
+  }, [name, source, canWrite])
 
   useEffect(() => {
     if (name === null || openFile === null) return
@@ -205,7 +220,10 @@ export function SkillDrawer({
       })
   }
 
-  const origin = creating || !detail?.bundled ? 'Yours' : 'Built in'
+  const origin = source
+    ? `From ${source.label} · commit ${source.commit.slice(0, 7)}`
+    : creating || !detail?.bundled ? 'Yours' : 'Built in'
+  const behind = source !== null && latest !== null && latest !== source.commit
   const held = scan?.held ? ' · held' : ''
   const subtitle = detail ? `${origin}${held} · version ${detail.version} · ${skillUsageText(detail.reads_7d ?? 0, detail.agents_7d ?? 0)}` : origin
   const err = (text: string) => <span className="text-[12px]" style={{ color: 'var(--crit)' }}>{text}</span>
@@ -395,6 +413,14 @@ export function SkillDrawer({
                     {testing ? 'Testing…' : 'Test with a sample'}
                   </button>
                 )}
+                {source && canWrite && (
+                  <button type="button" className="vg-side-btn" onClick={() => setUpdating(true)}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5" />
+                    </svg>
+                    {behind ? 'Update library · new version' : 'Update library'}
+                  </button>
+                )}
                 <span className="vg-skill-foot-end">
                   <button type="button" className="vg-side-btn" onClick={onClose}>Cancel</button>
                   {approvable && (
@@ -411,6 +437,9 @@ export function SkillDrawer({
           )}
         </aside>
       </div>
+      {updating && source && name && (
+        <SkillLibraryDialog name={name} label={source.label} onClose={() => setUpdating(false)} onUpdated={onSaved} />
+      )}
     </OverlayPortal>
   )
 }
@@ -426,24 +455,49 @@ export function SkillDeleteModal({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Only a skill that came with others from a repo offers the whole library.
+  const library = skill.library && skill.library.skills > 1 ? skill.library : null
+  const [whole, setWhole] = useState(false)
 
   const del = () => {
     setBusy(true)
     setError(null)
-    skillsApi
-      .delete(skill.name)
+    ;(whole ? skillsApi.deleteLibrary(skill.name) : skillsApi.delete(skill.name))
       .then(onDeleted)
       .catch((e) => { setError(errMsg(e)); setBusy(false) })
   }
 
   return (
-    <Popup open onClose={onClose} title="Delete skill" width={460}>
+    <Popup open onClose={onClose} title="Delete skill" width={library ? 560 : 460}>
       <div className="flex flex-col gap-3.5">
-        <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This removes the skill directory from the operator root.</p>
+        {library ? (
+          <>
+            <p className="text-[13px] text-tx-2 leading-[1.5]"><strong>{skill.name}</strong> came from <strong>{library.label}</strong>.</p>
+            <fieldset className="sk-pick">
+              <legend>What to delete</legend>
+              <label>
+                <input type="radio" name="sk-del" checked={!whole} disabled={busy} onChange={() => setWhole(false)} />
+                <span>
+                  <b>This skill</b>
+                  <span>An update offers it again as new</span>
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="sk-del" checked={whole} disabled={busy} onChange={() => setWhole(true)} />
+                <span>
+                  <b>The whole library</b>
+                  <span>{library.skills} {library.skills === 1 ? 'skill' : 'skills'} from {library.label}; Vigil stops tracking the repo</span>
+                </span>
+              </label>
+            </fieldset>
+          </>
+        ) : (
+          <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This removes the skill directory from the operator root.</p>
+        )}
         {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
         <div className="flex justify-end gap-2.5 pt-1">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <HoldButton label="Delete" disabled={busy} onConfirm={del} />
+          <HoldButton label={whole && library ? `Delete ${library.skills} skills` : 'Delete'} disabled={busy} onConfirm={del} />
         </div>
       </div>
     </Popup>

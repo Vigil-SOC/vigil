@@ -18,6 +18,37 @@ export interface ApiSkill {
   agents_7d?: number
   /** Where the skill's content scan stands. Held skills are kept from agents. Absent from an API that predates scanning. */
   scan?: ApiSkillScan
+  /** Set for a skill installed from a git repo: the repo, the commit, and how many skills came with it. */
+  source?: ApiSkillSource | null
+}
+
+export interface ApiSkillSource {
+  label: string
+  ref?: string | null
+  path: string
+  commit: string
+  skills: number
+}
+
+/** One skill an update would change, add or remove. `edited`: changed in Vigil since it was installed. */
+export interface ApiSkillLibraryChange {
+  name: string
+  folder: string
+  note: string
+  edited: boolean
+  problem?: string | null
+}
+
+/** POST /api/skills/{name}/library/preview: what updating the skill's library would do, read at `latest`. */
+export interface ApiSkillLibraryPreview {
+  label: string
+  ref?: string | null
+  path: string
+  commit: string
+  latest: string
+  changed: ApiSkillLibraryChange[]
+  new: ApiSkillLibraryChange[]
+  gone: ApiSkillLibraryChange[]
 }
 
 /** bundled, unchecked (scanning off), safe and approved reach agents; pending, flagged, failed and refused are held. */
@@ -125,6 +156,19 @@ export const skillsApi = {
   /** Installs the picked skills from the repo at the commit the preview read; refused (409) if the repo has moved or a name is taken. */
   installRepo: (source: string, commit: string, names: string[]) =>
     api.post<ApiSkillUpload>('/skills/repo/install', { source, commit, names }, { timeout: REPO_TIMEOUT }).then((r) => r.data),
+  /** The commit the skill's repo is at now (no clone); null when its branch or tag is gone. */
+  latest: (name: string) =>
+    api.get<{ commit: string | null }>(`/skills/${encodeURIComponent(name)}/library/latest`).then((r) => r.data.commit),
+  libraryPreview: (name: string) =>
+    api.post<ApiSkillLibraryPreview>(`/skills/${encodeURIComponent(name)}/library/preview`, null, { timeout: REPO_TIMEOUT }).then((r) => r.data),
+  /** Takes the picked changes at the commit the preview read; refused (409) if the repo has moved. */
+  libraryUpdate: (name: string, commit: string, take: string[], edited: string[]) =>
+    api
+      .post<{ skills: ApiSkill[]; removed: string[] }>(`/skills/${encodeURIComponent(name)}/library/update`, { commit, take, edited }, { timeout: REPO_TIMEOUT })
+      .then((r) => r.data),
+  /** Deletes every skill installed with this one from its repo. */
+  deleteLibrary: (name: string) =>
+    api.delete<{ deleted: string[] }>(`/skills/${encodeURIComponent(name)}/library`).then((r) => r.data),
   generate: (description: string) =>
     api.post<{ draft: SkillDraft }>('/skills/generate', { description }, { timeout: LLM_TIMEOUT }).then((r) => r.data.draft),
   test: (name: string) =>

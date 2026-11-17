@@ -23,13 +23,14 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import Counter
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
+from typing import Collection, Dict, Iterator, List, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from core.config import Settings, get_settings
 from core.skills.skill_library import (
@@ -38,6 +39,8 @@ from core.skills.skill_library import (
     Skill,
     SkillConflict,
     SkillError,
+    SkillNotFound,
+    delete_operator_skill,
     folder_files,
     inside,
     install_skill_files,
@@ -47,7 +50,7 @@ from core.skills.skill_library import (
     skill_roots,
     writable_operator_root,
 )
-from core.skills.skill_scan import skill_digest
+from core.skills.skill_scan import files_digest, skill_digest
 from core.storage.models import SkillInstall
 from core.storage.unit_of_work import unit_of_work
 
@@ -294,11 +297,12 @@ def cloned(source: RepoSource) -> Iterator[tuple[Path, str]]:
         _CLONES.release()
 
 
-def discover(repo: Path, source: RepoSource) -> List[Found]:
+def discover(repo: Path, source: RepoSource, own: Collection[str] = ()) -> List[Found]:
     """The skill folders in the clone, as ``npx skills`` finds them.
 
     Each that cannot be installed carries why: it does not parse, another
-    folder has its name, or a skill by that name is already loaded.
+    folder has its name, or a skill by that name is already loaded (other than
+    one of ``own``, the skills installed from this repo already).
     """
     top = repo if not source.path else inside(repo, f"./{source.path}")
     if top is None:
@@ -306,7 +310,7 @@ def discover(repo: Path, source: RepoSource) -> List[Found]:
     dirs = [top] if (top / SKILL_FILE).is_file() else repo_skill_dirs(top)
     if not dirs:
         raise SkillError(f"no {SKILL_FILE} found where skills are looked for")
-    taken = {skill.name for skill in load_skills(skill_roots())}
+    taken = {skill.name for skill in load_skills(skill_roots())} - set(own)
     found: List[Found] = []
     names: set[str] = set()
     for folder in dirs:
@@ -330,6 +334,15 @@ def discover(repo: Path, source: RepoSource) -> List[Found]:
         names.add(skill.name)
         found.append(Found(rel, skill.name, skill.description, problem))
     return found
+
+
+def _by_name(found: List[Found]) -> Dict[str, Found]:
+    # Two folders can carry one name; the one discover passed is the one shown.
+    named: Dict[str, Found] = {}
+    for f in found:
+        if f.name not in named or named[f.name].problem:
+            named[f.name] = f
+    return named
 
 
 def preview(
@@ -365,11 +378,7 @@ def install_from_repo(
                 f"{source.label} has changed since it was read (now {got[:7]}). "
                 "Read it again before installing."
             )
-        # Two folders can carry one name; the one discover passed is the one shown.
-        found: Dict[str, Found] = {}
-        for f in discover(repo, source):
-            if f.name not in found or found[f.name].problem:
-                found[f.name] = f
+        found = _by_name(discover(repo, source))
         for name in names:
             if name not in found:
                 raise SkillError(f"{name!r} is not a skill in {source.label}")
@@ -392,6 +401,7 @@ def _record(
     skills: List[Skill],
     folders: dict,
     installed_by: Optional[str],
+    drop: Collection[str] = (),
 ) -> None:
     rows = [
         SkillInstall(
@@ -410,7 +420,7 @@ def _record(
     with unit_of_work() as session:
         session.execute(
             delete(SkillInstall).where(
-                SkillInstall.skill_name.in_([s.name for s in skills])
+                SkillInstall.skill_name.in_([s.name for s in skills] + list(drop))
             )
         )
         session.add_all(rows)
@@ -420,3 +430,318 @@ def forget(name: str) -> None:
     """Drop where a deleted skill came from; a later skill by that name is new."""
     with unit_of_work() as session:
         session.execute(delete(SkillInstall).where(SkillInstall.skill_name == name))
+
+
+# ---- A library: the skills installed from one repo, ref and folder ----
+
+
+@dataclass(frozen=True)
+class Change:
+    """A skill an update would change, add or remove, and what it would do."""
+
+    name: str
+    folder: str
+    note: str  # what changed, the description of a new one, or "" when gone
+    edited: bool = False  # edited in Vigil since it was installed
+    problem: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LibraryPreview:
+    source: RepoSource
+    commit: str  # the commit the asked-about skill was installed from
+    latest: str
+    changed: List[Change]
+    new: List[Change]
+    gone: List[Change]
+
+
+def sources(names: Collection[str]) -> Dict[str, dict]:
+    """Where each of ``names`` came from, for those installed from a repo."""
+    wanted = set(names)
+    with unit_of_work() as session:
+        every = [
+            (r.skill_name, r.repo_url, r.label, r.ref, r.path, r.commit_sha)
+            for r in session.scalars(select(SkillInstall))
+        ]
+    # Counted over every row, so one skill's detail still says how many came with it.
+    counts = Counter((url, ref, path) for _, url, _, ref, path, _ in every)
+    rows = [row for row in every if row[0] in wanted]
+    return {
+        name: {
+            "label": label,
+            "ref": ref,
+            "path": path,
+            "commit": commit,
+            "skills": counts[(url, ref, path)],
+        }
+        for name, url, label, ref, path, commit in rows
+    }
+
+
+def _library(name: str) -> tuple[SkillInstall, List[SkillInstall]]:
+    """The install row of ``name`` and every row of its library."""
+    with unit_of_work() as session:
+        row = session.get(SkillInstall, name)
+        if row is None:
+            raise SkillNotFound(f"{name!r} was not installed from a repo")
+        rows = list(
+            session.scalars(
+                select(SkillInstall).where(
+                    SkillInstall.repo_url == row.repo_url,
+                    (
+                        SkillInstall.ref.is_(None)
+                        if row.ref is None
+                        else SkillInstall.ref == row.ref
+                    ),
+                    SkillInstall.path == row.path,
+                )
+            )
+        )
+        session.expunge_all()
+    return row, rows
+
+
+def _row_source(row: SkillInstall, settings: Optional[Settings]) -> RepoSource:
+    """The row's repo, checked again: the allowed hosts may have changed."""
+    at = f"@{row.ref}" if row.ref else ""
+    source = parse_source(f"{row.repo_url}{at}", settings)
+    return replace(source, path="/".join(_segments(row.path)))
+
+
+def latest_commit(name: str, settings: Optional[Settings] = None) -> Optional[str]:
+    """The commit ``name``'s repo is at now, or None when its ref is gone.
+
+    One ``git ls-remote``: nothing is cloned.
+    """
+    row, _ = _library(name)
+    source = _row_source(row, settings)
+    scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
+    try:
+        out = _git(["ls-remote", source.url, source.ref or "HEAD"], scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    refs = {}
+    for line in out.splitlines():
+        sha, _, refname = line.partition("\t")
+        refs[refname.strip()] = sha.strip()
+    if not source.ref:
+        return refs.get("HEAD")
+    # A clone of a tag checks out the commit it points to: the peeled ^{} line.
+    for key in (
+        f"refs/heads/{source.ref}",
+        f"refs/tags/{source.ref}^{{}}",
+        f"refs/tags/{source.ref}",
+    ):
+        if key in refs:
+            return refs[key]
+    return None
+
+
+def _summary(here: Dict[str, bytes], there: Dict[str, bytes]) -> str:
+    """What taking ``there`` does to the copy ``here``, in a few words."""
+    changed = [p for p in there if p in here and here[p] != there[p]]
+    parts = []
+    if SKILL_FILE in changed:
+        changed.remove(SKILL_FILE)
+        parts.append(f"{SKILL_FILE} changed")
+    for count, word in (
+        (len(changed), "changed"),
+        (len([p for p in there if p not in here]), "added"),
+        (len([p for p in here if p not in there]), "removed"),
+    ):
+        if count:
+            parts.append(f"{count} {'file' if count == 1 else 'files'} {word}")
+    return ", ".join(parts) or "Same as your copy"
+
+
+@dataclass(frozen=True)
+class _Diff:
+    changed: List[Change]
+    new: List[Change]
+    gone: List[Change]
+    unchanged: List[str]  # members whose repo copy is what was installed
+
+
+def _edited(skill: Skill, row: SkillInstall) -> bool:
+    return skill_digest(skill.path) != row.digest
+
+
+def _diff(repo: Path, source: RepoSource, rows: List[SkillInstall]) -> _Diff:
+    """The library's skills the clone changed, added and dropped.
+
+    A skill counts as changed when the repo's copy differs from what was
+    installed; ``edited`` says the copy here differs from that too, so taking
+    the update (or removing one gone from the repo) would lose edits made in
+    Vigil.
+    """
+    loaded = {skill.name: skill for skill in load_skills(skill_roots())}
+    # A row whose skill is gone from disk is not a member: it shows as new.
+    mine = {row.skill_name: row for row in rows if row.skill_name in loaded}
+    try:
+        found = _by_name(discover(repo, source, own=mine))
+    except SkillError:
+        found = {}  # the folder, or every skill in it, left the repo
+    changed: List[Change] = []
+    gone: List[Change] = []
+    unchanged: List[str] = []
+    for name, row in sorted(mine.items()):
+        there = found.get(name)
+        if there is None:
+            gone.append(Change(name, row.folder, "", _edited(loaded[name], row)))
+            continue
+        if there.problem:
+            changed.append(Change(name, there.folder, "", problem=there.problem))
+            continue
+        files = folder_files(repo / there.folder)
+        if files_digest(files) == row.digest:
+            unchanged.append(name)
+            continue
+        try:
+            here = folder_files(loaded[name].path)
+        except SkillError:
+            here = {}
+        changed.append(
+            Change(
+                name,
+                there.folder,
+                _summary(here, files),
+                _edited(loaded[name], row),
+            )
+        )
+    new = [
+        Change(f.name, f.folder, f.description, problem=f.problem)
+        for f in found.values()
+        if f.name not in mine
+    ]
+    return _Diff(changed, sorted(new, key=lambda c: c.name), gone, unchanged)
+
+
+def _advance(names: Collection[str], commit: str) -> None:
+    """Mark skills the repo left as they were as current at ``commit``."""
+    if not names:
+        return
+    with unit_of_work() as session:
+        for row in session.scalars(
+            select(SkillInstall).where(SkillInstall.skill_name.in_(list(names)))
+        ):
+            row.commit_sha = commit
+
+
+def library_preview(name: str, settings: Optional[Settings] = None) -> LibraryPreview:
+    """What updating ``name``'s library would offer.
+
+    Only the record of a skill the repo left as it was changes: it is current
+    at the commit read, so its panel stops offering a new version.
+    """
+    row, rows = _library(name)
+    source = _row_source(row, settings)
+    with cloned(source) as (repo, latest):
+        diff = _diff(repo, source, rows)
+    try:
+        _advance(diff.unchanged, latest)
+    except Exception:  # noqa: BLE001 - only the "new version" hint is stale
+        logger.exception("could not advance unchanged skills of %s", source.label)
+    commit = latest if name in diff.unchanged else row.commit_sha
+    return LibraryPreview(source, commit, latest, diff.changed, diff.new, diff.gone)
+
+
+def update_library(
+    name: str,
+    commit: str,
+    take: List[str],
+    installed_by: Optional[str],
+    edited: Collection[str] = (),
+    settings: Optional[Settings] = None,
+) -> tuple[List[Skill], List[str]]:
+    """Take the picked changes to ``name``'s library from the repo at ``commit``.
+
+    A changed skill is replaced where it lives, a new one installed, a gone one
+    deleted. The installs are all or nothing, as an upload's are; each skill
+    taken is scanned and held again. A pick edited in Vigil must be in
+    ``edited``, the ones the operator was warned about, or nothing is taken.
+    Returns the skills written and the names deleted.
+    """
+    if not take:
+        raise SkillError("Pick at least one skill to update")
+    if len(set(take)) != len(take) or len(take) > OPERATOR_SKILLS_MAX:
+        raise SkillError("Each skill can be picked once")
+    row, rows = _library(name)
+    source = _row_source(row, settings)
+    root = writable_operator_root(settings)
+    with cloned(source) as (repo, got):
+        if got != commit:
+            raise SkillConflict(
+                f"{source.label} has changed since it was read (now {got[:7]}). "
+                "Read it again before updating."
+            )
+        diff = _diff(repo, source, rows)
+        offered = {
+            c.name: (kind, c)
+            for kind, group in (
+                ("changed", diff.changed),
+                ("new", diff.new),
+                ("gone", diff.gone),
+            )
+            for c in group
+        }
+        for pick in take:
+            if pick not in offered:
+                raise SkillConflict(f"{pick!r} has nothing to update; read it again")
+            change = offered[pick][1]
+            if change.problem:
+                raise SkillConflict(f"{pick!r}: {change.problem}")
+            if change.edited and pick not in edited:
+                raise SkillConflict(
+                    f"{pick!r} was edited here since the repo was read; read it again"
+                )
+        put = [p for p in take if offered[p][0] != "gone"]
+        named = [(p, folder_files(repo / offered[p][1].folder)) for p in put]
+        replacing = {p for p in put if offered[p][0] == "changed"}
+        gone = sum(1 for p in take if offered[p][0] == "gone")
+        skills = install_skill_files(root, named, replacing, gone) if named else []
+    removed: List[str] = []
+    try:
+        for pick in take:
+            if offered[pick][0] != "gone":
+                continue
+            try:
+                delete_operator_skill(pick, settings)
+            except SkillNotFound:
+                pass  # already gone; only its record is left to drop
+            removed.append(pick)
+    finally:
+        # Also when a delete failed: what was written must still be recorded.
+        try:
+            _record(
+                source,
+                commit,
+                skills,
+                {p: offered[p][1].folder for p in put},
+                installed_by,
+                drop=removed,
+            )
+            _advance(diff.unchanged, commit)
+        except Exception:  # noqa: BLE001 - written; only where it came from is stale
+            logger.exception("library %s updated but not recorded", source.label)
+    return skills, removed
+
+
+def delete_library(name: str, settings: Optional[Settings] = None) -> List[str]:
+    """Delete every skill installed from ``name``'s library, and stop tracking it."""
+    _, rows = _library(name)
+    loaded = {skill.name for skill in load_skills(skill_roots())}
+    deleted: List[str] = []
+    done: List[str] = []  # rows to drop, a skill already gone from disk too
+    try:
+        for row in rows:
+            if row.skill_name in loaded:
+                delete_operator_skill(row.skill_name, settings)
+                deleted.append(row.skill_name)
+            done.append(row.skill_name)
+    finally:
+        with unit_of_work() as session:
+            session.execute(
+                delete(SkillInstall).where(SkillInstall.skill_name.in_(done))
+            )
+    return deleted

@@ -99,6 +99,16 @@ class SkillScanDetail(SkillScanSummary):
     approved_at: Optional[datetime] = None
 
 
+class SkillSource(BaseModel):
+    """The repo a skill was installed from, and how many came with it."""
+
+    label: str
+    ref: Optional[str] = None
+    path: str
+    commit: str
+    skills: int
+
+
 class SkillResponse(BaseModel):
     name: str
     description: str
@@ -111,6 +121,8 @@ class SkillResponse(BaseModel):
     reads_7d: int = 0
     agents_7d: int = 0
     scan: SkillScanSummary
+    # Set for a skill installed from a git repo.
+    source: Optional[SkillSource] = None
 
 
 class SkillApproveRequest(BaseModel):
@@ -195,6 +207,45 @@ class SkillRepoInstallRequest(SkillRepoRequest):
     names: list[str] = Field(..., min_length=1, max_length=100)
 
 
+class SkillLatest(BaseModel):
+    # The commit the skill's repo is at now; None when its branch or tag is gone.
+    commit: Optional[str] = None
+
+
+class SkillLibraryChange(BaseModel):
+    name: str
+    folder: str
+    # What changed, a new skill's description, or "" for one gone from the repo.
+    note: str
+    # Edited in Vigil since it was installed: updating replaces those edits.
+    edited: bool = False
+    problem: Optional[str] = None
+
+
+class SkillLibraryPreview(BaseModel):
+    label: str
+    ref: Optional[str] = None
+    path: str
+    commit: str
+    # The repo's commit now; updating sends it back, and a repo that moved is refused.
+    latest: str
+    changed: list[SkillLibraryChange]
+    new: list[SkillLibraryChange]
+    gone: list[SkillLibraryChange]
+
+
+class SkillLibraryUpdateRequest(BaseModel):
+    commit: str = Field(..., pattern=r"^[0-9a-f]{40,64}$")
+    take: list[str] = Field(..., min_length=1, max_length=100)
+    # Picks the preview said were edited here, so their edits may be replaced.
+    edited: list[str] = Field(default_factory=list, max_length=100)
+
+
+class SkillLibraryUpdated(BaseModel):
+    skills: list[SkillResponse]
+    removed: list[str]
+
+
 class SkillGenerateRequest(BaseModel):
     description: str = Field(..., pattern=r"\S")
 
@@ -231,6 +282,16 @@ def _usage_by_skill() -> Dict[str, Tuple[int, int]]:
         return {}
 
 
+def _sources(names: List[str]) -> Dict[str, dict]:
+    """Where each repo-installed skill came from, or empty when the database
+    cannot answer: like usage, it must not stop a list served from disk."""
+    try:
+        return skill_sources.sources(names)
+    except Exception:  # noqa: BLE001
+        logger.exception("skill install records unreadable; listing without them")
+        return {}
+
+
 def _scan_summary(state: ScanState) -> dict:
     return dict(
         state=state.state,
@@ -259,8 +320,10 @@ def _response(
     skill: Skill,
     state: ScanState,
     usage: Optional[Dict[str, Tuple[int, int]]] = None,
+    sources: Optional[Dict[str, dict]] = None,
 ) -> SkillResponse:
     reads, agents = (usage or {}).get(skill.name, (0, 0))
+    source = (sources or {}).get(skill.name)
     return SkillResponse(
         name=skill.name,
         description=skill.description,
@@ -270,6 +333,7 @@ def _response(
         reads_7d=reads,
         agents_7d=agents,
         scan=SkillScanSummary(**_scan_summary(state)),
+        source=SkillSource(**source) if source else None,
     )
 
 
@@ -300,7 +364,8 @@ async def list_skills():
     usage = _usage_by_skill()
     skills = load_skills(skill_roots())
     states = await asyncio.to_thread(scan_states, skills)
-    return [_response(skill, states[skill.name], usage) for skill in skills]
+    sources = await asyncio.to_thread(_sources, [skill.name for skill in skills])
+    return [_response(s, states[s.name], usage, sources) for s in skills]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -316,7 +381,8 @@ async def get_skill(name: str):
         logger.warning("could not read skill %s: %s", name, exc)
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
     state = await asyncio.to_thread(_state_of, skill)
-    listed = _response(skill, state, _usage_by_skill())
+    sources = await asyncio.to_thread(_sources, [skill.name])
+    listed = _response(skill, state, _usage_by_skill(), sources)
     return SkillDetail(
         **listed.model_dump(exclude={"scan"}),
         scan=_scan_detail(state),
@@ -523,6 +589,80 @@ async def remove_skill(name: str):
     except Exception:  # noqa: BLE001 - the skill is gone; a stale row only names it
         logger.exception("could not drop the install record of %s", name)
     return {"deleted": name}
+
+
+@router.get(
+    "/{name}/library/latest", response_model=SkillLatest, dependencies=_SKILLS_WRITE
+)
+async def library_latest(name: str):
+    """The commit the repo of a repo-installed skill is at now, cloning nothing."""
+    try:
+        commit = await asyncio.to_thread(skill_sources.latest_commit, name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return SkillLatest(commit=commit)
+
+
+@router.post(
+    "/{name}/library/preview",
+    response_model=SkillLibraryPreview,
+    dependencies=_SKILLS_WRITE,
+)
+async def library_preview(name: str):
+    """What updating the library ``name`` came with would change, changing nothing."""
+    try:
+        got = await asyncio.to_thread(skill_sources.library_preview, name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return SkillLibraryPreview(
+        label=got.source.label,
+        ref=got.source.ref,
+        path=got.source.path,
+        commit=got.commit,
+        latest=got.latest,
+        changed=[SkillLibraryChange(**vars(c)) for c in got.changed],
+        new=[SkillLibraryChange(**vars(c)) for c in got.new],
+        gone=[SkillLibraryChange(**vars(c)) for c in got.gone],
+    )
+
+
+@router.post("/{name}/library/update", response_model=SkillLibraryUpdated)
+async def library_update(
+    name: str,
+    req: SkillLibraryUpdateRequest,
+    user=Depends(require_permission("automation.write")),
+):
+    """Take the picked changes from the repo at the commit the preview read.
+
+    409 when the repo has moved since, a pick is no longer offered, or a pick
+    was edited here and not listed in ``edited``.
+    """
+    try:
+        skills, removed = await asyncio.to_thread(
+            skill_sources.update_library,
+            name,
+            req.commit,
+            req.take,
+            user.principal_id,
+            req.edited,
+        )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    skill_sweep.request()
+    states = await asyncio.to_thread(scan_states, skills)
+    return SkillLibraryUpdated(
+        skills=[_response(s, states[s.name]) for s in skills], removed=removed
+    )
+
+
+@router.delete("/{name}/library", dependencies=_SKILLS_WRITE)
+async def remove_library(name: str):
+    """Delete every skill installed with ``name`` from its repo, and stop tracking it."""
+    try:
+        deleted = await asyncio.to_thread(skill_sources.delete_library, name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return {"deleted": deleted}
 
 
 @router.post("/{name}/test", response_model=SkillTestResponse, dependencies=_SKILL_TEST)

@@ -31,7 +31,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Collection, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -1053,9 +1053,18 @@ def _declared_name(skill_md: bytes) -> str:
 
 
 def _stage_upload(
-    scratch: Path, root: Path, library: set[str], name: str, files: Dict[str, bytes]
-) -> Path:
-    """Write one uploaded skill under ``scratch`` and check it may be installed."""
+    scratch: Path,
+    root: Path,
+    library: set[str],
+    name: str,
+    files: Dict[str, bytes],
+    replacing: bool = False,
+) -> tuple[Path, Path]:
+    """Write one skill under ``scratch``; return it and where it goes.
+
+    A new skill's name must be free. One ``replacing`` must be an operator
+    skill already, and goes where that one loaded from.
+    """
     staged = scratch / name
     try:
         staged.mkdir()
@@ -1070,12 +1079,17 @@ def _stage_upload(
         raise SkillConflict(
             f"name {skill.name!r} belongs to the bundled library; choose another name"
         )
+    if replacing:
+        final = _operator_skill_dir(root, skill.name)
+        if not (final / SKILL_FILE).is_file():
+            raise SkillNotFound(f"No skill named {skill.name!r} to replace")
+        return staged, final
     final = _skill_dir(root, skill.name)
     if os.path.lexists(final) or _operator_skill_dir(root, skill.name) != final:
         raise SkillConflict(
             f"A skill named {skill.name!r} already exists. Delete it first, then upload again."
         )
-    return staged
+    return staged, final
 
 
 def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
@@ -1138,42 +1152,59 @@ def install_uploaded_skills(
 
 
 def install_skill_files(
-    root: Path, named: List[tuple[str, Dict[str, bytes]]]
+    root: Path,
+    named: List[tuple[str, Dict[str, bytes]]],
+    replace: Collection[str] = (),
+    freeing: int = 0,
 ) -> List[Skill]:
     """Install skills given as ``(folder name, {path within it: bytes})``.
 
-    Nothing is overwritten: a name the library or the operator root already
-    holds raises :class:`SkillConflict`. All or nothing: every skill is built
-    and checked in a scratch directory under the root before any moves into
-    place, and a skill already moved is taken out again if a later move fails.
+    Nothing is overwritten except the names in ``replace``, which must be
+    operator skills already and are swapped for the new files where they live;
+    any other name the library or the operator root holds raises
+    :class:`SkillConflict`. All or nothing: every skill is built and checked in
+    a scratch directory under the root before any moves into place, and if a
+    later move fails each one already made is undone, a replaced skill put back.
+    ``freeing`` counts skills the caller deletes right after, so the cap on
+    custom skills is checked against what is left, and a replace alone never
+    hits it.
     """
-    _require_room(root, len(named))  # nothing is overwritten, so all are new
+    growth = sum(1 for name, _ in named if name not in replace) - freeing
+    if growth > 0:
+        _require_room(root, growth)
     try:
         scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
     except OSError as exc:
         raise SkillError(f"could not write under {root}: {exc}") from exc
     library = _library_names()
-    moved: List[Path] = []
+    moved: List[Path] = []  # new skills now in place
+    swapped: List[tuple[Path, Path]] = []  # (a replaced skill's place, its old copy)
     installed = False
     try:
-        staged: List[Path] = []
+        staged: List[tuple[Path, Path, bool]] = []
         failures: List[tuple[str, SkillError]] = []
         for name, files in named:
+            replacing = name in replace
             try:
-                staged.append(_stage_upload(scratch, root, library, name, files))
+                path, final = _stage_upload(
+                    scratch, root, library, name, files, replacing
+                )
+                staged.append((path, final, replacing))
             except SkillError as exc:
                 failures.append((name, exc))
         if failures:
             raise _refusal(failures, len(named))
-        for path in staged:
-            # The staged folder's name is the skill's: parse_skill refuses others.
-            final = _skill_dir(root, path.name)
+        for path, final, replacing in staged:
             try:
-                if os.path.lexists(final):
+                if replacing:
+                    old = scratch / f".old-{path.name}"
+                    os.replace(final, old)
+                    swapped.append((final, old))
+                elif os.path.lexists(final):
                     raise FileExistsError(final)
                 os.replace(path, final)
             except OSError as exc:
-                if os.path.lexists(final):  # lost a race for the name
+                if not replacing and os.path.lexists(final):  # lost a race
                     raise SkillConflict(
                         f"A skill named {path.name!r} already exists."
                     ) from exc
@@ -1181,10 +1212,21 @@ def install_skill_files(
             moved.append(final)
         installed = True
     finally:
+        keep = False  # a backup that could not be put back is left in scratch
         if not installed:
+            replaced = {final for final, _ in swapped}
             for final in moved:
+                if final not in replaced:
+                    shutil.rmtree(final, ignore_errors=True)
+            for final, old in swapped:
                 shutil.rmtree(final, ignore_errors=True)
-        shutil.rmtree(scratch, ignore_errors=True)
+                try:
+                    os.replace(old, final)
+                except OSError:
+                    keep = True
+                    logger.exception("could not put %s back; it is at %s", final, old)
+        if not keep:
+            shutil.rmtree(scratch, ignore_errors=True)
     return [parse_skill(final) for final in moved]
 
 

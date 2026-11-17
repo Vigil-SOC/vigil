@@ -6693,6 +6693,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/{name}/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Library
+         * @description Delete every skill installed with ``name`` from its repo, and stop tracking it.
+         */
+        delete: operations["delete_api_skills_name_library"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Latest
+         * @description The commit the repo of a repo-installed skill is at now, cloning nothing.
+         */
+        get: operations["get_api_skills_name_library_latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Library Preview
+         * @description What updating the library ``name`` came with would change, changing nothing.
+         */
+        post: operations["post_api_skills_name_library_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/library/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Library Update
+         * @description Take the picked changes from the repo at the commit the preview read.
+         *
+         *     409 when the repo has moved since, a pick is no longer offered, or a pick
+         *     was edited here and not listed in ``edited``.
+         */
+        post: operations["post_api_skills_name_library_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/{name}/test": {
         parameters: {
             query?: never;
@@ -15150,6 +15233,7 @@ export interface components {
              */
             reads_7d: number;
             scan: components["schemas"]["SkillScanDetail"];
+            source?: components["schemas"]["SkillSource"] | null;
             /** Source Path */
             source_path: string;
             /** Version */
@@ -15186,6 +15270,62 @@ export interface components {
         /** SkillGenerateResponse */
         SkillGenerateResponse: {
             draft: components["schemas"]["SkillDraft"];
+        };
+        /** SkillLatest */
+        SkillLatest: {
+            /** Commit */
+            commit?: string | null;
+        };
+        /** SkillLibraryChange */
+        SkillLibraryChange: {
+            /**
+             * Edited
+             * @default false
+             */
+            edited: boolean;
+            /** Folder */
+            folder: string;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string;
+            /** Problem */
+            problem?: string | null;
+        };
+        /** SkillLibraryPreview */
+        SkillLibraryPreview: {
+            /** Changed */
+            changed: components["schemas"]["SkillLibraryChange"][];
+            /** Commit */
+            commit: string;
+            /** Gone */
+            gone: components["schemas"]["SkillLibraryChange"][];
+            /** Label */
+            label: string;
+            /** Latest */
+            latest: string;
+            /** New */
+            new: components["schemas"]["SkillLibraryChange"][];
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+        };
+        /** SkillLibraryUpdateRequest */
+        SkillLibraryUpdateRequest: {
+            /** Commit */
+            commit: string;
+            /** Edited */
+            edited?: string[];
+            /** Take */
+            take: string[];
+        };
+        /** SkillLibraryUpdated */
+        SkillLibraryUpdated: {
+            /** Removed */
+            removed: string[];
+            /** Skills */
+            skills: components["schemas"]["SkillResponse"][];
         };
         /** SkillReadRequest */
         SkillReadRequest: {
@@ -15253,6 +15393,7 @@ export interface components {
              */
             reads_7d: number;
             scan: components["schemas"]["SkillScanSummary"];
+            source?: components["schemas"]["SkillSource"] | null;
             /** Source Path */
             source_path: string;
         };
@@ -15310,6 +15451,22 @@ export interface components {
             /** State */
             state: string;
         };
+        /**
+         * SkillSource
+         * @description The repo a skill was installed from, and how many came with it.
+         */
+        SkillSource: {
+            /** Commit */
+            commit: string;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+            /** Skills */
+            skills: number;
+        };
         /** SkillTestResponse */
         SkillTestResponse: {
             /** Model */
@@ -15356,6 +15513,7 @@ export interface components {
             skipped: number;
             /** Skipped Note */
             skipped_note?: string | null;
+            source?: components["schemas"]["SkillSource"] | null;
             /** Source Path */
             source_path: string;
         };
@@ -28440,6 +28598,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillFileContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_skills_name_library: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_skills_name_library_latest: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLatest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_library_preview: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibraryPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_library_update: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillLibraryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibraryUpdated"];
                 };
             };
             /** @description Validation Error */
