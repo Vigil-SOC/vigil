@@ -38,7 +38,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from core.auth import key_age, mfa_coverage, password_validator, token_expiry
+from core.auth import (
+    break_glass,
+    key_age,
+    mfa_coverage,
+    password_validator,
+    token_expiry,
+)
 from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
@@ -230,6 +236,7 @@ mfa_coverage.register()
 password_validator.register()
 token_expiry.register()
 key_age.register()
+break_glass.register()
 register_medic_notices()
 app.add_middleware(CSRFMiddleware)
 

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
-from core.auth import step_up, trail_events
+from core.auth import break_glass, step_up, trail_events
 from core.auth.auth_service import _is_service_account, with_dispute
 from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
@@ -52,6 +52,12 @@ class RotateRequest(BaseModel):
     expires_in_days: Optional[int] = Field(
         default=None, ge=1, le=tokens.PERSON_MAX_DAYS
     )
+
+
+def _refuse_marked(holder: User) -> None:
+    """No token for a break-glass account: its sign-in is the safe's codes alone."""
+    if holder.break_glass_at is not None:
+        raise HTTPException(status_code=403, detail=break_glass.MARKED)
 
 
 def _holder(user: User) -> dict:
@@ -211,6 +217,7 @@ def mint(
                 detail="Directory sync's token is minted from Single sign-on",
             )
         _check_holder(current_user, holder)
+    _refuse_marked(holder)
     _confirm(request, current_user, "create a token")
     minted = tokens.mint(
         holder.user_id,
@@ -262,6 +269,7 @@ def rotate(
             status_code=403, detail="Only whoever mints for the holder can rotate this"
         )
     _check_holder(current_user, holder)
+    _refuse_marked(holder)
     _confirm(request, current_user, "rotate a token")
     try:
         rotated = tokens.rotate(

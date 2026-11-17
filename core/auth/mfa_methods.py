@@ -69,11 +69,13 @@ def _naive(moment: Optional[datetime]) -> Optional[datetime]:
 def has_app(user: User, keyed: bool) -> bool:
     """Whether the person's authenticator app is confirmed. ``mfa_enabled`` means
     "has a method", so for a person with keys a secret whose first code never
-    came (no TOTP step yet) is a setup still pending, not a method."""
+    came (no TOTP step yet) is a setup still pending, not a method. So it is for
+    a break-glass account, which holds MFA through the safe's codes."""
+    held = keyed or user.break_glass_at is not None
     return bool(
         user.mfa_secret
         and user.mfa_enabled
-        and (user.mfa_last_totp_step is not None or not keyed)
+        and (user.mfa_last_totp_step is not None or not held)
     )
 
 

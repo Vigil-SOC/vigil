@@ -108,3 +108,4 @@ A key retired before a restore stays retired after it, and its version number is
 - [ ] The trail reviewed for `auth.key_rotated`, `auth.key_retired` and `auth.emergency_rotation` entries.
 - [ ] Integration credentials and API tokens revoked or rotated where the incident touched them.
 - [ ] A fresh backup taken, so the paired `wrapping-key` snapshot holds the new secret.
+- [ ] Break-glass accounts given fresh codes, and a host reset link after `emergency pepper` or `all`: see [break-glass accounts](break-glass.md).
