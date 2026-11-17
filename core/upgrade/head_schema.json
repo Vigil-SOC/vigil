@@ -4181,6 +4181,56 @@
   "nullable": true,
   "type": "character varying(500)"
  },
+ "column skill_installs.commit_sha": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.digest": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.folder": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.installed_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column skill_installs.installed_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_installs.label": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.path": {
+  "default": "''::text",
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.ref": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column skill_installs.repo_url": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column skill_installs.skill_name": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column skill_reads.agent_id": {
   "default": null,
   "nullable": true,
@@ -5108,6 +5158,7 @@
  "constraint sketch_mappings.sketch_mappings_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint sketch_mappings.sketch_mappings_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint sketch_mappings.sketch_mappings_pkey": "PRIMARY KEY (id)",
+ "constraint skill_installs.skill_installs_pkey": "PRIMARY KEY (skill_name)",
  "constraint skill_reads.skill_reads_pkey": "PRIMARY KEY (id)",
  "constraint skill_scans.skill_scans_pkey": "PRIMARY KEY (digest)",
  "constraint skill_scans.skill_scans_recommendation": "CHECK (((recommendation IS NULL) OR (recommendation = ANY (ARRAY['SAFE'::text, 'CAUTION'::text, 'DO_NOT_INSTALL'::text]))))",
@@ -5492,6 +5543,7 @@
  "index idx_sketch_case_id": "CREATE INDEX idx_sketch_case_id ON public.sketch_mappings USING btree (case_id)",
  "index idx_sketch_finding_id": "CREATE INDEX idx_sketch_finding_id ON public.sketch_mappings USING btree (finding_id)",
  "index idx_sketch_id": "CREATE INDEX idx_sketch_id ON public.sketch_mappings USING btree (sketch_id)",
+ "index idx_skill_installs_repo": "CREATE INDEX idx_skill_installs_repo ON public.skill_installs USING btree (repo_url, ref, path)",
  "index idx_skill_reads_skill_time": "CREATE INDEX idx_skill_reads_skill_time ON public.skill_reads USING btree (skill_name, read_at)",
  "index idx_skill_scans_name": "CREATE INDEX idx_skill_scans_name ON public.skill_scans USING btree (skill_name)",
  "index idx_sla_policy_active": "CREATE INDEX idx_sla_policy_active ON public.sla_policies USING btree (is_active)",
@@ -5541,6 +5593,7 @@
  "index siem_searches_pkey": "CREATE UNIQUE INDEX siem_searches_pkey ON public.siem_searches USING btree (id)",
  "index sign_ins_pkey": "CREATE UNIQUE INDEX sign_ins_pkey ON public.sign_ins USING btree (sign_in_id)",
  "index sketch_mappings_pkey": "CREATE UNIQUE INDEX sketch_mappings_pkey ON public.sketch_mappings USING btree (id)",
+ "index skill_installs_pkey": "CREATE UNIQUE INDEX skill_installs_pkey ON public.skill_installs USING btree (skill_name)",
  "index skill_reads_pkey": "CREATE UNIQUE INDEX skill_reads_pkey ON public.skill_reads USING btree (id)",
  "index skill_scans_pkey": "CREATE UNIQUE INDEX skill_scans_pkey ON public.skill_scans USING btree (digest)",
  "index sla_policies_pkey": "CREATE UNIQUE INDEX sla_policies_pkey ON public.sla_policies USING btree (policy_id)",
@@ -7802,6 +7855,28 @@
    false
   ],
   "sequence": "[\"integer\", 1, 1, 1, 2147483647, 1, false]"
+ },
+ "relation skill_installs": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
  },
  "relation skill_reads": {
   "acl": [

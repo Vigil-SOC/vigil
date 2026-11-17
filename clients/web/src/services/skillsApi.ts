@@ -49,6 +49,18 @@ export interface ApiSkillUpload extends ApiSkill {
   skipped_note?: string | null
 }
 
+/** POST /api/skills/repo/preview: the skills a git repo holds, read at `commit`. */
+export interface ApiSkillRepoPreview {
+  label: string
+  ref?: string | null
+  path: string
+  commit: string
+  skills: { folder: string; name: string; description: string; problem?: string | null }[]
+}
+
+/** The server clones the repo for each call; a large one takes a while. */
+const REPO_TIMEOUT = 150_000
+
 /** A file in the skill folder: posix path relative to it, and size in bytes. */
 interface ApiSkillFile {
   path: string
@@ -107,6 +119,12 @@ export const skillsApi = {
       .post<ApiSkillUpload>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       .then((r) => r.data)
   },
+  /** Reads a git repo (owner/repo, a GitHub link or an https git URL; @ref for a branch or tag) and lists its skills. Installs nothing. */
+  previewRepo: (source: string) =>
+    api.post<ApiSkillRepoPreview>('/skills/repo/preview', { source }, { timeout: REPO_TIMEOUT }).then((r) => r.data),
+  /** Installs the picked skills from the repo at the commit the preview read; refused (409) if the repo has moved or a name is taken. */
+  installRepo: (source: string, commit: string, names: string[]) =>
+    api.post<ApiSkillUpload>('/skills/repo/install', { source, commit, names }, { timeout: REPO_TIMEOUT }).then((r) => r.data),
   generate: (description: string) =>
     api.post<{ draft: SkillDraft }>('/skills/generate', { description }, { timeout: LLM_TIMEOUT }).then((r) => r.data.draft),
   test: (name: string) =>

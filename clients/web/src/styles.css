@@ -7631,6 +7631,17 @@
    }
 }
 
+/* Import skills: the skills a repo holds, one row each, as the proof card's export choices. */
+.sk-pick { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sk-pick legend { padding: 0; margin-bottom: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--tx2); }
+.sk-pick-list { display: flex; flex-direction: column; gap: 8px; max-height: min(46vh, 420px); overflow-y: auto; }
+.sk-pick label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--ln1); border-radius: 10px; cursor: pointer; }
+.sk-pick label:has(input:checked) { border-color: var(--ac-ln); background: var(--ac-bg); }
+.sk-pick label.is-off { cursor: default; opacity: 0.6; }
+.sk-pick input { margin-top: 3px; accent-color: var(--ac); }
+.sk-pick label > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sk-pick label > span > span { color: var(--tx2); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
 /* ---- Skills tab: folder cards. The tone is the
    accent for a built-in skill and --vio for a custom one. A folder lifts its
    SKILL.md out on hover or focus. Scoped to .sk-*, so no other screen moves. ---- */

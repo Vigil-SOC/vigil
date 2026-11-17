@@ -23,6 +23,7 @@ from core.llm.router.router import LLMRouter, get_provider_spec
 from core.llm.security import PromptInjectionBlocked
 from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
+from core.skills import skill_sources
 from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
 from core.skills.skill_hold import ApprovalRefused, ScanState, approve, scan_states
@@ -164,6 +165,34 @@ class SkillWriteRequest(BaseModel):
         if not value.strip():
             raise ValueError("Steps cannot be empty")
         return value
+
+
+class SkillRepoRequest(BaseModel):
+    # owner/repo, owner/repo/<folder>, a GitHub page link or an https git URL;
+    # @<ref> picks a branch or tag.
+    source: str = Field(..., min_length=1, max_length=500)
+
+
+class SkillRepoFound(BaseModel):
+    folder: str
+    name: str
+    description: str
+    # Why it cannot be installed; None when it can.
+    problem: Optional[str] = None
+
+
+class SkillRepoPreview(BaseModel):
+    label: str
+    ref: Optional[str] = None
+    path: str
+    # The commit read; installing sends it back, and a repo that moved is refused.
+    commit: str
+    skills: list[SkillRepoFound]
+
+
+class SkillRepoInstallRequest(SkillRepoRequest):
+    commit: str = Field(..., pattern=r"^[0-9a-f]{40,64}$")
+    names: list[str] = Field(..., min_length=1, max_length=100)
 
 
 class SkillGenerateRequest(BaseModel):
@@ -368,6 +397,56 @@ async def upload_skill(file: UploadFile = File(...)):
 
 
 @router.post(
+    "/repo/preview", response_model=SkillRepoPreview, dependencies=_SKILLS_WRITE
+)
+async def preview_repo(req: SkillRepoRequest):
+    """Fetch a git repo and list the skills it holds, installing nothing.
+
+    The host must be in ``VIGIL_SKILL_SOURCE_HOSTS``. Each skill that cannot be
+    installed says why: it does not parse, or its name is taken.
+    """
+    try:
+        source, commit, found = await asyncio.to_thread(
+            skill_sources.preview, req.source
+        )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return SkillRepoPreview(
+        label=source.label,
+        ref=source.ref,
+        path=source.path,
+        commit=commit,
+        skills=[SkillRepoFound(**vars(f)) for f in found],
+    )
+
+
+@router.post("/repo/install", response_model=SkillUploadResponse)
+async def install_repo(
+    req: SkillRepoInstallRequest,
+    user=Depends(require_permission("automation.write")),
+):
+    """Install the picked skills from a git repo at the commit the preview read.
+
+    As an upload: all or nothing, nothing overwritten, each scanned and held.
+    409 when the repo has moved since the preview, or a name is taken.
+    """
+    try:
+        installed = await asyncio.to_thread(
+            skill_sources.install_from_repo,
+            req.source,
+            req.commit,
+            req.names,
+            user.principal_id,
+        )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    skill_sweep.request()
+    states = await asyncio.to_thread(scan_states, installed)
+    skills = [_response(s, states[s.name]) for s in installed]
+    return SkillUploadResponse(**skills[0].model_dump(), skills=skills, skipped=0)
+
+
+@router.post(
     "/generate", response_model=SkillGenerateResponse, dependencies=_SKILLS_WRITE
 )
 async def generate_skill(req: SkillGenerateRequest):
@@ -439,6 +518,10 @@ async def remove_skill(name: str):
         delete_operator_skill(name)
     except SkillError as exc:
         raise _http(exc) from exc
+    try:
+        await asyncio.to_thread(skill_sources.forget, name)
+    except Exception:  # noqa: BLE001 - the skill is gone; a stale row only names it
+        logger.exception("could not drop the install record of %s", name)
     return {"deleted": name}
 
 
