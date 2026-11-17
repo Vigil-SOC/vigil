@@ -2,6 +2,7 @@
    the VStrike provider, which isn't mounted under the console shell. */
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
@@ -228,7 +229,13 @@ export default function FindingPopup({
             <span className="k">Time</span><span className="v">{f.time}</span>
             <span className="k" style={{ alignSelf: 'center' }}>Status</span>
             <span className="v flex items-center gap-2 flex-wrap">
-              <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
+              {raw.case_id && !raw.case_restricted && stateWord(raw.terminal_state, raw.case_id).startsWith('Case ') ? (
+                <Link className="underline" to={`/cases?case=${encodeURIComponent(raw.case_id)}`}>
+                  {stateWord(raw.terminal_state, raw.case_id)}
+                </Link>
+              ) : (
+                <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
+              )}
               {!dismissed && <CauseSelect value={cause} onSelect={setCause} />}
               <button type="button" className="btn ghost" onClick={toggleDismiss} disabled={acting}>
                 {dismissed ? 'Undo' : 'Dismiss'}

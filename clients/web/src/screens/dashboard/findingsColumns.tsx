@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
@@ -90,7 +91,17 @@ export function baseFindingColumns(
     {
       key: 'status', label: 'Status',
       render: (f) => (
-        <span className={`status ${f.status ? STATE_TONE[f.status] : ''}`}>{stateWord(f.status, f.caseId, f.caseRestricted)}</span>
+        f.caseId && !f.caseRestricted && stateWord(f.status, f.caseId).startsWith('Case ') ? (
+          <Link
+            className={`status underline ${f.status ? STATE_TONE[f.status] : ''}`}
+            to={`/cases?case=${encodeURIComponent(f.caseId)}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {stateWord(f.status, f.caseId)}
+          </Link>
+        ) : (
+          <span className={`status ${f.status ? STATE_TONE[f.status] : ''}`}>{stateWord(f.status, f.caseId, f.caseRestricted)}</span>
+        )
       ),
       // status reads best in board order (New first); the rest read best high->low
       sortVal: (f) => (f.status ? STATE_RANK[f.status] : Number.POSITIVE_INFINITY), defaultDir: 'asc',
