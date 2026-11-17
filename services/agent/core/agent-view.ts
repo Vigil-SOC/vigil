@@ -13,6 +13,7 @@ import {
   type FramePayload,
   type TerminalPayload,
   type UnboundPayload,
+  DISPOSITIONS,
 } from "../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../contracts/memory.js";
 import { deniedPark, heldBecause } from "./agent.js";
@@ -64,9 +65,6 @@ export function heldOf(kernel: AgentProjection): Held | null {
   const reason = kernel.review === null ? null : heldBecause(kernel.review);
   return guarded === undefined || reason === null ? null : { ...guarded, reason };
 }
-
-// The six words a run's conclusion may say its disposition in.
-export const DISPOSITIONS = ["malicious", "suspicious", "benign", "false_positive", "inconclusive", "needs_review"] as const;
 
 // The word the run concluded on, as held: a dismissal the guard moved reads as what it was
 // moved to. A dismissal no review ever saw (a crash between the two) is not one that stands.

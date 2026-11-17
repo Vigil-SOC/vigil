@@ -217,6 +217,9 @@ export type Severity = (typeof SEVERITIES)[number];
 export const CONFIDENCES = ["low", "medium", "high"] as const;
 export type Confidence = (typeof CONFIDENCES)[number];
 
+// The six words a run's conclusion may say its disposition in.
+export const DISPOSITIONS = ["malicious", "suspicious", "benign", "false_positive", "inconclusive", "needs_review"] as const;
+
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.
 export interface TerminalHandoff {
