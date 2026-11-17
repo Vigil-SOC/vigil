@@ -4864,36 +4864,6 @@ export interface paths {
         patch: operations["patch_api_findings_finding_id"];
         trace?: never;
     };
-    "/api/findings/{finding_id}/enrich": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Get Or Generate Enrichment
-         * @description Get or generate AI enrichment for a finding.
-         *
-         *     Returns cached enrichment if present, otherwise generates, caches, and
-         *     returns new enrichment from the configured reporting model.
-         *
-         *     Args:
-         *         finding_id: The finding ID to enrich
-         *         force_regenerate: Force regeneration even if enrichment exists
-         *
-         *     Returns:
-         *         AI enrichment data with threat analysis, impact, recommendations, etc.
-         */
-        post: operations["post_api_findings_finding_id_enrich"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/findings/{finding_id}/intake": {
         parameters: {
             query?: never;
@@ -25114,41 +25084,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FindingUpdateResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_findings_finding_id_enrich: {
-        parameters: {
-            query?: {
-                force_regenerate?: boolean;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                finding_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
