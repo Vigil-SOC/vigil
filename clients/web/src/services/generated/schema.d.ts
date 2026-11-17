@@ -15812,7 +15812,10 @@ export interface components {
              * @description Must be empty: the workflow reference carries its config.
              */
             config: string;
-            /** Overrides */
+            /**
+             * Overrides
+             * @description Per-run budgets and runtime limits. The dollar ceiling (budgets.max_cost_usd) is checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes.
+             */
             overrides?: {
                 [key: string]: unknown;
             } | null;

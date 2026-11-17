@@ -150,7 +150,7 @@ class Pool implements Budget {
   private cost: number;
   private tokens: TokenCounts;
   private unpriced = 0;
-  // Workers run concurrently, so calls that cleared the ceiling but have not billed count too.
+  // Calls that cleared the ceiling but have not billed yet. A run makes one at a time, so this is 0 at a check.
   private inFlight = 0;
   // Not this.calls, which counts a call before it returns.
   private recorded: number;
@@ -228,8 +228,8 @@ class Pool implements Budget {
     else this.cost += payload.cost_usd;
   }
 
-  // Zero until something records: the lead's turn settles before workers fan out, so an
-  // unreserved first call costs at most one call.
+  // Zero when calls run one at a time, as they do. Should a run's calls ever overlap, this
+  // holds the later ones at the average cost so far, and the first ones at nothing.
   private get reserved(): number {
     if (this.inFlight === 0 || this.recorded === 0) return 0;
     return this.inFlight * (this.cost / this.recorded);
