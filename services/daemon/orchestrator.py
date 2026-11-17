@@ -13,14 +13,16 @@ import asyncio
 import copy
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from core.agents.builtins import ORCHESTRATOR_ACTOR
+from core.agents.lost_runs import Cursor, end_lost_start_jobs
 from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
@@ -127,6 +129,9 @@ def _count_queued_intake_rows() -> int:
 # Proactive hunts (nightly, intel) never hold more than this many slots, so a
 # detection arriving on a quiet fleet still finds one free.
 SCHEDULE_RUN_CEILING = 1
+
+# Seconds between looks for runs whose start job was lost: the look scans the runs table.
+LOST_CHECK_EVERY = 60
 
 
 # A hunt parked out of turns or budget, waiting on Keep going. A park on an
@@ -670,6 +675,20 @@ def _matching_cases(finding: Dict, *, open: bool) -> List[CaseMatch]:
         return SharedIOCRepository(session).matching_cases(finding, open=open)
 
 
+def _removed_from(finding_id: str) -> set:
+    """Ids of the Cases a person removed this finding from. Raises on a failed read."""
+    from core.storage.models import CaseFindingRemoval
+
+    with get_db_manager().session_scope() as session:
+        return set(
+            session.scalars(
+                select(CaseFindingRemoval.case_id).where(
+                    CaseFindingRemoval.finding_id == finding_id
+                )
+            )
+        )
+
+
 def _link_note(match: CaseMatch) -> str:
     """What matched, without the key's kind prefix: the phrasing of link notes and Triage."""
     kind, _, value = match.key.partition(":")
@@ -702,6 +721,68 @@ def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> Non
                 **activity_actor(ORCHESTRATOR_ACTOR, session),
             },
         ]
+
+
+def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
+    """Tell the Case's assignee and watchers an alert joined it. Raises on failure.
+
+    One notice per person while an earlier join notice on this Case is unread.
+    A watcher who switched ``alert_joined`` off gets none, and a person who may
+    not read the Case gets none (``notify``'s ``about_case``). A Case with
+    neither assignee nor watchers tells nobody.
+    """
+    from urllib.parse import quote
+
+    from core.cases.case_notification_service import principal_of
+    from core.platform.notices import notify, send_notices
+    from core.storage.models import Case, CaseNotification, CaseWatcher
+
+    title = finding.get("title") or finding.get("finding_id") or "alert"
+    with get_db_manager().session_scope() as session:
+        case = session.get(Case, case_id)
+        if case is None:
+            raise LookupError(f"case {case_id} is gone")
+        names = [case.assignee] if case.assignee else []
+        for watcher in session.scalars(
+            select(CaseWatcher).where(CaseWatcher.case_id == case_id)
+        ):
+            if (watcher.notification_preferences or {}).get("alert_joined", True):
+                names.append(watcher.user_id)
+        # A person who is assignee and watcher is told once.
+        principals = dict.fromkeys(
+            p for name in names if (p := principal_of(session, name))
+        )
+        sent = []
+        for principal in principals:
+            unread = session.scalar(
+                select(CaseNotification.notification_id)
+                .where(
+                    CaseNotification.user_id == principal,
+                    CaseNotification.notification_type == "alert_joined",
+                    CaseNotification.is_read.is_(False),
+                    CaseNotification.notification_metadata["case_id"].astext == case_id,
+                )
+                .limit(1)
+            )
+            if unread is not None:
+                continue
+            notice_id = notify(
+                principal,
+                "alert_joined",
+                f"Case {case_id}",
+                f"Alert `{title}` joined this case: {_link_note(match)}.",
+                link=f"/cases?case={quote(case_id, safe='')}",
+                metadata={
+                    "case_id": case_id,
+                    "finding_id": finding.get("finding_id"),
+                },
+                session=session,
+                about_case=case_id,
+            )
+            if notice_id is not None:
+                sent.append(notice_id)
+    # Mail goes out only once the rows have committed.
+    send_notices(sent)
 
 
 def _raise_case_priority(case_id: str, severity: Optional[str]) -> None:
@@ -810,6 +891,9 @@ class Orchestrator:
             "total_cost_usd": 0.0,
         }
         self._intake_surge_active = False
+        # Where the last look for lost start jobs stopped, and when it ran.
+        self._lost_cursor: Optional[Cursor] = None
+        self._lost_checked_at = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -1063,7 +1147,14 @@ class Orchestrator:
             return True
 
         try:
-            matches = _matching_cases(finding, open=True)
+            # A Case a person took this finding off is not a match: the next
+            # match, or none, and the finding launches as it would unmatched.
+            removed = _removed_from(finding_id)
+            matches = [
+                m
+                for m in _matching_cases(finding, open=True)
+                if m.case_id not in removed
+            ]
         except Exception as e:
             logger.error(
                 "Failed to match finding %s to open cases; leaving queued: %s",
@@ -1100,6 +1191,10 @@ class Orchestrator:
             (
                 "raise the case priority",
                 lambda: _raise_case_priority(match.case_id, finding.get("severity")),
+            ),
+            (
+                "tell the people on it",
+                lambda: _notify_joined(match.case_id, finding, match),
             ),
         ):
             try:
@@ -1466,6 +1561,21 @@ class Orchestrator:
                             f"Investigation {w_inv_id} is paused pending human approval.",
                         )
 
+                # A run whose start job was lost has no lease for the worker's
+                # sweeper to find: ended here, as a failed enqueue is. About once a
+                # minute, since it scans the runs table.
+                if (
+                    not self.config.dry_run
+                    and time.monotonic() - self._lost_checked_at >= LOST_CHECK_EVERY
+                ):
+                    self._lost_checked_at = time.monotonic()
+                    try:
+                        self._lost_cursor = await end_lost_start_jobs(
+                            self._lost_cursor, self._fail_lost_investigation
+                        )
+                    except Exception:  # noqa: BLE001 - must not skip the checks below
+                        logger.exception("ending lost start jobs failed")
+
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()
 
@@ -1540,6 +1650,14 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
+
+    def _fail_lost_investigation(self, inv_id: str) -> None:
+        try:
+            self._update_investigation_status(
+                inv_id, "failed", "Could not enqueue: the start job is no longer queued"
+            )
+        except Exception:  # noqa: BLE001 - the run is ended either way
+            logger.exception("could not fail investigation %s", inv_id)
 
     def _in_flight(self) -> int:
         try:

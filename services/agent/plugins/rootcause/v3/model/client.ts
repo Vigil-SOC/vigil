@@ -1,7 +1,7 @@
 // Model calls (spec §5.2). A move is one kernel turn: the model searches up to the move's cap through the evidence
 // tool, then emits the move's submission against its schema. The kernel journals every search as a `call` event
 // with a ref, bills the model, delimits the results and resumes; what is left here is the move's own check, once.
-import { runSubturn, type PluginContext, type PluginHooks, type Subturn, type AgentKinds, type AgentOptions } from "../../../../core/agent.js";
+import { runSubturn, skillsIndex, skillTool, SKILL_TOOL, type PluginContext, type PluginHooks, type Subturn, type AgentKinds, type AgentOptions } from "../../../../core/agent.js";
 import { schemaErrors, schemaIssues } from "../../../../core/stream.js";
 import type { CallPayload, RunKind } from "../../../../contracts/events.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../../../contracts/tool.js";
@@ -245,6 +245,10 @@ export class KernelTurns {
     // No outer model loop here: runSubturn hands hooks its own turn counter.
     this.ctx = { harness, options, turn: () => 0 };
   }
+  // The skills this run may load: the plugin's own and the operator's, read off the spec so a resume offers the same.
+  get skills(): PluginManifest["skills"] { return this.ctx.options.plugin.skills; }
+  // Reads an added skill's text when it is loaded, as the kernel's own load_skill does.
+  get skillBodies(): Harness<AgentKinds>["skillBodies"] { return this.ctx.harness.skillBodies; }
   turn<T>(sub: Subturn): Promise<Outcome<T>> { return runSubturn<T>(this.ctx, sub); }
   async calls(): Promise<CallPayload[]> {
     return (await this.ctx.harness.state.read(this.ctx.options.run_id)).filter((e) => e.kind === "call").map((e) => e.payload as CallPayload);
@@ -268,7 +272,7 @@ export class KernelModelClient implements ModelClient {
 
   constructor(private d: ClientDeps & { tools: Registry }, private turns: KernelTurns) {
     this.system = [SYSTEM_PROMPT, d.survey];
-    turns.local = d.tools.list().map((t) => this.localTool(t));
+    turns.local = [...d.tools.list().map((t) => this.localTool(t)), ...(turns.skills.length === 0 ? [] : [skillTool({ skills: turns.skills }, turns.skillBodies)])];
   }
 
   addContext(text: string) {
@@ -310,13 +314,18 @@ export class KernelModelClient implements ModelClient {
     this.answered = [];
     let outcome: Outcome<unknown> | undefined;
     let failure: unknown;
+    // A move that cannot search cannot load a skill either, so only a move that can is told of them. A load
+    // is a round like a search, so it spends the move's cap.
+    const skills = searches > 0 ? this.turns.skills : [];
+    const system = skills.length === 0 ? this.system : [this.system[0]!, skillsIndex({ skills }), ...this.system.slice(1)];
     try {
       outcome = await this.turns.turn({
         role: req.move,
-        system: this.system.join("\n\n"),
+        system: system.join("\n\n"),
         task: req.userContent,
         schema: wire(req.submitTool),
         tools: searches > 0 ? this.turns.local.map((t) => t.id) : [],
+        skills,
         max_turns: searches,
         cite: true,
       });
@@ -360,6 +369,11 @@ export class KernelModelClient implements ModelClient {
     let at = 0;
     for (const call of (await this.turns.calls()).slice(before)) {
       const input = argsOf(call.arguments);
+      // A skill read takes its ref but is no search: not evidence, not coverage, and nothing a move reads.
+      if (call.tool === SKILL_TOOL) {
+        this.d.tools.note(call.ref, input, "", false);
+        continue;
+      }
       // The kernel journals a search it refused before the tool ran too, which the tool never answered.
       const mine = this.answered[at]?.key === JSON.stringify(input) ? this.answered[at++] : undefined;
       const text = mine?.output ?? call.result;

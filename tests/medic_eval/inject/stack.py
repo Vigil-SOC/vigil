@@ -457,6 +457,15 @@ class Stack:
         )
         assert status == 200, (status, body)
 
+    def signal_daemon(self, name: str) -> None:
+        """Signal soc-daemon's PID 1; does not recreate it."""
+        self.compose("kill", "-s", name, "soc-daemon")
+
+    def daemon_started(self) -> str:
+        """Changes when soc-daemon restarts."""
+        cid = self.compose("ps", "-q", "soc-daemon").stdout.strip()
+        return docker_api(f"/containers/{cid}/json")["State"]["StartedAt"]
+
     def wait_daemon(self) -> None:
         """The daemon is up and its poller has started (it answers the webhook, one way or the other)."""
         self.wait(

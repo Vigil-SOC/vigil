@@ -109,9 +109,14 @@ def parse_source(text: str, settings: Optional[Settings] = None) -> RepoSource:
         raise SkillError("Name a repo: owner/repo, or an https link to one")
     ref: Optional[str] = None
     head, at, tail = text.rpartition("@")
-    if at and "/" not in tail and ":" not in tail:  # a user@host is not a ref
-        text, ref = head, tail
+    if at and ":" not in tail:
+        # A ref may hold "/", so user@host is told apart by where the "@" sits:
+        # inside the link's authority it is user info, which is refused below.
+        authority_end = text.find("/", text.find("://") + 3) if "://" in text else 0
+        if authority_end != -1 and len(head) >= authority_end:
+            text, ref = head, tail
     sub: List[str] = []
+    guess: List[str] = []  # /tree/ segments: a branch name and then a folder
     if "://" in text:
         parts = urlsplit(text)
         if parts.scheme != "https":
@@ -131,8 +136,11 @@ def parse_source(text: str, settings: Optional[Settings] = None) -> RepoSource:
                 raise SkillError("A GitHub link needs an owner and a repo")
             owner, repo, rest = path[0], path[1], path[2:]
             if rest[:1] == ["tree"] and len(rest) >= 2:
-                ref = ref or rest[1]
-                sub = rest[2:]
+                if ref or len(rest) == 2:
+                    ref = ref or rest[1]
+                    sub = rest[2:]
+                else:
+                    guess = rest[1:]
             elif rest:
                 raise SkillError(
                     "Link to the repo, or to a folder in it (…/tree/<branch>/<folder>)"
@@ -170,7 +178,40 @@ def parse_source(text: str, settings: Optional[Settings] = None) -> RepoSource:
         raise SkillError(
             f"{host} is not an allowed skill source. Allowed: {', '.join(allowed)}"
         )
+    if guess:
+        # Only now that the host is allowed: the one network call.
+        ref, sub = _split_tree(url, guess)
+    if ref is not None and (not _REF_RE.match(ref) or ".." in ref):
+        raise SkillError(f"{ref!r} is not a branch or tag name Vigil accepts")
     return RepoSource(url=url, label=label, host=host, ref=ref, path="/".join(sub))
+
+
+def _split_tree(url: str, segments: List[str]) -> tuple[str, List[str]]:
+    """Split ``<branch>/<folder>`` at the longest prefix that is a ref on the remote.
+
+    A link cannot say where a branch name holding "/" ends, so, as git does,
+    the remote decides: one ``git ls-remote`` for every prefix.
+    """
+    prefixes = ["/".join(segments[:n]) for n in range(len(segments), 0, -1)]
+    prefixes = [p for p in prefixes if _REF_RE.match(p)]
+    if not prefixes:
+        raise SkillError(f"{'/'.join(segments)!r} is not a branch Vigil accepts")
+    patterns = [f"refs/{kind}/{p}" for p in prefixes for kind in ("heads", "tags")]
+    scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
+    try:
+        out = _git(["ls-remote", url, *patterns], scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    found = set()
+    for line in out.splitlines():
+        name = line.partition("\t")[2].strip().removesuffix("^{}")
+        for kind in ("refs/heads/", "refs/tags/"):
+            if name.startswith(kind):
+                found.add(name[len(kind) :])
+    for prefix in prefixes:  # longest first
+        if prefix in found:
+            return prefix, segments[len(prefix.split("/")) :]
+    raise SkillError("The repo has no branch or tag matching that link")
 
 
 def _git_env() -> dict:

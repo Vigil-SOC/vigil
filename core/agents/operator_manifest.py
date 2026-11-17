@@ -7,6 +7,7 @@ refusal to agent-serve's ``POST /plugins/check``.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -97,12 +98,12 @@ def rendered_manifest(text: str) -> str:
 # agents read. One it names and no root holds is left out: the check refuses it.
 # One that is held refuses the manifest here, saying why: a run that went ahead
 # without it would not be the agent its author wrote.
-def manifest_skills(doc: Mapping[str, Any]) -> List[Dict[str, str]]:
+def manifest_skills(doc: Mapping[str, Any], lean: bool = False) -> List[Dict[str, str]]:
     names = _strings(doc.get("skills"))
     if not names:
         return []
     from core.skills.skill_hold import scan_states
-    from core.skills.skill_library import load_skills, skill_body, skill_roots
+    from core.skills.skill_library import is_bundled, load_skills, skill_roots
 
     loaded = {skill.name: skill for skill in load_skills(skill_roots())}
     named = [loaded[name] for name in dict.fromkeys(names) if name in loaded]
@@ -114,14 +115,27 @@ def manifest_skills(doc: Mapping[str, Any]) -> List[Dict[str, str]]:
             raise SkillHeld(f"skill {skill.name} {because}")
     found = {skill.name: skill for skill in named}
     return [
-        {
-            "name": found[name].name,
-            "description": found[name].description,
-            "body": skill_body(found[name]),
-        }
+        _carried(found[name], lean and not is_bundled(found[name]))
         for name in dict.fromkeys(names)
         if name in found
     ]
+
+
+def body_digest(body: str) -> str:
+    """Matches contentHash in the agent service, so both sides name a body alike."""
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+# What a run is handed of a skill. A lean one is an operator's: its body is read
+# back when load_skill asks, so the run neither carries nor journals the text.
+def _carried(skill: Any, lean: bool, body: Optional[str] = None) -> Dict[str, str]:
+    from core.skills.skill_library import skill_body
+
+    text = skill_body(skill) if body is None else body
+    carried = {"name": skill.name, "description": skill.description}
+    if lean:
+        return {**carried, "digest": body_digest(text)}
+    return {**carried, "body": text}
 
 
 # The parser a run loads with, so a manifest stored here is one a run accepts.
@@ -184,16 +198,14 @@ def added_skills() -> List[Dict[str, str]]:
         except OSError:
             continue
         if body.strip():
-            added.append(
-                {"name": skill.name, "description": skill.description, "body": body}
-            )
+            added.append(_carried(skill, True, body))
     return added
 
 
-# Run kinds with no run-wide skill index or loader to offer them through: root
-# cause runs its own engine, and a playbook's phases run under their own agents'
-# prompts and grants. Neither is sent them.
-NO_ADDED_SKILLS = frozenset({"root_cause", "compose"})
+# Run kinds with no run-wide skill index or loader to offer them through: a
+# playbook's phases run under their own agents' prompts and grants. It is not
+# sent them.
+NO_ADDED_SKILLS = frozenset({"compose"})
 
 
 # The start request's field for those skills, for every run whatever started it.
@@ -206,8 +218,8 @@ def added_request(run_kind: str) -> Dict[str, Any]:
 
 # The start request's operator fields: the skills an operator added, and for a
 # definition that carries a manifest, that manifest. The prompt and skills are
-# resolved now, so the run journals the text and bodies it used; the stored
-# manifest keeps its placeholders.
+# resolved now, so the run journals the text it used and each skill's digest; the
+# stored manifest keeps its placeholders.
 def operator_request(metadata: Mapping[str, Any], run_kind: str) -> Dict[str, Any]:
     fields = added_request(run_kind)
     text = metadata.get("operator_manifest")
@@ -216,5 +228,5 @@ def operator_request(metadata: Mapping[str, Any], run_kind: str) -> Dict[str, An
     return {
         **fields,
         "manifest": rendered_manifest(text),
-        "manifest_skills": manifest_skills(read_manifest(text)),
+        "manifest_skills": manifest_skills(read_manifest(text), lean=True),
     }
