@@ -28,6 +28,7 @@ from tests.medic_compose.compose import (
     compose_project,
     require_compose_project,
 )
+from tests.medic_eval import medic_api
 from tests.medic_eval.sample import SERVICES as SAMPLED
 
 HERE = Path(__file__).resolve().parent
@@ -287,6 +288,8 @@ class Stack:
             lambda: self.http("GET", "backend", 6987, "/api/health")[0],
             lambda c: c == 200,
         )
+        # The image's bundled pack is the last release's and lacks the lane-1 rules.
+        medic_api.import_source_pack(self)
 
     def stop(self) -> None:
         self.compose("down", "-v", "--remove-orphans", check=False)
