@@ -43,6 +43,11 @@ forbidden_modules =
     core.skills
     core.threat_intel
     core.workflows
+ignore_imports =
+    ; Telling the trail's administrators of a hold needs whoever holds
+    ; audit.forward. The import sits inside that alert, which runs only after
+    ; the trail has refused an entry; the storage layer never calls it.
+    core.audit.trail -> core.auth.permissions
 
 [importlinter:contract:versioned-api]
 name = the versioned API surface composes the domains; nothing under core imports it back
