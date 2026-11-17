@@ -876,7 +876,6 @@ host_state_dir() {
     (cd "$state" && pwd)
 }
 
-# Host paths and `docker compose run` flags every backup container shares.
 # The user the backup and upgrade one-shots run as: the host's uid:gid, so what
 # they write in the bind mounts is the host user's. On macOS the host uid (501)
 # cannot enter the image's /home/vigil, owned by its vigil user (1000), and
@@ -892,6 +891,7 @@ backup_run_user() {
     fi
 }
 
+# Host paths and `docker compose run` flags every backup container shares.
 # Exports the State Directory and investigation workdir the compose `backup`
 # service mounts and sets BACKUP_RUN_ARGS (backup_run_user, plus the repo-root .env
 # when present, mounted $1: ro by default).
