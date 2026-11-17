@@ -359,12 +359,18 @@ def first_finding_id(session, case_id: str) -> Optional[str]:
     """The finding the case was opened from: the earliest one linked to it.
 
     A merge or the case matcher links later ones, so the earliest ``added_at``
-    is the opener; the id breaks a tie.
+    is the opener. A case opened with several findings links them in the order
+    given, within one write; where those share a time, the earliest event wins.
     """
     return session.execute(
         select(case_findings.c.finding_id)
+        .join(Finding, Finding.finding_id == case_findings.c.finding_id)
         .where(case_findings.c.case_id == case_id)
-        .order_by(case_findings.c.added_at, case_findings.c.finding_id)
+        .order_by(
+            case_findings.c.added_at,
+            Finding.timestamp.asc().nulls_last(),
+            case_findings.c.finding_id,
+        )
         .limit(1)
     ).scalar_one_or_none()
 
