@@ -489,6 +489,75 @@ jobs:
         working-directory: services/agent
         run: npm run typecheck
 
+  # The hunt harness (TypeScript) and memory (Python) each carry a copy of the
+  # Entity Key rules; this runs both and fails when they disagree. No `paths:`
+  # filter, for the reason medic-bundled-check.yml gives: a filtered workflow
+  # never reports a required check. The job always reports, and its first step
+  # decides from the PR's changed files whether the install and the check run.
+  # Node 22 matches infra/docker/Dockerfile.agent; Python is .python-version.
+  check-entity-key-agreement:
+    name: Entity Key Agreement
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Did a file the check reads change?
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Both sides of a rename count as changed.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt
+          if grep -qxE -f - changed.txt <<'PATHS'; then
+          services/agent/plugins/hunt/(entities|types|tlds)\.ts
+          services/agent/contracts/memory\.ts
+          core/memory/(entity_keys|recall_contract|tlds)\.py
+          core/storage/defang\.py
+          clients/web/src/screens/workflows/entityTypes\.ts
+          scripts/check_entity_key_agreement\.py
+          scripts/entity_key_agreement_driver\.mts
+          infra/docker/Dockerfile\.agent
+          \.python-version
+          PATHS
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No file the Entity Key check reads changed; skipping it."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      - name: Set up Node.js
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: services/agent/package-lock.json
+
+      - name: Install agent dependencies
+        if: steps.changed.outputs.run == 'true'
+        working-directory: services/agent
+        run: npm ci
+
+      - name: Both halves build the same Entity Keys
+        if: steps.changed.outputs.run == 'true'
+        run: python scripts/check_entity_key_agreement.py
+
   # ============================================================================
   # Helm Install Schema — does a fresh chart install end with every ORM table?
   # ============================================================================

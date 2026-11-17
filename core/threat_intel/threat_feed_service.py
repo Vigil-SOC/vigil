@@ -18,7 +18,7 @@ import requests.auth
 
 from core.memory.entity_keys import entity_key, text_entity_keys
 from core.memory.recall_contract import ENTITY_KEY_TYPES
-from core.storage.defang import defang
+from core.storage.defang import defang, trim_edges
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def normalize_indicator_value(indicator_type: str, value: str) -> str:
     """The stored and looked-up form: Vigil's defang rule, then case-folded."""
     if indicator_type not in FOLDED_INDICATOR_TYPES:
         return value
-    return defang(value.strip()).lower()
+    return defang(trim_edges(value)).lower()
 
 
 _STIX_TOKEN = re.compile(

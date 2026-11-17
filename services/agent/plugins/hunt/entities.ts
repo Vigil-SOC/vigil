@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { KEY_CASE_SENSITIVE_TYPES } from "../../contracts/memory.js";
 import { TLDS } from "./tlds.js";
 import { ENTITY_TYPES, type Entity, type EntityType, type EvidenceRecord } from "./types.js";
 
@@ -32,13 +33,27 @@ export function defang(text: string): string {
     .replace(/\[at\]/gi, "@");
 }
 
+// An indicator's edge trim: JS `trim` plus U+001C-U+001F and U+0085, which Python's
+// `strip` takes. Twin of `trim_edges` in core/storage/defang.py; a loop, because a
+// regex anchored at the end is quadratic on a long run of spaces.
+const EXTRA_EDGE = "\x1c\x1d\x1e\x1f\x85";
+const isEdge = (ch: string): boolean => ch.trim() === "" || EXTRA_EDGE.includes(ch);
+
+export function trimEdges(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && isEdge(text[start]!)) start += 1;
+  while (end > start && isEdge(text[end - 1]!)) end -= 1;
+  return text.slice(start, end);
+}
+
 // Case folds for the types where it carries no meaning, so one host is one node.
 // An ARN's resource part and an AWS key id are case-significant, and a lowercased
 // key would merge them. Two keep case in part (#4542): a process that is an
 // absolute POSIX path, and a url's path, query and fragment -- only its scheme
 // and authority fold. Plain string ops, mirroring `_fold` in
 // core/memory/entity_keys.py; `new URL()` re-serialises and the two would drift.
-const CASE_SENSITIVE = new Set(["arn", "aws_key"]);
+const CASE_SENSITIVE: ReadonlySet<string> = new Set(KEY_CASE_SENSITIVE_TYPES);
 
 function normalize(type: EntityType, value: string): string {
   if (CASE_SENSITIVE.has(type) || (type === "process" && value.startsWith("/"))) return value;
@@ -73,11 +88,11 @@ function wellFormed(type: EntityType, value: string): boolean {
 export function parseKey(raw: string): Entity | undefined {
   const at = raw.indexOf(":");
   if (at < 1) return undefined;
-  const kind = raw.slice(0, at).trim().toLowerCase();
+  const kind = trimEdges(raw.slice(0, at)).toLowerCase();
   if (!(ENTITY_TYPES as readonly string[]).includes(kind)) return undefined;
 
   const type = kind as EntityType;
-  const value = normalize(type, defang(raw.slice(at + 1)).trim());
+  const value = normalize(type, trimEdges(defang(raw.slice(at + 1))));
   return wellFormed(type, value) ? { type, value } : undefined;
 }
 
@@ -90,7 +105,11 @@ export function fromText(raw: string): Entity[] {
       const value = normalize(type, match[0].replace(/[.,;)]+$/, ""));
       // A dotted quad after a version word is a release, not a host.
       const before = text.slice(Math.max(0, match.index - 12), match.index);
-      if (wellFormed(type, value) && !(type === "ip" && VERSION.test(before))) found.push({ type, value });
+      if (!wellFormed(type, value) || (type === "ip" && VERSION.test(before))) continue;
+      // Defanged and trimmed again after the punctuation trim, as memory's
+      // `text_entity_keys` does; nested `[[.]]` only resolves here.
+      const final = normalize(type, trimEdges(defang(value)));
+      if (final !== "") found.push({ type, value: final });
     }
   }
   return found;
@@ -129,7 +148,7 @@ export function fromPayload(payload: unknown, name = ""): Entity[] {
   }
   if (typeof payload !== "string" && typeof payload !== "number") return [];
 
-  const raw = defang(String(payload)).trim();
+  const raw = trimEdges(defang(String(payload)));
   const type = typeForKey(name);
   if (type === undefined) return fromText(raw);
 
