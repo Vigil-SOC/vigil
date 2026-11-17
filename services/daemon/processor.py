@@ -1068,7 +1068,9 @@ REASONING: [Brief explanation]
         lookups = [("ip", ips), ("domain", domains)] + [
             (t, hashes) for t in ("hash_sha256", "hash_sha1", "hash_md5")
         ]
-        lookups = [(t, sorted(set(v))) for t, v in lookups if v]
+        # str() so a stray None or number in the context cannot break the dedupe
+        lookups = [(t, sorted({str(x) for x in v if x})) for t, v in lookups]
+        lookups = [(t, v) for t, v in lookups if v]
         if not lookups:
             return {}, {"outcome": TI_NOTHING}
 
