@@ -708,9 +708,27 @@ def _record_proposals(case_id: str, run_id: str, action_ids: List[str]) -> None:
         )
 
 
-# The verdicts that dismiss a case. Both close it as a false positive: the alert that
-# opened it was not the attack it looked like.
+# The verdicts that dismiss a case. Both close it as a false positive, where the run
+# may act: the alert that opened it was not the attack it looked like.
 DISMISSALS = {"benign", "false_positive"}
+
+
+# Closing a case is a reversible act, so a run closes one only where its
+# workflow may act on its own; under Assist a person decides. A ceiling that
+# can't be read leaves the case open.
+def _may_close(run_id: str) -> bool:
+    from core.response.ceiling import (
+        REVERSIBLE,
+        effective_act,
+        read_ceiling,
+        workflow_of,
+    )
+
+    try:
+        return effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id))
+    except Exception:  # noqa: BLE001 — no answer is not permission
+        logger.exception("autonomy not read; case of %s left open", run_id)
+        return False
 
 
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
@@ -721,6 +739,15 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
 
     disposition = (update.disposition or "").strip().lower()
     if disposition not in DISMISSALS:
+        return
+    if not _may_close(run_id):
+        _add_activity(
+            case_id,
+            "agent_run_left_open",
+            f"Left open for a person: the investigation concluded {disposition}, "
+            "and autonomy does not let it close cases on its own",
+            {"run_id": run_id, "disposition": disposition},
+        )
         return
     try:
         with service_session() as session:

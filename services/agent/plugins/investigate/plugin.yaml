@@ -72,7 +72,7 @@ conclusion:
   severity_field: severity
   # Read off the terminal when the verdict is scored against the case's closure (analytics_service.py).
   confidence_field: confidence
-  # Sent as the guard leaves it; benign or false_positive closes the case (run_bridge_router.py).
+  # Sent as the guard leaves it; benign or false_positive closes the case where autonomy lets the run act (run_bridge_router.py).
   disposition_field: disposition
   # A completed run's list goes to the backend on the terminal, which files each as a
   # pending approval on the case (run_bridge_router.py). The run takes none of them.
