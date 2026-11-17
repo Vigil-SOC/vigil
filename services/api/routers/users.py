@@ -256,8 +256,9 @@ def _manager_accounts(
         _not_deleted(session.query(User)).filter(Principal.kind == principals.PERSON)
     ).all()
     current = sso_settings.settings()
-    linked = sso.linked_principals(session) if sso.is_on(current) else set()
     required = sso.required(current)
+    # Linked people count while required even if SSO is broken now: they are back once it is fixed.
+    linked = sso.linked_principals(session) if required or sso.is_on(current) else set()
     found = []
     for user in people:
         role_id, active = (users or {}).get(
