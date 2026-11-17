@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
+import { CopyButton } from '../../shared/CopyButton'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { ipRoleLabels } from '../../data/ipRoles'
@@ -183,6 +184,7 @@ export default function FindingPopup({
       <span className="fp-title">
         <span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span>
         <span className="mono fp-id">{id}</span>
+        {id && <CopyButton text={id} label="finding id" />}
       </span>
     ) : (
       id || 'Finding'

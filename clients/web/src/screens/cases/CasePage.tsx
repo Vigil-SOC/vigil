@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { utcClock, utcDay, utcDayClock } from '../../shared/utc'
 import { Link } from 'react-router-dom'
+import { CopyButton } from '../../shared/CopyButton'
 import { analyticsApi, approvalsApi, auditApi, autonomyApi, casesApi, workflowApi, type CaseRecordRow, type Ceiling, type NeedsYouItem, type WorkflowAgreement } from '../../services/api'
 import { actsByDefault, agreementText, falseCloseText, uncheckedText, workflowTier } from '../../shared/autonomy'
 import { AUTONOMY_CHANGED, notifyAutonomyChanged } from '../settings/useSettings'
@@ -1709,6 +1710,7 @@ export function CasePage({
           <button type="button" className="back" onClick={onBack}>Cases</button>
           <span aria-hidden>›</span>
           <span className="mono">{caseLabel(id)}</span>
+          <CopyButton text={id} label="case id" />
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}
             {onExpand && (
