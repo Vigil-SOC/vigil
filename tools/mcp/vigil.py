@@ -23,6 +23,7 @@ from core.cases.assignee import (
 from core.cases.case_handoff import ESCALATE_REPLACED
 from core.cases.case_handoff import move_case as move_case_row
 from core.cases.case_status import CaseStatus
+from core.cases.closure import FalsePositiveCause, false_positive_cause_value
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.response.ceiling import ceiling_read
 from core.storage.connection import get_db_session
@@ -195,9 +196,20 @@ def get_finding(finding_id: str) -> str:
 
 @mcp.tool()
 @requires("findings.write")
-def dismiss_finding(finding_id: str, reason: str) -> str:
-    """Dismiss a finding as noise, with the reason. The actor is the caller."""
-    return _call(tool_registry.dismiss_finding, finding_id=finding_id, reason=reason)
+def dismiss_finding(
+    finding_id: str, reason: str, noise_cause: Optional[str] = None
+) -> str:
+    """Dismiss a finding as noise, with the reason. The actor is the caller.
+
+    ``noise_cause`` is optional: expected, too_broad, data, or other. Omit it
+    to record no cause. A value outside that set dismisses nothing.
+    """
+    return _call(
+        tool_registry.dismiss_finding,
+        finding_id=finding_id,
+        reason=reason,
+        noise_cause=noise_cause,
+    )
 
 
 @mcp.tool()
@@ -1289,6 +1301,7 @@ def close_case(
     executive_summary: Optional[str] = None,
     false_positive_reason: Optional[str] = None,
     closure_notes: Optional[str] = None,
+    false_positive_cause: Optional[str] = None,
 ) -> str:
     """
     Properly close a case with closure metadata.
@@ -1302,6 +1315,9 @@ def close_case(
         executive_summary: Optional executive summary
         false_positive_reason: Optional reason a false-positive closure was one
         closure_notes: Optional free-text notes on the closure
+        false_positive_cause: Optional cause (expected, too_broad, data, other).
+            Omit it to leave a standing cause. A value outside that set closes nothing.
+            A valid cause on any other category is dropped.
 
     Example:
         close_case("case-123", "resolved",
@@ -1330,6 +1346,20 @@ def close_case(
                 }
             )
 
+        cause_arg: dict = {}
+        if false_positive_cause is not None:
+            try:
+                cause_arg["false_positive_cause"] = false_positive_cause_value(
+                    false_positive_cause
+                )
+            except ValueError as exc:
+                return jdump(
+                    {
+                        "error": str(exc),
+                        "causes": [member.value for member in FalsePositiveCause],
+                    }
+                )
+
         with service_session() as session:
             # Through the service rather than writing the rows here. This tool
             # had its own copy of the close, so the SLA clock, the IOC index and
@@ -1347,6 +1377,7 @@ def close_case(
                 executive_summary=executive_summary,
                 false_positive_reason=false_positive_reason,
                 closure_notes=closure_notes,
+                **cause_arg,
             )
             if closure is None:
                 return jdump({"error": f"Case {case_id} not found"})
@@ -1558,8 +1589,9 @@ def get_operator_agent(agent_id: str) -> str:
 @requires("ai_autonomy.read")
 def get_autonomy_ceiling() -> str:
     """Read the autonomy ceiling, as GET /api/v1/autonomy does: the stored act
-    flags, the effective read/write/propose state, environment_locked, four_eyes
-    and each workflow's own tier. Read only."""
+    flags, who stopped it, the actions that stop is holding, the effective
+    read/write/propose state, environment_locked, four_eyes and each workflow's
+    own tier. Read only."""
     try:
         return jdump(ceiling_read())
     except Exception as e:

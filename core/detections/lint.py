@@ -24,6 +24,14 @@ import yaml
 from core.detections import wazuh_xml
 from core.detections.inventory.record import normalize_query
 
+# The same instruction on both strings that tell the agent to add an exception.
+_CITE = (
+    "Cite finding_ids of this copy's judged-false alerts when it has any "
+    "(one that matches is enough, and every cited id must be this copy's, "
+    "judged false, and matched by the exception); when it has none the "
+    "exception can still be added; a handed-off copy and a Sigma exception "
+    "are not checked; a person can add one either way."
+)
 _REWRITE = (
     "Rewrite around behaviour: process lineage, command-line arguments, "
     "parent-child relationships, or protocol/technique patterns — not a "
@@ -31,12 +39,12 @@ _REWRITE = (
     "address or account that is expected here, keep it out of the rule "
     "(no `not filter_*` naming it) and add an exception instead: "
     "save_detection_rule's exceptions, or detection_rule_exception on a "
-    "saved copy."
+    "saved copy. " + _CITE
 )
 _EXCEPTION_HINT = (
     "The rule leaves out a host by name. It still runs, but move that host to an "
     "exception (save_detection_rule's exceptions, or detection_rule_exception on "
-    "a saved rule) so the rule itself names no machine."
+    "a saved rule) so the rule itself names no machine. " + _CITE
 )
 
 # IPv4 (optional CIDR). Candidates are confirmed with ipaddress.

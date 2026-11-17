@@ -11,6 +11,14 @@ from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL
 
 # Customer-specific exceptions per copy (#3794): kept apart from the rule body.
+# The same citation instruction as detection_rule_exception and the lint strings.
+_CITE = (
+    "Cite finding_ids of this copy's judged-false alerts when it has any "
+    "(one that matches is enough, and every cited id must be this copy's, "
+    "judged false, and matched by the exception); when it has none the "
+    "exception can still be added; a handed-off copy and a Sigma exception "
+    "are not checked; a person can add one either way."
+)
 _EXCEPTION_ITEMS = {
     "type": "array",
     "items": {
@@ -21,13 +29,19 @@ _EXCEPTION_ITEMS = {
                 "description": "{field: value} in this copy's own field names; every pair must equal. A CIDR value matches an address inside it.",
             },
             "note": {"type": "string", "description": "Why it is expected. Required."},
+            "finding_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Finding ids of this copy's judged-false alerts that this exception matches.",
+            },
         },
         "required": ["match", "note"],
     },
 }
 _EXCEPTIONS_SCHEMA = {
     "type": "object",
-    "description": "Customer-specific exceptions per copy, stored apart from the rule body instead of a `not filter_*` naming a host, address or account (lint refuses those). Keys are the copies being saved. Vigil's runner drops hits an exception matches; the replay counts a ruled-out event a sigma exception matches as excluded (a proven event one matches refuses the save). Adds no rule version; an exception already on the copy with the same match is kept as is.",
+    "description": "Customer-specific exceptions per copy, stored apart from the rule body instead of a `not filter_*` naming a host, address or account (lint refuses those). Keys are the copies being saved. Vigil's runner drops hits an exception matches; the replay counts a ruled-out event a sigma exception matches as excluded (a proven event one matches refuses the save). Adds no rule version; an exception already on the copy with the same match is kept as is. "
+    + _CITE,
     "properties": {
         "splunk": _EXCEPTION_ITEMS,
         "elastic": _EXCEPTION_ITEMS,
@@ -62,7 +76,7 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "search_detections",
-        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine, Splunk's scheduled and correlation saved searches and the Wazuh manager run, using keywords. Each hit carries its tool ('overlay', 'repo', 'elastic', 'splunk' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule or Splunk saved search switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error), and checks.sees: whether the data it reads is arriving ({result, reason, data_source, checked_at}; for Kibana, fail names the index with no events in 7d or the required fields missing from its mapping, unknown for ES|QL, ML or an unreadable source; for Wazuh, data_source is the rule's decoder ('wazuh decoder sshd'), fail means the Wazuh archive is on and no event was decoded as it in 7d, unknown when only alerts are kept and none came from it or when the indexer is not read; for Splunk, data_source is 'index=X sourcetype=Y' or 'datamodel DM.Dataset' read from the search's first clause after macro expansion, fail means no events there in 7d, unknown for a lookup, | rest, subsearch, eventtype, real-time search, undefined macro or a data model not accelerated), and checks.quiet: whether its alert volume stays under the SIEM's quiet_max_alerts_per_day ({result, reason, count, days, checked_at}; count is its alerts over the last days, from its version's first sight and at most 30; fail when count / days is over the threshold, e.g. 'fail: 4,210 alerts in 30 d (140/day), over 50/day'; unknown 'version too new' under 24 h, 'not counted this sync', or the search error), checks.accurate: the share of the alerts of this version judged real ({result, reason, real, judged, analyst, agent, checked_at}; each alert's latest analyst verdict wins over the agent's, from noise marks and closed Cases; fewer than 20 judged is unknown, under 10% real is fail; reason e.g. 'fail: 3 of 42 real (analyst 9, agent 33)'), checks.noisy ({result, reason, checked_at}; fail when today's alerts (UTC day so far) reach noisy_min_alerts and noisy_multiple times the rule's daily mean over the 29 days before) and checks.silent ({result, reason, days_fired, checked_at}; fail when the rule had no alert in the last silent_days after firing on at least silent_min_active_days of the days before in 30; a rule that rarely fires is never silent; days_fired 0 means it never fired in 30 days); noisy and silent are unknown when the rule has been in the inventory under 7 d, was not counted, or the search failed; and checks.caught: whether this version alerted on a real attack step ({result: pass, reason, checked_at}; a cited Kibana, Wazuh or Splunk alert of this version correlated with a finished compose run's step or a proven hunt or Case Verdict in the last 30 days, on a technique the rule declares, compared at parent level; reason e.g. 'pass: caught in Case 412 (proven, analyst), T1059.001, 2026-10-30'). Caught only ever passes and is never cleared on that version: no checks.caught means untested, not failed. Filter tool='elastic', 'splunk' or 'wazuh' with runs='fail' to answer which of that SIEM's rules don't run and why, sees='fail' for which are starved of data, accurate='fail' for which mostly fire on nothing, caught='untested' for which no attack run or proven incident has shown alerting, or quiet='fail' for which would flood analysts (a Splunk search's alerts are its notables under Enterprise Security, else its triggered alerts, else its scheduled runs that fired an action other than Splunk's data-output ones). A loaded Wazuh rule's Runs is pass ('loaded by the manager'); Kibana, Wazuh and Splunk rules get Noisy and Silent (a Wazuh rule below level 3 with no alerts passes both, as it cannot alert, and one with alerts is judged on them; a Splunk scheduled report (not tracked, not a correlation search, no action but data-output ones such as outputtelemetry or summary_index) reads both pass, 'a scheduled report; it does not alert'). A Kibana or Splunk copy linked to a repo rule also carries checks.drift ({result, reason, checked_at}): fail when the copy was disabled, removed or edited in the SIEM while its repo rule stayed the same (the reason names the versions and when each was first seen), pass when it matches, the repo is ahead, or the repo rule is not active. A repo or overlay hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled, its runs, its quiet check or null, its accurate and its caught) or 'not deployed'. A SIEM hit carries origin: its link to a repo or overlay rule (origin_rule_id, kind same_id | known_name | agent | declined, by, reason, at) or null. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Each hit has flagged: true when its latest Runs, Sees, Quiet, Accurate, Noisy, Silent or drift change went pass -> fail (it broke or drifted and has not recovered); filter flagged=true for those. When exactly one rule matches, its hit carries recent_changes: its last 10 recorded check changes (check runs|sees|quiet|accurate|noisy|silent|caught|drift|status, old -> new, changed_at, version, reason), newest first.",
+        "description": "Search the detection rules of every configured repo (Sigma, Splunk, Elastic, KQL), Vigil's own overlay of drafted rules, and the rules Kibana's detection engine, Splunk's scheduled and correlation saved searches and the Wazuh manager run, using keywords. Each hit carries its tool ('overlay', 'repo', 'elastic', 'splunk' or 'wazuh'), its status ('active', or 'disabled' for a Kibana rule or Splunk saved search switched off or a Wazuh rule excluded in ossec.conf) and checks.runs: whether the SIEM runs it ({result: pass|fail|unknown, reason, checked_at}; reason holds the SIEM's own error), and checks.sees: whether the data it reads is arriving ({result, reason, data_source, checked_at}; for Kibana, fail names the index with no events in 7d or the required fields missing from its mapping, unknown for ES|QL, ML or an unreadable source; for Wazuh, data_source is the rule's decoder ('wazuh decoder sshd'), fail means the Wazuh archive is on and no event was decoded as it in 7d, unknown when only alerts are kept and none came from it or when the indexer is not read; for Splunk, data_source is 'index=X sourcetype=Y' or 'datamodel DM.Dataset' read from the search's first clause after macro expansion, fail means no events there in 7d, unknown for a lookup, | rest, subsearch, eventtype, real-time search, undefined macro or a data model not accelerated), and checks.quiet: whether its alert volume stays under the SIEM's quiet_max_alerts_per_day ({result, reason, count, days, checked_at}; count is its alerts over the last days, from its version's first sight and at most 30; fail when count / days is over the threshold, e.g. 'fail: 4,210 alerts in 30 d (140/day), over 50/day'; unknown 'version too new' under 24 h, 'not counted this sync', or the search error), checks.accurate: the share of the alerts of this version judged real ({result, reason, real, judged, analyst, agent, expected, too_broad, data, other, not_given, false_person, false_agent, case_close, checked_at}; each alert's latest analyst verdict wins over the agent's, from noise marks and closed Cases; fewer than 20 judged is unknown, under 10% real is fail; reason e.g. 'fail: 3 of 42 real (analyst 9, agent 33)'; expected, too_broad, data, other and not_given count only the judged-false alerts and add up to judged minus real; false_person and false_agent split those by who gave them; case_close is how many a case close won), checks.noisy ({result, reason, checked_at}; fail when today's alerts (UTC day so far) reach noisy_min_alerts and noisy_multiple times the rule's daily mean over the 29 days before) and checks.silent ({result, reason, days_fired, checked_at}; fail when the rule had no alert in the last silent_days after firing on at least silent_min_active_days of the days before in 30; a rule that rarely fires is never silent; days_fired 0 means it never fired in 30 days); noisy and silent are unknown when the rule has been in the inventory under 7 d, was not counted, or the search failed; and checks.caught: whether this version alerted on a real attack step ({result: pass, reason, checked_at}; a cited Kibana, Wazuh or Splunk alert of this version correlated with a finished compose run's step or a proven hunt or Case Verdict in the last 30 days, on a technique the rule declares, compared at parent level; reason e.g. 'pass: caught in Case 412 (proven, analyst), T1059.001, 2026-10-30'). Caught only ever passes and is never cleared on that version: no checks.caught means untested, not failed. Filter tool='elastic', 'splunk' or 'wazuh' with runs='fail' to answer which of that SIEM's rules don't run and why, sees='fail' for which are starved of data, accurate='fail' for which mostly fire on nothing, caught='untested' for which no attack run or proven incident has shown alerting, or quiet='fail' for which would flood analysts (a Splunk search's alerts are its notables under Enterprise Security, else its triggered alerts, else its scheduled runs that fired an action other than Splunk's data-output ones). A loaded Wazuh rule's Runs is pass ('loaded by the manager'); Kibana, Wazuh and Splunk rules get Noisy and Silent (a Wazuh rule below level 3 with no alerts passes both, as it cannot alert, and one with alerts is judged on them; a Splunk scheduled report (not tracked, not a correlation search, no action but data-output ones such as outputtelemetry or summary_index) reads both pass, 'a scheduled report; it does not alert'). A Kibana or Splunk copy linked to a repo rule also carries checks.drift ({result, reason, checked_at}): fail when the copy was disabled, removed or edited in the SIEM while its repo rule stayed the same (the reason names the versions and when each was first seen), pass when it matches, the repo is ahead, or the repo rule is not active. A repo or overlay hit carries deployed: per SIEM, the copies linked to it (each with its state: pass / fail / unknown / unchecked / disabled, its runs, its quiet check or null, its accurate and its caught) or 'not deployed'. A SIEM hit carries origin: its link to a repo or overlay rule (origin_rule_id, kind same_id | known_name | agent | declined, by, reason, at) or null. An overlay hit also carries stage (its current rollout stage: shadow, live or off; null for a Sigma copy) and stages (every stage row, oldest first: version, stage, proof, actor, reason, at). Each hit has flagged: true when its latest Runs, Sees, Quiet, Accurate, Noisy, Silent or drift change went pass -> fail (it broke or drifted and has not recovered); filter flagged=true for those. When exactly one rule matches, its hit carries recent_changes: its last 10 recorded check changes (check runs|sees|quiet|accurate|noisy|silent|caught|drift|status, old -> new, changed_at, version, reason), newest first. Pass rule_id to return that one rule plus judged_false, a page of its judged-false determinations (offset, limit at most 25, total, returned, has_more, next_offset). Each entry is finding_id, text (a noise mark's noise_reason, or a false-positive close's false_positive_reason when set, otherwise closure_notes), person (true when a person gave it) and cause (expected, too_broad, data, other, or null). Without rule_id the result stays a list and that page is not built.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -114,9 +128,18 @@ SECURITY_DETECTION_TOOLS = [
                     "type": "boolean",
                     "description": "Optional: true keeps rules whose Runs, Sees, Quiet, Accurate or drift went pass -> fail and have not recovered; false keeps the rest.",
                 },
+                "rule_id": {
+                    "type": "integer",
+                    "description": "Optional: return this one rule and a page of its judged-false determinations, instead of a list. A hit's rule_id.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Optional: where the judged-false page starts, with rule_id. Ignored on a list.",
+                    "default": 0,
+                },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of results to return (default: 20)",
+                    "description": "Maximum number of rules to return (default: 20). With rule_id, the judged-false page size, at most 25.",
                     "default": 20,
                 },
             },
@@ -325,7 +348,8 @@ SECURITY_DETECTION_TOOLS = [
     },
     {
         "name": "detection_rule_exception",
-        "description": "Add a customer-specific exception to one of Vigil's overlay copies (search_detections tool 'overlay'), or remove one. An exception keeps an expected host, address or account out of the rule's query: Vigil's runner drops the hits whose fields equal every pair of match (a CIDR value matches an address inside it; a /0 such as 0.0.0.0/0 is refused, as it would match every event) before they are counted or become findings, and counts its matches per day in the version's checks.exceptions; checks.exceptions_seen records what they dropped together from the last run that fetched rows (rows, matched): matched equal to rows means the copy raised nothing that run. Field names are the copy's own: ECS paths for the Elastic copy, Splunk field names for the Splunk copy, Sigma fields for the Sigma form. Each exception covers one copy. Adding or removing one makes no new rule version and does not restart shadow. Exceptions are listed in the deploy pull request's description and stop applying once the SIEM's own copy runs the rule. Every addition and removal is recorded with you as the actor; a removed exception is kept with who removed it, when and why.",
+        "description": "Add a customer-specific exception to one of Vigil's overlay copies (search_detections tool 'overlay'), or remove one. An exception keeps an expected host, address or account out of the rule's query: Vigil's runner drops the hits whose fields equal every pair of match (a CIDR value matches an address inside it; a /0 such as 0.0.0.0/0 is refused, as it would match every event) before they are counted or become findings, and counts its matches per day in the version's checks.exceptions; checks.exceptions_seen records what they dropped together from the last run that fetched rows (rows, matched): matched equal to rows means the copy raised nothing that run. Field names are the copy's own: ECS paths for the Elastic copy, Splunk field names for the Splunk copy, Sigma fields for the Sigma form. Each exception covers one copy. Adding or removing one makes no new rule version and does not restart shadow. Exceptions are listed in the deploy pull request's description and stop applying once the SIEM's own copy runs the rule. Every addition and removal is recorded with you as the actor; a removed exception is kept with who removed it, when and why. "
+        + _CITE,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -349,6 +373,11 @@ SECURITY_DETECTION_TOOLS = [
                 "reason": {
                     "type": "string",
                     "description": "Why it is removed. Required to remove.",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Finding ids of this copy's judged-false alerts that this exception matches. Required when the copy has any; omit when it has none.",
                 },
             },
             "required": ["action"],
@@ -495,7 +524,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "dismiss_finding",
-        "description": "Dismiss a finding as noise. This is the finding's terminal state: it reads Dropped and leaves the Overview feed. Recorded with you as the actor and the reason you give.",
+        "description": "Dismiss a finding as noise. This is the finding's terminal state: it reads Dropped and leaves the Overview feed. Recorded with you as the actor and the reason you give. noise_cause is optional and records which kind of fix the false positive is.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -506,6 +535,11 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "reason": {
                     "type": "string",
                     "description": "Why this finding is noise. Required.",
+                },
+                "noise_cause": {
+                    "type": "string",
+                    "enum": ["expected", "too_broad", "data", "other"],
+                    "description": "Which kind of fix this is. Optional. Omit it to record no cause.",
                 },
             },
             "required": ["finding_id", "reason"],

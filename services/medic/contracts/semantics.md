@@ -123,6 +123,8 @@ The engine opens an **upgrade window** when:
 - the `version` signal changes; or
 - restart markers for **2 or more Vigil services fall within 5 min** of each other (an epoch change, a container `started_at` change, or an `uptime_seconds` drop).
 
+A restart Medic recorded (`fix_run` of `restart_service`) is not a marker. The engine is told at the moment Medic records it; observations of that service for the next 5 min do not add a marker. A vector says the same thing by an epoch that starts with `medic-restart:` (v34). A `version` change still opens a window on its own, and one recorded restart beside one other service's restart does not.
+
 The window lasts **15 min after the last such restart** (⚑ 4). **A chain of windows** (each marker arriving before the window it extends has closed) **holds for at most 60 min after the chain's first marker**: a `version` value that keeps flipping can't hold alerts indefinitely. At the cap the window is over for every rule, **`watcher.sensor-blind` included**; later markers in the same chain extend nothing. A marker after the chain's window has closed (15 min with none) starts a new chain with its own cap (amended 2026-10-08, ⚑ S4b2-6, vector v29). During it, **pending can't promote to firing**, firing incidents carry on, and every evaluation is recorded as normal. When the window closes, any rule that is still true fires at once, because its `active_since` was kept. **An upgrade delays an alert; it never hides one** that persists. Admin-declared maintenance windows use the same mechanism. Where they are configured is K3's call; they're not in Phase 0.
 
 ## 8. What the vectors pin

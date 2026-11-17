@@ -8,6 +8,7 @@ import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, rankTechniques, type ApiFinding } from '../../data/mappers'
 import { NO_CONFIDENCE } from '../../data/data'
 import { techniqueName } from '../../data/mitre'
+import { CauseSelect } from '../../shared/falsePositiveCause'
 import { EmptyState, Popup } from '../../shared/ui'
 import { stateWord } from '../../shared/findingState'
 import { Icon } from '../../shared/icons'
@@ -190,6 +191,7 @@ export default function FindingPopup({
   const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
   const [acting, setActing] = useState(false)
+  const [cause, setCause] = useState('')
   const [dismissError, setDismissError] = useState<string | null>(null)
   const [triageNote, setTriageNote] = useState<string | null>(null)
   const [triageError, setTriageError] = useState<string | null>(null)
@@ -219,6 +221,7 @@ export default function FindingPopup({
     setExcludeError(null)
     setJustExcluded(new Set())
     setDismissError(null)
+    setCause('')
     findingsApi
       .getById(id)
       .then((res) => {
@@ -282,7 +285,7 @@ export default function FindingPopup({
     const target = id
     setActing(true)
     setDismissError(null)
-    ;(dismissed ? findingsApi.clearNoise(target) : findingsApi.markNoise(target))
+    ;(dismissed ? findingsApi.clearNoise(target) : findingsApi.markNoise(target, cause || undefined))
       .then(() => findingsApi.getById(target))
       .then((res) => {
         if (triageFor.current === target) setRaw(res.data as RawFinding)
@@ -366,6 +369,7 @@ export default function FindingPopup({
             <span className="k" style={{ alignSelf: 'center' }}>Status</span>
             <span className="v flex items-center gap-2 flex-wrap">
               <span>{stateWord(raw.terminal_state, raw.case_id, raw.case_restricted)}</span>
+              {!dismissed && <CauseSelect value={cause} onSelect={setCause} />}
               <button type="button" className="btn ghost" onClick={toggleDismiss} disabled={acting}>
                 {dismissed ? 'Undo' : 'Dismiss'}
               </button>

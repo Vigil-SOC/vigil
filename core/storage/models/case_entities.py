@@ -720,8 +720,11 @@ class CaseClosureInfo(Base):
     recommendations: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     recurrence_prevention: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # False positive details
+    # False positive details. The reason is free text. The cause is one of
+    # FalsePositiveCause, or null when none was stated or the category is not
+    # false_positive. A reopen clears the cause with the category.
     false_positive_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    false_positive_cause: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Summary
     executive_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

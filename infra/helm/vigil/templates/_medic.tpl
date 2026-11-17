@@ -134,8 +134,13 @@ translated to its endpoint, hence the endpoint addresses.
 {{- if not (.Values.podSecurityContext).fsGroup -}}
 {{- fail "medic.enabled needs podSecurityContext.fsGroup (default 1000): the backend reads Medic's API key file (0440) through that group" -}}
 {{- end -}}
-{{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer account the gateway logs in as" .Values.medic.gateway.viewer.username -}}
-{{- $_ := required "medic.gateway.viewer.passwordSecret.name is required when medic.enabled: an existing Secret holding the Viewer password (never put the password in values)" .Values.medic.gateway.viewer.passwordSecret.name -}}
+{{- $_ := required "medic.gateway.viewer.username is required when medic.enabled: the Viewer service account the gateway's token belongs to" .Values.medic.gateway.viewer.username -}}
+{{- end -}}
+
+{{/* The Secret holding the gateway's API token. Never rendered by the chart
+     (NOTES prints the command that fills it), so an upgrade keeps it. */}}
+{{- define "vigil.medicGateway.tokenSecret" -}}
+{{- .Values.medic.gateway.tokenSecret.name | default (printf "%s-token" (include "vigil.medicGateway.fullname" .)) -}}
 {{- end -}}
 
 {{/*

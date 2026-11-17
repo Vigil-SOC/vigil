@@ -50,6 +50,10 @@ _LEGACY_POLL_SOURCES = (
 
 _FEDERATION_ZERO = {"polls": 0, "findings": 0, "errors": 0, "dropped": 0}
 
+# Work-loop pass counters on /health. One integer per component the hang rule
+# reads. Kafka and the executor are not in that set.
+_PASS_COMPONENTS = ("poller", "processor", "scheduler", "orchestrator")
+
 
 # ---------------------------------------------------------------------------
 # ProbeMetrics — known-answer probe scores (#924)
@@ -134,6 +138,14 @@ class MetricsServer:
         self._tasks: Dict[str, asyncio.Task] = {}
         # Sub-loops by component group, read only by /status (never /health).
         self._loops: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._passes: Dict[str, int] = {name: 0 for name in _PASS_COMPONENTS}
+
+    def pass_ticker(self, name: str) -> Callable[[], None]:
+        """A callable that counts one pass of ``name``'s work loop."""
+        return functools.partial(self._count_pass, name)
+
+    def _count_pass(self, name: str) -> None:
+        self._passes[name] += 1
 
     def loop_watcher(self, group: str) -> Callable[..., None]:
         """A ``watch(name, task, shutdown_event)`` callable for one component."""
@@ -241,6 +253,7 @@ class MetricsServer:
         health: Dict[str, Any] = {
             "status": "healthy",
             "timestamp": utcnow().isoformat(),
+            "started_at": self._start_time.isoformat(),
             "uptime_seconds": (utcnow() - self._start_time).total_seconds(),
         }
 
@@ -256,6 +269,7 @@ class MetricsServer:
             )
         }
         health["components"] = components
+        health["passes"] = {name: self._passes[name] for name in _PASS_COMPONENTS}
 
         # A dead task makes the daemon unhealthy so the probes restart it.
         ok = all(v in ("running", "disabled") for v in components.values())

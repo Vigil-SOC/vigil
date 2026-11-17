@@ -255,6 +255,8 @@ export function useFederation() {
 }
 
 export type AccountStatus = 'active' | 'locked' | 'deactivated' | 'deleted' | 'erased'
+/** A sign-in method type, named once. Details stay on the Sign-in methods dialog. */
+export type MfaMethodType = 'authenticator_app' | 'security_key' | 'recovery_codes'
 /** list_users' status filter: "current" is every account not deleted or erased */
 export type AccountFilter = 'current' | 'all' | AccountStatus
 
@@ -272,9 +274,13 @@ export interface User {
   is_active: boolean
   is_verified: boolean
   mfa_enabled: boolean
+  /** method types this account has, in dialog order; empty when it has none */
+  mfa_method_types: MfaMethodType[]
   /** signs in with a password, and/or through the SSO provider (a linked subject) */
   has_password: boolean
   has_sso: boolean
+  /** a directory-managed account nobody signed in to and no case or task names: Remove frees its names */
+  unused_sync?: boolean
   last_login: string | null
   login_count: number
   principal_kind: 'person' | 'service_account'
@@ -291,6 +297,8 @@ export interface User {
   locked_from: string | null
   /** when an idle account will be deactivated, once inside the warning window */
   deactivating_at: string | null
+  /** sync, person or dormancy; null when the account was deactivated before this was kept */
+  deactivation_route: 'sync' | 'person' | 'dormancy' | null
   /** person-only keys the role holds; stored, no effect for a non-person */
   no_effect: string[]
 }
@@ -307,6 +315,8 @@ export interface Role {
   diff?: Record<string, { catalog: boolean | null; role: boolean | null }>
   unrecognised: string[]
   holders: number
+  /** directory sync's role: not granted, edited or deleted */
+  reserved?: boolean
 }
 
 export interface RolePreset {
@@ -320,6 +330,10 @@ export interface RolesMeta {
   presets: RolePreset[]
   permissions: string[]
   platform_equivalent: string[]
+  /** person-only keys: no effect for a service account */
+  person_only: string[]
+  /** new-capability permissions no custom or legacy role holds */
+  new_permissions_unheld: string[]
   nobody_can_manage_roles: boolean
 }
 
@@ -333,6 +347,8 @@ const EMPTY_ROLES_META: RolesMeta = {
   presets: [],
   permissions: [],
   platform_equivalent: [],
+  person_only: [],
+  new_permissions_unheld: [],
   nobody_can_manage_roles: false,
 }
 
@@ -384,6 +400,8 @@ export function useUsers({ search, status, skip, limit }: UsersQuery) {
           presets: d.presets ?? [],
           permissions: d.permissions ?? [],
           platform_equivalent: d.platform_equivalent ?? [],
+          person_only: d.person_only ?? [],
+          new_permissions_unheld: d.new_permissions_unheld ?? [],
           nobody_can_manage_roles: !!d.nobody_can_manage_roles,
         })
         setPhase('ready')
@@ -638,6 +656,25 @@ export function useCeiling() {
     }
   }, [refresh])
   const resume = useCallback(async () => apply((await autonomyApi.resume()).data), [apply])
+  const releaseHeld = useCallback(
+    async (actionId: string) => {
+      try {
+        return apply((await autonomyApi.releaseHeld(actionId)).data)
+      } catch (err) {
+        refresh()
+        throw err
+      }
+    },
+    [apply, refresh],
+  )
+  const releaseAllHeld = useCallback(async () => {
+    try {
+      return apply((await autonomyApi.releaseAllHeld()).data)
+    } catch (err) {
+      refresh()
+      throw err
+    }
+  }, [apply, refresh])
   const setWorkflow = useCallback(
     async (id: string, body: Schema<'WorkflowAutonomyBody'>) => {
       try {
@@ -650,7 +687,7 @@ export function useCeiling() {
     [apply, refresh],
   )
 
-  return { ceiling, phase, save, stop, resume, refresh, setWorkflow }
+  return { ceiling, phase, save, stop, resume, refresh, setWorkflow, releaseHeld, releaseAllHeld }
 }
 
 export interface InvestigateWorkflow {

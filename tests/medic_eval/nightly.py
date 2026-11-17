@@ -55,7 +55,8 @@ RULES = REPO / "services" / "medic" / "packs" / "medic-core" / "rules"
 CELLS = (*config_cells.CELLS, *stub_cells.CELLS, *pipeline_cells.CELLS)
 HELM_CELLS = helm_cells.CELLS
 # P-2.c holds 8100 s. These run beside it because none touches soc-daemon; every other
-# cell recreates or signals it (I-3.a, I-3.b, P-3.a too) and runs on its own.
+# cell recreates or signals it (I-3.a, I-3.b, P-3.a, P-3.d, P-3.e too) and runs on its own.
+# P-3.d then P-3.e: both hold soc-daemon, so they stay in this sequential list.
 BESIDE_P2C = ("I-5.b", "L-1.c", "L-2.a", "L-5.a")
 JOB_BUDGET_S = 5.5 * 3600  # the job's 6 h, less the report and teardown
 BRINGUP_S = 20 * 60  # enable-compose.sh builds three images

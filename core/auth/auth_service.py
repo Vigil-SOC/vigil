@@ -26,6 +26,7 @@ from core.auth import (
     principals,
     security_keys,
     session_policy,
+    trail_events,
 )
 from core.auth.identity import claim_sign_in_names, identifier_in_use, matching_accounts
 from core.config import _settings_env_file, get_settings
@@ -180,18 +181,59 @@ def password_matches_any(plaintext: str, hashes) -> bool:
 
 def managers(person: str) -> list[str]:
     """Principal ids of active people, other than this one, who hold users.write."""
-    with unit_of_work() as session:
+    return [principal for principal, _, _ in _manager_rows(person)]
+
+
+def _manager_rows(
+    person: str, session: Optional[Session] = None
+) -> list[tuple[str, str, str]]:
+    """Active people other than ``person`` who hold users.write: principal, name, email.
+
+    Service accounts are never included. Pass ``session`` from a request
+    transaction so this does not open a second one."""
+    with unit_of_work(session) as session:
         users = (
-            session.query(User.user_id, User.principal_id)
+            session.query(User)
             .filter(User.is_active.is_(True), User.service_account.isnot(True))
             .all()
         )
-        return [
-            principal
-            for user_id, principal in users
-            if principal != person
-            and AuthService.check_permission(user_id, "users.write", session=session)
+        rows = [
+            (user.principal_id, user.full_name or user.username, user.email)
+            for user in users
+            if user.principal_id != person
+            and AuthService.check_permission(
+                user.user_id, "users.write", session=session
+            )
         ]
+    rows.sort(key=lambda row: (row[1].casefold(), row[2].casefold()))
+    return rows
+
+
+def dispute_line(person: str, fallback: str, session: Optional[Session] = None) -> str:
+    """The closing sentence of a notice to ``person``.
+
+    Names the account managers and their email, or ``fallback`` when this
+    person has no other account manager."""
+    contacts = _manager_rows(person, session)
+    if not contacts:
+        return fallback
+    named = ", ".join(f"{name} <{email}>" for _, name, email in contacts)
+    return f"If this wasn't you, contact {named}."
+
+
+def with_dispute(
+    person: str, message: str, fallback: str, session: Optional[Session] = None
+) -> str:
+    """``message`` with its dispute sentence resolved.
+
+    ``fallback`` is the sentence already in ``message`` (empty when the notice
+    has none today). No other account manager leaves that wording as it is."""
+    line = dispute_line(person, fallback, session)
+    if fallback:
+        return message.replace(fallback, line, 1)
+    if not line:
+        return message
+    return f"{message} {line}"
 
 
 class AuthService:
@@ -459,6 +501,9 @@ class AuthService:
                     user.username,
                 )
         if locked:
+            # After the lock committed: a lock only reduces access, so the entry is
+            # held to record late if the trail refuses, and never blocks the lock.
+            trail_events.locked(locked[0], locked[2], locked[4], locked[5])
             AuthService._tell_locked(*locked)
 
     @staticmethod
@@ -487,6 +532,18 @@ class AuthService:
         except Exception:  # noqa: BLE001 - the lock stands, so does the person's notice
             logger.exception("could not find the managers to tell about a lock")
             to_managers = []
+        person_text = (
+            f"Your account was locked at {at} after {failures} failed sign-ins "
+            f"{where}. {ends} If this was not you, tell an administrator."
+        )
+        try:
+            person_text = with_dispute(
+                principal_id,
+                person_text,
+                "If this was not you, tell an administrator.",
+            )
+        except Exception:  # noqa: BLE001 - the lock stands; today's wording still goes
+            logger.exception("could not name the managers on a lock notice")
         notices = [
             (
                 principal,
@@ -503,8 +560,7 @@ class AuthService:
                 principal_id,
                 "account_locked",
                 "Your account was locked",
-                f"Your account was locked at {at} after {failures} failed sign-ins "
-                f"{where}. {ends} If this was not you, tell an administrator.",
+                person_text,
             )
         )
         for principal, kind, title, message in notices:
@@ -1005,7 +1061,9 @@ class AuthService:
                 full_name=full_name,
                 role_id=role_id,
                 is_active=True,
-                is_verified=False,
+                # A new account's address is confirmed. Only a person's own
+                # later change leaves one unconfirmed until they use the link.
+                is_verified=True,
                 mfa_enabled=False,
                 login_count=0,
             )

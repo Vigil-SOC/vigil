@@ -167,6 +167,14 @@ What closing a **Case** determined: `resolved`, `false_positive`, `duplicate`,
 is a recorded absence, not a determination.
 _Avoid_: resolution, disposition, reason
 
+**False-Positive Cause** (`cases`):
+Which kind of fix a false-positive determination is: `expected` (the activity
+was expected or authorized), `too_broad` (the rule's logic needs work), `data`
+(a field, parser or source is wrong), or `other`. It refines a **Closure
+Category** of `false_positive` and a noise mark. Absence is a null column, not
+a member of the set.
+_Avoid_: not given, reason, disposition
+
 **Entity Key**:
 The `type:value` string an **Episodic Memory** row is written and queried on --
 `ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, sparing the
@@ -317,8 +325,9 @@ collide with the capability domains above often enough to belong beside them.
 **Ledger**:
 The append-only event log of one run, and its only durable record. Every other
 view of a run is derived from it rather than stored beside it. The application
-role `vigil_app` may `SELECT` and `INSERT`; `UPDATE`, `DELETE` and `TRUNCATE`
-are revoked at the database.
+role `vigil_app` and the agent layer's own role `vigil_agent` may `SELECT` and
+`INSERT`; `UPDATE`, `DELETE` and `TRUNCATE` are revoked at the database.
+`vigil_agent` holds nothing beyond the agent tables.
 _Avoid_: journal, audit log, history
 
 **Fold**:

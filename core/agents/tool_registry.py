@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
 from contextlib import nullcontext
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from core.agents.attribution import current_claims
@@ -33,6 +35,11 @@ from core.cases.case_status import (
     record_status_change,
     status_change,
 )
+from core.cases.closure import (
+    ClosedByKind,
+    FalsePositiveCause,
+    false_positive_cause_value,
+)
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
@@ -43,7 +50,9 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
+from core.storage.models import Finding
 from core.teams import default_team
 
 if TYPE_CHECKING:
@@ -311,12 +320,42 @@ _TRIAGE_KEYS = (
 )
 
 
+# FindingSchema drops these. The frozen finding response stays without them;
+# the agent read puts the columns back on the dict it already returns.
+_NOISE_FIELDS = (
+    "noise_marked_at",
+    "noise_marked_by",
+    "noise_marked_by_kind",
+    "noise_reason",
+    "noise_cause",
+)
+
+
+def _iso_utc(value: Any) -> Any:
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _attach_noise(shaped: Args, finding_id: str) -> None:
+    with service_session() as session:
+        row = session.get(Finding, finding_id)
+        if row is None:
+            return
+        for key in _NOISE_FIELDS:
+            shaped[key] = _iso_utc(getattr(row, key))
+
+
 def get_finding(*, finding_id: str) -> Any:
     finding = _data().get_finding(finding_id)
     if not isinstance(finding, dict):
         return finding
     shaped = _for_agent(finding)
     shaped["detection_rule"] = rule_for_finding(finding)
+    if _data().is_using_database():
+        _attach_noise(shaped, finding_id)
     return shaped
 
 
@@ -401,17 +440,24 @@ def _sampled_context(context: Any) -> Any:
 
 # A dismissal is the finding's terminal state. The actor is the caller and the
 # kind is agent, as with a status edit that closes a case; the reason is what makes it a record.
-def dismiss_finding(*, finding_id: str, reason: str) -> Args:
+def dismiss_finding(
+    *, finding_id: str, reason: str, noise_cause: Optional[str] = None
+) -> Args:
     if refusal := permission_refusal("findings.write"):
         return refusal
     from core.cases.agent_closure import actor, service_session
-    from core.cases.closure import ClosedByKind
-    from core.storage.models import Finding
     from core.time import utcnow
 
     reason = (reason or "").strip()
     if not reason:
         return {"error": "A reason is required to dismiss a finding"}
+    try:
+        cause = false_positive_cause_value(noise_cause)
+    except ValueError:
+        return {
+            "error": f"{noise_cause!r} is not a false-positive cause",
+            "causes": [member.value for member in FalsePositiveCause],
+        }
     with service_session() as session:
         finding = session.get(Finding, finding_id)
         if finding is None:
@@ -420,12 +466,14 @@ def dismiss_finding(*, finding_id: str, reason: str) -> Args:
         finding.noise_marked_by = actor()
         finding.noise_marked_by_kind = ClosedByKind.AGENT.value
         finding.noise_reason = reason
+        finding.noise_cause = cause
         return {
             "success": True,
             "finding_id": finding_id,
             "noise_marked_by": finding.noise_marked_by,
             "noise_marked_by_kind": finding.noise_marked_by_kind,
             "noise_reason": reason,
+            "noise_cause": cause,
         }
 
 
@@ -1018,10 +1066,11 @@ def _indicator_lookup(args: Args) -> Any:
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
     return [
         {
+            **(hits.get(value) or {}),
+            # The row names the value as asked, not the feed's stored spelling.
             "indicator_type": indicator_type,
             "indicator_value": value,
             "known": value in hits,
-            **(hits.get(value) or {}),
         }
         for value in values
     ]
@@ -1231,8 +1280,11 @@ async def execute_backend_tool(
             result = await result
         return result, True
 
-    # Agent skills (#925): reads from disk only, never a database.
+    # Agent skills: read from disk, except those the scan holds, which read as
+    # absent so the agent cannot learn their content. The verdicts come from the
+    # database, hence off the event loop.
     if tool_name == READ_SKILL_TOOL:
-        return read_skill(args.get("name"), args.get("file")), True
+        visible = await asyncio.to_thread(agent_skills)
+        return read_skill(args.get("name"), args.get("file"), skills=visible), True
 
     return None, False

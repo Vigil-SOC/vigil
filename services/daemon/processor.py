@@ -96,6 +96,8 @@ class FindingProcessor:
         self.input_queue: asyncio.Queue = asyncio.Queue(maxsize=INPUT_QUEUE_MAXSIZE)
         # Set by the daemon: watch(name, task, shutdown_event) for /status loops.
         self.watch_loop: Optional[Callable[..., None]] = None
+        # Set by the daemon: counts one _process_worker pass on /health.
+        self.note_pass: Optional[Callable[[], None]] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -302,6 +304,10 @@ class FindingProcessor:
         logger.debug(f"Processing worker {worker_id} started")
 
         while not shutdown_event.is_set():
+            # The empty-queue wait is a pass too. A pass that blocks does not
+            # tick again until it returns.
+            if self.note_pass is not None:
+                self.note_pass()
             try:
                 # Get item with timeout to allow shutdown checks
                 try:

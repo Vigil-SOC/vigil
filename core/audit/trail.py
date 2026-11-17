@@ -255,6 +255,52 @@ def hold(
     )
 
 
+def tell_administrators(session, kind: str, title: str, message: str) -> list[int]:
+    """A high-priority notice to each active holder of ``audit.forward``, in the
+    caller's transaction. Returns the notice ids: pass them to ``send_notices``
+    once that transaction has committed, so the emails go out."""
+    from core.auth import permissions
+    from core.platform.notices import notify
+
+    ids = []
+    for principal in permissions.holders("audit.forward"):
+        notice = notify(
+            principal,
+            kind,
+            title,
+            message,
+            link="/settings?section=audit",
+            priority="high",
+            session=session,
+        )
+        if notice is not None:
+            ids.append(notice)
+    return ids
+
+
+def _alert_first_held(session, since: datetime) -> list[int]:
+    """Tell the trail's administrators when the entry just held is the only one
+    waiting. Rows with a ``window_key`` are collapse windows, not held entries."""
+    waiting = session.execute(
+        text("SELECT count(*) FROM public.audit_trail_held WHERE window_key IS NULL")
+    ).scalar()
+    if waiting != 1:
+        return []
+    try:
+        with session.begin_nested():  # a failed notice must not undo the hold
+            return tell_administrators(
+                session,
+                "audit_trail_held",
+                "The audit trail is holding entries",
+                f"The audit trail refused an entry at {since:%Y-%m-%d %H:%M} UTC "
+                "and is holding it to record late. Open Settings › Audit to "
+                "see why.",
+            )
+    except Exception:  # noqa: BLE001 - the hold stands
+        logger.exception("could not tell the trail's administrators about a hold")
+        return []
+
+
 def append_or_hold(payload: dict[str, Any], **beside: Any) -> Optional[Entry]:
     """For a safety action, which goes ahead whether or not this records it.
 
@@ -276,11 +322,16 @@ def append_or_hold(payload: dict[str, Any], **beside: Any) -> Optional[Entry]:
     try:
         with get_db_session() as session, session.begin():
             hold(session, payload, occurred_at, **beside)
+            notices = _alert_first_held(session, occurred_at)
     except Exception:  # noqa: BLE001
         logger.exception(
             "audit entry could not be held: %s",
             json.dumps({"occurred_at": occurred_at.isoformat(), "payload": payload}),
         )
+    else:
+        from core.platform.notices import send_notices
+
+        send_notices(notices)  # after the commit
     return None
 
 
@@ -318,6 +369,26 @@ def drain_late(session, limit: int = 100) -> int:
         except Exception:  # noqa: BLE001 - the rest still go in
             logger.exception("held audit entry %s could not be recorded", row_id)
     return recorded
+
+
+def held_waiting(session) -> tuple[int, Optional[datetime]]:
+    """How many entries are waiting to be recorded late, and the oldest time.
+
+    The same predicate as ``drain_late``: a row with a ``window_key`` is an
+    open collapse window or an expiry marker, not a held entry. ``(0, None)``
+    when the table is not there yet.
+    """
+    if (
+        session.execute(text("SELECT to_regclass('public.audit_trail_held')")).scalar()
+        is None
+    ):
+        return 0, None
+    count, since = session.execute(text("""
+            SELECT count(*), min(occurred_at)
+            FROM public.audit_trail_held
+            WHERE window_key IS NULL
+        """)).one()
+    return int(count), since
 
 
 def failure_key(source_ip: Optional[str], attempted_name: Optional[str]) -> str:

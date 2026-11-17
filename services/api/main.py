@@ -233,6 +233,12 @@ key_age.register()
 register_medic_notices()
 app.add_middleware(CSRFMiddleware)
 
+# A 401 on /scim/ never reaches the handler. The note counts it and does not
+# read the body or the Authorization header (#4423).
+from services.api.middleware.scim_auth import ScimAuthNoteMiddleware  # noqa: E402
+
+app.add_middleware(ScimAuthNoteMiddleware)
+
 # Security headers added AFTER CORS so it is the outermost middleware on the
 # response path. That way HSTS/CSP/X-Frame-Options apply to CORS preflight
 # responses too (CORSMiddleware short-circuits OPTIONS without calling inner
@@ -681,6 +687,10 @@ async def _startup(app: FastAPI):
 
         app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
+        from services.api.skill_sweep import run as skill_sweeper
+
+        app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
+
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
@@ -712,11 +722,17 @@ def _start_audit_feed(app) -> None:
 
 
 async def _stop_setup_code(app) -> None:
+    # Cancelling the task cannot stop the thread a sweep runs in; this does, at
+    # the next skill, so shutdown is not held for the rest of a long sweep.
+    from core.skills import skill_hold
+
+    skill_hold.cancel.set()
     for name in (
         "key_ring_task",
         "key_age_task",
         "setup_code_task",
         "dormancy_task",
+        "skill_sweep_task",
     ):
         task = getattr(app.state, name, None)
         if task is None:
@@ -1021,6 +1037,7 @@ _SERVED_BY_THE_BACKEND = (
     "/api",
     "/internal",
     "/mcp",
+    "/scim",
     "/assets",
     "/metrics",
     "/docs",

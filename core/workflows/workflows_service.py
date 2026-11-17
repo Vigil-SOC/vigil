@@ -655,7 +655,7 @@ class WorkflowsService:
         and the outcome are read back through the run record, which the
         agent layer mirrors as each phase completes.
         """
-        from core.agents.operator_manifest import operator_request
+        from core.agents.operator_manifest import SkillHeld, operator_request
         from core.agents.queue import build_start_job, enqueue_run
 
         workflow = self.get_workflow(workflow_id)
@@ -819,12 +819,19 @@ class WorkflowsService:
                 "run_id": run_id,
             }
 
+        try:
+            operator = await asyncio.to_thread(operator_request, workflow.metadata)
+        except SkillHeld as exc:
+            run_service.finalize_run(run_id, status="failed", error=str(exc))
+            note_terminal(run_id, "failed", "")
+            return {"success": False, "error": str(exc), "run_id": run_id}
+
         job = build_start_job(
             run_id=run_id,
             # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
             # A custom agent's manifest and skills ride the job, not the trail entry.
-            request={**spec, **operator_request(workflow.metadata)},
+            request={**spec, **operator},
             enqueued_by=actor or triggered_by or "api",
             principal=principal,
             actor=actor_principal,

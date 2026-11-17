@@ -24,7 +24,14 @@ import {
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
-import { detectionRulesApi, type EffectClass, type OverlayOnlyRule, type ToolClass } from '../../services/api'
+import {
+  approvalsApi,
+  detectionRulesApi,
+  type Ceiling,
+  type EffectClass,
+  type OverlayOnlyRule,
+  type ToolClass,
+} from '../../services/api'
 import { errorText } from '../../shared/errorText'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
@@ -70,6 +77,23 @@ const splitTool = (name: string) => {
   return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
+type HeldRow = Ceiling['held'][number]
+
+/** The ceiling stores a naive UTC stamp; without an offset a browser reads it as local. */
+function utcStamp(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  return utcDayClock(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`)
+}
+
+function stoppedBanner(ceil: Ceiling): string {
+  const who = ceil.stopped_by_label || ceil.stopped_by
+  const when = utcStamp(ceil.stopped_at)
+  const by = who ? ` by ${who}${when ? ` ${when}` : ''}` : ''
+  return (
+    `Stopped${by}. Unattended writes, proposals, outside actions and Vigil’s own detection rules ` +
+    'are off until someone resumes; runs no person started can’t reach restricted cases, and other reads continue.'
+  )
+}
 
 type WorkflowChoice = 'fleet' | 'act' | 'assist'
 const WORKFLOW_CHOICES: { to: WorkflowChoice; label: string }[] = [
@@ -119,7 +143,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'stop':
       return {
         title: 'Stop autonomy?',
-        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
+        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; runs no person started can’t reach restricted cases, and other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     case 'workflow': {
       const shown = agreementText(pending.workflow.agreement)
@@ -186,6 +210,10 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   // write raises, resumes and switches four-eyes; stop stops and lowers
   const canRaise = hasPermission('ai_autonomy.write')
   const canLower = canRaise || hasPermission('ai_autonomy.stop')
+  const canDecide = hasPermission('ai_decisions.approve')
+  const [rejectFor, setRejectFor] = useState<HeldRow | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [heldBusy, setHeldBusy] = useState<string | null>(null)
   const lastSaved = useRef<OrchestratorConfig | null>(null)
   const configRef = useRef<OrchestratorConfig | null>(null)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -453,34 +481,48 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
 
   // the environment lock disables raising; lowering a stored flag still saves.
   // Without ai_autonomy.write there is no raise control: stop holders can only lower.
-  const seg = (label: string, on: boolean, stored: boolean, raise: () => void, lower: () => void) => (
-    <>
-      {canRaise ? (
-        <div className="lim-seg" role="group" aria-label={label}>
-          <button type="button" aria-pressed={on} disabled={locked} onClick={on ? undefined : raise}>
-            {locked && <Icon name="lock" size={12} />} On their own
-          </button>
-          <button type="button" aria-pressed={!on} onClick={stored ? lower : undefined}>
-            Ask first
-          </button>
-        </div>
-      ) : (
-        <span className="lim-class-note">
-          {on ? 'On their own.' : 'Ask first.'}
-          {canLower && stored && (
-            <button type="button" className="btn ghost" onClick={lower}>
-              Switch to Ask first
+  const seg = (label: string, on: boolean, stored: boolean, raise: () => void, lower: () => void) => {
+    const raiseStopped = Boolean(ceil?.stopped) && !on
+    return (
+      <>
+        {canRaise ? (
+          <div className="lim-seg" role="group" aria-label={label}>
+            <button
+              type="button"
+              aria-pressed={on}
+              disabled={locked || raiseStopped}
+              title={raiseStopped ? STOPPED_LOOSEN : undefined}
+              onClick={on ? undefined : raise}
+            >
+              {locked && <Icon name="lock" size={12} />} On their own
             </button>
-          )}
-        </span>
-      )}
-      {locked && (
-        <span className="lim-class-note">
-          <Icon name="lock" size={13} /> Locked by the environment
-        </span>
-      )}
-    </>
-  )
+            <button type="button" aria-pressed={!on} onClick={stored ? lower : undefined}>
+              Ask first
+            </button>
+          </div>
+        ) : (
+          <span className="lim-class-note">
+            {on ? 'On their own.' : 'Ask first.'}
+            {canLower && stored && (
+              <button type="button" className="btn ghost" onClick={lower}>
+                Switch to Ask first
+              </button>
+            )}
+          </span>
+        )}
+        {locked && (
+          <span className="lim-class-note">
+            <Icon name="lock" size={13} /> Locked by the environment
+          </span>
+        )}
+        {raiseStopped && canRaise && (
+          <span className="lim-class-note">
+            <Icon name="alert" size={13} /> {STOPPED_LOOSEN}
+          </span>
+        )}
+      </>
+    )
+  }
 
   // write may loosen (confirm first, refused while stopped); stop may only tighten
   const toolRow = (t: ToolClass, stopped: boolean) => {
@@ -644,6 +686,114 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     )
   }
 
+  const releaseOne = async (actionId: string) => {
+    setHeldBusy(actionId)
+    try {
+      await ceiling.releaseHeld(actionId)
+      notify('ok', 'Released. It runs on the next pass, once autonomy is not stopped.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to release the action.'))
+    } finally {
+      setHeldBusy(null)
+    }
+  }
+
+  const releaseAll = async () => {
+    setHeldBusy('all')
+    try {
+      await ceiling.releaseAllHeld()
+      notify('ok', 'Released. Each one runs on the next pass, once autonomy is not stopped.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to release the held actions.'))
+    } finally {
+      setHeldBusy(null)
+    }
+  }
+
+  const rejectHeld = async () => {
+    if (!rejectFor || !rejectReason.trim()) return
+    const row = rejectFor
+    setHeldBusy(row.action_id)
+    try {
+      await approvalsApi.reject(row.action_id, rejectReason.trim())
+      setRejectFor(null)
+      setRejectReason('')
+      await ceiling.refresh()
+      notify('ok', 'Rejected.')
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to reject the action.'))
+    } finally {
+      setHeldBusy(null)
+    }
+  }
+
+  const heldList = (view: NonNullable<typeof ceil>) => {
+    const rows = view.held ?? []
+    if (rows.length === 0) return null
+    const releasable = rows.filter((row) => !row.restricted)
+    return (
+      <div className="lim-tools mt-3">
+        <div className="lim-tools-head">
+          <h4>
+            Actions the stop is holding <span className="lim-tools-count">{rows.length}</span>
+          </h4>
+          <span>
+            Approved outside actions stay held after a resume until someone releases them. The next pass runs a
+            released one.
+          </span>
+          {!canDecide && releasable.length > 0 && (
+            <span>Releasing or rejecting one needs permission to approve a decision.</span>
+          )}
+        </div>
+        {rows.map((row) => (
+          <div className="lim-row lim-held" key={row.action_id}>
+            <span className="lim-row-title">
+              <span className="lim-tool-name">{row.title}</span>
+              {!row.restricted && (
+                <span>
+                  {row.action_type}
+                  {row.target ? ` · ${row.target}` : ''}
+                  {row.approved_by ? ` · approved by ${row.approved_by}` : ''}
+                </span>
+              )}
+            </span>
+            <span className="lim-row-tag">{row.restricted ? 'Restricted' : 'Held'}</span>
+            <span className="lim-row-ctl lim-held-ctl">
+              {canDecide && !row.restricted && (
+                <>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={heldBusy != null}
+                    onClick={() => releaseOne(row.action_id)}
+                  >
+                    {heldBusy === row.action_id ? 'Releasing…' : 'Release'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn danger"
+                    disabled={heldBusy != null}
+                    onClick={() => {
+                      setRejectReason('')
+                      setRejectFor(row)
+                    }}
+                  >
+                    Reject
+                  </button>
+                </>
+              )}
+            </span>
+          </div>
+        ))}
+        {canDecide && releasable.length > 1 && (
+          <button type="button" className="btn ghost mt-2" disabled={heldBusy != null} onClick={releaseAll}>
+            {heldBusy === 'all' ? 'Releasing…' : 'Release all'}
+          </button>
+        )}
+      </div>
+    )
+  }
+
   const idle = bound('stale_threshold')
   const runtime = bound('max_runtime_per_investigation')
   const loop = bound('loop_interval')
@@ -781,9 +931,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         ) : (
           <>
             {ceil.stopped && (
-              <div className="settings-banner err mb-3">
+              <div className="settings-banner err lim-stopped mb-3">
                 <Icon name="alert" size={14} />
-                <span>Stopped. Unattended writes, proposals, outside actions and Vigil’s own detection rules are off until someone resumes; other reads continue. The choices below apply after that.</span>
+                <span>
+                  {stoppedBanner(ceil)}
+                </span>
               </div>
             )}
             {locked && (
@@ -834,17 +986,25 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 <span className="toggle-row-hint">
                   Nobody approves an action they proposed, or one proposed by a run that acted for them.
                 </span>
+                {ceil.stopped && ceil.four_eyes && canRaise && (
+                  <span className="lim-class-note">
+                    <Icon name="alert" size={13} /> {STOPPED_LOOSEN}
+                  </span>
+                )}
               </div>
               {canRaise ? (
                 <Toggle
                   label="Four-eyes approval"
                   checked={ceil.four_eyes}
+                  disabled={ceil.stopped && ceil.four_eyes}
+                  title={ceil.stopped && ceil.four_eyes ? STOPPED_LOOSEN : undefined}
                   onChange={(v) => saveCeiling({ four_eyes: v })}
                 />
               ) : (
                 <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
               )}
             </div>
+            {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
           </>
@@ -952,6 +1112,30 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         danger={pending?.kind === 'stop'}
         onConfirm={confirmPending}
         onClose={dismissPending}
+      />
+      <ConfirmDialog
+        open={rejectFor != null}
+        title="Reject this action?"
+        body={
+          <Field label="Why it is rejected">
+            <TextInput
+              autoFocus
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && rejectReason.trim() && rejectHeld()}
+            />
+          </Field>
+        }
+        confirmLabel="Reject"
+        confirmDisabled={!rejectReason.trim()}
+        busy={heldBusy != null && heldBusy === rejectFor?.action_id}
+        onConfirm={rejectHeld}
+        onClose={() => {
+          if (heldBusy == null) {
+            setRejectFor(null)
+            setRejectReason('')
+          }
+        }}
       />
     </>
   )

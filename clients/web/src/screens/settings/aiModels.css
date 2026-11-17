@@ -62,3 +62,76 @@ button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
 .aim-who { font-weight: 650; color: var(--tx0); }
 .aim-note { font-size: 11px; color: var(--tx2); }
 .aim-table tbody td.aim-nowrap { white-space: nowrap; }
+
+/* The investigation replay sits under that row and stays inside the visible card
+   when the table itself scrolls sideways. */
+.aim-table-wrap { container-type: inline-size; }
+.aim-table tr:has(+ .aim-replay-row) td { border-bottom-color: transparent; padding-bottom: 4px; }
+.aim-replay-row:hover { background: transparent; }
+.aim-replay-row td { padding-top: 0; white-space: normal; }
+.aim-replay {
+  position: sticky;
+  left: 0;
+  width: calc(100cqw - 20px);
+  max-width: calc(100cqw - 20px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.aim-replay-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.aim-replay-line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tx1);
+  overflow-wrap: anywhere;
+}
+.aim-replay-reason {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--poor);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+/* A disabled Replay button is not a tab stop, so the reason wraps in full (DESIGN.md §7). */
+.aim-replay:focus-within .aim-replay-reason,
+.aim-replay:not(:has(button:not(:disabled))) .aim-replay-reason {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.aim-replay-cases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.aim-replay-cases li {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tx1);
+  overflow-wrap: anywhere;
+}
+.aim-replay-id { font-family: var(--mono); color: var(--tx0); }
+.aim-replay-more {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tx1);
+  background: var(--bg3);
+  border: 0;
+  border-radius: 999px;
+  height: 22px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.aim-replay-more:hover { color: var(--tx0); }

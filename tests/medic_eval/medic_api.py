@@ -38,6 +38,47 @@ else:
 """
 
 
+POST = r"""
+import json, socket, sys, urllib.error, urllib.request
+path, body, key_file = sys.argv[1], sys.argv[2], sys.argv[3]
+key = open(key_file).read().strip()
+data = body.encode()
+def send(addr):
+    req = urllib.request.Request(
+        f"http://{addr}:8470{path}", data=data, method="POST",
+        headers={
+            "X-Medic-Key": key,
+            "Content-Type": "application/json",
+            "X-Medic-Admin": "user:eval",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+for addr in sorted({a[4][0] for a in socket.getaddrinfo(socket.gethostname(), 8470)}):
+    try:
+        print(json.dumps(send(addr)))
+        break
+    except Exception:
+        continue
+else:
+    print("null")
+"""
+
+
+def post(stack, path: str, body: str = "{}") -> tuple[int, str]:
+    """(status, body) of POST `path` inside the Medic container."""
+    out = stack.medic_exec(
+        "python", "-c", POST, path, body, stack.medic_key_file
+    )
+    got = json.loads(out.strip() or "null")
+    if got is None:
+        return 0, ""
+    return got
+
+
 def get(stack, path: str, paged: bool = False):
     """The parsed reply of GET `path`, or None when the API can't be reached."""
     out = stack.medic_exec("python", "-c", READ, path, "paged" if paged else "one", stack.medic_key_file)

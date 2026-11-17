@@ -17,10 +17,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "import-linter==2.15",
+    "import-linter==2.16",
     "openapi-spec-validator>=0.7",
     "pytest>=8",
-    "ruff==0.17.4",
+    "ruff==0.17.5",
 ]
 
 [tool.uv]

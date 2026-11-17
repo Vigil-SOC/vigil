@@ -12,6 +12,15 @@ without one gets a fresh uuid. The sync appends the 'shadow' stage rows, and for
 transaction. A copy saved unchanged makes no version and no entry. A version
 with no such entry was first seen by the sync alone: a file put in the folder.
 
+A redraft saved under a new id is a new rule. When the daily gaps run raised the
+gap a save answers again, the save's copies replace the ones Vigil drafted for
+that gap's technique before (``proposals.replaced_copies``): each copy's new
+version names the earlier copies of its language on its ``detections.rule_saved``
+entry and, for a staged copy (Splunk, Elastic, Wazuh), on its stage row
+(``proof['replaces']``), so a replaced staged copy can be read forward to its
+successor. A Sigma copy has no stage rows: its link is on the trail entry only.
+Code makes the link, never the model.
+
 Evidence passed with the save is replayed on the Sigma form before anything is
 written (#3755); the result lands as ``checks.replay`` on the Sigma version.
 Events named by id are read from the SIEM instead, and each Splunk and Elastic
@@ -254,8 +263,8 @@ def _parse(language: str, text: str) -> RuleRecord:
 
 def _wanted(
     given: Optional[Dict[str, Any]], copies: Dict[str, str]
-) -> Dict[str, List[Tuple[Dict[str, Any], str]]]:
-    """Exceptions per copy language as (match, note); Refused when one is malformed."""
+) -> Dict[str, List[Tuple[Dict[str, Any], str, Any]]]:
+    """Exceptions per copy language as (match, note, finding ids); Refused when one is malformed."""
     if not given:
         return {}
     if not isinstance(given, dict):
@@ -272,19 +281,20 @@ def _wanted(
         if not isinstance(items, list):
             raise Refused(f"{language} exceptions must be a list")
         try:
-            out[language] = [
-                excepts.checked(
-                    (i or {}).get("match") if isinstance(i, dict) else None,
-                    i.get("note") if isinstance(i, dict) else None,
-                )
-                for i in items
-            ]
+            parsed = []
+            for item in items:
+                body = item if isinstance(item, dict) else {}
+                match, note = excepts.checked(body.get("match"), body.get("note"))
+                parsed.append((match, note, body.get("finding_ids")))
+            out[language] = parsed
         except ValueError as exc:
             raise Refused(f"{language} exception: {exc}") from exc
     return out
 
 
-def _sigma_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Dict]:
+def _sigma_matches(
+    key: Optional[str], given: List[Tuple[Dict, str, Any]]
+) -> List[Dict]:
     """The Sigma copy's active exceptions, stored and given."""
     stored: List[Dict] = []
     if key:
@@ -297,7 +307,7 @@ def _sigma_matches(key: Optional[str], given: List[Tuple[Dict, str]]) -> List[Di
             )
         if rid is not None:
             stored = [m for _, m in excepts.active([rid]).get(rid, [])]
-    return stored + [m for m, _ in given]
+    return stored + [m for m, _, _ids in given]
 
 
 def _evidence(
@@ -479,7 +489,7 @@ def _saved(keys: List[str]) -> List[Dict[str, Any]]:
 
 def _add_exceptions(
     prepared: List[Tuple[str, str, RuleRecord]],
-    wanted: Dict[str, List[Tuple[Dict[str, Any], str]]],
+    wanted: Dict[str, List[Tuple[Dict[str, Any], str, Any]]],
 ) -> List[Dict[str, Any]]:
     """Store the exceptions given for each saved copy, attributed to the caller."""
     if not wanted:
@@ -519,6 +529,68 @@ def _author() -> Dict[str, Any]:
         "agent_id": agent_id,
         "run_id": run_id,
     }
+
+
+def _replaced(
+    author: Dict[str, Any], prepared: List[Tuple[str, str, RuleRecord]]
+) -> Dict[str, List[int]]:
+    """Each copy's native key and the earlier gap drafts' copies it replaces.
+
+    Only a record: a lookup that fails is logged and the save goes ahead unlinked.
+    """
+    if not author["run_id"]:
+        return {}
+    from core.detections.engineering import proposals
+
+    try:
+        return proposals.replaced_copies(
+            author["run_id"],
+            [
+                {
+                    "language": language,
+                    "native_key": record.native_key,
+                    "techniques": list(record.techniques),
+                }
+                for language, _, record in prepared
+            ],
+        )
+    except Exception:  # noqa: BLE001 -- the save stands without the link
+        logger.exception("Overlay save: finding the drafts this one replaces failed")
+        return {}
+
+
+def _answer_gaps(
+    author: Dict[str, Any],
+    prepared: List[Tuple[str, str, RuleRecord]],
+    saved: List[Dict[str, Any]],
+) -> List[str]:
+    """Attach the saved copies to the gaps the daily gaps run handed this run, if any.
+
+    The rules are saved already: a record that fails is logged, not the save's answer.
+    """
+    from core.detections.engineering import proposals
+
+    rule_ids = {row["id"]: row["rule_id"] for row in saved}
+    copies = [
+        {
+            "rule_id": rule_ids[record.native_key],
+            "language": language,
+            "native_key": record.native_key,
+            "techniques": list(record.techniques),
+            "text": text,
+        }
+        for language, text, record in prepared
+        if record.native_key in rule_ids
+    ]
+    try:
+        return proposals.attach_saved(
+            author["run_id"],
+            author["agent_id"] or author["actor"] or author["run_id"],
+            copies,
+        )
+    except Exception:  # noqa: BLE001 -- the save stands without the record
+        logger.exception("Overlay save: recording the gaps run's rule failed")
+        return []
 
 
 def save_rule(
@@ -602,9 +674,11 @@ def save_rule(
                 )
                 _write(root, rel, text)
             source = service.overlay_source()  # recounted with the new files
+            author = _author()
             saves = sync.Saves(
-                _author(),
+                author,
                 {record.native_key: fingerprint(record) for _, _, record in prepared},
+                _replaced(author, prepared),
             )
             report = sync._sync_one(service, source, saves)
             if report.error and all_or_nothing:
@@ -622,9 +696,14 @@ def save_rule(
             undone, removed = _undo(service, root, before, keys)
             reason = exc.args[0] if isinstance(exc, NotSaved) else type(exc).__name__
             raise NotSaved(reason, undone=undone, removed=removed) from exc
-    result: Dict[str, Any] = {"saved": _saved(keys), "sync": asdict(report)}
+    saved = _saved(keys)
+    result: Dict[str, Any] = {"saved": saved, "sync": asdict(report)}
     if added:
         result["exceptions"] = added
+    if author["run_id"] and saved and not report.error:
+        answered = _answer_gaps(author, prepared, saved)
+        if answered:
+            result["gap_proposals"] = answered
     if report.error:
         result["error"] = f"written, but the overlay sync failed: {report.error}"
     return result

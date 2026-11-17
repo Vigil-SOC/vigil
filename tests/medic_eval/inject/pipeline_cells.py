@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 
+from tests.medic_eval import medic_api
 from tests.medic_eval.inject.config_cells import (
     ELASTIC,
     ELASTIC_STUB,
@@ -20,7 +21,8 @@ from tests.medic_eval.inject.config_cells import (
     _expect,
 )
 from tests.medic_eval.inject.contract import Cell
-from tests.medic_eval.inject.stack import Stack
+from tests.medic_eval.inject.stack import Stack, docker_api
+from tests.medic_eval.inject.survival_checks import restore
 
 # ---- I-3: federation polling Elastic ----------------------------------------
 # Federation (global and the "elastic" source) is enabled, elastic-siem points at
@@ -62,7 +64,9 @@ def _stub_hits(s: Stack, hits: list | None) -> None:
 def _federation(s: Stack, hits: list | None, max_items: int, interval: int) -> None:
     _stub_hits(s, hits)
     s.set_integration(ELASTIC, {"elasticsearch_url": ELASTIC_STUB}, hits is not None)
-    status, body = s.api("PUT", "/api/federation/settings", {"enabled": hits is not None})
+    status, body = s.api(
+        "PUT", "/api/federation/settings", {"enabled": hits is not None}
+    )
     assert status == 200, (status, body)
     status, body = s.api(
         "PATCH",
@@ -126,7 +130,9 @@ def i3a_verify(s: Stack, faulted: bool) -> None:
 # skipped (core/federation/adapters/_base.py full_batch_cursor). No rule covers
 # it, so it scores as a miss.
 
-I3B_WARNING = f"batch filled max_items={I3B_MAX_ITEMS} but no alert carried a readable time"
+I3B_WARNING = (
+    f"batch filled max_items={I3B_MAX_ITEMS} but no alert carried a readable time"
+)
 
 
 def i3b_inject(s: Stack) -> None:
@@ -231,7 +237,9 @@ def _free_slots(s: Stack) -> int:
 
 def p2c_verify(s: Stack, faulted: bool) -> None:
     if faulted:
-        _eventually(s, lambda: _free_slots(s) <= 0, True, "orchestrator free_slots <= 0")
+        _eventually(
+            s, lambda: _free_slots(s) <= 0, True, "orchestrator free_slots <= 0"
+        )
         time.sleep(15)  # an intake pass (loop_interval is 10 s) has seen the queued row
         # Still queued, and the made-up runs were not failed as stale.
         _expect(
@@ -254,11 +262,12 @@ def p2c_verify(s: Stack, faulted: bool) -> None:
         _eventually(s, lambda: _free_slots(s) > 0, True, "orchestrator free_slots > 0")
 
 
-# ---- P-3.a: the scheduler task is cancelled ---------------------------------
-# The daemon has no endpoint or signal that stops a component, so compose.eval.yml
-# mounts sitecustomize.py, which cancels the task named "scheduler" on SIGUSR1.
-# /health then reads components.scheduler "stopped" and answers 503; recreating the
-# daemon starts it again.
+# ---- P-3.a: the scheduler task fails ----------------------------------------
+# The daemon has no endpoint that stops a component, so compose.eval.yml mounts
+# sitecustomize.py, which raises in the scheduler task on SIGUSR1. /health then
+# reads components.scheduler "failed: RuntimeError" and answers 503. The fault
+# is held until the lane-1 rule can fire, then cleared by Medic's run-fix
+# (the shipped pack's restart-soc-daemon), never by recreating the container.
 
 
 def _health(s: Stack) -> tuple[int, str]:
@@ -270,23 +279,342 @@ def _health(s: Stack) -> tuple[int, str]:
         return status, ""
 
 
+def _failed(state: str) -> bool:
+    return state == "failed" or state.startswith("failed:")
+
+
 def p3a_inject(s: Stack) -> None:
-    if _health(s)[1] == "stopped":
+    if _failed(_health(s)[1]):
         return
     s.compose("kill", "-s", "SIGUSR1", "soc-daemon")  # PID 1 is the daemon's python
-    _eventually(s, lambda: _health(s)[1], "stopped", "components.scheduler")
+    _eventually(s, lambda: _failed(_health(s)[1]), True, "components.scheduler failed")
 
 
 def p3a_revert(s: Stack) -> None:
     if _health(s) == (200, "running"):
         return
-    s.recreate("soc-daemon")
-    s.wait_daemon()
+    deadline = time.monotonic() + 180
+    incident = None
+    while time.monotonic() < deadline and incident is None:
+        page = medic_api.get(s, "/v1/incidents?state=open&limit=200") or {}
+        for item in page.get("items") or []:
+            rule = item.get("rule") or {}
+            if (
+                rule.get("id") == "pipeline.daemon-component-failed-compose"
+                and item.get("state") == "firing"
+            ):
+                incident = item["incident_id"]
+                break
+        if incident is None:
+            time.sleep(5)
+    if incident is None:
+        raise AssertionError("lane-1 soc-daemon incident did not open")
+    status, body = medic_api.post(s, f"/v1/incidents/{incident}/fix", "{}")
+    if status == 409 and json.loads(body).get("reason") == "fix_running":
+        pass  # a second revert: the first click is still in its restart
+    elif status != 201:
+        raise AssertionError(f"run-fix answered {status}: {body[:300]}")
+    s.wait(lambda: _health(s), lambda got: got == (200, "running"), timeout=180)
 
 
 def p3a_verify(s: Stack, faulted: bool) -> None:
-    want = (503, "stopped") if faulted else (200, "running")
-    _eventually(s, lambda: _health(s), want, "GET :9091/health (status, scheduler)")
+    if faulted:
+        _eventually(
+            s,
+            lambda: (_health(s)[0], _failed(_health(s)[1])),
+            (503, True),
+            "GET :9091/health failed",
+        )
+    else:
+        _eventually(
+            s,
+            lambda: _health(s),
+            (200, "running"),
+            "GET :9091/health (status, scheduler)",
+        )
+
+
+# ---- P-3.d: the scheduler loop stalls without dying --------------------------
+# SIGUSR2 (sitecustomize.py) stops TaskScheduler.run from counting passes and
+# leaves the task running. Not P-3.a: that cause is the death cell, and
+# rule_for binds it to pipeline.daemon-component-failed-compose. The lane-1
+# rule is a suppression child, so it stays held for 5 minutes after it fires;
+# the route wait and the click are in revert, after detect_within_s.
+# Medic loads the source pack for these two cells. The eval image's bundled
+# pack does not have the rule until a release bundles 0.7.0, and daemon_health
+# does not use the API, so it keeps running while those sensors are off.
+
+HUNG_RULE = "pipeline.daemon-component-hung-compose"
+# 15m changes window plus for: 5m. The 5-minute route hold is not part of this.
+P3D_DETECT_S = 15 * 60 + 5 * 60
+# Past that window plus the 5-minute child delay, so a hang would have routed.
+P3E_DETECT_S = P3D_DETECT_S + 5 * 60 + 60
+# The scheduler counts a pass and then sleeps 60s (services/daemon/scheduler.py).
+# Longer than the 60s sleep: a pass also runs its tasks before sleeping again.
+_TICK_S = 90
+_SOURCE = "MEDIC_EVAL_SOURCE_PACK"
+_RULE_FILE = (
+    "/app/services/medic/packs/medic-core/rules/"
+    "pipeline-daemon-component-hung-compose.yaml"
+)
+
+
+def _health_body(s: Stack) -> tuple[int, dict]:
+    """/health from inside soc-daemon. The backend is not on this path: the
+    database cell stops postgres, and the backend may go with it."""
+    out = s.py(
+        "soc-daemon",
+        "import json, urllib.request, urllib.error\n"
+        "try:\n"
+        "    r = urllib.request.urlopen('http://127.0.0.1:9091/health', timeout=5)\n"
+        "    print(json.dumps([r.status, r.read().decode()]))\n"
+        "except urllib.error.HTTPError as e:\n"
+        "    print(json.dumps([e.code, e.read().decode()]))\n"
+        "except Exception as e:\n"
+        "    print(json.dumps([0, str(e)]))\n",
+    )
+    status, text = json.loads(out)
+    try:
+        body = json.loads(text)
+    except (TypeError, ValueError):
+        body = {}
+    return status, body if isinstance(body, dict) else {}
+
+
+def _scheduler_pass(s: Stack) -> tuple[int, str, int | None]:
+    status, body = _health_body(s)
+    comp = (body.get("components") or {}).get("scheduler")
+    count = (body.get("passes") or {}).get("scheduler")
+    return (
+        status,
+        comp if isinstance(comp, str) else "",
+        count if type(count) is int else None,
+    )
+
+
+def _daemon_started(s: Stack) -> str:
+    cid = s.compose("ps", "-q", "soc-daemon").stdout.strip()
+    return docker_api(f"/containers/{cid}/json")["State"]["StartedAt"]
+
+
+def _source_pack(s: Stack, on: bool) -> None:
+    """Medic loads packs/medic-core from the image when its DEV_MODE is on."""
+    want = "true" if on else "false"
+    if s.env.get(_SOURCE, "false") == want:
+        got = medic_api.status(s) or {}
+        if got.get("dev_mode") is on and (not on or _rule_in_image(s)):
+            return
+    s.env[_SOURCE] = want
+    s.up("medic")
+    s.wait(
+        lambda: s.compose("ps", "--format", "json", "medic").stdout,
+        lambda o: '"healthy"' in o,
+        timeout=420,
+    )
+    s.wait(
+        lambda: (medic_api.status(s) or {}).get("dev_mode"),
+        lambda v: v is on,
+        timeout=180,
+    )
+    if on:
+        assert _rule_in_image(s), "the medic image has no lane-1 hang rule"
+
+
+def _rule_in_image(s: Stack) -> bool:
+    code = (
+        "from pathlib import Path; p = Path("
+        + repr(_RULE_FILE)
+        + "); print(p.read_text() if p.is_file() else '')"
+    )
+    out = s.medic_exec("python", "-c", code)
+    return "id: pipeline.daemon-component-hung-compose" in out
+
+
+def _incidents(s: Stack) -> list:
+    return (
+        medic_api.get(s, "/v1/incidents?include_suppressed=true&limit=100", paged=True)
+        or []
+    )
+
+
+def _fix_cleared(s: Stack, incident_id: str) -> bool:
+    rows = (
+        medic_api.get(
+            s,
+            f"/v1/decisions?type=fix_verified&incident_id={incident_id}&limit=100",
+            paged=True,
+        )
+        or []
+    )
+    return any(
+        row.get("type") == "fix_verified"
+        and (row.get("body") or {}).get("incident_id") == incident_id
+        and (row.get("body") or {}).get("result") == "cleared"
+        for row in rows
+    )
+
+
+def _fix_seqs(s: Stack) -> list:
+    rows = medic_api.get(s, "/v1/decisions?type=fix_run&limit=100", paged=True) or []
+    return [row.get("seq") for row in rows if row.get("type") == "fix_run"]
+
+
+def _hung_routed(s: Stack, opened_after: str) -> dict | None:
+    """The lane-1 hang incident that opened at or after `opened_after`, if it has routed."""
+    for item in _incidents(s):
+        rule = item.get("rule") or {}
+        if rule.get("id") != HUNG_RULE or item.get("opened_at", "") < opened_after:
+            continue
+        if item.get("routed_at"):
+            return item
+    return None
+
+
+def _wait_routed(s: Stack, opened_after: str) -> dict:
+    found = s.wait(
+        lambda: _hung_routed(s, opened_after),
+        lambda item: item is not None,
+        timeout=15 * 60,
+        every=15,
+    )
+    return found
+
+
+def _passes_moved(s: Stack) -> bool:
+    """True once scheduler passes have increased across one scheduler sleep."""
+    status, comp, first = _scheduler_pass(s)
+    if status != 200 or comp != "running" or first is None:
+        return False
+    time.sleep(_TICK_S)
+    status, comp, second = _scheduler_pass(s)
+    return status == 200 and comp == "running" and second is not None and second > first
+
+
+def p3d_inject(s: Stack) -> None:
+    _source_pack(s, True)
+    status, comp, count = _scheduler_pass(s)
+    if (
+        status == 200
+        and comp == "running"
+        and s.marks.get("p3d") == count
+        and count is not None
+    ):
+        return
+    _expect(status, 200, "GET :9091/health before the stall")
+    _expect(comp, "running", "components.scheduler before the stall")
+    assert count is not None, "passes.scheduler missing"
+    s.compose("kill", "-s", "SIGUSR2", "soc-daemon")  # PID 1; does not recreate
+    time.sleep(2)  # the wrapper cancels the real loop within one check
+    status, comp, stalled = _scheduler_pass(s)
+    time.sleep(_TICK_S)
+    status, comp, count = _scheduler_pass(s)
+    _expect(status, 200, "GET :9091/health while stalled")
+    _expect(comp, "running", "components.scheduler while stalled")
+    _expect(count, stalled, "passes.scheduler across one scheduler sleep")
+    assert count is not None
+    s.marks["p3d"] = count
+    s.marks["p3d_at"] = int(time.time())
+
+
+def p3d_revert(s: Stack) -> None:
+    try:
+        if s.marks.get("p3d_clear") and _scheduler_pass(s)[:2] == (200, "running"):
+            return
+        opened_after = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(s.marks.get("p3d_at", 0))
+        )
+        incident = _wait_routed(s, opened_after)
+        started = _daemon_started(s)
+        status, body = medic_api.post(
+            s, f"/v1/incidents/{incident['incident_id']}/fix", "{}"
+        )
+        if status == 409 and json.loads(body).get("reason") == "fix_running":
+            pass
+        elif status != 201:
+            raise AssertionError(f"run-fix answered {status}: {body[:300]}")
+        s.wait(lambda: _passes_moved(s), lambda ok: ok, timeout=300, every=5)
+        assert _daemon_started(s) != started, "soc-daemon was not restarted"
+        s.wait(
+            lambda: _fix_cleared(s, incident["incident_id"]),
+            lambda ok: ok,
+            timeout=240,
+            every=5,
+        )
+        s.marks["p3d_clear"] = 1
+    finally:
+        _source_pack(s, False)
+
+
+def p3d_verify(s: Stack, faulted: bool) -> None:
+    status, comp, _count = _scheduler_pass(s)
+    if faulted:
+        _expect((status, comp), (200, "running"), "stalled scheduler still running")
+        assert s.marks.get("p3d") is not None
+    else:
+        _expect((status, comp), (200, "running"), "scheduler after the run-fix")
+
+
+def p3e_inject(s: Stack) -> None:
+    """Postgres down, no hang. The daemon is not recreated: that would open
+    ingest.processor-without-database and reset the pass counters."""
+    if s.marks.get("p3e"):
+        return
+    _source_pack(s, True)
+    s.p3e = {  # type: ignore[attr-defined]
+        "started": _daemon_started(s),
+        "fixes": tuple(_fix_seqs(s)),
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # compose.eval.yml sets restart: no, so a service that exits while
+        # Postgres is down stays down. Remember what was already down.
+        "down": tuple(s.not_running()),
+    }
+    s.marks["p3e"] = 1
+    s.compose("stop", "postgres")
+
+
+def p3e_revert(s: Stack) -> None:
+    try:
+        if not s.marks.get("p3e"):
+            return
+        held = getattr(s, "p3e", {})
+        routed = _hung_routed(s, held.get("at", ""))
+        assert routed is None, (
+            f"lane-1 hang routed during the database outage: {routed}"
+        )
+        assert tuple(_fix_seqs(s)) == held.get("fixes", ()), "a fix_run was recorded"
+        assert _daemon_started(s) == held.get("started"), "State.StartedAt changed"
+    finally:
+        _source_pack(s, False)
+        s.marks.pop("p3e", None)
+        if "postgres" in s.not_running():
+            s.compose("start", "postgres")
+            s.wait(
+                lambda: s.compose("ps", "--format", "json", "postgres").stdout,
+                lambda o: '"healthy"' in o,
+                timeout=180,
+            )
+        restore(s, set(getattr(s, "p3e", {}).get("down", ())))
+
+
+def p3e_verify(s: Stack, faulted: bool) -> None:
+    if faulted:
+        assert "postgres" in s.not_running(), "postgres is still running"
+        before = _health_body(s)
+        _expect(before[0], 200, "GET :9091/health while postgres is down")
+        _expect(
+            (before[1].get("components") or {}).get("scheduler"), "running", "scheduler"
+        )
+        time.sleep(_TICK_S)
+        after = _health_body(s)
+        _expect(after[0], 200, "GET :9091/health after one scheduler sleep")
+        for name in ("processor", "scheduler"):
+            was = (before[1].get("passes") or {}).get(name)
+            now = (after[1].get("passes") or {}).get(name)
+            assert type(was) is int and type(now) is int and now > was, (
+                f"passes.{name} did not advance ({was} -> {now})"
+            )
+    else:
+        assert "postgres" not in s.not_running(), "postgres was not started"
 
 
 CELLS = (
@@ -343,11 +671,31 @@ CELLS = (
     Cell(
         "P-3.a",
         3,
-        120,
+        180,
         p3a_inject,
         p3a_verify,
         p3a_revert,
-        ("docker compose kill -s SIGUSR1 soc-daemon (cancels the scheduler task)",),
-        ("docker compose up -d --force-recreate soc-daemon",),
+        ("docker compose kill -s SIGUSR1 soc-daemon (scheduler task raises)",),
+        ("POST /v1/incidents/{id}/fix (restart soc-daemon)",),
+    ),
+    Cell(
+        "P-3.d",
+        1,
+        P3D_DETECT_S,
+        p3d_inject,
+        p3d_verify,
+        p3d_revert,
+        ("docker compose kill -s SIGUSR2 soc-daemon (scheduler loop stalls)",),
+        ("POST /v1/incidents/{id}/fix once routed (restart soc-daemon)",),
+    ),
+    Cell(
+        "P-3.e",
+        1,
+        P3E_DETECT_S,
+        p3e_inject,
+        p3e_verify,
+        p3e_revert,
+        ("docker compose stop postgres",),
+        ("docker compose start postgres",),
     ),
 )

@@ -239,6 +239,18 @@
         "default": null,
         "title": "Executive Summary"
       },
+      "false_positive_cause": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "False Positive Cause"
+      },
       "false_positive_reason": {
         "anyOf": [
           {

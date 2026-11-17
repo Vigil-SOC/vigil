@@ -114,6 +114,14 @@
 .de-right { display: flex; justify-content: flex-end; text-align: right; }
 .de-name { font-size: 13.5px; line-height: 20px; font-weight: 550; color: var(--tx0); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .de-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--tx3); }
+.de-rule { min-width: 0; }
+/* The judged-false split. Two lines until a control in the row is focused, then the whole sentence. */
+.de-split { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.de-row:focus-within .de-split { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.de-meta .de-split { flex: 1 1 12em; }
+.de-flag-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; max-width: 100%; min-width: 0; }
+.de-flag-line .de-split { flex: 1 1 12em; }
+.de-health-cell { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .de-where { flex: none; padding: 1px 7px; border-radius: 5px; background: var(--bg3); color: var(--tx1); font-size: 12px; }
 .de-where-cell { min-width: 0; display: flex; align-items: center; gap: 8px; padding-top: 1px; }
 .de-source { min-width: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--tx2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -184,6 +192,8 @@
 .de-x-side { display: grid; justify-items: end; align-content: start; gap: 6px; text-align: right; }
 .de-x-n { font-size: 12px; color: var(--tx2); white-space: nowrap; }
 .de-x-n b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
+.de-x-cite { font-size: 12px; color: var(--tx2); overflow-wrap: anywhere; }
+.de-x-cite b { font-family: var(--font-mono); font-weight: 600; color: var(--tx0); }
 .de-x-rm { font-size: 12px; color: var(--poor); }
 .de-x-removed summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--tx2); }
 .de-x-removed summary:hover { color: var(--tx0); }
@@ -275,6 +285,28 @@
 .de-rollout-cells .de-rollout-cant li + li { margin-top: 4px; }
 .de-rollout-err { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--tx2); }
 
+
+/* Proposed: Vigil's drafts after a gap, listed beside the picked one (Cases' split view). */
+.de-prop { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+.de-prop-list { padding: 0; position: sticky; top: 0; overflow: hidden; }
+.de-prop-list-head { padding: 16px 16px 8px; }
+.de-prop-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ln0); max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
+.de-prop-rows .case-row { padding: 12px 14px; }
+.de-prop-rows .case-row:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.de-prop-rows .case-row .cr-meta { flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.de-prop-rows .case-row .de-prop-sub { margin-top: 4px; }
+.de-prop-name { font-size: 13.5px; font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
+.de-prop-tech { font-size: 12px; color: var(--tx2); }
+.de-prop-gone { opacity: .55; }
+.de-prop-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.de-prop-copies { display: flex; gap: 4px; }
+.de-prop-query { margin-top: 12px; }
+.de-prop-ask { margin-top: 12px; max-width: none; }
+@container main (max-width: 999px) {
+  .de-prop { grid-template-columns: minmax(0, 1fr); }
+  .de-prop-list { position: static; }
+  .de-prop-rows { max-height: 320px; }
+}
 
 /* The coverage heat map (#4103), Alex's 1.x matrix: one column per tactic, one cell per technique. */
 .de-cov { display: grid; gap: 12px; }

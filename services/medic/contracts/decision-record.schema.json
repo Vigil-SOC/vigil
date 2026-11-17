@@ -38,7 +38,9 @@
         "anchor",
         "store_reset",
         "pack_event",
-        "gap"
+        "gap",
+        "fix_run",
+        "fix_verified"
       ],
       "x-medic-type": "enum"
     },
@@ -179,6 +181,38 @@
         "properties": {
           "body": {
             "$ref": "#/$defs/gap"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "fix_run"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/fix_run"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "fix_verified"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/fix_verified"
           }
         }
       }
@@ -1304,6 +1338,119 @@
           "x-medic-type": "enum"
         }
       }
+    },
+    "fix_run": {
+      "description": "One click of restart_service. A refused check is recorded here and runs nothing. Wall-clock at.",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "fix_type",
+        "would_have",
+        "action",
+        "level",
+        "who",
+        "checks",
+        "covered",
+        "dependencies",
+        "queue_depth"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {"$ref": "#/$defs/incident_id"},
+        "fix_type": {"const": "restart_service", "x-medic-type": "enum"},
+        "would_have": {
+          "description": "The incident's L1 would-have action.",
+          "enum": ["notify_admin", "propose_runbook", "run_runbook", "prepare_support_bundle"],
+          "x-medic-type": "enum"
+        },
+        "action": {
+          "type": "object",
+          "required": ["type", "service"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "restart_service", "x-medic-type": "enum"},
+            "service": {"const": "soc-daemon", "x-medic-type": "enum"}
+          }
+        },
+        "container_id": {"$ref": "#/$defs/id"},
+        "started_at": {
+          "description": "State.StartedAt after a restart that ran.",
+          "$ref": "#/$defs/ts"
+        },
+        "verify_at": {
+          "description": "When to verify. Absent when nothing ran.",
+          "$ref": "#/$defs/ts"
+        },
+        "level": {"const": "L1", "x-medic-type": "enum"},
+        "who": {"$ref": "#/$defs/id"},
+        "checks": {
+          "type": "object",
+          "required": ["result"],
+          "additionalProperties": false,
+          "properties": {
+            "result": {
+              "enum": [
+                "passed",
+                "not_open",
+                "not_firing",
+                "no_runbook",
+                "upgrade_window",
+                "no_container",
+                "container_restarted",
+                "fix_running",
+                "not_compose",
+                "restart_failed"
+              ],
+              "x-medic-type": "enum"
+            },
+            "passed": {
+              "type": "array",
+              "items": {
+                "enum": ["open", "firing", "runbook", "upgrade", "container", "idle"],
+                "x-medic-type": "enum"
+              }
+            }
+          }
+        },
+        "covered": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/incident_id"}
+        },
+        "dependencies": {
+          "description": "Open incidents this one is suppressed by.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/incident_id"}
+        },
+        "queue_depth": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0, "x-medic-type": "number"},
+            {"const": "unknown", "x-medic-type": "enum"}
+          ]
+        }
+      }
+    },
+    "fix_verified": {
+      "description": "One per incident a fix_run covered. Wall-clock at.",
+      "type": "object",
+      "required": ["incident_id", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {"$ref": "#/$defs/incident_id"},
+        "result": {
+          "enum": ["cleared", "not_cleared", "not_back", "not_verified"],
+          "x-medic-type": "enum"
+        },
+        "detail": {"const": "medic_stopped", "x-medic-type": "enum"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"result": {"const": "not_verified"}},
+            "required": ["result"]
+          },
+          "then": {"required": ["detail"]}
+        }
+      ]
     },
     "ts_tick": {
       "description": "An evaluation tick (E3 §1): whole seconds on the 15 s grid, no fraction, so the same instant has one spelling (A3-5; S0 review R5).",

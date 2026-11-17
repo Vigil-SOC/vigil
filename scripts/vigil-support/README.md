@@ -7,7 +7,7 @@ format.
 
 ```
 sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop|helm] [--state-dir DIR] [--since DAYS]
-                                           [--release NAME] [--namespace NS]
+                                           [--release NAME] [--namespace NS] [--medic]
 ```
 
 | Option | Meaning |
@@ -15,13 +15,18 @@ sh scripts/vigil-support/vigil-support.sh [--mode native|compose|desktop|helm] [
 | `--mode` | Only look for that kind of install. `native` and `compose` mean a checkout, `desktop` means Desktop standalone, `helm` means a Helm release read from the administrator's machine (see [Helm](#helm)). |
 | `--state-dir` | Vigil's State Directory. Default `$VIGIL_DIR`, else `~/.vigil` (Desktop: its app-data directory). |
 | `--release`, `--namespace` | `--mode helm` only: pick the Helm release and its namespace. Either one without `--mode helm` is an error. |
-| `--since DAYS` | How far back journal and macOS log sources reach. Default 7. macOS `log show` uses 24 h unless `--since` is given. |
+| `--since DAYS` | How far back journal and macOS log sources reach, and the window of the Medic section. Default 7. macOS `log show` uses 24 h unless `--since` is given. |
+| `--medic` | Also collect Medic's section. See [Medic section](#medic-section). Without this flag the bundle is unchanged. |
 
 The bundle is written to the current directory as
 `vigil-support-<install|host>-<version>-<UTC yyyymmddThhmmssZ>.tar.gz`
 (`install` when one install was found, `host` otherwise). If that name is taken
 by a concurrent run, `-1`, `-2`, ... is appended. An earlier bundle is never
-collected into a new one.
+collected into a new one. With `--medic`, when the section is collected, the
+same reserved name is also written beside the archive as
+`<that name>.medic.json` (so a `-1` archive has a `-1` side file). That side
+file is the part that can go on a public defect report. The archive, including
+`medic/section.json` inside it, is for the site's own team.
 
 ## Detection
 
@@ -46,6 +51,7 @@ configuration/
 health/
 logs/
 system/
+medic/section.json    only with --medic, and only when the section is collected
 ```
 
 `configuration/`, `health/` and `logs/` hold the install's own files (below);
@@ -97,10 +103,12 @@ of the backend container, so without `--state-dir` they are read from there:
 ### Helm
 
 `--mode helm` runs on the administrator's machine (Linux or macOS) with their
-current `kubectl` context and `helm`; both must be on `PATH`. No image is pulled
-and nothing is started in the cluster; the one helper is a `kubectl port-forward`
-that runs under the same time limit and clean-up as everything else, and is gone
-on exit, INT and TERM. The host is not the install, so the Docker and checkout
+current `kubectl` context and `helm`; both must be on `PATH`. No image is pulled.
+Nothing is started in the cluster, except when `--medic` is set: that runs one
+read-only command, `python -m services.medic section --since-days <DAYS>`,
+inside the Medic container (`kubectl exec`). The port-forward helper still runs
+under the same time limit and clean-up as everything else, and is gone on exit,
+INT and TERM. The host is not the install, so the Docker and checkout
 detection is skipped and `system/` holds only the administrator's host files.
 Every command names the release's namespace with `-n`. With no release found, or
 `helm` or `kubectl` missing (`<tool> not found`), the bundle is a host-only one
@@ -182,6 +190,77 @@ attach it. If the handover fails, the final output says the bundle is
 root-owned and where it is. `sudo` resets `VIGIL_DIR`, so a non-default
 State Directory needs `--state-dir` (or `sudo --preserve-env=VIGIL_DIR`).
 
+## Medic section
+
+`--medic` runs one read-only command inside Medic's own runtime and writes
+nothing into Medic:
+
+```
+python -m services.medic section --since-days <DAYS>
+```
+
+`<DAYS>` is the script's `--since` (default 7). The command's stdout, when it
+exits 0, is `medic/section.json` in the archive and `<archive name>.medic.json`
+beside it. The side file uses the archive's reserved name and numeric suffix,
+mode 0600, and under `sudo` the same `SUDO_UID`:`SUDO_GID` hand-off as the
+bundle. It is not written when the section is not collected, and it is removed
+if the archive is not written. The script does not parse the JSON.
+
+The side file is the part meant for a public defect report. The archive is for
+the site's own team, under the data notice: it still holds the hostname, the
+process list and the logs. Nothing is uploaded; the operator shares a file.
+
+Before the closing data notice, a collected section prints a block labelled
+`Medic section (for a public report)` with the path, the `--since` window, the
+byte size and the SHA-256 of those bytes, and says the incident count and the
+field names are the file header. The bundle's own SHA-256 is the block after
+the notice.
+
+The section is not passed through `redact.awk` and is not tail-cut. Stdout is
+kept only when every byte is printable ASCII or a newline, it is not empty,
+and it is at most 1 MiB. Otherwise the item is `malformed` and neither copy is
+written. A non-zero exit is `not collected` with the command's stderr line
+(that line still goes through the filter). The rest of the bundle is written
+either way.
+
+Which incidents are in the file is Medic's command, not this script. It is the
+set whose stored `would_have` action is `prepare_support_bundle`: today, every
+lane-3 incident that was open during `--since`. A lane-1 daemon death or hang
+(`pipeline.daemon-component-failed-compose`,
+`pipeline.daemon-component-hung-compose`) that Medic restarted is in it too, so
+the defect stays reported after the restart cleared it. Each incident has a
+`fix` list, empty when nothing was run: one object per restart attempt with
+`action` (the incident's L1 name), `who` (`admin` or `medic`; the session id is
+never written), `level` (`L0`, `L1` or `L2`) and `result` (`cleared`,
+`not_cleared`, `not_back`, `not_verified`, or `""` until verified). Vigil's lane-3 notice
+(`core/platform/medic_incidents.py`, `_BUNDLE`) and the first-start summary's
+defect line tell the admin to run
+`sh scripts/vigil-support/vigil-support.sh --medic`, so the bundle holds the
+incident the notice is about, and say the script must be from Vigil 1.1.3 or
+later. A copy older than 1.1.3 does not know `--medic`: it stops on the
+unknown option and writes nothing. Run without `--medic`, the script does not
+collect this section.
+
+Lane reasons in the file, and the words those notices use. `_GATE` and
+`_UNKNOWN` in `core/platform/medic_incidents.py` are quoted here as they stand:
+
+| `lane.reason` | Meaning |
+| --- | --- |
+| `lane1_gate_failed` | "A fix rule didn't pass Medic's safety check, so no fix was offered." |
+| `unknown_signature` | "Medic saw a signature it does not recognise, so no fix was offered." |
+| `rule` | A detection rule matched. The incident is on the lane that rule names. The notices have no fixed sentence for this reason; they describe the fault. |
+
+Rights, by shape:
+
+| Shape | How the command runs |
+| --- | --- |
+| Compose | `docker exec` into `deeptempo-medic` (the container already runs as uid 10001). |
+| Helm | `kubectl exec` into the one Running and Ready pod labelled `app.kubernetes.io/component=medic,app.kubernetes.io/instance=<release>`, container `medic`. That needs `create` on `pods/exec`. Pod names change on every restart, so the grant cannot be narrowed to one pod name. Leave the section uncollected rather than grant that verb: the bundle is still written. A `forbidden` response is `needs elevation` with the cluster's line, same as the other Helm items. |
+| Host-native | Only when this script is already root. It then runs `nice -n 10` as `vigil-medic`, with the interpreter, app dir and data dir from `scripts/medic/host-native/medic.sh` (`VIGIL_MEDIC_HOST_RUNTIME`, default `/opt/vigil-medic`; `VIGIL_MEDIC_DATA_DIR`, else `/Library/Application Support/vigil-medic` on macOS, else `/var/lib/vigil-medic`). The `medic-loop` sudo rule is not used, and the loop does not have to be running. Not root: `needs elevation`, and the script does not run sudo. This is also the path when no install was detected. |
+| Desktop | `not installed`. |
+
+No container named `deeptempo-medic`, or no Running and Ready Medic pod: `not collected`, Medic's history is still kept, and a rerun once Medic is running collects the section.
+
 ## `manifest.json`
 
 ```json
@@ -237,7 +316,8 @@ notice.
 
 Every captured byte goes through `redact.awk` with `secret-names.txt`
 (`awk -f redact.awk -v names=... -v values=... -v counts=... -v name=<file>`)
-before it enters the bundle. The `.env` and the rendered Compose config are read
+before it enters the bundle. `medic/section.json` does not (see
+[Medic section](#medic-section)). The `.env` and the rendered Compose config are read
 first, and the filter run with `-v learn=1` prints the values worth catching
 elsewhere; they go into a file in the private work directory and are passed as
 `values`, so the same value is also replaced in free text such as container logs
@@ -285,8 +365,11 @@ Printed at the start and end of every run, and ending `SUMMARY.txt`:
 > text that match no known format cannot be guaranteed caught. Nothing is
 > uploaded. Review the bundle before you share it.
 
-The end of the run then prints the bundle path, size and SHA-256 (`sha256sum`
-or `shasum -a 256`), then the not-collected items and the never-included entries.
+When `--medic` collected a section, the end of the run first prints the
+`Medic section (for a public report)` block (path, `--since` window, byte size,
+SHA-256). It then prints the data notice, then the bundle path, size and
+SHA-256 (`sha256sum` or `shasum -a 256`), then the not-collected items and the
+never-included entries.
 
 ## `VERSION`
 

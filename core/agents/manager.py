@@ -11,7 +11,8 @@ from core.agents.run_stats import agent_run_stats
 from core.llm.providers.registry import get_registry, model_display_name
 from core.response.ceiling import asks_first
 from core.response.config import ResponseConfig
-from core.skills.skill_library import READ_SKILL_TOOL, load_skills, skill_roots
+from core.skills.skill_hold import agent_skills
+from core.skills.skill_library import READ_SKILL_TOOL, Skill, load_skills, skill_roots
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,9 @@ AGENT_COMPONENT = "investigation"
 
 
 def profile_from_manifest(
-    row: dict, response_config: Optional[ResponseConfig] = None
+    row: dict,
+    response_config: Optional[ResponseConfig] = None,
+    skills: Optional[List[Skill]] = None,
 ) -> AgentProfile:
     """An agent as its manifest says, built-in or operator, and nothing else.
 
@@ -29,6 +32,11 @@ def profile_from_manifest(
     the id without its prefix; description and needs are the manifest's, and
     the prompt is its ``system`` rendered. Only an operator (custom-) agent keeps
     the manifest on its profile: phase tools and the skills column branch on it.
+
+    The skills index is rendered here, from the skills not held by the scan, so
+    a profile is only as current as its build. Every caller that hands a prompt
+    to a model builds the profile fresh; ``skills`` lets a caller building many
+    share one read of the verdicts.
     """
     text = row.get("manifest") or ""
     doc = read_manifest(text)
@@ -39,7 +47,7 @@ def profile_from_manifest(
         or row["id"].removeprefix(CUSTOM_AGENT_ID_PREFIX),
         description=str(doc.get("description") or ""),
         system_prompt=render_system(
-            str(doc.get("system") or ""), needs, response_config
+            str(doc.get("system") or ""), needs, response_config, skills
         ),
         recommended_tools=needs,
         manifest=text if row["id"].startswith(CUSTOM_AGENT_ID_PREFIX) else None,
@@ -55,8 +63,11 @@ class SOCAgentLibrary:
     ) -> Dict[str, AgentProfile]:
         # One read of the thresholds for the whole set (#916).
         config = response_config or ResponseConfig.from_settings()
+        skills = agent_skills()
         return {
-            agent_id: profile_from_manifest({"id": agent_id, "manifest": text}, config)
+            agent_id: profile_from_manifest(
+                {"id": agent_id, "manifest": text}, config, skills
+            )
             for agent_id, text in builtin_manifests().items()
         }
 
@@ -99,12 +110,13 @@ class AgentManager:
 
         try:
             config = ResponseConfig.from_settings()
+            skills = agent_skills()
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:
                 for row in session.query(CustomAgent).all():
                     try:
                         profile = profile_from_manifest(
-                            CustomAgentSchema.dump(row), config
+                            CustomAgentSchema.dump(row), config, skills
                         )
                         customs[profile.id] = profile
                     except Exception as e:

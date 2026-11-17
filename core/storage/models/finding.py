@@ -78,6 +78,9 @@ class Finding(Base):
         String(20), nullable=True
     )
     noise_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Which kind of fix the dismissal is (FalsePositiveCause), or null when
+    # none was chosen. Cleared with the mark.
+    noise_cause: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # AI-generated enrichment (cached analysis)
     ai_enrichment: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

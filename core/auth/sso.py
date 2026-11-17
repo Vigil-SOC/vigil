@@ -43,11 +43,12 @@ ASYMMETRIC = [
     "ES256", "ES384", "ES512", "EdDSA",
 ]  # fmt: skip
 
-# The login page's three messages (decision 7).
+# The login page's messages (decision 7, plus a directory-sync refusal, #4423).
 FAILED = "failed"
 DEACTIVATED = "deactivated"
 EMAIL_NOT_VERIFIED = "email_not_verified"
-CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED)
+NOT_PROVISIONED = "not_provisioned"
+CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED)
 
 
 class Refused(Exception):
@@ -290,10 +291,33 @@ def linked_principals(session: Session) -> set[str]:
     return {pid for (pid,) in session.query(SsoLink.principal_id).all()}
 
 
+def sso_only(session: Session, user) -> bool:
+    """No local password and linked to a provider: it signs in only through SSO."""
+    if user.password_hash:
+        return False
+    q = session.query(SsoLink.principal_id).filter(
+        SsoLink.principal_id == user.principal_id
+    )
+    return q.first() is not None
+
+
 def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:
     return (
         session.query(SsoLink)
         .filter(SsoLink.issuer == issuer, SsoLink.subject == subject)
+        .first()
+    )
+
+
+def linked_by_directory(
+    session: Session, issuer: str, directory_id: str
+) -> Optional[SsoLink]:
+    """The link whose externalId is ``directory_id`` at this issuer."""
+    if not directory_id:
+        return None
+    return (
+        session.query(SsoLink)
+        .filter(SsoLink.issuer == issuer, SsoLink.directory_id == directory_id)
         .first()
     )
 

@@ -9,6 +9,7 @@ values, never copied from the caller.
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -43,6 +44,10 @@ EVENT_ACTIONS = [
     "create", "start", "restart", "die", "kill", "stop", "oom", "destroy",
     "health_status",
 ]  # fmt: skip
+# soc-daemon's stop drain. A restart's `t` is at least this, and not unbounded.
+GRACE_S = 50
+GRACE_MAX_S = 120
+_ENABLED = {"true", "1", "yes", "on"}
 
 # name -> (segments, allowed query names and their value kinds). `{id}` = ID_RE.
 # `details` is never allowed on logs: it adds log-opt env attributes (SP2 §3).
@@ -66,6 +71,7 @@ ROUTES = {
         },
     ),
     "events": (("events",), {"since": "ts", "until": "ts", "filters": "filters"}),
+    "restart": (("containers", "{id}", "restart"), {"t": "int"}),
 }
 STREAMING = {"ping", "logs", "events"}  # piped; the rest are projected
 
@@ -80,6 +86,7 @@ class Refuse(Exception):
 class Request:
     route: str
     target: str  # what is sent to Docker, rebuilt from parsed parts
+    method: str = "GET"
 
 
 def _match(segments: list[str]) -> str | None:
@@ -148,8 +155,19 @@ def check_target(target: str) -> Request:
                 raise Refuse(403, "event_not_allowed")
             f["event"] = asked
         seen["filters"] = json.dumps(f, separators=(",", ":"), sort_keys=True)
+    if route == "restart":
+        # Absent `t` would be Docker's 10s default, shorter than the drain.
+        if "t" not in seen:
+            seen["t"] = str(GRACE_S)
+        elif not GRACE_S <= int(seen["t"]) <= GRACE_MAX_S:
+            raise Refuse(403, "query_not_allowed")
     q = urllib.parse.urlencode(seen)
     return Request(route, path + ("?" + q if q else ""))
+
+
+def medic_enabled() -> bool:
+    """The same master switch as Medic. Off: this proxy does no writes."""
+    return os.environ.get("VIGIL_MEDIC_ENABLED", "").strip().lower() in _ENABLED
 
 
 def check_head(head: bytes) -> Request:
@@ -163,9 +181,10 @@ def check_head(head: bytes) -> Request:
     if len(parts) != 3 or parts[2] != "HTTP/1.1" or not line.isprintable():
         raise Refuse(400, "bad_request_line")
     method, target, _ = parts
-    if method != "GET":
+    if method not in ("GET", "POST"):
         raise Refuse(405, "method_not_allowed")
     hosts = 0
+    lengths: list[str] = []
     for h in headers:
         name, colon, value = h.partition(":")
         if not colon or not HEADER_NAME_RE.fullmatch(name) or not value.isprintable():
@@ -173,9 +192,23 @@ def check_head(head: bytes) -> Request:
         name = name.lower()
         if name in REFUSED_HEADERS:
             raise Refuse(400, "header_not_allowed")
-        if name == "content-length" and value.strip() != "0":
-            raise Refuse(400, "get_with_body")
+        if name == "content-length":
+            lengths.append(value.strip())
         hosts += name == "host"
-    if hosts > 1 or sum(h.lower().startswith("content-length:") for h in headers) > 1:
+    if hosts > 1 or len(lengths) > 1:
         raise Refuse(400, "duplicate_header")
-    return check_target(target)
+    if method == "POST":
+        if not medic_enabled():
+            raise Refuse(403, "medic_off")
+        if lengths != ["0"]:
+            raise Refuse(400, "post_with_body")
+    elif any(item != "0" for item in lengths):
+        raise Refuse(400, "get_with_body")
+    req = check_target(target)
+    if method == "POST" and req.route != "restart":
+        raise Refuse(405, "method_not_allowed")
+    if method == "GET" and req.route == "restart":
+        raise Refuse(405, "method_not_allowed")
+    if method == "GET":
+        return req
+    return Request(req.route, req.target, "POST")

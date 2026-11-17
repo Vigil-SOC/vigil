@@ -4,6 +4,7 @@
 #
 #   vigil-support.sh [--mode native|compose|desktop|helm] [--state-dir DIR] [--since DAYS]
 #                    [--release NAME] [--namespace NS]   (the last two: --mode helm only)
+#                    [--medic]
 #
 # Exit 0: a bundle was written. Exit 1: none was.
 
@@ -26,6 +27,7 @@ SRC_SECS=${VIGIL_SUPPORT_SOURCE_SECS:-60}
 LOG_SECS=${VIGIL_SUPPORT_LOG_SECS:-90}
 TOTAL_SECS=${VIGIL_SUPPORT_TOTAL_SECS:-300}
 SRC_MAX=${VIGIL_SUPPORT_SOURCE_MAX:-52428800} # 50 MiB raw per source, newest kept
+MEDIC_MAX=1048576 # 1 MiB; a larger Medic section is malformed, never cut
 BUNDLE_MAX=1073741824 # 1 GiB raw per bundle
 MIN_FREE_KB=$((BUNDLE_MAX / 1024))
 FS_ROOT=${VIGIL_SUPPORT_FS_ROOT:-} # prefix for system paths, for tests
@@ -39,6 +41,8 @@ uploaded. Review the bundle before you share it."
 
 WORK=
 RESERVED=
+MEDIC_SIDE=
+MEDIC_BYTES=
 KEEP=0
 
 die() {
@@ -60,7 +64,10 @@ kill_tree() { # pid signal
 cleanup() {
     trap '' INT TERM HUP PIPE
     for _c in $(kids $$); do kill_tree "$_c" KILL; done
-    [ "$KEEP" = 1 ] || { [ -n "$RESERVED" ] && rm -f "$RESERVED"; }
+    if [ "$KEEP" != 1 ]; then
+        [ -n "$RESERVED" ] && rm -f "$RESERVED"
+        [ -n "$MEDIC_SIDE" ] && rm -f "$MEDIC_SIDE"
+    fi
     [ -n "$WORK" ] && rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -77,11 +84,17 @@ REL_ARG=
 NS_ARG=
 SINCE=7
 SINCE_SET=0
+MEDIC=0
 while [ $# -gt 0 ]; do
     case $1 in
     -h | --help)
-        sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
+        ;;
+    --medic)
+        MEDIC=1
+        shift
+        continue
         ;;
     --mode | --state-dir | --since | --release | --namespace)
         [ $# -ge 2 ] || die "$1 needs a value"
@@ -1103,7 +1116,173 @@ collect_helm_system() {
     done
 }
 
+# Medic's section is not a collect_cmd source: no tail cut, no redact.awk.
+# A newline stays; any other byte outside printable ASCII, an empty stdout,
+# or more than MEDIC_MAX bytes is malformed and nothing is kept.
+MEDIC_STOPPED="Medic is not running; its history is still kept; rerun once Medic is running"
+MEDIC_CMD="python -m services.medic section --since-days $SINCE"
+MEDIC_SIZE=
+MEDIC_SHA=
+
+# Sets _lim. Returns 1 when the overall limit is already spent.
+source_budget() {
+    _left=$((TOTAL_SECS - ($(date +%s) - T0)))
+    if [ "$_left" -le 0 ]; then
+        return 1
+    fi
+    _lim=$SRC_SECS
+    [ "$_lim" -gt "$_left" ] && _lim=$_left
+    return 0
+}
+
+# Full stdout, not the newest SRC_MAX. Sets RC and _stem.
+capture_full() { # secs cmd...
+    _secs=$1
+    shift
+    ITEM=$((ITEM + 1))
+    _stem=$RAW/$ITEM
+    {
+        ("$@" </dev/null >"$_stem.out" 2>"$_stem.err"; echo $? >"$_stem.st")
+    } &
+    supervise "$_secs" "$_stem" $!
+}
+
+medic_over_time() { skip "$_dest" "overall time limit of ${TOTAL_SECS} s reached" "$_src"; }
+
+# Exit 0 and acceptable bytes: remember them. Anything else: not collected.
+accept_medic() { # stem limit elev
+    if [ "$RC" != 0 ]; then
+        _why=$(failure_reason "$1" "$3" "$2")
+        skip "$_dest" "$_why" "$_src"
+        return
+    fi
+    _sz=$(wc -c <"$1.out" | tr -d ' ')
+    _bad=$(tr -d '\012\040-\176' <"$1.out" | wc -c | tr -d ' ')
+    if [ "${_sz:-0}" -eq 0 ] || [ "$_sz" -gt "$MEDIC_MAX" ] || [ "${_bad:-0}" -ne 0 ]; then
+        skip "$_dest" "malformed" "$_src"
+        return
+    fi
+    MEDIC_BYTES=$1.out
+    MEDIC_SIZE=$_sz
+    if has sha256sum; then
+        MEDIC_SHA=$(sha256sum "$MEDIC_BYTES" | awk '{ print $1 }')
+    elif has shasum; then
+        MEDIC_SHA=$(shasum -a 256 "$MEDIC_BYTES" | awk '{ print $1 }')
+    else
+        MEDIC_SHA="unavailable (no sha256sum or shasum)"
+    fi
+    record "$_dest" collected "ok" "$_src" "$_sz" 0 0
+}
+
+# elev: see failure_reason. The command is Medic's section, already chosen.
+run_medic() { # elev cmd...
+    _elev=$1
+    shift
+    source_budget || { medic_over_time; return; }
+    capture_full "$_lim" "$@"
+    accept_medic "$_stem" "$_lim" "$_elev"
+}
+
+collect_medic_compose() {
+    if ! has docker; then
+        skip "$_dest" "docker not found" "$_src"
+        return
+    fi
+    source_budget || { medic_over_time; return; }
+    [ "$_lim" -gt 20 ] && _lim=20
+    capture_full "$_lim" docker inspect -f '{{.State.Running}}' deeptempo-medic
+    if [ "$RC" != 0 ]; then
+        if grep -qiE 'no such (object|container)' "$_stem.err" "$_stem.out" 2>/dev/null; then
+            skip "$_dest" "$MEDIC_STOPPED" "$_src"
+        else
+            _why=$(failure_reason "$_stem" 0 "$_lim")
+            skip "$_dest" "$_why" "$_src"
+        fi
+        return
+    fi
+    _run=$(tr -d '[:space:]' <"$_stem.out")
+    if [ "$_run" != true ]; then
+        skip "$_dest" "$MEDIC_STOPPED" "$_src"
+        return
+    fi
+    run_medic 0 docker exec deeptempo-medic python -m services.medic section --since-days "$SINCE"
+}
+
+collect_medic_helm() {
+    if [ -n "$HELM_WHY" ]; then
+        skip "$_dest" "$HELM_WHY" "$_src"
+        return
+    fi
+    if [ "$N_INSTALLS" != 1 ] || [ -z "$HELM_NS" ] || [ -z "$HELM_REL" ]; then
+        skip "$_dest" "$MEDIC_STOPPED" "$_src"
+        return
+    fi
+    source_budget || { medic_over_time; return; }
+    _sel="app.kubernetes.io/component=medic,app.kubernetes.io/instance=$HELM_REL"
+    _tpl=$WORK/medic-pod.tpl
+    printf '%s\n' '{{range .items}}{{printf "%s\t%s\t" .metadata.name .status.phase}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{end}}{{end}}{{printf "\n"}}{{end}}' >"$_tpl"
+    capture_full "$_lim" kubectl -n "$HELM_NS" get pods -l "$_sel" -o "go-template-file=$_tpl"
+    if [ "$RC" != 0 ]; then
+        _why=$(failure_reason "$_stem" 2 "$_lim")
+        skip "$_dest" "$_why" "$_src"
+        return
+    fi
+    _n=$(awk -F '\t' '$2 == "Running" && $3 == "True" { c++ } END { print c + 0 }' "$_stem.out")
+    if [ "$_n" -eq 0 ]; then
+        skip "$_dest" "$MEDIC_STOPPED" "$_src"
+        return
+    fi
+    if [ "$_n" -ne 1 ]; then
+        skip "$_dest" "more than one Running and Ready Medic pod" "$_src"
+        return
+    fi
+    _pod=$(awk -F '\t' '$2 == "Running" && $3 == "True" { print $1; exit }' "$_stem.out")
+    case $_pod in
+    '' | *[!A-Za-z0-9.-]*)
+        skip "$_dest" "Medic pod name is not usable" "$_src"
+        return
+        ;;
+    esac
+    run_medic 2 kubectl -n "$HELM_NS" exec "$_pod" -c medic -- python -m services.medic section --since-days "$SINCE"
+}
+
+collect_medic_host() {
+    # Already root: do not go through the medic-loop sudo rule. Not root: the
+    # script does not run sudo for this.
+    if ! has id || [ "$(id -u 2>/dev/null)" != 0 ]; then
+        skip "$_dest" "needs elevation" "$_src"
+        return
+    fi
+    _rt=${VIGIL_MEDIC_HOST_RUNTIME:-/opt/vigil-medic}
+    if [ -n "${VIGIL_MEDIC_DATA_DIR:-}" ]; then
+        _data=$VIGIL_MEDIC_DATA_DIR
+    elif [ "$OS_KIND" = Darwin ]; then
+        _data="/Library/Application Support/vigil-medic"
+    else
+        _data=/var/lib/vigil-medic
+    fi
+    run_medic 0 sh -c 'cd / && exec sudo -n -u vigil-medic -- env -i PATH=/usr/bin:/bin HOME="$1" LANG=C.UTF-8 PYTHONPATH="$2" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 VIGIL_MEDIC_DATA_DIR="$1" nice -n 10 "$3" -m services.medic section --since-days "$4"' _ "$_data" "$_rt/app" "$_rt/venv/bin/python" "$SINCE"
+}
+
+collect_medic() {
+    _dest=medic/section.json
+    _src=$MEDIC_CMD
+    source_budget || { medic_over_time; return; }
+    # Desktop has no Medic. --mode desktop stays that way even when no
+    # Desktop install was found and the bundle is host-only.
+    if [ "$HELM_REQ" = 1 ]; then
+        collect_medic_helm
+    elif [ "$MODE" = desktop ] || [ "$MODE_ARG" = desktop ]; then
+        skip "$_dest" "not installed" "$_src"
+    elif [ "$MODE" = compose ]; then
+        collect_medic_compose
+    else
+        collect_medic_host
+    fi
+}
+
 section 2/6 "collecting configuration, health and logs"
+[ "$MEDIC" = 1 ] && collect_medic
 if [ "$HELM_REQ" = 1 ]; then
     collect_helm
 elif [ "$N_INSTALLS" = 1 ]; then
@@ -1261,17 +1440,43 @@ until (
     FINAL=$OUTDIR/$NAME-$_n.tar.gz
 done
 RESERVED=$FINAL
+# The side file takes this reserved name, including its numeric suffix.
+# It is removed with the archive unless the tar is kept.
+if [ -n "$MEDIC_BYTES" ]; then
+    _side=${FINAL%.tar.gz}.medic.json
+    mkdir -p "$STAGE/medic" || die "cannot write the Medic section; nothing written"
+    cp "$MEDIC_BYTES" "$STAGE/medic/section.json" || die "cannot write the Medic section; nothing written"
+    chmod 600 "$STAGE/medic/section.json"
+    _existed=0
+    [ -e "$_side" ] && _existed=1
+    # noclobber's own "File exists" line is not the reason we print.
+    if (set -C; cat "$MEDIC_BYTES" >"$_side") 2>/dev/null; then
+        MEDIC_SIDE=$_side
+        chmod 600 "$MEDIC_SIDE" || die "cannot write the Medic section; nothing written"
+    else
+        [ "$_existed" = 0 ] && [ -e "$_side" ] && MEDIC_SIDE=$_side
+        die "cannot write the Medic section; nothing written"
+    fi
+fi
 COPYFILE_DISABLE=1 tar -czf "$FINAL" -C "$WORK/bundle" "$NAME" || die "tar failed; nothing written"
 chmod 600 "$FINAL"
 KEEP=1
 # Run with sudo, the bundle belongs to the invoking user, not root: hand it
 # over, so they can read, review and attach the file they were told to make.
+# The Medic side file gets the same hand-off.
 if [ "$SUDO_FIRED" = 1 ]; then
     _owned=0
     if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
         chown "$SUDO_UID:$SUDO_GID" "$FINAL" 2>/dev/null && _owned=1
     fi
     [ "$_owned" = 1 ] || printf 'Note: the bundle is owned by root, not the invoking user: %s\n' "$FINAL"
+    if [ -n "$MEDIC_SIDE" ]; then
+        _sowned=0
+        if [ -n "${SUDO_UID:-}" ] && [ -n "${SUDO_GID:-}" ]; then
+            chown "$SUDO_UID:$SUDO_GID" "$MEDIC_SIDE" 2>/dev/null && _sowned=1
+        fi
+        [ "$_sowned" = 1 ] || printf 'Note: the Medic section is owned by root, not the invoking user: %s\n' "$MEDIC_SIDE"
+    fi
 fi
 
 SIZE=$(wc -c <"$FINAL" | tr -d ' ')
@@ -1283,6 +1488,15 @@ else
     SUM="unavailable (no sha256sum or shasum)"
 fi
 
+if [ -n "$MEDIC_SIDE" ]; then
+    echo
+    echo "Medic section (for a public report)"
+    printf 'Path:    %s\n' "$MEDIC_SIDE"
+    printf 'Window:  %s days (--since)\n' "$SINCE"
+    printf 'Size:    %s bytes\n' "$MEDIC_SIZE"
+    printf 'SHA-256: %s\n' "$MEDIC_SHA"
+    echo "The incident count and field names are the file header."
+fi
 echo
 echo "$NOTICE"
 echo

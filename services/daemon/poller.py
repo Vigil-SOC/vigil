@@ -148,6 +148,8 @@ class DataPoller:
         self._crowdstrike_dedup = RedisDedupSet("poller:crowdstrike")
         self._elastic_dedup = RedisDedupSet("poller:elastic")
         self._webhook_dedup = RedisDedupSet("poller:webhook")
+        # Set by the daemon via set_pass_ticker. The federation runner shares it.
+        self._note_pass: Optional[Callable[[], None]] = None
 
         # Services (lazy loaded)
         self._splunk_service = None
@@ -183,6 +185,11 @@ class DataPoller:
 
     def set_loop_watcher(self, watch: Callable[..., None]) -> None:
         self._federation.watch_loop = watch
+
+    def set_pass_ticker(self, tick: Callable[[], None]) -> None:
+        """Count poll-loop passes and the webhook heartbeat on /health."""
+        self._note_pass = tick
+        self._federation.note_pass = tick
 
     def set_output_queue(self, queue: asyncio.Queue):
         """Set the output queue for processed findings."""
@@ -694,8 +701,16 @@ class DataPoller:
             await runner.cleanup()
             return
 
-        # Wait for shutdown
-        await shutdown_event.wait()
+        # Heartbeat while this task is serving. A failed bind returned above
+        # and did not tick. About a second, inside this task.
+        while not shutdown_event.is_set():
+            if self._note_pass is not None:
+                self._note_pass()
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
+                break
+            except asyncio.TimeoutError:
+                pass
 
         await runner.cleanup()
         logger.info("Webhook server stopped")

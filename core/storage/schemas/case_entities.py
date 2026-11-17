@@ -252,6 +252,7 @@ class CaseClosureInfoSchema(ORMSchema):
     recommendations: Optional[str] = None
     recurrence_prevention: Optional[str] = None
     false_positive_reason: Optional[str] = None
+    false_positive_cause: Optional[str] = None
     executive_summary: Optional[str] = None
     closed_by: Optional[str] = None
     closure_notes: Optional[str] = None

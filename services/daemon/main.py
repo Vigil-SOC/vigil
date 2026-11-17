@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Under the daemon StatefulSet's terminationGracePeriodSeconds (60), leaving
 # room for the telemetry flush after the components stop.
+# Compose stop_grace_period is at least this, so a restart drains before SIGKILL.
 SHUTDOWN_GRACE_SECONDS = 45
 
 
@@ -148,6 +149,12 @@ class SOCDaemon:
         self._orchestrator.watch_loop = self._metrics_server.loop_watcher(
             "orchestrator"
         )
+
+        tick = self._metrics_server.pass_ticker
+        self._poller.set_pass_ticker(tick("poller"))
+        self._processor.note_pass = tick("processor")
+        self._scheduler.note_pass = tick("scheduler")
+        self._orchestrator.note_pass = tick("orchestrator")
 
         logger.info("All components initialized")
 

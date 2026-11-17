@@ -211,8 +211,12 @@ export const findingsApi = {
 
   deleteAll: () => api.delete('/findings/all'),
 
-  markNoise: (id: string) =>
-    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+  // A body only when a cause was chosen. No body stores no cause, and the mark still lands.
+  markNoise: (id: string, cause?: string) =>
+    api.post(
+      `/findings/${encodeURIComponent(id)}/noise`,
+      cause ? { noise_cause: cause } : undefined,
+    ),
 
   clearNoise: (id: string) =>
     api.delete(`/findings/${encodeURIComponent(id)}/noise`),
@@ -791,6 +795,8 @@ export interface AIConfigResponse {
   assignments: Record<string, ComponentAssignment>
 }
 
+export type InvestigationReplayResponse = Schema<'InvestigationReplayResponse'>
+
 export const aiConfigApi = {
   getConfig: () => api.get<AIConfigResponse>('/ai/config'),
   setComponent: (
@@ -800,6 +806,10 @@ export const aiConfigApi = {
   clearComponent: (component: string) =>
     api.delete<{ component: string; cleared: boolean }>(`/ai/config/${component}`),
   listModels: () => api.get<{ models: AIModelInfo[] }>('/ai/models'),
+  // The one investigation replay (#4389). A 404 is "no investigation replay".
+  getInvestigationReplay: () => api.get<InvestigationReplayResponse>('/ai/investigation-replay'),
+  startInvestigationReplay: (body: Schema<'InvestigationReplayStart'>) =>
+    api.post<InvestigationReplayResponse>('/ai/investigation-replay', body),
 }
 
 export interface IngestionJob {
@@ -1128,6 +1138,103 @@ export interface RuleStageChange {
   hold: boolean
 }
 
+/** One stored check on a rule version, as the sync and sweeps wrote it. */
+export interface RuleCheck {
+  result?: 'pass' | 'fail' | 'unknown' | string
+  reason?: string | null
+  checked_at?: string
+  [key: string]: unknown
+}
+
+/** GET /detection-rules/rules/{id}: one listed rule copy with its query and stored checks. */
+export interface RuleDetail {
+  rule_id: number
+  title: string
+  /** The copy's language: splunk, elastic, wazuh or sigma. */
+  source: string
+  /** 'overlay' for Vigil's own rules. */
+  tool: string
+  version: number
+  description: string
+  query: string
+  checks: Record<string, RuleCheck | undefined>
+  stage: 'shadow' | 'live' | 'off' | null
+  /** Oldest first, each with the proof the move was made on. */
+  stages: { version: number; stage: 'shadow' | 'live' | 'off'; proof: Record<string, unknown>; actor: string; reason: string; at: string }[]
+}
+
+/** The gap a gaps-run proposal answers, as the run recorded it. */
+export interface ProposalGap {
+  kind: 'missed' | 'paper' | 'intel' | 'blind'
+  technique: string
+  count: number
+  confirmed: number
+  /** Missed runs by key: "hunt:<id>", "case:<id>". */
+  runs: string[]
+  /** Alerts on a paper-only technique, by finding id. */
+  alerts: string[]
+  /** The intrusion sets and reports that name an intel gap's technique. */
+  sources: string[]
+  /** How many of its Cases this reader can't read. */
+  runs_withheld?: number
+  /** Its alerts are hidden: the reader can't read findings. */
+  alerts_withheld?: boolean
+}
+
+/** One detection proposal as GET /detection-engineering/proposals lists it. */
+export interface ProposalRow {
+  proposal_id: string
+  title: string
+  technique: string | null
+  case_id: string | null
+  state: string
+  origin: { source?: string; rollout?: string; gap?: ProposalGap; [key: string]: unknown }
+  created_by: string
+  created_at: string
+  updated_at: string
+  /** The run the proposal was handed to, and the rule copies attached to it. */
+  run_id: string | null
+  rule_ids: number[]
+  /** The copy its stages follow: a SIEM's, else the Sigma form. */
+  rule_id: number | null
+  /** Its run's status: running, paused, completed, failed or cancelled. */
+  run_status: string | null
+  /** Its run still working as the backend counts it, which can outlast ``run_status``. */
+  run_working: boolean
+}
+
+export interface ProposalEvent {
+  id: number
+  from_state: string | null
+  to_state: string
+  actor: string
+  actor_kind: string
+  reason: string
+  at: string
+  evidence: { step?: string; run_id?: string; rule_ids?: number[]; [key: string]: unknown }
+}
+
+/** GET /detection-engineering/proposals/{id}: the proposal with its text, copies and events. */
+export interface Proposal extends ProposalRow {
+  sigma: string
+  copies: Record<string, string>
+  events: ProposalEvent[]
+  /** The attached copies' stage rows, oldest first; kept after a copy is removed. */
+  stages: { rule_id: number; version: number; stage: 'shadow' | 'live' | 'off'; actor: string; reason: string; at: string }[]
+}
+
+/** Detection proposals: rules Vigil or a person drafted, with every step on the record. */
+export const detectionEngineeringApi = {
+  /** Newest first. */
+  proposals: () => api.get<{ proposals: ProposalRow[] }>('/detection-engineering/proposals'),
+
+  proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
+
+  /** Rejects a proposal; the reason is required and stays on its record. */
+  reject: (proposalId: string, reason: string) =>
+    api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
+}
+
 /** The signed-in person's notices and live conditions (the bell's second source). */
 export const noticesApi = {
   list: () => api.get<Notices>('/notices'),
@@ -1153,6 +1260,13 @@ export const detectionRulesApi = {
   /** Moves a live rule to shadow and holds it there until a person releases it. */
   revertRule: (ruleId: number, reason: string) =>
     api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/revert`, { reason }),
+
+  /** One rule copy: its latest version's query, description and stored checks. */
+  rule: (ruleId: number) => api.get<RuleDetail>(`/detection-rules/rules/${ruleId}`),
+
+  /** Switches a shadow rule off and holds it there; a signed-in person only. */
+  switchOffRule: (ruleId: number, reason: string) =>
+    api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/switch-off`, { reason }),
 
   /** Lifts a person's hold: the normal rollout applies to the rule again. */
   releaseRule: (ruleId: number, reason: string) =>
@@ -1426,6 +1540,10 @@ export const autonomyApi = {
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),
+  // Clears the stop's hold. The row stays approved; the next executor pass runs it.
+  releaseHeld: (actionId: string) =>
+    api.post<Ceiling>(`/autonomy/held/${encodeURIComponent(actionId)}/release`),
+  releaseAllHeld: () => api.post<Ceiling>('/autonomy/held/release'),
 }
 
 export interface OrchestratorStatus {
@@ -1492,6 +1610,10 @@ export interface AuditFeedHealth {
   unconfirmed: number | null
   /** New entries are refused until the push carries it, for up to 30 seconds. */
   paused: boolean
+  /** Entries waiting to be recorded late. Open collapse windows are not counted. */
+  held: number | null
+  /** When the oldest waiting entry happened. Null when none is waiting. */
+  held_since: string | null
 }
 
 export interface AuditVerify {
@@ -1922,6 +2044,18 @@ export const invitesApi = {
   accept: (body: Schema<'AcceptInvite'>) => api.post<{ message: string }>('/auth/accept-invite', body),
 }
 
+// Directory pushes that wait for a link, and undoing a window of sync deactivations (#4507).
+export const directoryPushesApi = {
+  pending: () => api.get<Schema<'PendingPushes'>>('/users/sync/pending'),
+  link: (pendingId: string, userId: string) =>
+    api.post(`/users/sync/pending/${encodeURIComponent(pendingId)}/link`, { user_id: userId } satisfies Schema<'LinkRequest'>),
+  countWindow: (since: string, until: string) =>
+    api.get<Schema<'SyncWindowCount'>>('/users/sync/window', { params: { since, until } }),
+  reactivateWindow: (since: string, until: string) =>
+    api.post<Schema<'SyncWindowResult'>>('/users/sync/window', { since, until } satisfies Schema<'SyncWindow'>),
+  removeUnused: (userId: string) => api.post(`/users/${encodeURIComponent(userId)}/remove-unused`),
+}
+
 // Teams on Team & access. Reads need users.read; changes need teams.manage.
 export const teamsApi = {
   list: () => api.get<Schema<'TeamOut'>[]>('/users/teams'),
@@ -1951,6 +2085,9 @@ export const authApi = {
     } satisfies Schema<'PasswordResetRequest'>),
   confirmPasswordReset: (payload: Schema<'PasswordResetConfirm'>) =>
     api.post<{ message: string; recovery_codes_removed?: boolean }>('/auth/password-reset/confirm', payload),
+  // Public. Opening /confirm-email does not send this; the button does.
+  confirmEmail: (token: string) =>
+    api.post<{ message: string }>('/auth/email-confirmation/confirm', { token }),
   /** Revokes every token the user holds and clears the auth cookies, so the
    *  caller is signed out once this resolves. */
   changePassword: (body: Schema<'ChangePasswordRequest'>) =>
@@ -1984,12 +2121,13 @@ export const signInsApi = {
     api.post<Schema<'EndedSignIns'>>(`/users/${encodeURIComponent(userId)}/sign-ins/end`, {
       reason,
     } satisfies Schema<'EndSignInsRequest'>),
-  // End a lock; how the manager confirmed the person's identity goes to the audit trail.
-  unlock: (userId: string, identityConfirmedBy: string, suspectedCompromise = false) =>
+  // End a lock and the person's sign-ins. The reason and how they were confirmed go to the trail.
+  unlock: (userId: string, identityConfirmedBy: string, reason: string, suspectedCompromise = false) =>
     api.post(`/users/${encodeURIComponent(userId)}/unlock`, {
       identity_confirmed_by: identityConfirmedBy as Schema<'UnlockRequest'>['identity_confirmed_by'],
+      reason,
       suspected_compromise: suspectedCompromise,
-    }),
+    } satisfies Schema<'UnlockRequest'>),
   // Recovery: a reset link (emailed, or copied once) and a reset of two-step sign-in.
   resetLink: (userId: string) => api.get<Schema<'ResetLinkState'>>(`/users/${encodeURIComponent(userId)}/reset-link`),
   issueResetLink: (userId: string, body: Schema<'ResetLinkRequest'>) =>
@@ -2025,12 +2163,67 @@ export const sessionPolicyApi = {
 }
 
 // Single sign-on settings. The client secret is sent on a save and never comes back.
-export type SsoSettings = Schema<'SsoSettingsOut'>
+export type SsoSettings = Schema<'SsoSettingsOut'> & {
+  sync_enabled?: boolean
+  directory_id_claim?: string
+}
 export type SsoSettingsBody = Schema<'SsoSettingsIn'>
 export const ssoApi = {
   get: () => api.get<SsoSettings>('/auth/sso/settings'),
   put: (body: SsoSettingsBody, version: number) =>
     api.put<SsoSettings>('/auth/sso/settings', body, { headers: { 'If-Match': `"${version}"` } }),
+}
+
+/** Directory sync status. `token` is present only in the response that minted it. */
+export type DirectorySync = {
+  sync_enabled: boolean
+  directory_id_claim: string
+  last_push: string | null
+  token_expires_at: string | null
+  failed_authentications: number
+  last_manager_refusals: string[]
+  skipped_joins: number
+  /** pushes refused for a username or email in use, waiting for a link on Team & access */
+  pending_links: number
+  broken_lines: { external_id: string; on: string }[]
+  mapping_note: string | null
+  role_refusals: string[]
+  scim_path: string
+  token?: string | null
+}
+export const directorySyncApi = {
+  get: () => api.get<DirectorySync>('/auth/sso/sync'),
+  save: (directory_id_claim: string, mint = false) =>
+    api.post<DirectorySync>('/auth/sso/sync', { directory_id_claim, mint }),
+  mapping: () => api.get<DirectoryMapping>('/auth/sso/mapping'),
+  saveMapping: (
+    body: { group_roles: { group: string; role_id: string }[]; team_lines: TeamLine[] },
+    version: number,
+    dryRun = false,
+  ) =>
+    api.post<MappingEffect>('/auth/sso/mapping', body, {
+      params: dryRun ? { dry_run: true } : undefined,
+      headers: { 'If-Match': `"${version}"` },
+    }),
+}
+
+export type PushedGroup = { id: string; external_id: string; display_name: string }
+export type TeamLine = { group: string; team_id: string }
+export type DirectoryMapping = {
+  group_roles: { group: string; role_id: string }[]
+  team_lines: TeamLine[]
+  groups: PushedGroup[]
+  version: number
+  mapping_author: string | null
+}
+export type MappingEffect = {
+  roles_rise: number
+  roles_fall: number
+  roles_default: number
+  memberships_added: number
+  memberships_removed: number
+  applied: boolean
+  version: number
 }
 
 // The shipped breached-password list and what an administrator has imported onto it.
@@ -2055,10 +2248,12 @@ export type Factor = { code?: string; assertion?: Record<string, unknown>; chall
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
   // the first method needs the password; a change to one that exists, the password and a code
-  verify: (code: string, password: string) =>
+  // the first method sends the password; adding the app beside a key also sends that key
+  verify: (code: string, password: string, factor: Factor = {}) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
       password,
+      ...factor,
     } satisfies Schema<'MFAVerifyRequest'>),
   regenerateRecoveryCodes: (password: string, factor: Factor) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {

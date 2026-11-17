@@ -217,8 +217,50 @@ def _diff(actual: dict, expected: dict) -> dict:
     return diff
 
 
-def report_for(before: dict, after: dict, pending: int) -> dict:
-    """Keys gained, built-ins that differ, kept legacy roles, rows returned."""
+# Fixed sentence: the revision stops chat and a person's MCP token approving.
+# Next to ``widened``, the other stated exception this report already names.
+_APPROVAL_EXCEPTION = (
+    "Approving an outside action through chat or through a person's MCP token "
+    "no longer approves it. The action stays pending for a person to confirm "
+    "in Approvals."
+)
+_RECOVER_ADMIN = "python -m core.auth.recover_admin <username>"
+
+
+def _role_manager_count(conn) -> int:
+    """Active, non-deleted people whose role holds roles.manage.
+
+    Counted after this revision's grants. Principals exist from 0003; SSO
+    links do not, so a person here signs in with a password. The SQL stays
+    in this revision and does not import auth.
+    """
+    return int(conn.execute(text("""
+                SELECT count(*)
+                FROM public.users AS u
+                JOIN public.principals AS p ON p.principal_id = u.principal_id
+                JOIN public.roles AS r ON r.role_id = u.role_id
+                WHERE u.is_active
+                  AND p.deleted_at IS NULL
+                  AND p.kind = 'person'
+                  AND r.permissions->>'roles.manage' = 'true'
+                """)).scalar_one())
+
+
+def _manage_roles_line(count: int) -> str:
+    if count == 0:
+        return (
+            "Nobody on this install can manage roles. "
+            f"On the host, run {_RECOVER_ADMIN}."
+        )
+    return "Someone can manage roles."
+
+
+def report_for(before: dict, after: dict, pending: int, role_managers: int) -> dict:
+    """Keys gained, built-ins that differ, kept legacy roles, rows returned.
+
+    ``role_managers`` is the count from ``_role_manager_count`` after the
+    grants. The approval exception is stated beside the Senior Analyst widening.
+    """
     gained = {}
     widened = {}
     for role_id in sorted(after):
@@ -250,6 +292,12 @@ def report_for(before: dict, after: dict, pending: int) -> dict:
     return {
         "gained": gained,
         "widened": widened,
+        "approval_exception": _APPROVAL_EXCEPTION,
+        "role_managers": {
+            "active_people": role_managers,
+            "can_manage_roles": role_managers > 0,
+            "line": _manage_roles_line(role_managers),
+        },
         "differs": differs,
         "legacy_roles": legacy,
         "pending_returned": pending,
@@ -278,7 +326,7 @@ def upgrade() -> None:
     before = _load_roles(conn)
     pending = _pending_count(conn)
     run_sql(__file__)
-    body = report_for(before, _load_roles(conn), pending)
+    body = report_for(before, _load_roles(conn), pending, _role_manager_count(conn))
     _trail(conn, body)
     stash_report(revision, body)
 

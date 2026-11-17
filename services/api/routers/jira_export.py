@@ -11,7 +11,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from core.audit import outside, trail
 from core.auth.permissions import deny_unless, may_read_case
+from core.cases import case_trail
 from core.integrations._base.config import resolve
 from core.integrations.jira.descriptor import JIRA
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -51,6 +53,21 @@ class JiraExportResponse(BaseModel):
     subtasks_created: int = 0
     url: Optional[str] = None
     error: Optional[str] = None
+
+
+def _note_jira_outcome(seq, actor, case_id, project_key, outcome, **fields) -> None:
+    """Record the outcome. No entry when this push has no intent to answer."""
+    if seq is None or actor is None:
+        return
+    outside.commit_outcome(
+        actor,
+        outside.JIRA_OUTCOME,
+        intent=seq,
+        outcome=outcome,
+        case_id=case_id,
+        project_key=project_key,
+        **fields,
+    )
 
 
 def _export_failure(exc: Exception) -> JiraExportResponse:
@@ -109,6 +126,8 @@ def export_case_to_jira(
             detail="JIRA not configured. Set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN in environment.",
         )
 
+    seq = None
+    actor = None
     try:
         # Build description
         description = f"*Case Report: {case.title}*\n\n"
@@ -135,11 +154,15 @@ def export_case_to_jira(
                 description += f"- ... and {len(findings) - 10} more\n"
             description += "\n"
 
-        # Get resolution steps
-        if case.metadata and case.metadata.get("resolution_steps"):
+        # resolution_steps is the column. case.metadata is SQLAlchemy's MetaData.
+        steps = case.resolution_steps or []
+        if isinstance(steps, list) and steps:
             description += "*Resolution Steps:*\n"
-            for i, step in enumerate(case.metadata["resolution_steps"][:5], 1):
-                description += f"{i}. {step.get('description', 'N/A')}\n"
+            for i, step in enumerate(steps[:5], 1):
+                text = (
+                    step.get("description", "N/A") if isinstance(step, dict) else "N/A"
+                )
+                description += f"{i}. {text}\n"
             description += "\n"
 
         # Add link
@@ -156,6 +179,22 @@ def export_case_to_jira(
             "low": "Low",
         }
         jira_priority = priority_map.get(case.priority.lower(), "Medium")
+
+        # One intent covers the issue and its subtasks, committed before either
+        # request. A trail that cannot take it means the push is not attempted.
+        # The request session is not used for the entry, and is not committed here.
+        try:
+            if outside.recording():
+                actor = case_trail._actor(session, current_user.username)
+                seq = outside.commit_intent(
+                    actor,
+                    outside.JIRA_INTENT,
+                    case_id=case_id,
+                    project_key=request.project_key,
+                )
+        except Exception as exc:
+            logger.error("JIRA export not attempted: %s", exc)
+            return JiraExportResponse(success=False, error=INTERNAL_ERROR_DETAIL)
 
         # Create main issue
         auth = (username, token)
@@ -183,9 +222,12 @@ def export_case_to_jira(
         response.raise_for_status()
         result_data = response.json()
         issue_key = result_data.get("key")
+        if not issue_key:
+            raise RuntimeError("Jira did not return an issue key")
 
         # Create subtasks for findings if requested
         subtasks_created = 0
+        subtasks_failed = 0
         if request.include_findings and findings:
             for finding in findings[:5]:  # Limit to 5 subtasks
                 subtask_data = {
@@ -214,6 +256,7 @@ def export_case_to_jira(
                     sub_response.raise_for_status()
                     subtasks_created += 1
                 except Exception as e:
+                    subtasks_failed += 1
                     logger.warning(
                         f"Failed to create subtask for finding {finding.finding_id}: {e}"
                     )
@@ -223,6 +266,17 @@ def export_case_to_jira(
             f"Case {case_id} exported to JIRA: {issue_key} by {current_user.username}"
         )
 
+        # A created issue is done even when some subtasks failed.
+        _note_jira_outcome(
+            seq,
+            actor,
+            case_id,
+            request.project_key,
+            trail.OUTCOME_DONE,
+            issue_key=issue_key,
+            subtasks_created=subtasks_created,
+            subtasks_failed=subtasks_failed,
+        )
         return JiraExportResponse(
             success=True,
             issue_key=issue_key,
@@ -233,4 +287,11 @@ def export_case_to_jira(
     except HTTPException:
         raise
     except Exception as e:
+        _note_jira_outcome(
+            seq,
+            actor,
+            case_id,
+            request.project_key,
+            outside.error_outcome(e),
+        )
         return _export_failure(e)

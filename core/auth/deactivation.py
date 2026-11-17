@@ -19,6 +19,7 @@ from core.auth.permissions import case_reader_for, may_read_case
 from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,17 @@ def when_committed(session: Session, send: Callable[[], None]) -> None:
     event.listen(session, "after_commit", run)
 
 
+ROUTES = ("sync", "person", "dormancy")
+
+
+def clear_deactivation(user: User) -> None:
+    """A reactivation: the route and the time are gone, so a later push can
+    deactivate again and a sync push will not treat a person's deactivation as its own.
+    """
+    user.deactivation_route = None
+    user.deactivated_at = None
+
+
 def deactivate_account(
     session: Session,
     user: User,
@@ -53,6 +65,7 @@ def deactivate_account(
     actor: str,
     by_person: bool,
     record_trail: bool = True,
+    route: str | None = None,
 ) -> list[str]:
     """Deactivate ``user`` in ``session``; returns the credential ids revoked.
 
@@ -60,8 +73,16 @@ def deactivate_account(
     are told if the account owned open work. ``record_trail=False`` leaves the
     ``credential.revoked`` entries to the caller, for a disable that commits on
     its own ahead of the rest of a request.
+
+    ``route`` is who did it (``sync``, ``person`` or ``dormancy``). Callers pass
+    it. It is the only writer of ``deactivation_route`` and ``deactivated_at``.
     """
+    if route is not None and route not in ROUTES:
+        raise ValueError(f"unknown deactivation route {route}")
     user.is_active = False
+    if route is not None:
+        user.deactivation_route = route
+        user.deactivated_at = utcnow()
     # Row before trail lock, the order every other path takes them in.
     session.flush()
     revoked = []

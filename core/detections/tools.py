@@ -20,6 +20,7 @@ from core.detections.gaps import (
     technique_check,
 )
 from core.detections.inventory import catalog, metrics
+from core.detections.inventory.accurate import FALSE_PAGE, judged_false_page
 from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.overlay import save_rule
@@ -104,14 +105,16 @@ class SecurityDetectionsTools:
         quiet: Optional[str] = None,
         accurate: Optional[str] = None,
         caught: Optional[str] = None,
-    ) -> List[Dict]:
+        rule_id: Any = None,
+        offset: int = 0,
+    ) -> Any:
         """
         Search across all detection rules using keywords.
 
         Args:
             query: Search query (e.g., "powershell base64", "lateral movement")
             source_type: Optional filter by rule format ("sigma", "splunk", "elastic", "kql", "wazuh")
-            limit: Maximum number of results
+            limit: Maximum number of results. With rule_id, the judged-false page size (at most 25).
             tool: Optional filter by where the rule was read ("overlay", "repo", "elastic", "splunk", "wazuh")
             runs: Optional filter by Runs result ("pass", "fail", "unknown")
             stage: Optional filter by current rollout stage ("shadow", "live", "off")
@@ -123,12 +126,30 @@ class SecurityDetectionsTools:
                 whether a Kibana, Wazuh or Splunk rule's judged alerts are mostly real
             caught: Optional filter: "pass" for versions that alerted on a real
                 attack step, "untested" for the rest
+            rule_id: When set, return that one rule plus a page of its judged-false
+                determinations. Without it the call stays a list and builds no page.
+            offset: Where that page starts. Ignored without rule_id.
 
         Returns:
             List of matching detection rules, each with its status, checks and
             whether it is flagged; an overlay rule also with its stage and stage
-            rows; a single hit also carries its recent check changes
+            rows; a single hit also carries its recent check changes. With
+            rule_id, that one rule plus ``judged_false``.
         """
+        try:
+            rid = _rule_id(rule_id)
+        except ValueError:
+            return {"error": "rule_id must be a detection rule id"}
+        if rid is not None:
+            hits = catalog.search("", None, 1, rule_id=rid)
+            if not hits:
+                return {"error": f"No detection rule {rid}"}
+            return {
+                **hits[0],
+                "judged_false": judged_false_page(
+                    rid, _offset(offset), _page_size(limit)
+                ),
+            }
         return catalog.search(
             query or "",
             source_type,
@@ -375,11 +396,19 @@ class SecurityDetectionsTools:
         note: Any = None,
         exception_id: Any = None,
         reason: Any = None,
+        finding_ids: Any = None,
         **_kwargs: object,
     ) -> Dict:
         """Add a customer-specific exception to an overlay copy, or remove one."""
         return await asyncio.to_thread(
-            edit_exception, action, rule_id, match, note, exception_id, reason
+            edit_exception,
+            action,
+            rule_id,
+            match,
+            note,
+            exception_id,
+            reason,
+            finding_ids,
         )
 
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:
@@ -395,6 +424,44 @@ class SecurityDetectionsTools:
             timestamp_end=span[1] if span else None,
         )
         return reconstruct(steps, findings)
+
+
+def _rule_id(value: Any) -> Optional[int]:
+    """A detection rule id, or None when the argument was left out."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        rid = int(value)
+    except ValueError:
+        raise ValueError from None
+    if rid < 1:
+        raise ValueError
+    return rid
+
+
+def _offset(value: Any) -> int:
+    try:
+        start = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if isinstance(value, bool):
+        return 0
+    return max(start, 0)
+
+
+def _page_size(limit: Any) -> int:
+    """The judged-false page size: at least 1, at most FALSE_PAGE, else 20."""
+    try:
+        size = int(limit)
+    except (TypeError, ValueError):
+        return 20
+    if isinstance(limit, bool):
+        return 20
+    return min(max(size, 1), FALSE_PAGE)
 
 
 # Global instance for reuse

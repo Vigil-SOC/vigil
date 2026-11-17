@@ -1,0 +1,18 @@
+# Compose only. The router copies this onto the lane-1 rule when the code list
+# allows (restart_service, soc-daemon, compose). verify_after_s covers the
+# daemon's stop drain (45s) plus coming back and serving /health.
+apiVersion: medic.runbooks/v1
+kind: Runbook
+id: restart-soc-daemon
+title: Restart the soc-daemon container
+applies_to:
+  - pipeline.daemon-component-failed-compose
+  - pipeline.daemon-component-hung-compose
+action: {type: restart_service, service: soc-daemon}
+verify_after_s: 90
+description: >-
+  Restarts the soc-daemon container Medic just inspected. After 90 seconds
+  Medic checks that every component is running and /health answers 200. A hung
+  loop is read again one scheduler pass later, and every running component's
+  pass counter has to have moved. The incident still resolves only when its
+  own rule clears.

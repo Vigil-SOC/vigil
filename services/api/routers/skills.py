@@ -6,13 +6,16 @@ operator root (``VIGIL_SKILLS_PATH``, else ``~/.vigil/skills``); see
 bundled library is never modified.
 """
 
+import asyncio
 import logging
-from typing import Dict, Optional, Tuple
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth.permissions import permission_gate
+from core.auth import trail_events
+from core.auth.permissions import permission_gate, require_permission
 from core.llm.cost.budget import BudgetExceeded
 from core.llm.oneshot import NoProviderConfigured
 from core.llm.providers.registry import get_registry
@@ -22,6 +25,7 @@ from core.llm.target import component_fallback, model_for
 from core.routing import Auth, RouterMeta
 from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
+from core.skills.skill_hold import ApprovalRefused, ScanState, approve, scan_states
 from core.skills.skill_library import (
     UPLOAD_MAX,
     Skill,
@@ -29,7 +33,7 @@ from core.skills.skill_library import (
     SkillError,
     SkillNotFound,
     delete_operator_skill,
-    install_uploaded_skill,
+    install_uploaded_skills,
     is_bundled,
     load_skills,
     operator_skills_root,
@@ -38,9 +42,12 @@ from core.skills.skill_library import (
     skill_files,
     skill_roots,
     skill_version,
+    skipped_note,
     write_operator_skill,
 )
 from core.skills.skill_usage import skill_usage
+from core.storage.unit_of_work import unit_of_work
+from services.api import skill_sweep
 from services.api.routers.claude import NO_PROVIDER_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -60,6 +67,35 @@ ROUTER_META = RouterMeta(
 )
 
 
+class SkillScanSummary(BaseModel):
+    # bundled | unchecked | pending | failed | safe | flagged | approved | refused.
+    # Only bundled, unchecked, safe and approved skills reach agents; the rest are
+    # held. refused: the folder contains a symlink, which is never allowed.
+    state: str
+    held: bool
+    recommendation: Optional[str] = None  # SAFE | CAUTION | DO_NOT_INSTALL
+    score: Optional[int] = None
+
+
+class SkillScanFinding(BaseModel):
+    rule_id: str
+    severity: str
+    message: str
+    file: Optional[str] = None
+
+
+class SkillScanDetail(SkillScanSummary):
+    max_severity: Optional[str] = None
+    findings: list[SkillScanFinding] = []
+    scanner_version: Optional[str] = None
+    # The content the verdict is about; POST /{name}/approve takes it back.
+    digest: Optional[str] = None
+    scanned_at: Optional[datetime] = None
+    error: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
+
 class SkillResponse(BaseModel):
     name: str
     description: str
@@ -71,6 +107,25 @@ class SkillResponse(BaseModel):
     # skills themselves come from disk and must still list.
     reads_7d: int = 0
     agents_7d: int = 0
+    scan: SkillScanSummary
+
+
+class SkillApproveRequest(BaseModel):
+    # The scan's digest the approver read; refused if the skill has moved on.
+    digest: str
+
+
+class SkillUploadResponse(SkillResponse):
+    """The first skill installed, as a single upload always returned, plus all of them.
+
+    A zip may hold several skills; ``skills`` lists every skill installed, and
+    ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+    explains.
+    """
+
+    skills: List[SkillResponse]
+    skipped: int = 0
+    skipped_note: Optional[str] = None
 
 
 class SkillFile(BaseModel):
@@ -84,6 +139,7 @@ class SkillFileContent(BaseModel):
 
 
 class SkillDetail(SkillResponse):
+    scan: SkillScanDetail
     body: str
     operator_root_set: bool
     version: int
@@ -144,8 +200,33 @@ def _usage_by_skill() -> Dict[str, Tuple[int, int]]:
         return {}
 
 
+def _scan_summary(state: ScanState) -> dict:
+    return dict(
+        state=state.state,
+        held=not state.allowed,
+        recommendation=state.recommendation,
+        score=state.score,
+    )
+
+
+def _scan_detail(state: ScanState) -> SkillScanDetail:
+    return SkillScanDetail(
+        **_scan_summary(state),
+        max_severity=state.max_severity,
+        findings=[SkillScanFinding(**f) for f in state.findings],
+        scanner_version=state.scanner_version,
+        digest=state.digest,
+        scanned_at=state.scanned_at,
+        error=state.error,
+        approved_by=state.approved_by,
+        approved_at=state.approved_at,
+    )
+
+
 def _response(
-    skill: Skill, usage: Optional[Dict[str, Tuple[int, int]]] = None
+    skill: Skill,
+    state: ScanState,
+    usage: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> SkillResponse:
     reads, agents = (usage or {}).get(skill.name, (0, 0))
     return SkillResponse(
@@ -156,7 +237,12 @@ def _response(
         file_count=len(skill_files(skill)),
         reads_7d=reads,
         agents_7d=agents,
+        scan=SkillScanSummary(**_scan_summary(state)),
     )
+
+
+def _state_of(skill: Skill) -> ScanState:
+    return scan_states([skill])[skill.name]
 
 
 def _loaded(name: str) -> Skill:
@@ -180,7 +266,9 @@ def _http(exc: SkillError) -> HTTPException:
 async def list_skills():
     """Every valid skill under the configured roots, bundled library first."""
     usage = _usage_by_skill()
-    return [_response(skill, usage) for skill in load_skills(skill_roots())]
+    skills = load_skills(skill_roots())
+    states = await asyncio.to_thread(scan_states, skills)
+    return [_response(skill, states[skill.name], usage) for skill in skills]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -195,9 +283,11 @@ async def get_skill(name: str):
     except OSError as exc:
         logger.warning("could not read skill %s: %s", name, exc)
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
-    listed = _response(skill, _usage_by_skill())
+    state = await asyncio.to_thread(_state_of, skill)
+    listed = _response(skill, state, _usage_by_skill())
     return SkillDetail(
-        **listed.model_dump(),
+        **listed.model_dump(exclude={"scan"}),
+        scan=_scan_detail(state),
         body=body,
         operator_root_set=operator_skills_root() is not None,
         version=skill_version(skill),
@@ -230,7 +320,7 @@ async def get_skill_file(name: str, path: str):
     dependencies=_SKILLS_WRITE,
 )
 async def save_skill(req: SkillWriteRequest):
-    """Write ``<vigil_skills_path>/<name>/SKILL.md``, bumping its version.
+    """Write ``<root>/[<category>/...]<name>/SKILL.md``, bumping its version.
 
     An existing operator skill is overwritten when ``version`` is the one on disk
     (409 otherwise); ``source`` copies that skill's folder.
@@ -245,21 +335,33 @@ async def save_skill(req: SkillWriteRequest):
         )
     except SkillError as exc:
         raise _http(exc) from exc
-    return _response(skill)
+    skill_sweep.request()
+    return _response(skill, await asyncio.to_thread(_state_of, skill))
 
 
-@router.post("/upload", response_model=SkillResponse, dependencies=_SKILLS_WRITE)
+@router.post("/upload", response_model=SkillUploadResponse, dependencies=_SKILLS_WRITE)
 async def upload_skill(file: UploadFile = File(...)):
-    """Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+    """Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
 
-    A name already taken is refused (409); nothing is overwritten.
+    All or nothing: a skill refused refuses the upload, and a name already
+    taken is refused (409); nothing is overwritten. Skills are found where
+    ``npx skills`` looks in a repo; any other ``SKILL.md`` is skipped and
+    counted, not installed.
     """
     data = await file.read(UPLOAD_MAX + 1)  # one byte over is enough to refuse it
     try:
-        skill = install_uploaded_skill(file.filename or "", data)
+        installed, skipped = install_uploaded_skills(file.filename or "", data)
     except SkillError as exc:
         raise _http(exc) from exc
-    return _response(skill)
+    skill_sweep.request()
+    states = await asyncio.to_thread(scan_states, installed)
+    skills = [_response(s, states[s.name]) for s in installed]
+    return SkillUploadResponse(
+        **skills[0].model_dump(),
+        skills=skills,
+        skipped=skipped,
+        skipped_note=skipped_note(skipped),
+    )
 
 
 @router.post(
@@ -289,6 +391,44 @@ async def generate_skill(req: SkillGenerateRequest):
     return SkillGenerateResponse(draft=draft)
 
 
+@router.post("/{name}/approve", response_model=SkillResponse)
+async def approve_skill(
+    name: str,
+    req: SkillApproveRequest,
+    user=Depends(require_permission("skills.approve")),
+):
+    """Release a held skill's current content to agents.
+
+    Needs ``skills.approve``, which ``automation.write`` does not carry, so the
+    uploader cannot approve their own skill. 409 when the skill needs no
+    approval, has no verdict yet, or its content is no longer ``digest``.
+    """
+    try:
+        skill = _loaded(name)
+    except SkillError as exc:
+        raise _http(exc) from exc
+
+    def release() -> ScanState:
+        with unit_of_work() as session:
+            try:
+                before = approve(skill, req.digest, user.principal_id, session)
+            except ApprovalRefused as exc:
+                raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+            trail_events.record(
+                session,
+                "skills.approved",
+                actor=user.principal_id,
+                name=skill.name,
+                digest=req.digest,
+                state=before.state,
+                recommendation=before.recommendation,
+            )
+        return _state_of(skill)
+
+    # Digesting, the verdict read and the write are blocking: off the event loop.
+    return _response(skill, await asyncio.to_thread(release))
+
+
 @router.delete("/{name}", dependencies=_SKILLS_WRITE)
 async def remove_skill(name: str):
     """Delete an operator skill directory. A bundled skill is refused."""
@@ -311,6 +451,15 @@ async def test_skill(name: str):
         skill = _loaded(name)
     except SkillError as exc:
         raise _http(exc) from exc
+
+    # Running a held skill would put its content in front of a model, which is
+    # what the hold exists to prevent.
+    state = await asyncio.to_thread(_state_of, skill)
+    if not state.allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Skill {name!r} is held ({state.state}) and cannot be tested until it is released.",
+        )
 
     try:
         cases = load_cases(skill) if has_cases(skill) else []
@@ -335,7 +484,6 @@ async def test_skill(name: str):
             LLMRouter(),
             provider,
             skill,
-            root=skill.path.parent,
             max_tokens=1024,
             model=model,
             cases=cases,

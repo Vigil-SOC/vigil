@@ -1,4 +1,4 @@
-"""The proxy: one validated GET per connection, rebuilt and sent to the socket.
+"""The proxy: one validated request per connection, rebuilt and sent to the socket.
 
 Streaming routes (logs, events, ping) are piped byte for byte with
 back-pressure: the proxy reads from Docker only as fast as Medic reads from it,
@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+import socket
 
 from services.medic_dockerproxy import logs, policy, project
 from services.medic_dockerproxy.policy import Refuse
@@ -23,6 +24,10 @@ MAX_JSON_BODY = 8 << 20
 MAX_CONNECTIONS = 32  # D4: ~7 follow streams + events + polls
 HEAD_TIMEOUT = 10.0
 UPSTREAM_TIMEOUT = 10.0  # connect, and a whole JSON reply
+RESTART_TIMEOUT = 90.0  # stop drain plus the container coming back
+_PROJECT = "com.docker.compose.project"
+_SERVICE = "com.docker.compose.service"
+_DAEMON = "soc-daemon"
 WRITE_TIMEOUT = 10.0  # sending a projected JSON reply to Medic
 STATUS_RE = re.compile(r"HTTP/1\.[01] ([1-5][0-9]{2})( .*)?")
 SIZE_RE = re.compile(rb"[0-9A-Fa-f]{1,8}")
@@ -71,6 +76,8 @@ async def read_reply(ur: asyncio.StreamReader) -> tuple[int, bytes]:
             if await ur.readexactly(2) != b"\r\n":
                 raise ValueError("chunk end")
     length = hdrs.get("content-length", "")
+    if not length and int(m[1]) in (204, 304):
+        return int(m[1]), b""
     if not LENGTH_RE.fullmatch(length) or int(length) > MAX_JSON_BODY:
         raise ValueError("content-length")
     return int(m[1]), await ur.readexactly(int(length))
@@ -196,6 +203,8 @@ class Proxy:
             return await refuse(cw, 400, "head_timeout")
         except asyncio.IncompleteReadError:
             return
+        if req.method == "POST":
+            return await self._restart(req, cw)
         try:
             ur, uw = await asyncio.wait_for(
                 asyncio.open_unix_connection(self.socket_path, limit=CHUNK),
@@ -216,6 +225,68 @@ class Proxy:
                 await self._projected(req.route, ur, cw)
         finally:
             uw.close()
+
+    async def _docker(
+        self, method: str, target: str, timeout: float
+    ) -> tuple[int, bytes] | None:
+        try:
+            ur, uw = await asyncio.wait_for(
+                asyncio.open_unix_connection(self.socket_path, limit=CHUNK),
+                UPSTREAM_TIMEOUT,
+            )
+        except (OSError, TimeoutError):
+            return None
+        try:
+            uw.write(
+                f"{method} {target} HTTP/1.1\r\nHost: docker\r\n"
+                "Content-Length: 0\r\nConnection: close\r\n\r\n".encode()
+            )
+            await uw.drain()
+            return await asyncio.wait_for(read_reply(ur), timeout)
+        except (OSError, TimeoutError, asyncio.IncompleteReadError, ValueError):
+            return None
+        finally:
+            uw.close()
+
+    async def _inspect(self, container_id: str) -> dict | None:
+        got = await self._docker(
+            "GET", f"/containers/{container_id}/json", UPSTREAM_TIMEOUT
+        )
+        if got is None or got[0] != 200:
+            return None
+        try:
+            return project.inspect(json.loads(got[1]))
+        except (ValueError, project.Unprojectable):
+            return None
+
+    def _labels(self, doc: dict) -> dict:
+        config = doc.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        return labels if isinstance(labels, dict) else {}
+
+    async def _restart(self, req: policy.Request, cw: asyncio.StreamWriter) -> None:
+        """POST /containers/{id}/restart, only this Compose project's soc-daemon."""
+        cid = req.target.split("?", 1)[0].split("/")[2]
+        try:
+            own = await self._inspect(socket.gethostname())
+            doc = await self._inspect(cid)
+        except (OSError, TimeoutError):
+            logs.event("upstream_unreachable", level=logging.WARNING)
+            return await refuse(cw, 502, "upstream_unreachable")
+        if own is None or doc is None:
+            return await refuse(cw, 403, "not_in_project")
+        project_name = self._labels(own).get(_PROJECT)
+        same = project_name and project_name == self._labels(doc).get(_PROJECT)
+        if not same or self._labels(doc).get(_SERVICE) != _DAEMON:
+            return await refuse(cw, 403, "not_in_project")
+        got = await self._docker("POST", req.target, RESTART_TIMEOUT)
+        if got is None:
+            logs.event("upstream_unreachable", level=logging.WARNING)
+            return await refuse(cw, 502, "upstream_unreachable")
+        status, body = got
+        if status in (200, 204):
+            return await send(cw, 200, b'{"restarted":true}')
+        await send(cw, status, json.dumps({"message": _message(body)}).encode())
 
     async def _pipe(self, ur, cr, cw) -> None:
         cw.transport.set_write_buffer_limits(high=WRITE_HIGH)

@@ -1,4 +1,4 @@
-"""`python -m services.medic run | check`."""
+"""`python -m services.medic run | check | section`."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from services.medic.app.heartbeat import (
 from services.medic.app.pack_admin import PackAdmin
 from services.medic.app.policy_probe import Policy, PolicyCheck, Verdict
 from services.medic.app.policy_probe import probe as policy_probe
+from services.medic.app.section import section_main
 from services.medic.app.trace import TraceCapture, pack_of, start_capture
 from services.medic.app.watchdog import Watchdog
 from services.medic.app.wiring import (
@@ -49,6 +50,7 @@ from services.medic.app.wiring import (
     store_head,
 )
 from services.medic.engine.core import iso
+from services.medic.fix import Fixer
 from services.medic.redact import install_log_redaction
 from services.medic.sensors import Sensor
 from services.medic.sensors.containers import docker_containers
@@ -65,7 +67,7 @@ from services.medic.store import RecordHeld, StoreError, open_writer
 
 log = logging.getLogger("services.medic")
 
-USAGE = "usage: python -m services.medic {run|check [--ready]}"
+USAGE = "usage: python -m services.medic {run|check [--ready]|section [--since-days N]}"
 
 # httpcore's DEBUG trace logs raw response headers (Set-Cookie and the like) in a
 # shape K2's patterns miss, and httpx logs every request at INFO. A sensor's
@@ -114,6 +116,9 @@ def main(
     to real time and a real exit."""
     # Medic reads its own env: it may not import core.config (A3-1).
     env = os.environ if env is None else env  # noqa: ENV001
+    # Read-only export. Before `run`: no writer, no heartbeat, no API key.
+    if argv and argv[0] == "section":
+        return section_main(argv[1:], env, USAGE)
     if list(argv) not in (["run"], ["check"], ["check", "--ready"]):
         print(USAGE, file=sys.stderr)
         return 2
@@ -445,6 +450,8 @@ def _run(
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
+        fixer = Fixer(medic)
+        fixer.settle()
         # Dev mode, and a start whose lifecycle failed, have none.
         admin = (
             PackAdmin(pack, shape=shape, data_dir=data_dir, clock=clock)
@@ -460,6 +467,7 @@ def _run(
             record_start(data_dir, now=started_at, previous_beat=previous_beat),
             dev_mode=vigil_dev_mode,
             admin=admin,
+            fixer=fixer,
         )
         status.publish(cycle=0)
         watchdog = Watchdog(
@@ -491,6 +499,7 @@ def _run(
             log.exception("Medic stopped on an error: %s", type(exc).__name__)
             code = 1
         finally:
+            fixer.stop()
             watchdog.stop()
             status.stop()
             medic.capture.close(clock.wall())  # the manifest, on a clean stop
@@ -652,10 +661,20 @@ class _Status:
     retries on its own."""
 
     def __init__(
-        self, medic, data_dir, api, clock, started_at, history, *, dev_mode, admin
+        self,
+        medic,
+        data_dir,
+        api,
+        clock,
+        started_at,
+        history,
+        *,
+        dev_mode,
+        admin,
+        fixer=None,
     ) -> None:
         self.medic, self.data_dir, self.clock = medic, data_dir, clock
-        self.dev_mode, self.admin = dev_mode, admin
+        self.dev_mode, self.admin, self.fixer = dev_mode, admin, fixer
         self.started_at, self.history = started_at, history
         self.board = StatusBoard()
         self.api = None
@@ -669,6 +688,7 @@ class _Status:
                 data_dir=data_dir,
                 writer=medic.writer,
                 bridge=admin.bridge if admin else None,
+                fixer=fixer,
                 bind_peer=api.bind_peer,
             )
         self._failing = self._api_failed = self._pack_failing = False

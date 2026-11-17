@@ -31,6 +31,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_MIN_RULE_LEVEL = 7
 MAX_RULE_LEVEL = 16
 
+# Vigil's case status, and the Elastic Security alert status it maps to.
+# Anything else is sent as itself.
+_ELASTIC_STATUS = {
+    "acknowledged": "acknowledged",
+    "in_progress": "acknowledged",
+    "closed": "closed",
+    "resolved": "closed",
+    "open": "open",
+    "new": "open",
+}
+
+
+def elastic_alert_status(status: str) -> str:
+    """The alert status Elastic Security is asked to store."""
+    return _ELASTIC_STATUS.get(status, status)
+
 
 def min_rule_level_from_config(config: Mapping[str, Any]) -> int:
     """The minimum Wazuh rule level to ingest, defaulting to 7.
@@ -416,6 +432,26 @@ class ElasticIngestion(SIEMIngestionService):
             },
         }
 
+    def calls_kibana(self) -> bool:
+        """Whether a status push would leave this process at all.
+
+        No Elasticsearch URL, or a URL with no Kibana, returns before any
+        request. Alert status lives in Kibana; an indexer has none to update.
+        """
+        svc = self._get_elastic_service()
+        return bool(svc and svc.kibana_url)
+
+    async def push_alert_status(self, alert_id: str, status: str) -> Optional[int]:
+        """HTTP status from Kibana, or None when ``calls_kibana`` is false.
+
+        Timeouts and connection errors propagate. A 4xx or 5xx is the status
+        code, not an exception.
+        """
+        svc = self._get_elastic_service()
+        if not svc or not svc.kibana_url:
+            return None
+        return await svc.update_alert_status([alert_id], elastic_alert_status(status))
+
     async def update_upstream_alert_status(
         self,
         alert_id: str,
@@ -423,20 +459,9 @@ class ElasticIngestion(SIEMIngestionService):
         note: Optional[str] = None,
     ) -> bool:
         """Push a status change back to Elastic Security."""
-        svc = self._get_elastic_service()
-        if not svc:
+        try:
+            code = await self.push_alert_status(alert_id, status)
+        except Exception as exc:
+            logger.error("Error updating alert status: %s", exc)
             return False
-        if not svc.kibana_url:
-            # Alert status lives in Kibana; an indexer has none to update.
-            return False
-
-        elastic_status_map = {
-            "acknowledged": "acknowledged",
-            "in_progress": "acknowledged",
-            "closed": "closed",
-            "resolved": "closed",
-            "open": "open",
-            "new": "open",
-        }
-        es_status = elastic_status_map.get(status, status)
-        return await svc.update_alert_status([alert_id], es_status)
+        return code is not None and code < 400
