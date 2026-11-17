@@ -51,7 +51,13 @@ FAILED = "failed"
 DEACTIVATED = "deactivated"
 EMAIL_NOT_VERIFIED = "email_not_verified"
 NOT_PROVISIONED = "not_provisioned"
-CODES = (FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED)
+# A break-glass account is never signed into through the provider (#4534).
+BREAK_GLASS_EMAIL = "break_glass_email"
+BREAK_GLASS_LINKED = "break_glass_linked"
+CODES = (
+    FAILED, DEACTIVATED, EMAIL_NOT_VERIFIED, NOT_PROVISIONED,
+    BREAK_GLASS_EMAIL, BREAK_GLASS_LINKED,
+)  # fmt: skip
 
 
 class Refused(Exception):
