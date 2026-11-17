@@ -6028,6 +6028,11 @@
       gap: 8px;
    }
 
+   .fp-ip-role {
+      font-size: 12px;
+      color: var(--tx-3);
+   }
+
    .fp-ip {
       display: flex;
       flex-wrap: wrap;
