@@ -531,7 +531,7 @@ def _filter(query, expression: Optional[str]):
 def _take_over(session: Session, caller: User, link: SsoLink, external_id: str) -> User:
     """A push whose externalId matches a link manages that account."""
     user = _person(session, link)
-    if user is None:
+    if user is None or user.break_glass_at is not None:
         trail_events.record(
             session,
             "directory.takeover_refused",

@@ -18,6 +18,9 @@ const SSO_ERRORS: Record<string, string> = {
     "Your company sign-in hasn't verified your email address, so Vigil can't sign you in. Ask your IT team to verify it.",
   not_provisioned:
     "Your account hasn't been set up in Vigil from your identity provider yet. If this lasts, ask your admin.",
+  break_glass_email:
+    "This address belongs to a break-glass account. Ask an account manager to change that account's email to a mailbox your identity provider doesn't use.",
+  break_glass_linked: 'This identity is linked to a break-glass account; ask the operator to move the mark.',
 }
 // A plain navigation: the server answers with the provider's redirect.
 const SSO_START = `${basePath}/api/auth/sso/start`

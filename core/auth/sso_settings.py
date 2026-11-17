@@ -7,6 +7,7 @@ store, and the read model says only whether one is set.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import NamedTuple, Optional
 
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from core.storage.models import SystemConfig
 from core.storage.unit_of_work import unit_of_work
+
+logger = logging.getLogger(__name__)
 
 KEY = "auth.sso"
 SECRET_KEY = "VIGIL_SSO_CLIENT_SECRET"
@@ -102,8 +105,15 @@ def settings() -> SsoSettings:
         try:
             return read_row(session)[0].settings
         except (ValidationError, TypeError, ValueError):
-            # A row edited by hand into something invalid: the defaults hold.
-            return SsoSettings()
+            # A row edited by hand into something invalid: the defaults hold,
+            # except Require single sign-on, which a broken row never turns off.
+            row = session.get(SystemConfig, KEY)
+            value = row.value if row is not None else None
+            required = isinstance(value, dict) and value.get("require_sso") is True
+            logger.error(
+                "The auth.sso settings row is invalid; SSO is off until it is re-saved"
+            )
+            return SsoSettings(require_sso=required)
 
 
 class DiscoveryRefused(Exception):

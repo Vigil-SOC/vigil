@@ -256,8 +256,9 @@ def _manager_accounts(
         _not_deleted(session.query(User)).filter(Principal.kind == principals.PERSON)
     ).all()
     current = sso_settings.settings()
-    linked = sso.linked_principals(session) if sso.is_on(current) else set()
     required = sso.required(current)
+    # Linked people count while required even if SSO is broken now: they are back once it is fixed.
+    linked = sso.linked_principals(session) if required or sso.is_on(current) else set()
     found = []
     for user in people:
         role_id, active = (users or {}).get(
@@ -511,6 +512,7 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
             principals.SERVICE_ACCOUNT if machine else principals.PERSON
         )
         entry["managed_by_medic"] = _is_medic(user)
+        entry["break_glass"] = user.break_glass_at is not None
         entry["purpose"] = user.purpose
         entry["accountable"] = None
         entry["accountable_gone"] = False
@@ -1299,6 +1301,8 @@ def link_pending_push(
         _refuse_erased(user)
         if not _is_person_account(user, session):
             _refuse("A service account can't take a directory link")
+        if user.break_glass_at is not None:
+            _refuse("Remove the break-glass mark at the host first")
         _require_privileges_cover_target(current_user, user, session, action="link")
         issuer = sso_settings.read_row(session)[0].settings.issuer
         if not issuer:

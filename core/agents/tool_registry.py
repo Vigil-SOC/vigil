@@ -44,11 +44,7 @@ from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-from core.llm.tool_schemas import (
-    CALL_INTEGRATION_TOOL,
-    FIND_INTEGRATION_TOOLS,
-    INTEGRATION_TOOLS,
-)
+from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
@@ -68,7 +64,8 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 
 Args = Dict[str, Any]
 
-# Every chat tool names the permission execute_backend_tool checks. A run no
+# Every chat tool names the permission execute_backend_tool checks, except
+# call_integration_tool: it is checked as the tool it names. A run no
 # person started is bound by its run claims and holds no role: the autonomy
 # ceiling governs it at invoke. A caller bound to nothing is refused.
 TOOL_PERMISSIONS: Dict[str, str] = {
@@ -113,7 +110,6 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "export_learning_episodes": "automation.read",
     READ_SKILL_TOOL: "automation.read",
     FIND_INTEGRATION_TOOLS: "integrations.read",
-    CALL_INTEGRATION_TOOL: "integrations.write",
 }
 
 

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, object_session
 from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
+    break_glass,
     directory_sync,
     invites,
     key_ring,
@@ -1534,6 +1535,10 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         raise sso.Refused("service_account", principal=pid)
     if not user.is_active:
         raise sso.Refused("account_deactivated", sso.DEACTIVATED, pid)
+    if user.break_glass_at is not None:
+        # Never linked: found by email, or by a link made before the mark.
+        code = sso.BREAK_GLASS_EMAIL if link is None else sso.BREAK_GLASS_LINKED
+        raise sso.Refused("break_glass_account", code, principal=pid, attempted=email)
     if link is None:
         other = session.query(SsoLink).filter(
             SsoLink.principal_id == pid, SsoLink.issuer == s.issuer
@@ -2637,7 +2642,7 @@ def verify_mfa(
             _ADDED_APP[1],
             fallback=_DISPUTE_SIGN_OUT,
         )
-    elif again and codes:
+    elif again and (codes or current_user.break_glass_at is not None):
         _tell_person(
             session,
             current_user,
@@ -2657,8 +2662,12 @@ def verify_mfa(
 def _recovery_window(request: Request, session: Session) -> bool:
     """Whether this is a key-only person's recovery sign-in, still inside its
     privileged window and with keys still unavailable: the sign-in stands in for the code.
+    A break-glass sign-in does for its whole life: its code was spent to get in, and
+    asking for another would spend the safe's codes on adding a method.
     """
     row = session.get(SignIn, _session_sid(request) or "")
+    if row and row.ended_at is None and row.auth_method == sign_ins.BREAK_GLASS:
+        return True
     return bool(
         row
         and row.auth_method == sign_ins.RECOVERY_STEP_DOWN
@@ -2716,6 +2725,10 @@ def regenerate_recovery_codes(
         The new plaintext recovery codes, shown only once.
     """
     raise_if_locked(current_user)
+    # A break-glass account's codes are the safe's; refused before the check
+    # so no code is spent.
+    if current_user.break_glass_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, break_glass.MARKED)
     _strong_check(request, current_user, body, session)
     codes = AuthService.get_mfa_recovery_codes(current_user.user_id, session)
     if codes is None:

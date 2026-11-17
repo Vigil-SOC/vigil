@@ -184,7 +184,13 @@ export default function TwoStepDialog({
       return
     }
     const issued = res.data.recovery_codes ?? []
-    if (required && !enabled && issued.length) setJustAdded('app')
+    // None issued (a break-glass account keeps the safe's codes): nothing to show.
+    if (!issued.length) {
+      await refreshUser()
+      go('main')
+      return
+    }
+    if (required && !enabled) setJustAdded('app')
     setCodes(issued)
     go('codes')
     // Required: the console must not open before the recovery codes have been seen.

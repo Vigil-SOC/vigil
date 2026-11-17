@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
-import { CONFIDENCES, SEVERITIES } from "../contracts/events.js";
+import { CONFIDENCES, DISPOSITIONS, SEVERITIES } from "../contracts/events.js";
 
 // A plugin is a directory holding plugin.yaml; its skills come from the repo's one library,
 // core/skills/library, resolved against the package: dist/skills in the image, else three levels up.
@@ -173,6 +173,13 @@ function conclusionOf(value: unknown, where: string): ConclusionSpec {
       throw new SpecError(`${where}: ${confidence_field} must be an enum drawn from ${CONFIDENCES.join(", ")}`);
     }
   }
+  // Exact words only, so the dismissal guard below sees every value that can close a case.
+  if (disposition_field !== undefined) {
+    const allowed = (properties[disposition_field] as { enum?: unknown } | undefined)?.enum;
+    if (!Array.isArray(allowed) || !allowed.every((one) => (DISPOSITIONS as readonly unknown[]).includes(one))) {
+      throw new SpecError(`${where}: ${disposition_field} must be an enum drawn from ${DISPOSITIONS.join(", ")}`);
+    }
+  }
   return {
     schema: schema as Record<string, unknown>,
     summary_field,
@@ -202,6 +209,10 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
     for (const one of [...guarded, fallback]) {
       if (!allowed.has(one)) throw new SpecError(`${where}: guard value ${one} is not in ${field}'s enum`);
     }
+  }
+  // A held dismissal must land somewhere that keeps the case open.
+  if (field === conclusion.disposition_field && (fallback === "benign" || fallback === "false_positive")) {
+    throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which closes the case`);
   }
   if (guarded.includes(fallback)) throw new SpecError(`${where}: guard.fallback ${fallback} is itself guarded`);
   return { field, guarded, fallback, reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`) };
