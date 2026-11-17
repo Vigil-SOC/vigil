@@ -2332,6 +2332,12 @@ async def change_password(
     ):
         # 400, not 401: the session is valid, a body field is wrong. A 401 would
         # make the web client refresh and retry, spending two rate-limit slots.
+        # Own transaction: this raise rolls the request's back.
+        await asyncio.to_thread(
+            trail_events.password_change_failed,
+            current_user.principal_id,
+            _session_sid(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
@@ -3093,6 +3099,17 @@ def _reset_request_message(settings) -> str:
     )
 
 
+def _link_problem(row: Optional[invites.AuthLink]) -> str:
+    """Why ``invites.usable`` failed a link, for the trail."""
+    if row is None:
+        return "unknown"
+    if row.used_at is not None:
+        return "used"
+    if row.revoked_at is not None:
+        return "revoked"
+    return "expired" if invites.is_expired(row) else "too_many_attempts"
+
+
 @router.post("/password-reset/confirm")
 @limiter.limit("5/hour", key_func=reset_confirm_rate_key)
 def password_reset_confirm(
@@ -3106,13 +3123,29 @@ def password_reset_confirm(
     policy and reuse check, uses the link up, closes every other open one, and
     ends the account's sign-ins. A rejected password leaves the link usable.
     """
+    source = client_host(request)
+
+    def refuse(reason, row=None):
+        # Own transaction: two of the refusals raise, which rolls this one back.
+        trail_events.reset_refused(
+            source,
+            reason,
+            body.token,
+            row.link_id if row else None,
+            row.principal_id if row else None,
+        )
+
     # A link issued before single sign-on was required is not honoured now.
     if sso.required():
+        refuse("sso_required")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
         )
     row = invites.find(session, body.token, lock=True, kind=invites.RESET)
     if not invites.usable(row):
+        # First: note_expired holds the trail's lock until this request ends,
+        # which the refusal's own transaction would wait on.
+        refuse(_link_problem(row), row)
         if row is not None:
             invites.note_expired(session, row)
         # Returned, not raised, so the expiry's trail entry stays.
@@ -3129,11 +3162,13 @@ def password_reset_confirm(
     )
     if user is not None and _is_service_account(user):
         logger.warning("Refused password reset for service account %s", user.username)
+        refuse("not_eligible", row)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_INVALID_RESET_TOKEN,
         )
     if not user or not user.is_active:
+        refuse("not_eligible", row)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account no longer eligible for reset",
@@ -3141,6 +3176,7 @@ def password_reset_confirm(
     # A self-service link never gives an SSO-only account a password; an
     # administrator's or the host script's still can.
     if row.channel == invites.SELF and sso.sso_only(session, user):
+        refuse("sso_required", row)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_INVALID_RESET_TOKEN,

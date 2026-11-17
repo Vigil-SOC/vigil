@@ -78,7 +78,7 @@ dc() {
     # Compose refuses to start redis without one (`${REDIS_PASSWORD:?}`), so a
     # caller that skipped start.sh still gets the install's password.
     ensure_redis_password >&2 || return 1
-    # Compose refuses to start without both (`:?`). Fill-only: dc also wraps
+    # Compose refuses to start without all three (`:?`). Fill-only: dc also wraps
     # logs, backups and restores, which must not change a login.
     ensure_postgres_passwords >&2
     local -a medic_files=() medic_env=()
@@ -556,9 +556,9 @@ ensure_bifrost_admin_password() {
 # Database passwords anyone can read: env.example's and Compose's old values,
 # and Helm's. Same list as _SHIPPED_DEFAULT_PASSWORDS in
 # core/storage/connection.py and infra/docker/initdb/00_apply.sh.
-PUBLISHED_POSTGRES_PASSWORDS="deeptempo_secure_password_change_me vigil_app_password_change_me change-me-before-production"
+PUBLISHED_POSTGRES_PASSWORDS="deeptempo_secure_password_change_me vigil_app_password_change_me vigil_agent_password_change_me change-me-before-production"
 
-# The database owner's and vigil_app's passwords, per install. In .env, not
+# The database owner's, vigil_app's and vigil_agent's passwords, per install. In .env, not
 # ~/.vigil: Compose and agent_up.sh read them there. Fills an empty one and keeps
 # a set one. --replace-published (start.sh) also replaces a published value;
 # sync_postgres_passwords then sets the database to match. Without it, an empty
@@ -574,10 +574,11 @@ ensure_postgres_passwords() {
         _fill_env_secret POSTGRES_PASSWORD "the database owner's password" "$replace"
     fi
     _fill_env_secret POSTGRES_APP_PASSWORD "vigil_app's database password" "$replace"
+    _fill_env_secret POSTGRES_AGENT_PASSWORD "vigil_agent's database password" "$replace"
     # Compose reads them from the environment: a caller that never ran load_env
     # (dc in vigil-backup.sh, setup_dev.sh) still gets .env's.
     local key v
-    for key in POSTGRES_PASSWORD POSTGRES_APP_PASSWORD; do
+    for key in POSTGRES_PASSWORD POSTGRES_APP_PASSWORD POSTGRES_AGENT_PASSWORD; do
         [ -n "$(printenv "$key" 2>/dev/null || true)" ] && continue
         v="$(env_file_value "$key")"
         [ -z "$v" ] || export "$key=$v"
@@ -596,13 +597,15 @@ _postgres_volume_may_exist() {
 # container's local socket, which the stock image trusts without a password.
 # .env is the source of truth and this can always run again, so a change cut
 # off between writing .env and here finishes on the next ./start.sh. vigil_app
-# is set once the upgrade one-shot has created it (which sets it too).
+# and vigil_agent are set once the upgrade one-shot has created them (which sets
+# them too).
 sync_postgres_passwords() {
-    local owner app i=0
+    local owner app agent i=0
     owner="$(env_file_value POSTGRES_PASSWORD)"
     app="$(env_file_value POSTGRES_APP_PASSWORD)"
-    if [ -z "$owner" ] || [ -z "$app" ]; then
-        echo "POSTGRES_PASSWORD and POSTGRES_APP_PASSWORD must both be set in .env" >&2
+    agent="$(env_file_value POSTGRES_AGENT_PASSWORD)"
+    if [ -z "$owner" ] || [ -z "$app" ] || [ -z "$agent" ]; then
+        echo "POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD and POSTGRES_AGENT_PASSWORD must all be set in .env" >&2
         return 1
     fi
     # Over TCP: the first boot's init server listens on the socket only, and
@@ -616,13 +619,18 @@ sync_postgres_passwords() {
     printf '%s\n' \
         '\getenv owner_pw VIGIL_OWNER_PW' \
         '\getenv app_pw VIGIL_APP_PW' \
+        '\getenv agent_pw VIGIL_AGENT_PW' \
         "ALTER ROLE deeptempo PASSWORD :'owner_pw';" \
         "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_app') AS has_app \\gset" \
         '\if :has_app' \
         "ALTER ROLE vigil_app PASSWORD :'app_pw';" \
         '\endif' \
-        | VIGIL_OWNER_PW="$owner" VIGIL_APP_PW="$app" docker exec -i \
-            -e VIGIL_OWNER_PW -e VIGIL_APP_PW deeptempo-postgres \
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vigil_agent') AS has_agent \\gset" \
+        '\if :has_agent' \
+        "ALTER ROLE vigil_agent PASSWORD :'agent_pw';" \
+        '\endif' \
+        | VIGIL_OWNER_PW="$owner" VIGIL_APP_PW="$app" VIGIL_AGENT_PW="$agent" docker exec -i \
+            -e VIGIL_OWNER_PW -e VIGIL_APP_PW -e VIGIL_AGENT_PW deeptempo-postgres \
             psql -X -q -v ON_ERROR_STOP=1 -U deeptempo -d deeptempo_soc >/dev/null \
         || { echo "Could not set the database passwords from .env" >&2; return 1; }
 }

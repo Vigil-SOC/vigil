@@ -265,6 +265,7 @@ _SHIPPED_DEFAULT_PASSWORDS = frozenset(
     {
         "deeptempo_secure_password_change_me",
         "vigil_app_password_change_me",
+        "vigil_agent_password_change_me",
         "change-me-before-production",
     }
 )

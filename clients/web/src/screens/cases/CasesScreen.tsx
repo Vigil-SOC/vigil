@@ -309,7 +309,11 @@ function CasesTable({
   const myTeams = people.find((person) => person.username === me)?.teams ?? []
   const mineKey = myTeams.map((team) => team.id).join('\n')
   // 'mine' is My teams (the whole queue for someone on no team), 'all' Everyone's, else one team's id.
-  const [teamPick, setTeamPick] = useState('mine')
+  // A ?owner= link opens on Everyone's, so the list matches the count of that owner's cases that linked to it.
+  const [pickedTeam, setTeamPick] = useState(() => (filters.assignee ? 'all' : 'mine'))
+  // "Assigned to me" spans every team the person owns cases on, so it overrides the My teams default
+  // (an explicitly chosen team still narrows it); the select then says Everyone's, as the list shows.
+  const teamPick = pickedTeam === 'mine' && me && filters.assignee === me ? 'all' : pickedTeam
   // Teams this person can name: the teams list with users.read, else the teams on the people payload.
   const listedTeams = useNamedTeams()
   const teamChoices = useMemo(() => {

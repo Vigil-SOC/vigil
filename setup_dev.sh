@@ -35,7 +35,7 @@ ensure_agent_token
 ensure_bifrost_admin_password
 # Redis requires a password; compose starts it with this one below.
 ensure_redis_password
-# Both database passwords, filled once. ./start.sh replaces a published one.
+# The three database passwords, filled once. ./start.sh replaces a published one.
 ensure_postgres_passwords
 
 # Python

@@ -18,6 +18,7 @@ Bifrost starts a fresh, empty log. Copy it back from there to keep the history.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import getpass
 import json
@@ -33,12 +34,16 @@ from pathlib import Path
 from urllib.parse import quote
 
 import psycopg2
+import redis
+import redis.asyncio
+from bullmq import Queue
 from cryptography.fernet import Fernet, InvalidToken
 from psycopg2 import sql
 from sqlalchemy import create_engine
 from sqlalchemy import text as sa_text
 from sqlalchemy.pool import NullPool
 
+from core.agents.queue import RUN_QUEUE
 from core.audit import feed, retention, trail
 from core.auth import dormancy, key_ring, sign_in_runs, sign_ins
 from core.auth.mfa_coverage import SETTINGS_LINK
@@ -61,6 +66,7 @@ from core.backup.create import (
 )
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
+from core.redis_client import effective_redis_url, redact_logged_text
 from core.response.approval_service import ActionStatus
 from core.secrets_manager import EncryptedFileBackend
 from core.skills.skill_library import operator_skills_root
@@ -125,7 +131,7 @@ def restore_snapshot(
     test: bool,
     actor: str | None = None,
     bifrost_data: str | None = None,
-    discarded: list[str] | None = None,
+    reason: str | None = None,
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -195,6 +201,7 @@ def restore_snapshot(
             # with nothing moved, rather than failing after the swap.
             restoring_user = _actor(actor)
             _check_erasure_list(root, dump_in_snapshot)
+            _check_redis()
             paired_key = _paired_wrapping_key(restic, passphrase, snapshot_id, priority)
             swap_lines, abandoned, live_ring = _swap(
                 cfg, staged_name, pre_name, placed, stamp
@@ -202,6 +209,14 @@ def restore_snapshot(
             lines.extend(swap_lines)
             swapped = True
             created = False
+            # Right after the swap, so a failed settle still empties the queue;
+            # a failed discard still lets the settle run, then is raised.
+            discarded: list[str] | None = None
+            try:
+                discarded = _discard_queued_runs()
+                lines.append(f"queued jobs discarded: {len(discarded)}")
+            except BackupError as exc:
+                lines.append(str(exc))
             # The swap stays even when this fails. --test returned above. The
             # lines naming what it moved aside go out with the error. History
             # is recorded after settle so a missing history file does not skip
@@ -224,7 +239,9 @@ def restore_snapshot(
                         live_ring,
                     )
                 )
-                _record_restored(manifest, snapshot_id, discarded)
+                if discarded is None:
+                    raise BackupError("queued agent runs were not discarded")
+                _record_restored(manifest, snapshot_id, reason, discarded)
             except BackupError as exc:
                 raise BackupError("\n".join([*lines, str(exc)])) from exc
             return "\n".join(lines)
@@ -748,8 +765,72 @@ def _reapply_erased(root: Path, dump_in_snapshot: str) -> None:
         raise BackupError(f"could not reapply erased principals: {exc}") from exc
 
 
+def _check_redis() -> None:
+    """Refuse before the swap when the agent-run queue can't be reached."""
+    client = redis.Redis.from_url(
+        effective_redis_url(), socket_connect_timeout=5, socket_timeout=5
+    )
+    try:
+        client.ping()
+    except Exception as exc:
+        raise BackupError(
+            "Redis is not answering, so queued agent runs can't be discarded; "
+            f"start Redis and restore again ({redact_logged_text(str(exc))})"
+        ) from exc
+    finally:
+        client.close()
+
+
+# Waiting (and paused), delayed, prioritized, and active jobs a stopped worker left.
+_QUEUED_STATES = ["waiting", "delayed", "prioritized", "active"]
+
+
+def _discard_queued_runs() -> list[str]:
+    """Empty ``agent-runs`` and return the ids of the queued jobs it held.
+
+    The restored database stopped every run it knows of, so any job left
+    would only start or resume a run that is gone or cancelled. The queue has
+    no repeatable jobs. Obliterating also drops its finished and failed jobs,
+    which name runs the restored database no longer has.
+    """
+
+    async def discard() -> list[str]:
+        # Timeouts and no long retry: Redis answered before the swap.
+        client = redis.asyncio.from_url(
+            effective_redis_url(),
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=30,
+        )
+        queue = Queue(RUN_QUEUE, {"connection": client})
+        try:
+            # Ids only: getJobs fails on an id whose job hash is gone.
+            ids = await queue.scripts.getRanges(
+                queue.sanitizeJobTypes(_QUEUED_STATES), 0, -1, False
+            )
+            try:
+                # force: a stopped worker's lock on an active job may linger.
+                # A string: bullmq 2.15 hands the flag to Redis as-is, and
+                # redis-py refuses a bool.
+                await queue.obliterate(force="1")
+            except Exception:
+                # obliterate pauses first; don't leave the queue stuck paused.
+                await queue.resume()
+                raise
+            return sorted(set(map(str, ids)))
+        finally:
+            await queue.close()
+
+    try:
+        return asyncio.run(discard())
+    except Exception as exc:
+        raise BackupError(
+            f"could not discard queued agent runs: {redact_logged_text(str(exc))}"
+        ) from exc
+
+
 def _record_restored(
-    manifest: dict, snapshot_id: str, discarded: list[str] | None
+    manifest: dict, snapshot_id: str, reason: str | None, discarded: list[str]
 ) -> None:
     """One history line, same keys as ``core.upgrade.command._record``.
 
@@ -766,8 +847,8 @@ def _record_restored(
         "to": version if isinstance(version, str) else None,
         "outcome": "restored",
         "restore_point": snapshot_id,
-        "reason": "",
-        "discarded": list(discarded or []),
+        "reason": reason or "",
+        "discarded": discarded,
     }
     path = Path(raw)
     try:

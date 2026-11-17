@@ -385,6 +385,11 @@ when the operator brings their own: that Secret must also hold this key.
 POSTGRES_APP_PASSWORD
 {{- end -}}
 
+{{/* vigil_agent's password, in the same Secret. Only the agent pods and the upgrade Job get it. */}}
+{{- define "vigil.postgres.agentPasswordSecretKey" -}}
+POSTGRES_AGENT_PASSWORD
+{{- end -}}
+
 {{/*
 REDIS_URL resolution. Same three modes as Postgres.
 
