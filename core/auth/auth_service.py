@@ -1053,7 +1053,8 @@ class AuthService:
                 this account takes
 
         Returns:
-            Created User object or None
+            Created User object, or None when the username or email is in use
+            or reserved
         """
         with unit_of_work(session) as session:
             # Either string is a sign-in name, so each has to be free as a

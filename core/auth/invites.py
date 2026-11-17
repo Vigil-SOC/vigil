@@ -18,12 +18,13 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func, update
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core.audit.retention import ERASED_PREFIX
 from core.audit.trail import SYSTEM
 from core.auth import trail_events
+from core.auth.identity import fold, sql_fold
 from core.auth.password_reset import RESET_TTL_SECONDS
 from core.storage.models import AuthLink
 from core.time import utcnow
@@ -176,7 +177,7 @@ def revoke(
 
 def open_for(session: Session, email: str, lock: bool = False) -> Optional[AuthLink]:
     """The email's open invite: at most one, by the table's unique index."""
-    query = _open(session).filter(func.lower(AuthLink.email) == email.casefold())
+    query = _open(session).filter(sql_fold(AuthLink.email) == fold(email))
     return (query.with_for_update() if lock else query).first()
 
 
