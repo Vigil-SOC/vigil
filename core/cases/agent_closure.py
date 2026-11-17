@@ -187,6 +187,11 @@ def acting_principal() -> Optional[str]:
     return actor_identity()[0]
 
 
+# The activity DataService.update_case adds when a title is edited outside a run's
+# own retitle; its presence on a case means the title is a person's.
+TITLE_EDITED = "case_title_edited"
+
+
 def activity_actor(
     explicit: Optional[str] = None, session: Optional[Session] = None
 ) -> dict[str, str]:

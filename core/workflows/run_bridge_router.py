@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise_run
 from core.auth.permissions import builtin_reader_request
-from core.cases.agent_closure import activity_actor
+from core.cases.agent_closure import TITLE_EDITED, activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.pagerduty.page import page_proposed_containment
@@ -108,6 +108,9 @@ class TerminalUpdate(BaseModel):
     # The run's verdict as its guard left it. Loose like severity: only benign and
     # false_positive act, and anything else leaves the case as it is.
     disposition: Optional[str] = None
+    # A short title for the case, naming what the run found. Loose like the rest:
+    # blank or absent leaves the title as it is.
+    title: Optional[str] = None
     # When the agent sealed the report. The row's finished_at, so Ended and the
     # history agree. Absent, or unreadable, and the row is stamped on arrival.
     finished_at: Optional[str] = None
@@ -298,6 +301,7 @@ def record_terminal(
         # Only a run that reached its conclusion has rated anything.
         if update.outcome == "completed":
             _raise_priority(origin, run_id, update.severity)
+            _retitle_case(origin, run_id, update.title)
             _close_dismissed(origin, run_id, update)
 
     # A threat hunt that proved a compromise tees up the backward root-cause run.
@@ -748,6 +752,46 @@ def _raise_priority(case_id: str, run_id: str, severity: Optional[str]) -> None:
         logger.exception(
             "could not apply the severity of %s to case %s", run_id, case_id
         )
+
+
+TITLE_MAX = 200
+
+
+# The case is titled once, from its first alert, so after the run it still reads
+# like that alert. A title a person has edited is never replaced, and a closed
+# case keeps the title it was closed under.
+def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    new = " ".join((title or "").split())[:TITLE_MAX]
+    if not new:
+        return
+    try:
+        data = DatabaseDataService()
+        case = data.get_case(case_id)
+        if not case or str(case.get("status") or "").lower() == "closed":
+            return
+        old = str(case.get("title") or "")
+        if new == old:
+            return
+        activities = list(case.get("activities") or [])
+        if any(a.get("activity_type") == TITLE_EDITED for a in activities):
+            return
+        # The title and its activity in one write, so the write is not taken for a
+        # person's edit.
+        activities.append(
+            {
+                "timestamp": utcnow().isoformat() + "Z",
+                "activity_type": "agent_run_retitled",
+                "description": f"Retitled by the investigation: {old} \u2192 {new}",
+                "details": {"run_id": run_id, "from": old, "to": new},
+                **activity_actor(),
+            }
+        )
+        if not data.update_case(case_id, title=new, activities=activities):
+            logger.error("could not retitle case %s", case_id)
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception("could not apply the title of %s to case %s", run_id, case_id)
 
 
 # The verdicts that dismiss a case. Both close it as a false positive: the alert that

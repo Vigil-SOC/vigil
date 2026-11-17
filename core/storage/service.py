@@ -1313,6 +1313,24 @@ class DatabaseService:
                 now = {f.finding_id for f in case.findings}
                 findings = (sorted(now - was), sorted(was - now))
 
+            # A title written without activities of its own is a person's edit (the
+            # API, or an agent acting for one). The marker is what later lets an
+            # automatic retitle leave it alone.
+            if "title" in updates and "activities" not in updates:
+                if updates["title"] != case.title:
+                    from core.cases.agent_closure import TITLE_EDITED, activity_actor
+
+                    updates["activities"] = [
+                        *(case.activities or []),
+                        {
+                            "timestamp": utcnow().isoformat() + "Z",
+                            "activity_type": TITLE_EDITED,
+                            "description": f"Title edited: {case.title} \u2192 {updates['title']}",
+                            "details": {},
+                            **activity_actor(),
+                        },
+                    ]
+
             # Update remaining mapped fields
             before, after = {}, {}
             for key, value in updates.items():

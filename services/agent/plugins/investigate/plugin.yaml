@@ -74,6 +74,9 @@ conclusion:
   confidence_field: confidence
   # Sent as the guard leaves it; benign or false_positive closes the case (run_bridge_router.py).
   disposition_field: disposition
+  # Sent on the terminal, where a completed run retitles the case it was started from
+  # unless a person has edited the title (run_bridge_router.py).
+  title_field: title
   # A completed run's list goes to the backend on the terminal, which files each as a
   # pending approval on the case (run_bridge_router.py). The run takes none of them.
   proposals_field: proposed_actions
@@ -87,6 +90,10 @@ conclusion:
       summary:
         type: string
         description: What happened, in a paragraph a reader can act on.
+      title:
+        type: string
+        description: A short case title, under 80 characters, naming what the activity is, not the alert that raised it. Omit when nothing found supports one.
+        maxLength: 80
       disposition:
         type: string
         enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
