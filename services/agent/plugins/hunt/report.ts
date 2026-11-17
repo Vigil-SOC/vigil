@@ -1,4 +1,5 @@
 import { costOf, roundCost } from "../../contracts/budget.js";
+import { overBy } from "./opening.js";
 import { resolutionOf, type Checkpoint, type Resolution } from "./checkpoints.js";
 import { suppressedEntities } from "./frontier.js";
 import type { Projection } from "./ledger.js";
@@ -313,21 +314,25 @@ function openedOn(recall: RecallPayload | null): string[] {
   ];
 }
 
-const COST_LINE = /^(- \*\*Cost:\*\* )\$[\d.]+/m;
+// Cost, then " of $ceiling", then the overshoot a rewrite has to replace rather than keep.
+const COST_LINE = /^(- \*\*Cost:\*\* )\$[\d.]+( of \$[\d.]+)?(?: · (?:under )?\$[\d.]+ over)?$/m;
 const ENDED_LINE = /^(- \*\*Ended:\*\* ).+$/m;
 
 function isHuntReport(markdown: string): boolean {
   return COST_LINE.test(markdown) && ENDED_LINE.test(markdown);
 }
 
+// The ceiling a Cost line printed, for a caller that was not handed the exact one.
+const ceilingIn = (of: string | undefined): number | undefined => (of === undefined ? undefined : Number(of.slice(5)));
+
 // The header is written when the hunt stops reasoning. The account and the review
 // are charged after that, and the run record is their cost and the time the
 // terminal was sealed. Bring the two lines forward; leave every other line alone.
-export function alignReport(markdown: string, costUsd: number, endedAt: string): string {
+export function alignReport(markdown: string, costUsd: number, endedAt: string, ceilingUsd?: number): string {
   // A function, not a replacement string: `$1` in the dollars would be read as a backreference.
   const cost = `$${costUsd.toFixed(4)}`;
   return markdown
-    .replace(COST_LINE, (_match, prefix: string) => `${prefix}${cost}`)
+    .replace(COST_LINE, (_match, prefix: string, of: string | undefined) => `${prefix}${cost}${of ?? ""}${overBy(costUsd, ceilingUsd ?? ceilingIn(of))}`)
     .replace(ENDED_LINE, (_match, prefix: string) => `${prefix}${endedAt}`);
 }
 
@@ -337,9 +342,10 @@ export function sealReport(
   markdown: string,
   events: readonly { kind: string; payload: unknown }[],
   endedAt: string,
+  ceilingUsd?: number,
 ): { summary: string; finished_at: string } | null {
   if (!isHuntReport(markdown)) return null;
-  return { summary: alignReport(markdown, roundCost(costOf(events)), endedAt), finished_at: endedAt };
+  return { summary: alignReport(markdown, roundCost(costOf(events)), endedAt, ceilingUsd), finished_at: endedAt };
 }
 
 // What the rendered header should say once the run has a terminal. Spend after
@@ -376,7 +382,7 @@ export function renderReport(
     `- **Outcome:** ${report.outcome ?? "not terminated"}`,
     `- **Hunt:** ${report.hunt_id}`,
     `- **Iterations:** ${report.iterations} of ${report.budgets.max_iterations}`,
-    `- **Cost:** $${report.cost_usd.toFixed(4)} of $${report.budgets.max_cost_usd.toFixed(2)}`,
+    `- **Cost:** $${report.cost_usd.toFixed(4)} of $${report.budgets.max_cost_usd.toFixed(2)}${overBy(report.cost_usd, report.budgets.max_cost_usd)}`,
     `- **Started:** ${report.created_at}`,
     `- **Ended:** ${report.terminated_at ?? "still running"}`,
   ];

@@ -1,6 +1,6 @@
 import type { AgentEvent, CallPayload, DirectivePayload, NewEvent, RunOutcome, RunPayload, StopCause, TerminalPayload } from "../../../contracts/events.js";
 import type { RegisteredTool } from "../../../contracts/tool.js";
-import type { AgentKinds, StopSource } from "../../../core/agent.js";
+import { SKILL_TOOL, type AgentKinds, type StopSource } from "../../../core/agent.js";
 import { GatewayExhausted } from "../../../core/limiter.js";
 import type { Harness } from "../../../core/loop.js";
 import { stopCauseOf } from "../../../core/provider.js";
@@ -8,6 +8,7 @@ import { redactCredentials } from "../../../core/security.js";
 import type { RunSpec } from "../../../core/spec.js";
 import { toolsFrom } from "../../../tools/remote.js";
 import { loadPlugin } from "../../index.js";
+import { ADDED_SKILLS, withAddedSkills } from "../../registry.js";
 import { defaultConfig, type AgentConfig } from "./config.js";
 import { frameAlert, Unframed } from "./frame.js";
 import { createGraph } from "./graph.js";
@@ -144,7 +145,7 @@ async function drive(
   // The source's own tool, through the agent's dispatch: bounded, attributed and masked like any other call.
   const invoke: Invoke = async (args) => redactCredentials(await harness.dispatch.invoke(bound.tool, args, signal)).value;
   const turns = new KernelTurns(harness as unknown as Harness<AgentKinds>, {
-    run_id, run_kind: "root_cause", spec, plugin: loadPlugin("rootcause").manifest, tools, signal,
+    run_id, run_kind: "root_cause", spec, plugin: withAddedSkills(loadPlugin("rootcause").manifest, spec.sections[ADDED_SKILLS]), tools, signal,
     ...(options.started_by === undefined ? {} : { started_by: options.started_by }),
   });
 
@@ -189,7 +190,7 @@ async function drive(
   const source = bound.adapter.open(invoke, { index, range });
   registry.register(source.evidenceTool());
   // The calls a resumed run already made stay citable, and a new one never reuses a ref.
-  for (const call of prior.filter((e) => e.kind === "call").map((e) => e.payload as CallPayload)) registry.note(call.ref, argsOf(call.arguments), call.ok ? call.result : "", !neverRan(call));
+  for (const call of prior.filter((e) => e.kind === "call").map((e) => e.payload as CallPayload)) registry.note(call.ref, argsOf(call.arguments), call.ok && call.tool !== SKILL_TOOL ? call.result : "", call.tool !== SKILL_TOOL && !neverRan(call));
   const trace = new MemoryTrace(run_id, () => new Date(), folded.entries);
   // The pool's own spend, which a resume was seeded with off the ledger.
   const budget = { get usd() { return harness.budget.spent.cost_usd; } };

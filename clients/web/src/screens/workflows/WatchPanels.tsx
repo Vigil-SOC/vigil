@@ -3,7 +3,7 @@
    Everything is a function of the run detail and, for a hunt, the lead's recorded digest at that step: no endpoint, no fold. */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { workflowApi, type ReplayDigest } from '../../services/api'
-import { Cost, fmtCost } from '../../shared/cost'
+import { Cost, fmtCost, fmtOver } from '../../shared/cost'
 import { Markdown } from '../../shared/Markdown'
 import { explanationColor, explanationWord, wordDisplay } from '../cases/caseFold'
 import { OpenCheckpoint, bearings, liveGap, provenanceTag } from './huntParts'
@@ -231,7 +231,13 @@ function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Re
   const unread = recorded === undefined ? '…' : 'Not recorded for this step.'
 
   const budget: LimitRow = spent !== undefined && grant
-    ? { label: 'Budget', value: <><Cost usd={spent} /> of {fmtCost(grant.max_cost_usd)}</>, pct: share(spent, grant.max_cost_usd) }
+    ? {
+      label: 'Budget',
+      // only the newest step reads the run's spend, so only it can show an overshoot
+      value: <><Cost usd={spent} /> of {fmtCost(grant.max_cost_usd)}{last ? fmtOver(spent, grant.max_cost_usd) : ''}</>,
+      pct: share(spent, grant.max_cost_usd),
+      ...(last && fmtOver(spent, grant.max_cost_usd) && { color: 'var(--poor)' }),
+    }
     : spent !== undefined ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
     : digest ? { label: 'Budget', value: <><Cost usd={digest.cost_usd} /> left</> } : { label: 'Budget', value: unread }
   const steps: LimitRow = grant
@@ -341,9 +347,9 @@ const budgetRow = (spent: number | null, max: number | null): LimitRow =>
     : max === null ? { label: 'Budget', value: <><Cost usd={spent} /> spent</> }
     : {
       label: 'Budget',
-      // The ceiling is checked after a call, so the call that crosses it still bills: say so rather than show a plain fraction.
-      value: <>{spent === null ? '…' : <Cost usd={spent} />} of {fmtCost(max)}{spent !== null && spent > max ? ' · over budget' : ''}</>,
-      ...(spent === null ? {} : { pct: share(spent, max), ...(spent > max && { color: 'var(--poor)' }) }),
+      // The ceiling is checked before a call and the call's cost is known after it, so a run can end above it: name by how much.
+      value: <>{spent === null ? '…' : <Cost usd={spent} />} of {fmtCost(max)}{fmtOver(spent, max)}</>,
+      ...(spent === null ? {} : { pct: share(spent, max), ...(fmtOver(spent, max) && { color: 'var(--poor)' }) }),
     }
 
 /** An investigate run at one step. `costs` are the replay's per-decision spend, so the budget follows the step. */

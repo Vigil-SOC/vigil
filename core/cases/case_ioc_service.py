@@ -14,12 +14,20 @@ from sqlalchemy.orm import Session
 
 from core.cases import case_trail
 from core.cases.case_records_service import readable_case
+from core.cases.linked_entities import LINKED_SOURCE
 from core.exceptions import NotFoundError
 from core.storage.models import CaseIOC
+from core.storage.shared_ioc_repository import make_key, marked_keys
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+def is_marked(session: Session, case_id: str, ioc_type: str, value: str) -> bool:
+    """Whether the Case holds a false-positive mark on this value, under any spelling."""
+    key = make_key(ioc_type, value)
+    return key is not None and key in marked_keys(session, [case_id]).get(case_id, ())
 
 
 class CaseIOCService:
@@ -101,6 +109,69 @@ class CaseIOCService:
                 raise
             logger.error("Error adding IOC: %s", exc)
             return None
+
+    def set_false_positive(
+        self,
+        case_id: str,
+        ioc_type: str,
+        value: str,
+        marked: bool,
+        session: Optional[Session] = None,
+        added_by: Optional[str] = None,
+    ) -> Tuple[List[CaseIOC], bool]:
+        """Mark or clear a value as a false positive on this Case.
+
+        The mark is by folded value (``make_key``), so it covers every row the
+        Case holds for it, whatever the spelling. Marking a value no row holds
+        (one a linked alert names) writes the row, flagged. The trail entry is
+        written only when something changed. Returns the rows and whether they
+        changed. A value that cannot be keyed is a ``ValueError``.
+        """
+        key = make_key(ioc_type, value)
+        if key is None:
+            raise ValueError("ioc_type and value must be set and not oversized")
+        with unit_of_work(session) as session:
+            readable_case(session, case_id)
+            rows = [
+                r
+                for r in session.query(CaseIOC).filter(CaseIOC.case_id == case_id)
+                if make_key(r.ioc_type, r.value) == key
+            ]
+            stale = [r for r in rows if bool(r.is_false_positive) != marked]
+            for r in stale:
+                r.is_false_positive = marked
+            if marked and not rows:
+                now = utcnow()
+                row = CaseIOC(
+                    case_id=case_id,
+                    ioc_type=ioc_type,
+                    value=value,
+                    source=LINKED_SOURCE,
+                    first_seen=now,
+                    last_seen=now,
+                    tags=[],
+                    is_active=True,
+                    is_false_positive=True,
+                )
+                session.add(row)
+                rows, stale = [row], [row]
+            if stale:
+                case_trail.append_or_legacy(
+                    session,
+                    action=(
+                        case_trail.IOC_FALSE_POSITIVE
+                        if marked
+                        else case_trail.IOC_FALSE_POSITIVE_CLEAR
+                    ),
+                    signed_in=added_by,
+                    case_id=case_id,
+                    operator_text=value,
+                    ids=lambda: {
+                        "ioc_ids": [r.ioc_id for r in stale],
+                        "ioc_type": ioc_type,
+                    },
+                )
+            return rows, bool(stale)
 
     def add_iocs(
         self,
@@ -222,7 +293,8 @@ class CaseIOCService:
             tags=tags or [],
             context=context,
             is_active=True,
-            is_false_positive=False,
+            # A value a person marked stays marked when it is recorded again.
+            is_false_positive=is_marked(session, case_id, ioc_type, value),
         )
 
         session.add(ioc)

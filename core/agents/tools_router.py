@@ -438,6 +438,48 @@ async def note_skill_read(
         logger.exception("recording the read of skill %s failed", body.name)
 
 
+class SkillBodyRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+def _operator_skill_body(name: str) -> Optional[str]:
+    """The current text of the operator skill called ``name``, or None.
+
+    Bundled skills are not served: a run carries those itself. A skill the scan
+    holds is None too, the same as one that does not exist, so a run already
+    going cannot read what a new one could not. Verdicts that cannot be read
+    leave every skill pending, so a hold that cannot be decided is not a pass.
+    """
+    from core.skills.skill_hold import agent_skills
+    from core.skills.skill_library import is_bundled, skill_body
+
+    for skill in agent_skills():
+        if skill.name == name and not is_bundled(skill):
+            try:
+                return skill_body(skill)
+            except OSError:
+                return None
+    return None
+
+
+@router.post("/skill-bodies")
+async def read_skill_body(
+    body: SkillBodyRequest, authorization: Optional[str] = Header(default=None)
+) -> Dict[str, str]:
+    """An operator skill's current body, for the load_skill a run answers itself.
+
+    Runs carry a skill's name, description and digest, not its text, so the text
+    is read here when it is asked for, and a resumed run reads what the skill says
+    now. The answer is ``{"name", "body"}``; a refusal is an error status whose
+    ``detail`` the agent layer hands the model.
+    """
+    authorise(authorization, "skill body")
+    text = await asyncio.to_thread(_operator_skill_body, body.name)
+    if text is None:
+        raise HTTPException(status_code=404, detail=f"No skill named {body.name!r}")
+    return {"name": body.name, "body": text}
+
+
 @router.post("/invoke")
 async def invoke(
     body: InvokeRequest,

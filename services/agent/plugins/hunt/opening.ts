@@ -70,10 +70,18 @@ export function boundBy(hunt: HuntState): "iterations" | "cost" | null {
   return null;
 }
 
+// " · $0.42 over" once the run has spent past its ceiling, else nothing. Strict on the
+// unrounded figures, and never "$0.00": a ceiling that is 0, absent or not a number is no ceiling.
+export function overBy(cost: number, ceiling: number | null | undefined): string {
+  if (typeof ceiling !== "number" || !Number.isFinite(ceiling) || ceiling <= 0 || !(cost > ceiling)) return "";
+  const over = cost - ceiling;
+  return over < 0.01 ? " · under $0.01 over" : ` · $${over.toFixed(2)} over`;
+}
+
 // Both numbers either way, because the one with room is the answer to "then why
 // did it stop" and is the first thing an operator looks for.
 export function boundReason(hunt: HuntState): string {
-  const spend = `$${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}`;
+  const spend = `$${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}${overBy(hunt.cost_usd, hunt.budgets.max_cost_usd)}`;
   const turns = `iteration ${hunt.iteration} of ${hunt.budgets.max_iterations}`;
   if (boundBy(hunt) === "cost") return `spent its allowance: ${spend}, at ${turns}`;
   return `ran out of turns: ${turns}, having spent ${spend}`;
@@ -84,7 +92,7 @@ export function boundReason(hunt: HuntState): string {
 export function standingOf(hunt: HuntState): string {
   return (
     `iteration ${hunt.iteration} of ${hunt.budgets.max_iterations}, ` +
-    `having spent $${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}`
+    `having spent $${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}${overBy(hunt.cost_usd, hunt.budgets.max_cost_usd)}`
   );
 }
 

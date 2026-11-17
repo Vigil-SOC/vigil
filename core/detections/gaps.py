@@ -407,21 +407,7 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
             EpisodicVerdict.investigation_kind.in_(LEDGER_KINDS),
             EpisodicVerdict.concluded_at >= since,
         )
-        verdicts = [
-            {
-                "investigation_kind": v.investigation_kind,
-                "investigation_id": v.investigation_id,
-                "hypothesis_id": v.hypothesis_id,
-                "outcome": "proven" if v.outcome == "handed_off" else v.outcome,
-                "trust": v.trust,
-                "techniques": {t.strip().upper() for t in v.techniques or []},
-                "subjects": list(v.subject_entities or []),
-                "first_seen": _naive_utc(v.first_seen),
-                "last_seen": _naive_utc(v.last_seen),
-                "concluded_at": v.concluded_at,
-            }
-            for v in query.all()
-        ]
+        verdicts = [verdict_row(v) for v in query.all()]
         hidden = _unreadable_runs(session, verdicts)
         verdicts = [v for v in verdicts if _run(v) not in hidden]
         case_ids = {
@@ -492,6 +478,31 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
                 for key, values in _entities_from_context(entity_context).items():
                     v["entities"][key] += values
     return verdicts
+
+
+def verdict_row(v: EpisodicVerdict) -> Dict[str, Any]:
+    """A Verdict as the ledger reads it. A ``handed_off`` outcome reads as ``proven``."""
+    return {
+        "investigation_kind": v.investigation_kind,
+        "investigation_id": v.investigation_id,
+        "hypothesis_id": v.hypothesis_id,
+        "outcome": "proven" if v.outcome == "handed_off" else v.outcome,
+        "trust": v.trust,
+        "techniques": {t.strip().upper() for t in v.techniques or []},
+        "subjects": list(v.subject_entities or []),
+        "first_seen": _naive_utc(v.first_seen),
+        "last_seen": _naive_utc(v.last_seen),
+        "concluded_at": v.concluded_at,
+    }
+
+
+def read_window_findings(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    """The Findings a Verdict's window is reconstructed against."""
+    from core.storage.database_data_service import DatabaseDataService
+
+    return DatabaseDataService().get_findings(
+        limit=FINDINGS_LIMIT, timestamp_start=start, timestamp_end=end
+    )
 
 
 def _unreadable_runs(session: Any, verdicts: List[Dict[str, Any]]) -> set:

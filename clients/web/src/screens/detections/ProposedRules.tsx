@@ -15,6 +15,7 @@ import {
 import { Empty, Failure } from '../shared/x1'
 import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
 import { caseLabel } from '../../shared/caseLabel'
+import HuntRef from './HuntRef'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
@@ -414,7 +415,9 @@ function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy 
                 {i > 0 && ', '}
                 {what === 'case'
                   ? <Link className="de-link" to={`/cases?case=${encodeURIComponent(ref)}`}>{caseLabel(ref)}</Link>
-                  : <>{what === 'hunt' ? 'Hunt' : what} <span className="mono">{ref}</span></>}
+                  : what === 'hunt'
+                    ? <HuntRef id={ref} run={proposal.hunts?.[ref]} />
+                    : <>{what} <span className="mono">{ref}</span></>}
               </span>
             )
           })}
@@ -470,6 +473,35 @@ function replayWord(c: RuleCheck): string {
   return `Matched ${proven > 1 ? `at least 1 of ${proven} proven events` : 'the proven event'}${out ? `, cleared ${out} ruled out` : ''}`
 }
 
+/** Where a proposal replay's attack events came from, in words: ``attack_basis`` is
+ * "linked to hunt:…, case:…", "named by a person" or "none". */
+function attackFrom(basis: string): string {
+  if (!basis.startsWith('linked to ')) return basis === 'named by a person' ? 'events a person named' : 'no attack events: the gap names no proven hunt or Case'
+  const refs = basis.slice('linked to '.length).split(', ').map((k) => {
+    // A Case this reader can't read reaches here as "a case".
+    if (!k.includes(':')) return 'a Case you can’t read'
+    const [what, ref] = [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)]
+    return what === 'case' ? caseLabel(ref) : `${what === 'hunt' ? 'Hunt' : what} ${ref}`
+  })
+  return `the hosts and window of ${refs.join(', ')}`
+}
+
+/** Vigil's own replay of the proposal's Sigma text on the SIEMs (the proposal's latest
+ * replay step), beside the save-time proof of each copy. */
+function proposalReplay(proposal: Proposal): { row: { what: string; said: string; title?: string }; note: string } | null {
+  const step = [...proposal.events].reverse().find((e) => e.evidence?.step === 'replay')
+  if (!step) return null
+  const ev = step.evidence as { attack_basis?: string; hits?: number; attack_rows?: number; false_positives?: number; proven?: boolean; evaluated?: boolean; unproven_because?: string | null }
+  const counts = ev.evaluated === false
+    ? ''
+    : `Hit ${Number(ev.hits ?? 0).toLocaleString()} of ${plural(Number(ev.attack_rows ?? 0), 'attack event', 'attack events')}, ${plural(Number(ev.false_positives ?? 0), 'false positive', 'false positives')}. `
+  const stale = step.judges_current_text === false ? ' It judged an earlier text of the rule.' : ''
+  return {
+    row: { what: 'Replay · Sigma', said: ev.evaluated === false ? 'Not run' : ev.proven ? 'Proven' : 'Not proven', title: utcDayClock(step.at) ?? undefined },
+    note: `${counts}Attack events from ${attackFrom(ev.attack_basis ?? 'none')}; replayed by ${who(step.actor)}, ${utcDayClock(step.at)}.${ev.unproven_because ? ` ${ev.unproven_because}` : ''}${stale}`,
+  }
+}
+
 function Checks({ proposal, rules, shown, main, moves }: {
   proposal: Proposal
   rules: (RuleDetail | null)[]
@@ -486,6 +518,7 @@ function Checks({ proposal, rules, shown, main, moves }: {
     const replay = r.checks.replay
     if (replay?.result) before.push({ what: `Replay · ${name}`, said: replayWord(replay), title: replay.reason ?? undefined })
   }
+  const replayed = proposalReplay(proposal)
   const runs = (main?.checks.runs?.days ?? {}) as Record<string, { pass?: number; fail?: number }>
   const hits = (main?.checks.shadow?.days ?? {}) as Record<string, number>
   const runDays = Object.values(runs)
@@ -501,6 +534,12 @@ function Checks({ proposal, rules, shown, main, moves }: {
   return (
     <>
       {before.length > 0 && <Group title="Before saving" rows={before} />}
+      {replayed && (
+        <>
+          <Group title="On the proven attack" rows={[replayed.row]} />
+          <p className="de-card-sub">{replayed.note}</p>
+        </>
+      )}
       {since.length > 0 && <Group title={main?.stage === 'shadow' ? 'In shadow' : 'Since saving'} rows={since} />}
       {moves.length > 0 && (
         <Group

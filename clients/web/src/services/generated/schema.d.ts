@@ -2747,6 +2747,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases/{case_id}/iocs/false-positive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark Ioc False Positive
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     While marked, no alert joins the case or links to it on that value. It
+         *     covers the value under any spelling, and a value a linked alert names gets
+         *     a recorded, marked row.
+         */
+        put: operations["put_api_cases_case_id_iocs_false-positive"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases/{case_id}/merge": {
         parameters: {
             query?: never;
@@ -3809,6 +3833,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-engineering/hunts/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hunt Detections
+         * @description What a hunt run led to for detection: its proposals and their rules, and why
+         *     each proven hypothesis without one got none. Not found on a Case it can't read.
+         */
+        get: operations["get_api_detection-engineering_hunts_run_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-engineering/proposals": {
         parameters: {
             query?: never;
@@ -3974,6 +4019,26 @@ export interface paths {
         put?: never;
         /** Tune Proposal */
         post: operations["post_api_detection-engineering_proposals_proposal_id_tune"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-engineering/rules/{rule_id}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rule Proposals
+         * @description The gaps-run proposals a rule copy answers, each with the hunts behind it.
+         */
+        get: operations["get_api_detection-engineering_rules_rule_id_proposals"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8922,6 +8987,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/iocs/false-positive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mark Ioc False Positive
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     While marked, no alert joins the case or links to it on that value. It
+         *     covers the value under any spelling, and a value a linked alert names gets
+         *     a recorded, marked row.
+         */
+        put: operations["put_api_v1_cases_case_id_iocs_false-positive"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/merge": {
         parameters: {
             query?: never;
@@ -9815,6 +9904,31 @@ export interface paths {
         put?: never;
         /** Invoke */
         post: operations["post_internal_tools_invoke"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/tools/skill-bodies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Skill Body
+         * @description An operator skill's current body, for the load_skill a run answers itself.
+         *
+         *     Runs carry a skill's name, description and digest, not its text, so the text
+         *     is read here when it is asked for, and a resumed run reads what the skill says
+         *     now. The answer is ``{"name", "body"}``; a refusal is an error status whose
+         *     ``detail`` the agent layer hands the model.
+         */
+        post: operations["post_internal_tools_skill-bodies"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12835,6 +12949,23 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /**
+         * IOCMark
+         * @description Mark or clear an indicator as a false positive on this case.
+         *
+         *     Named by type and value, not id: an indicator a linked alert names has none.
+         */
+        IOCMark: {
+            /** Ioc Type */
+            ioc_type: string;
+            /**
+             * Is False Positive
+             * @default true
+             */
+            is_false_positive: boolean;
+            /** Value */
+            value: string;
+        };
         /** ImportListResponse */
         ImportListResponse: {
             /** Imports */
@@ -15197,6 +15328,11 @@ export interface components {
             /** Digest */
             digest: string;
         };
+        /** SkillBodyRequest */
+        SkillBodyRequest: {
+            /** Name */
+            name: string;
+        };
         /** SkillCaseResult */
         SkillCaseResult: {
             /** Missing */
@@ -15717,7 +15853,10 @@ export interface components {
              * @description Must be empty: the workflow reference carries its config.
              */
             config: string;
-            /** Overrides */
+            /**
+             * Overrides
+             * @description Per-run budgets and runtime limits. The dollar ceiling (budgets.max_cost_usd) is checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes.
+             */
             overrides?: {
                 [key: string]: unknown;
             } | null;
@@ -21396,6 +21535,43 @@ export interface operations {
             };
         };
     };
+    "put_api_cases_case_id_iocs_false-positive": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IOCMark"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseIOCListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_cases_case_id_merge: {
         parameters: {
             query?: never;
@@ -23431,6 +23607,39 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-engineering_hunts_run_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-engineering_proposals": {
         parameters: {
             query?: {
@@ -23799,6 +24008,39 @@ export interface operations {
                 "application/json": components["schemas"]["TuneRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-engineering_rules_rule_id_proposals": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -32558,6 +32800,43 @@ export interface operations {
             };
         };
     };
+    "put_api_v1_cases_case_id_iocs_false-positive": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IOCMark"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseIOCListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_v1_cases_case_id_merge: {
         parameters: {
             query?: never;
@@ -34127,6 +34406,43 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_internal_tools_skill-bodies": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillBodyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
                     };
                 };
             };

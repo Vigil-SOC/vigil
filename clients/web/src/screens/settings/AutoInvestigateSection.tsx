@@ -191,7 +191,7 @@ interface LimitRow {
 
 // The board's rows; bounds, step and defaults come from the server
 const SCRUB_ROWS: LimitRow[] = [
-  { field: 'max_cost_per_investigation', title: 'Budget per case', hint: 'What a new case may spend without asking', label: 'Budget', prefix: '$', unit: 'per case' },
+  { field: 'max_cost_per_investigation', title: 'Budget per case', hint: "Checked before each model call, so a case can end above it by the cost of the call it was making (retries included). Calls that couldn't be priced (up to 3), calls whose usage was estimated, and requests billed but not recorded aren't fully counted. The allowance starts again when a run resumes. A case that reaches it ends; it doesn't ask.", label: 'Budget', prefix: '$', unit: 'per case' },
   { field: 'max_iterations_per_agent', title: 'Steps per case', hint: 'Steps before the case stops and asks', label: 'Steps', unit: 'per case' },
 ]
 const FLEET_ROWS: LimitRow[] = [

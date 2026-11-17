@@ -88,7 +88,19 @@ export interface Quota {
 }
 
 // Calls and wall are the harness's to count, dollars the gateway's to enforce.
-// Checked once per call, so an exhausted run parks before paying for another.
+// The dollar ceiling is soft: checked before each call, while a call's cost is known only
+// after it returns. This rests on a run making one model call at a time. A run can end
+// above the ceiling by:
+//  - the call running when it was reached, retries of an empty reply and fallback
+//    requests of a structured answer included, all counted to that call;
+//  - up to UNPRICED_TOLERANCE calls that could not be priced, counted as $0;
+//  - calls whose usage the gateway did not report, counted from an estimate that leaves
+//    out reasoning;
+//  - requests a provider billed that were recorded as nothing: retried attempts, and
+//    calls that failed before usage was reported;
+//  - a call cut off by a crash, whose spend is never journaled.
+// The unpriced allowance and the call in flight start again on each resume. A change that
+// runs one run's model calls concurrently has to revisit this bound.
 export interface Budget {
   readonly limits: BudgetLimits;
   readonly spent: Spend;

@@ -185,7 +185,6 @@ async def _prove_sigma(
         evidence = await siem_replay.replay(
             sigma,
             sources=sources,
-            attack_claim=None,
             named=named,
             claims=claims,
             start=start,

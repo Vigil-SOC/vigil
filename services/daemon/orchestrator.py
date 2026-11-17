@@ -186,6 +186,9 @@ def _count_schedule_runs_in_flight() -> int:
 
 
 MAX_CLOSED_LINKS = 5
+MAX_OPEN_LINKS = (
+    5  # counted apart, so a long closed history can't crowd out an open Case
+)
 
 
 # related_to: the type the case screen labels and an analyst's link defaults to.
@@ -690,19 +693,41 @@ def _removed_from(finding_id: str) -> set:
 
 
 def _link_note(match: CaseMatch) -> str:
-    """What matched, without the key's kind prefix: the phrasing of link notes and Triage."""
+    """What matched, without the key's kind prefix: the phrasing of attach notes and Triage."""
     kind, _, value = match.key.partition(":")
     if match.same_alert:
         return f"same alert on {value}"
-    return f"same attacker {value}" if kind == "ip" else f"same {kind} {value}"
+    if kind == "src_ip":
+        return f"same source IP {value}"
+    if kind == "dst_ip":
+        return f"{value} was a destination there"
+    if kind == "ip":  # an attach recorded before roles were
+        return f"IP {value} matched before roles were recorded"
+    return f"same {kind} {value}"
 
 
-def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> None:
-    """Note on the Case that an alert joined it. Raises on failure."""
+def _related_note(match: CaseMatch, new_case: str) -> str:
+    """The note on a related-Case link; true read from either Case."""
+    kind, _, value = match.key.partition(":")
+    seen = {
+        "src_ip": "was a source",
+        "dst_ip": "was a destination",
+        "ip": "was seen, its role not recorded,",
+    }.get(kind)
+    if match.same_alert or seen is None:
+        return _link_note(match)
+    return (
+        f"{value} {seen} on {match.case_id} and is the source of an alert on {new_case}"
+    )
+
+
+def _record_case_activity(
+    case_id: str, activity_type: str, description: str, details: Dict
+) -> None:
+    """Add an entry to the Case's activity. Raises on failure."""
     from core.cases.agent_closure import activity_actor
     from core.storage.models import Case
 
-    title = finding.get("title") or finding.get("finding_id") or "alert"
     with get_db_manager().session_scope() as session:
         case = session.get(Case, case_id)
         if case is None:
@@ -711,16 +736,35 @@ def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> Non
             *(case.activities or []),
             {
                 "timestamp": utcnow().isoformat() + "Z",
-                "activity_type": "alert_added",
-                "description": f"Alert `{title}` added: {_link_note(match)}",
-                "details": {
-                    "finding_id": finding.get("finding_id"),
-                    "matched_key": match.key,
-                    "same_alert": match.same_alert,
-                },
+                "activity_type": activity_type,
+                "description": description,
+                "details": details,
                 **activity_actor(ORCHESTRATOR_ACTOR, session),
             },
         ]
+
+
+def _record_merge_activity(case_id: str, finding: Dict, match: CaseMatch) -> None:
+    """Note on the Case that an alert joined it. Raises on failure."""
+    title = finding.get("title") or finding.get("finding_id") or "alert"
+    _record_case_activity(
+        case_id,
+        "alert_added",
+        f"Alert `{title}` added: {_link_note(match)}",
+        {
+            "finding_id": finding.get("finding_id"),
+            "matched_key": match.key,
+            "same_alert": match.same_alert,
+        },
+    )
+
+
+def _record_failure(case_id: str, description: str, details: Dict) -> None:
+    """Put a failure where an analyst reads it: the Case's activity. Never raises."""
+    try:
+        _record_case_activity(case_id, "intake_failure", description, details)
+    except Exception:
+        logger.exception("Could not record on case %s: %s", case_id, description)
 
 
 def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
@@ -1098,6 +1142,8 @@ class Orchestrator:
                 row.get("id"),
                 state="expired",
                 reason="ttl_expired" if self._enabled else "ttl_expired_autoops_off",
+                # The open Case it matched, so the expiry names what a link would have.
+                merged_into=self._open_case_matched(row),
             )
             return None
         if row.get("kind") == "detection":
@@ -1114,16 +1160,39 @@ class Orchestrator:
                 return None
         return row
 
-    def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+    def _open_case_matched(self, row: Dict) -> Optional[str]:
+        """The newest open Case a queued detection matches, or None. Never raises."""
+        if row.get("kind") != "detection":
+            return None
+        try:
+            finding = self._hydrate_detection_finding(row)
+            matches = _matching_cases(finding, open=True) if finding else []
+        except Exception:
+            logger.warning(
+                "Failed to match expiring row %s", row.get("id"), exc_info=True
+            )
+            return None
+        return matches[0].case_id if matches else None
+
+    def _merge_if_overlaps(
+        self,
+        finding: Dict,
+        trigger_id: Optional[int],
+        links: Optional[List[CaseMatch]] = None,
+    ) -> bool:
         """True when this row is not launching this tick (merged, or held).
+
+        Open Cases the finding matches without attaching (an IP that was only a
+        destination there, or whose role was never recorded) are added to
+        ``links``, for the new Case to link to once it exists.
 
         A failed read or attach is not a merge: no ``dedup_prevented`` bump, no
         ``_decide_trigger``. Returning True still skips launch so the row
         stays ``queued`` and the next tick retries.
 
         A finding already on a not-closed Case merges into it (#2245), and so
-        does one that matches an open Case's entities (``matching_cases``),
-        whether or not that Case's run has finished. A closed Case does not
+        does one that matches an open Case's entities (``matching_cases``) as a
+        source, hash or hostname, whether or not that Case's run has finished. A closed Case does not
         count: the finding reopens.
         """
         finding_id = finding.get("finding_id", "unknown")
@@ -1162,9 +1231,11 @@ class Orchestrator:
                 e,
             )
             return True
-        if not matches:
+        match = next((m for m in matches if m.attaches), None)
+        if match is None:
+            if links is not None:
+                links += matches[:MAX_OPEN_LINKS]
             return False
-        match = matches[0]
         if not _attach_finding(match.case_id, finding_id):
             logger.warning(
                 "Finding %s matches case %s but could not be attached; leaving queued",
@@ -1199,13 +1270,20 @@ class Orchestrator:
         ):
             try:
                 write()
-            except Exception:
+            except Exception as e:
                 logger.exception(
                     "Finding %s merged into case %s but could not %s",
                     finding_id,
                     match.case_id,
                     what,
                 )
+                if what == "note it on the case":
+                    _record_failure(
+                        match.case_id,
+                        f"Alert `{finding.get('title') or finding_id}` was added "
+                        f"({_link_note(match)}) but its note could not be written: {e}",
+                        {"finding_id": finding_id, "matched_key": match.key},
+                    )
         self._count_dedup_prevented()
         self._decide_trigger(
             trigger_id,
@@ -1267,7 +1345,8 @@ class Orchestrator:
             "detection", finding_severity=finding.get("severity")
         )
 
-        if self._merge_if_overlaps(finding, trigger_id):
+        open_links: List[CaseMatch] = []
+        if self._merge_if_overlaps(finding, trigger_id, open_links):
             return
 
         workflow_id = select_workflow(finding)
@@ -1292,6 +1371,7 @@ class Orchestrator:
             ),
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
+            open_links=open_links,
         )
 
     async def _create_manual_investigation(
@@ -1349,6 +1429,7 @@ class Orchestrator:
         trigger_id: Optional[int] = None,
         document: Optional[str] = None,
         gap_proposal_ids: Optional[List[str]] = None,
+        open_links: Optional[List[CaseMatch]] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -1496,7 +1577,9 @@ class Orchestrator:
 
         if trigger_type == "finding" and inv_record.get("case_id"):
             for finding in findings:
-                await self._link_closed_cases(inv_record["case_id"], finding)
+                await self._link_related_cases(
+                    inv_record["case_id"], finding, open_links or []
+                )
 
         if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
@@ -2394,31 +2477,50 @@ class Orchestrator:
             logger.error(f"Failed to create approval action: {e}")
 
     # -------------------------------------------------------------------------
-    # Closed-Case links
+    # Related-Case links
     # -------------------------------------------------------------------------
 
-    async def _link_closed_cases(self, case_id: str, finding: Dict):
-        """Link a new Case to the most recent closed Cases its finding matches.
+    async def _link_related_cases(
+        self, case_id: str, finding: Dict, open_links: List[CaseMatch]
+    ):
+        """Link a new Case to the Cases its finding matches without attaching.
 
-        Never raises: a failed lookup or link costs the link, not the Case.
+        The most recent closed ones (looked up now), then the open ones intake
+        carried: one that closed since is already linked as closed, counted there.
+        Never raises: a failed lookup or link costs the link, not the Case, and is
+        recorded on the new Case.
         """
         try:
-            matches = await asyncio.to_thread(_matching_cases, finding, open=False)
-        except Exception:
+            closed = await asyncio.to_thread(_matching_cases, finding, open=False)
+        except Exception as e:
             logger.warning(
                 "Failed to look up closed cases for %s", case_id, exc_info=True
             )
-            return
-        for match in [m for m in matches if m.case_id != case_id][:MAX_CLOSED_LINKS]:
-            note = _link_note(match)
+            await asyncio.to_thread(
+                _record_failure,
+                case_id,
+                f"Could not look up closed cases to link: {e}",
+                {"finding_id": finding.get("finding_id")},
+            )
+            closed = []
+        closed = [m for m in closed if m.case_id != case_id][:MAX_CLOSED_LINKS]
+        tried = {m.case_id for m in closed}
+        for match in closed + [m for m in open_links if m.case_id not in tried]:
             try:
+                note = _related_note(match, case_id)
                 await asyncio.to_thread(_link_cases, case_id, match.case_id, note)
-            except Exception:
+            except Exception as e:
                 logger.warning(
                     "Failed to link case %s to %s",
                     case_id,
                     match.case_id,
                     exc_info=True,
+                )
+                await asyncio.to_thread(
+                    _record_failure,
+                    case_id,
+                    f"Could not link to case {match.case_id}: {e}",
+                    {"related_case_id": match.case_id, "matched_key": match.key},
                 )
 
     # -------------------------------------------------------------------------

@@ -9,7 +9,8 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, AgentRowsProvider, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedDraft, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
+import { HuntDetections } from './HuntDetections'
 import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
@@ -18,7 +19,7 @@ import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { Cost } from '../../shared/cost'
+import { Cost, fmtOver } from '../../shared/cost'
 import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
 import { StopLine } from '../../shared/StopLine'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
@@ -28,6 +29,7 @@ import { openSections, shortLabel, type OpenItem, type V3OpenRef, type V3Questio
 import { explanationColor, explanationWord } from '../cases/caseFold'
 import { HypothesisWord, KeepGoing, OpenCheckpoint, bearings, liveGap, provenanceTag, type Bearing } from './huntParts'
 import { pickId } from './runTarget'
+import { ENTITY_TYPES } from './entityTypes'
 import {
   IN_FLIGHT, callLine, errMsg, fmtDuration, investigationOf, runStatusColor, useInvestigateReplay, useRunDetail, verdictOf,
   type HuntCheckpoint, type HuntEvidence, type HuntGap, type HuntHandoff, type HuntMove,
@@ -559,13 +561,6 @@ function looksUnfinished(line: string): boolean {
   return line.endsWith(':') || /^[a-z]/.test(line)
 }
 
-/** The ten kinds a key can carry, held to the hunt's own closed set by the spec
- *  loader, which refuses anything else rather than coercing it. Spelled here so
- *  the operator is told before submitting, and kept in step with
- *  `plugins/hunt/types.ts` — a list that drifts tells them a key is fine that
- *  no reader will ever query. */
-const ENTITY_TYPES = ['ip', 'domain', 'host', 'url', 'email', 'hash', 'arn', 'aws_key', 'user', 'process']
-
 /** `type:value`, comma separated — the form the hunt already writes an entity in.
  *  Split on the first colon, because a url value carries its own. */
 function parsedSubjects(raw: string): { keys: string[]; bad: string[] } {
@@ -1063,7 +1058,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
             placeholder={(limits?.budgets?.max_cost_usd ?? 15).toFixed(2)}
             hint={costBad
               ? 'A dollar amount above 0 and no more than 100.'
-              : 'Dollars this run may spend before it stops and reports on what it has. The turn count above is the other ceiling; whichever it reaches first ends the run.'}
+              : "Checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes. The turn count above is the other ceiling; whichever it reaches first ends the run."}
           />
         )}
         {isHuntLike && (
@@ -1643,6 +1638,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
+  const over = typeof cost === 'number' ? fmtOver(cost, ceiling) : ''
   const verdict = verdictOf(d, trace?.reason ?? null)
   const cause = stopCauseOf(d.stop_cause)
   return (
@@ -1657,10 +1653,10 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
         <span className="flex-1" />
         <div className="meta">
           {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
+          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}${fmtOver(cost, ceiling)}`}</span>
           {spent !== null && (
-            <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
-              <div className="budget-fill" style={{ width: `${spent}%` }} />
+            <div className="budget-track" title={over ? `Over the cost ceiling${over}` : `${spent.toFixed(0)}% of the cost ceiling`}>
+              <div className="budget-fill" style={{ width: `${spent}%`, ...(over && { background: 'var(--poor)' }) }} />
             </div>
           )}
         </div>
@@ -2424,7 +2420,7 @@ function StopRun({ runId, onStopped }: { runId: string; onStopped: () => void })
   )
 }
 
-type HuntTab = 'memory' | 'hyp' | 'evidence' | 'moves' | 'frontier' | 'gaps' | 'esc' | 'report' | 'next'
+type HuntTab = 'memory' | 'hyp' | 'evidence' | 'moves' | 'frontier' | 'gaps' | 'esc' | 'detections' | 'report' | 'next'
 
 /** Views of one run as tabs rather than stacked tables. A view with nothing in it
  *  is not offered rather than offered empty. */
@@ -2441,6 +2437,8 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
   const steps = hunt.narrative?.next_steps ?? []
   const memory = hunt.recall ?? null
   const remembered = memory === null ? null : recalledCount(memory)
+  const detections = useHuntDetections(d.run_id, !IN_FLIGHT.includes(d.status))
+  const led = detections === null ? 0 : detections.proposals.length + detections.without.length
   const tabs: [HuntTab, string, number | null][] = [
     ['hyp', 'Hypotheses', hunt.hypotheses.length],
     ...(hunt.evidence_count > 0 ? ([['evidence', 'Evidence', hunt.evidence_count]] as [HuntTab, string, number][]) : []),
@@ -2453,6 +2451,8 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
     ...(frontier.length > 0 ? ([['frontier', 'Frontier', frontier.length]] as [HuntTab, string, number][]) : []),
     ...(gaps.length > 0 ? ([['gaps', 'Gaps', gaps.length]] as [HuntTab, string, number][]) : []),
     ...(supervision > 0 ? ([['esc', 'Escalations & checkpoints', supervision]] as [HuntTab, string, number][]) : []),
+    // A concluded hunt's proposals and rules, or why a proven hypothesis got none.
+    ...(led > 0 ? ([['detections', 'Detections', led]] as [HuntTab, string, number][]) : []),
     ['report', 'Report', null],
     ...(steps.length > 0 ? ([['next', 'Next steps', steps.length]] as [HuntTab, string, number][]) : []),
   ]
@@ -2480,6 +2480,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
           <HuntCheckpoints checkpoints={checkpoints} />
         </>
       )}
+      {shown === 'detections' && detections !== null && <HuntDetections read={detections} hyp={(id) => <Hyp id={id} />} />}
       {shown === 'report' && (report === ''
         ? <div className="muted text-[12.5px] py-3">The report is written when the hunt reaches a terminal state — completed, cancelled, or stopped at its budget.</div>
         : (
@@ -2496,6 +2497,21 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'next' && <HuntActions hunt={hunt} />}
     </HypLabels.Provider>
   )
+}
+
+/** What a concluded run led to for detection, once; null while in flight, unread, or not
+ *  readable (no detections.read, or the read failed): the tab is then not offered. */
+function useHuntDetections(runId: string, concluded: boolean): HuntDetectionsRead | null {
+  const [read, setRead] = useState<HuntDetectionsRead | null>(null)
+  useEffect(() => {
+    if (!concluded) return
+    let live = true
+    detectionEngineeringApi.hunt(runId)
+      .then((res) => { if (live) setRead(res.data) })
+      .catch(() => { if (live) setRead(null) })
+    return () => { live = false }
+  }, [runId, concluded])
+  return concluded ? read : null
 }
 
 /** The account, laid out — what happened, with the tabs carrying the evidence and
@@ -4076,7 +4092,7 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
   )
 }
 
-const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. Every workflow run except root cause and playbooks is also offered the skills you add, beside the built-in ones its kind uses. How much each skill is used is on its card.'
+const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. Every workflow run except playbooks is also offered the skills you add, beside the built-in ones its kind uses. How much each skill is used is on its card.'
 const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
 
 // The card's usage line (#1560): skill reads are recorded now, so this
