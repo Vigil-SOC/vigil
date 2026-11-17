@@ -225,7 +225,14 @@ either way.
 
 Which incidents are in the file is Medic's command, not this script. It is the
 set whose stored `would_have` action is `prepare_support_bundle`: today, every
-lane-3 incident that was open during `--since`. Vigil's lane-3 notice
+lane-3 incident that was open during `--since`. A lane-1 daemon death or hang
+(`pipeline.daemon-component-failed-compose`,
+`pipeline.daemon-component-hung-compose`) that Medic restarted is in it too, so
+the defect stays reported after the restart cleared it. Each incident has a
+`fix` list, empty when nothing was run: one object per restart attempt with
+`action` (the incident's L1 name), `who` (`admin` or `medic`; the session id is
+never written), `level` (`L0`, `L1` or `L2`) and `result` (`cleared`,
+`not_cleared`, `not_back`, `not_verified`, or `""` until verified). Vigil's lane-3 notice
 (`core/platform/medic_incidents.py`, `_BUNDLE`) and the first-start summary's
 defect line tell the admin to run
 `sh scripts/vigil-support/vigil-support.sh --medic`, so the bundle holds the
