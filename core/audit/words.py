@@ -358,6 +358,15 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "auth.mfa_reset": lambda p: "Reset someone's two-step sign-in"
     + (" from the host" if p.get(trail.ACTOR) == trail.SYSTEM else ""),
     "user.unlocked": "Unlocked an account",
+    "auth.locked": lambda p: "Locked an account"
+    + (f" after {p['failures']} failed sign-ins" if p.get("failures") else "")
+    + (f", until {p['until']}" if p.get("until") else ", until unlocked"),
+    "auth.password_change_failed": "Failed to change their password: wrong current password",
+    "reset.refused": lambda p: "Refused a password reset link"
+    + (f": {_word(p['reason'])}" if p.get("reason") else ""),
+    "notice.email_failed": lambda p: "A notice's email was not sent"
+    + (f" ({_word(p['kind'])})" if p.get("kind") else "")
+    + (f": {p['error']}" if p.get("error") else ""),
     "reset.sent": lambda p: {
         "self": "Asked for a password reset link",
         "signin": "Was sent to change a password at sign-in",

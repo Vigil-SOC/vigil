@@ -13,6 +13,7 @@ register a function ``(user) -> [{"message", "link"}]`` in ``CONDITIONS``.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import timedelta
 from typing import Any, Callable, Dict, List, Optional
 
@@ -203,6 +204,7 @@ def _send_one(notice_id: int) -> None:
 def _finish(notice_id: int, *, sent: bool, error: Optional[str] = None) -> None:
     """Record the send. ``error`` is an exception class name; None with
     ``sent`` is success. Neither raises into the caller."""
+    failed = None
     try:
         with get_db_manager().session_scope() as session:
             row = session.get(CaseNotification, notice_id)
@@ -210,6 +212,7 @@ def _finish(notice_id: int, *, sent: bool, error: Optional[str] = None) -> None:
                 return
             meta = dict(row.notification_metadata or {})
             if error:
+                failed = (row.user_id, row.notification_type)
                 meta["mail"] = _MAIL_FAILED
                 meta["mail_error"] = error
             else:
@@ -222,6 +225,17 @@ def _finish(notice_id: int, *, sent: bool, error: Optional[str] = None) -> None:
             row.notification_metadata = meta or None
     except Exception:
         logger.exception("notice %s outcome was not recorded", notice_id)
+        return
+    if failed:
+        # The trail shows the person was not told: who, which kind, the error's
+        # type. No address and no text, which erasure can blank on the notice.
+        # On its own thread: the sender may be inside a request that holds the
+        # trail's lock until it commits, and waiting here would deadlock on it.
+        from core.auth import trail_events
+
+        threading.Thread(
+            target=trail_events.notice_email_failed, args=(*failed, error), daemon=True
+        ).start()
 
 
 def _own_notices(session, user_id: str):
