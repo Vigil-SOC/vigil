@@ -16,6 +16,7 @@ from sqlalchemy import case as sql_case
 from sqlalchemy import cast, delete, distinct, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import lazyload, noload, selectinload
@@ -29,6 +30,7 @@ from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
     Case,
+    CaseFindingRemoval,
     Finding,
     FindingMitrePrediction,
     Investigation,
@@ -46,6 +48,28 @@ _UNSET = object()
 # Retrying a batch row by row against them would only repeat the failure (and
 # any pool timeout) once per row.
 _CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
+
+
+def _record_removals(session, case_id: str, *, added, removed) -> None:
+    """Remember findings a person took off a Case, and forget ones put back (#4682).
+
+    Intake reads these rows so it does not join a removed finding to the same
+    Case again. Runs in the caller's session, so the row and the unlink commit
+    together.
+    """
+    if removed:
+        session.execute(
+            pg_insert(CaseFindingRemoval)
+            .values([{"case_id": case_id, "finding_id": f} for f in removed])
+            .on_conflict_do_nothing()
+        )
+    if added:
+        session.execute(
+            delete(CaseFindingRemoval).where(
+                CaseFindingRemoval.case_id == case_id,
+                CaseFindingRemoval.finding_id.in_(added),
+            )
+        )
 
 
 def _is_connection_error(e: Exception) -> bool:
@@ -1312,6 +1336,7 @@ class DatabaseService:
                 )
                 now = {f.finding_id for f in case.findings}
                 findings = (sorted(now - was), sorted(was - now))
+                _record_removals(session, case_id, added=now - was, removed=was - now)
 
             # Update remaining mapped fields
             before, after = {}, {}
@@ -1375,6 +1400,7 @@ class DatabaseService:
             if finding not in case.findings:
                 case.findings.append(finding)
                 case.updated_at = utcnow()
+                _record_removals(session, case_id, added={finding_id}, removed=())
                 session.flush()
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
@@ -1407,6 +1433,7 @@ class DatabaseService:
             if finding in case.findings:
                 case.findings.remove(finding)
                 case.updated_at = utcnow()
+                _record_removals(session, case_id, added=(), removed={finding_id})
                 session.flush()
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
