@@ -31,9 +31,15 @@ RETRY_WINDOW = timedelta(hours=24)
 # A case nobody is working: closed, or parked until someone returns to it.
 IDLE_CASE_STATUSES = ("closed", "parked")
 
+_PASSING_CODES = r"(?:408|429|500|502|503|504|529)"
+# A status code counts only where it reads as one ("HTTP 503", "Error code: 529",
+# "502 Bad Gateway"), not as any number in the text ("limit of 500 results").
 TRANSIENT = re.compile(
-    r"\b(408|429|500|502|503|504|529)\b"
-    r"|timed? ?out|timeout|overloaded|rate.?limit|unavailable"
+    rf"\b(?:HTTP\S*|status|code|error)[\s:=]*{_PASSING_CODES}\b"
+    rf"|\b{_PASSING_CODES}\s+(?:Request Timeout|Too Many Requests"
+    r"|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)"
+    r"|timed? ?out|timeout|overloaded|rate.?limit"
+    r"|(?:service|temporarily) unavailable"
     r"|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|fetch failed"
     r"|failed to execute HTTP request|connection (reset|refused|error|closed)",
     re.IGNORECASE,
@@ -97,6 +103,17 @@ def retries_due(session, after: timedelta, attempts: int) -> List[Dict[str, Any]
         if runs and runs[0][1] > run.started_at:
             continue
         if _failures_in_a_row([status for status, _ in runs]) > attempts:
+            continue
+        # An investigation opened since, with or without a run, is the case
+        # already being worked again.
+        if session.execute(
+            select(Investigation.investigation_id)
+            .where(
+                Investigation.case_id == case_id,
+                Investigation.created_at > run.finished_at,
+            )
+            .limit(1)
+        ).first():
             continue
         investigation = session.get(
             Investigation, run.trigger_context["investigation_id"]

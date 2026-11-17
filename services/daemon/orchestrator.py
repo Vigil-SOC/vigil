@@ -2083,7 +2083,8 @@ class Orchestrator:
         """Run again each case investigation that failed for a passing reason."""
         while not shutdown_event.is_set():
             try:
-                if self._enabled:
+                # A dry run opens no runs, so a retry would never stop being due.
+                if self._enabled and not self.config.dry_run:
                     settings = get_settings()
                     await self._run_retry_tick(
                         timedelta(seconds=settings.case_run_retry_after_seconds),
