@@ -27,10 +27,11 @@ except ImportError:
             ClientSession = Any
             StdioServerParameters = Any
 
+from core.config import vigil_path
 from core.integrations._base.config import missing as missing_fields
 from core.integrations._base.config import resolve
 from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
-from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.child_env import PROXY_ENV_NAMES, ca_bundle_env, proxy_env
 from core.integrations.mcp.runner import (
     RunnerError,
     RunnerServer,
@@ -364,17 +365,13 @@ class MCPClient:
             return False
 
         try:
-            # Create stdio server parameters. stdio_client narrows the child
-            # environment to a six-name allowlist, so a CA bundle set in the
-            # backend's environment has to be forwarded rather than inherited.
+            # In the runner when MCP_RUNNER_URL is set; server_params then unused.
+            runner = self._runner_for(server_name)
             server_params = StdioServerParameters(
                 command=server.command,
                 args=server.args,
-                env={**ca_bundle_env(), **(server.env or {})},
+                env=None if runner else self._stdio_env(server),
             )
-
-            # In the runner when MCP_RUNNER_URL is set; server_params then unused.
-            runner = self._runner_for(server_name)
 
             if persistent:
                 # Create persistent session
@@ -382,6 +379,9 @@ class MCPClient:
                     self.persistent_sessions[server_name] = PersistentServerSession(
                         server_name, server_params, runner
                     )
+                elif runner is None:
+                    # A reconnect spawns with the env as resolved now.
+                    self.persistent_sessions[server_name].server_params = server_params
 
                 # Connect. The session logs and swallows the spawn error;
                 # keep it on last_errors so a probe can report it.
@@ -469,6 +469,24 @@ class MCPClient:
         self.setup_required(server_name)
         # Looked up at each start: reload_server_configs replaces the entry.
         return runner_env(self.mcp_service.servers[server_name])
+
+    def _stdio_env(self, server) -> Dict[str, str]:
+        """A stdio child's env: what the runner would start it with, not ours.
+
+        stdio_client adds only HOME, LOGNAME, PATH, SHELL, TERM and USER, so
+        the backend's own secrets never reach the child. Built per connect, as
+        ``resolve()`` picks up integration settings saved since the last one.
+        Mirrors services/mcp_runner/catalog.py:Catalog.launch.
+        """
+        own = runner_env(server)
+        # A proxy name the server sets drops both forwarded spellings.
+        overridden = {k.upper() for k in own if k in PROXY_ENV_NAMES}
+        env = {k: v for k, v in proxy_env().items() if k.upper() not in overridden}
+        env.update(own)
+        env.update(ca_bundle_env())
+        env["PYTHONPATH"] = str(self.mcp_service.project_root)
+        env.setdefault("VIGIL_DIR", str(vigil_path()))
+        return env
 
     def _missing_credentials_for(self, server) -> List[str]:
         # Resolves through get_secret, so a credential saved via the integration

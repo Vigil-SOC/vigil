@@ -189,6 +189,11 @@ Anything in this repository that a deployment actually runs:
   verification that can be silently disabled, and bypass of the
   approval workflow in `core/response/approval_service.py` for actions that
   change the world (host isolation, firewall rules).
+  Without `MCP_RUNNER_URL` (`start.sh`, systemd, the desktop app) each server
+  is a stdio child that receives only its declared env and credentials, never
+  the backend's own, but it runs as the backend's user and can read that
+  user's files. That is the known limit of host-native mode, not a finding;
+  per-server uid isolation comes from the runner (Compose, Helm).
 - **Secret handling** — the encrypted store at `~/.vigil/secrets.enc`,
   `core.secrets`, Helm secret plumbing, and anything that writes a credential
   to a log, an error response, or the database in cleartext.
