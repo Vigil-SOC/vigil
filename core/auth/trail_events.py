@@ -212,26 +212,6 @@ def locked(
     )
 
 
-def notice_email_failed(principal: str, kind: str, error: str) -> None:
-    """A notice's email that could not be sent: who, which kind, the error's type.
-
-    Best effort and never held: a trail that is refusing must not make this
-    fail again through the alert notice's own email.
-    """
-    try:
-        with unit_of_work() as session:
-            record(
-                session,
-                "notice.email_failed",
-                actor=trail.SYSTEM,
-                principal=principal,
-                kind=kind,
-                error=error,
-            )
-    except Exception:  # noqa: BLE001
-        logger.exception("audit trail did not record a failed notice email")
-
-
 def credential_expired(credential_id: str) -> None:
     """The first presentation of an expired credential, once.
 

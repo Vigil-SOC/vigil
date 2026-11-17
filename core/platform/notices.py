@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from core.audit import trail
 from core.platform.email_service import mail_is_configured, send_email
 from core.platform.user_agent import browser_of
 from core.storage.connection import get_db_manager
@@ -231,11 +232,32 @@ def _finish(notice_id: int, *, sent: bool, error: Optional[str] = None) -> None:
         # type. No address and no text, which erasure can blank on the notice.
         # On its own thread: the sender may be inside a request that holds the
         # trail's lock until it commits, and waiting here would deadlock on it.
-        from core.auth import trail_events
-
         threading.Thread(
-            target=trail_events.notice_email_failed, args=(*failed, error), daemon=True
+            target=_record_mail_failed, args=(*failed, error), daemon=True
         ).start()
+
+
+def _record_mail_failed(principal: str, kind: str, error: str) -> None:
+    """A notice's email that could not be sent: who, which kind, the error's type.
+
+    Best effort and never held: a trail that is refusing must not make this
+    fail again through the alert notice's own email.
+    """
+    try:
+        with get_db_manager().session_scope() as session:
+            if trail.in_use(session):
+                trail.append(
+                    session,
+                    {
+                        trail.ACTION: "notice.email_failed",
+                        trail.ACTOR: trail.SYSTEM,
+                        "principal": principal,
+                        "kind": kind,
+                        "error": error,
+                    },
+                )
+    except Exception:  # noqa: BLE001
+        logger.exception("audit trail did not record a failed notice email")
 
 
 def _own_notices(session, user_id: str):
