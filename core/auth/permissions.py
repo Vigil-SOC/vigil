@@ -76,6 +76,9 @@ CATALOG = {
         "ai_decisions.read": _SIGNED_IN_READ,
         # Held only by the directory-sync account, on no built-in role (#4423).
         "directory.sync": _NEW_CAPABILITY,
+        # Releases a held operator skill to agents. Apart from automation.write
+        # so whoever uploads a skill cannot also approve it.
+        "skills.approve": _NEW_CAPABILITY,
     },
     "builtins": {
         "role-admin": {
@@ -110,6 +113,7 @@ CATALOG = {
             "platform.write": True,
             "roles.manage": True,
             "sessions.manage": True,
+            "skills.approve": True,
             "teams.manage": True,
             "users.delete": True,
             "users.read": True,
@@ -236,6 +240,7 @@ STEP_UP = {
     "ai_autonomy.write": "change AI autonomy",
     "sessions.manage": "change session settings",
     "roles.manage": "change roles",
+    "skills.approve": "approve a skill",
     "users.write": "change users",
     "users.delete": "delete a user",
 }

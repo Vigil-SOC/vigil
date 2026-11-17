@@ -26,6 +26,18 @@ class CheckUnavailable(Exception):
     """agent-serve could not be asked."""
 
 
+class SkillHeld(ManifestRefused):
+    """A skill the manifest names is held for its security scan or approval."""
+
+
+_HELD_BECAUSE = {
+    "pending": "is waiting for its security scan",
+    "failed": "could not be security scanned",
+    "flagged": "was flagged by its security scan and is not approved",
+    "refused": "contains a symlink and is never run",
+}
+
+
 # Lenient: a stored manifest has passed the check, and an unreadable one reads as
 # empty rather than taking the Agents list down with it.
 def read_manifest(text: Optional[str]) -> Dict[str, Any]:
@@ -83,13 +95,24 @@ def rendered_manifest(text: str) -> str:
 
 # The skills a manifest names, from the same roots the console and the Python
 # agents read. One it names and no root holds is left out: the check refuses it.
+# One that is held refuses the manifest here, saying why: a run that went ahead
+# without it would not be the agent its author wrote.
 def manifest_skills(doc: Mapping[str, Any]) -> List[Dict[str, str]]:
     names = _strings(doc.get("skills"))
     if not names:
         return []
+    from core.skills.skill_hold import scan_states
     from core.skills.skill_library import load_skills, skill_body, skill_roots
 
-    found = {skill.name: skill for skill in load_skills(skill_roots())}
+    loaded = {skill.name: skill for skill in load_skills(skill_roots())}
+    named = [loaded[name] for name in dict.fromkeys(names) if name in loaded]
+    states = scan_states(named)
+    for skill in named:
+        state = states[skill.name]
+        if not state.allowed:
+            because = _HELD_BECAUSE.get(state.state, "is held")
+            raise SkillHeld(f"skill {skill.name} {because}")
+    found = {skill.name: skill for skill in named}
     return [
         {
             "name": found[name].name,

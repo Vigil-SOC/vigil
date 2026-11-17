@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -49,6 +50,7 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 from core.storage.models import Finding
 from core.teams import default_team
@@ -1064,10 +1066,11 @@ def _indicator_lookup(args: Args) -> Any:
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
     return [
         {
+            **(hits.get(value) or {}),
+            # The row names the value as asked, not the feed's stored spelling.
             "indicator_type": indicator_type,
             "indicator_value": value,
             "known": value in hits,
-            **(hits.get(value) or {}),
         }
         for value in values
     ]
@@ -1277,8 +1280,11 @@ async def execute_backend_tool(
             result = await result
         return result, True
 
-    # Agent skills (#925): reads from disk only, never a database.
+    # Agent skills: read from disk, except those the scan holds, which read as
+    # absent so the agent cannot learn their content. The verdicts come from the
+    # database, hence off the event loop.
     if tool_name == READ_SKILL_TOOL:
-        return read_skill(args.get("name"), args.get("file")), True
+        visible = await asyncio.to_thread(agent_skills)
+        return read_skill(args.get("name"), args.get("file"), skills=visible), True
 
     return None, False

@@ -367,7 +367,12 @@ def move_case(
         if not _current_member(session, named, destination.team_id):
             raise OwnerOffTeam(case_id, destination.name)
         if newly_set_owner(stored, named):
-            _may(session, "cases.assign", user_id=user_id, http=http)
+            # Naming yourself needs no cases.assign, unless it would displace an
+            # owner who stays on the destination (that clears their ownership).
+            if named != username or _current_member(
+                session, stored, destination.team_id
+            ):
+                _may(session, "cases.assign", user_id=user_id, http=http)
             require_owner_can_write(session, named or "")
             require_owner_reads(session, case, named)
         new_owner = named

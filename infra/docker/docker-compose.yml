@@ -61,6 +61,14 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_COST: ${ORCHESTRATOR_MAX_COST:-5.0}
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
+  # Skill scanning, and so the hold on unscanned or flagged skills. Every process
+  # that builds a prompt (backend, soc-daemon, llm-worker) must agree on whether
+  # it is on, or one of them would hand held skills to its runs. All three use
+  # the backend image, which carries the scanner, so one path serves them; only
+  # the backend runs scans, the others just read the verdicts. Set it empty in
+  # .env to turn scanning off everywhere. llm-worker repeats this line below
+  # because it does not take this anchor.
+  VIGIL_SKILL_SCANNER: ${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
 
 # One build for the API and the backup services. A second image tag would
 # compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
@@ -547,6 +555,8 @@ services:
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
       - REDIS_URL=redis://redis:6379/0
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
+      # Same value as the backend and daemon (see x-intent-env).
+      - VIGIL_SKILL_SCANNER=${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}

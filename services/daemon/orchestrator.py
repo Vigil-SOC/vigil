@@ -1721,7 +1721,12 @@ class Orchestrator:
             job = build_start_job(
                 run_id,
                 run_kind,
-                {**request, **operator_request(workflow.metadata if workflow else {})},
+                {
+                    **request,
+                    **await asyncio.to_thread(
+                        operator_request, workflow.metadata if workflow else {}
+                    ),
+                },
                 enqueued_by=started_by or "orchestrator",
                 principal=token,
                 actor=actor,

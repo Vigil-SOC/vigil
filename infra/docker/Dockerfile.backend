@@ -52,7 +52,29 @@ COPY requirements.lock .
 RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
 
 # ---------------------------------------------------------------------------
-# Stage 3: runtime image
+# Stage 3: SkillSpector, the skill scanner (core.skills.skill_scan)
+# ---------------------------------------------------------------------------
+# Its own venv, run as a separate program: it pulls LangChain, boto3 and
+# yara-python, which must not mix with the backend's pinned requirements. It is
+# not on PyPI, so it is installed from git at a pinned commit (2.12.0), its
+# dependencies held to skillspector-constraints.txt. git and
+# the compilers exist only in this stage; the venv alone is copied forward.
+# The venv is built at its final path so its scripts' shebangs stay valid.
+FROM python:${PYTHON_VERSION}-slim AS skillspector
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY infra/docker/skillspector-constraints.txt /tmp/skillspector-constraints.txt
+RUN python -m venv /opt/skillspector \
+    && /opt/skillspector/bin/pip install --no-cache-dir \
+      -c /tmp/skillspector-constraints.txt \
+      "git+https://github.com/NVIDIA/skillspector.git@c81615007d40e86051a302a3cf897f8a05264928"
+
+# ---------------------------------------------------------------------------
+# Stage 4: runtime image
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
@@ -109,6 +131,10 @@ WORKDIR /app
 # Installed Python packages from the deps stage
 COPY --from=python-deps /install/deps /usr/local
 
+# The skill scanner's venv. Same base image and Python as the runtime, so its
+# interpreter symlink resolves here too.
+COPY --from=skillspector /opt/skillspector /opt/skillspector
+
 # Application source — copy each top-level package separately so
 # modifying one doesn't bust the cache for all the others.
 COPY --chown=vigil:vigil core/        ./core/
@@ -143,10 +169,13 @@ RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; f
 
 USER vigil
 
+# The image ships the skill scanner, so scanning is on here; elsewhere the
+# setting defaults to off (core/config.py).
 ENV HOME=/home/vigil \
     PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
-    PORT=6987
+    PORT=6987 \
+    VIGIL_SKILL_SCANNER=/opt/skillspector/bin/skillspector
 
 EXPOSE 6987
 

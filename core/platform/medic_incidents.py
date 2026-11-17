@@ -45,7 +45,9 @@ _FIX_NOT_HELD = "fix_not_held"
 _FIX_NOT_BACK = "fix_not_back"
 _FIX_FIXED = "fix_fixed"
 _MEDIC = "/medic"
-_BUNDLE = "sh scripts/vigil-support/vigil-support.sh"
+_BUNDLE = "sh scripts/vigil-support/vigil-support.sh --medic"
+# --medic first shipped in 1.1.3 (#4405); an older script exits on it.
+_BUNDLE_MIN = "Needs the support script from Vigil 1.1.3 or later (it adds --medic)."
 _NO_FIX = "No fix text for this incident; open it in Medic"
 _OPEN_CONSOLE = "Open Medic in the Vigil console"
 _INCIDENT = re.compile(r"inc_[0-9A-Za-z]{8,32}")
@@ -362,6 +364,7 @@ def _opened_note(
                 fix or _NO_FIX,
                 "",
                 f"Build a support bundle with {_BUNDLE}",
+                _BUNDLE_MIN,
             ]
     if item.reopen > 0:
         lines += ["", "This incident is flapping."]
@@ -427,7 +430,7 @@ def _summary_note(
     else:
         lines.append(f"{defects} are Vigil defects to report.")
     if defects:
-        lines.append(f"Build a support bundle with {_BUNDLE}")
+        lines += [f"Build a support bundle with {_BUNDLE}", _BUNDLE_MIN]
     if reset:
         lines.append("This follows a store reset.")
     if not watching:
