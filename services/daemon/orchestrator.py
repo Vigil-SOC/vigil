@@ -13,6 +13,7 @@ import asyncio
 import copy
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import func
 
 from core.agents.builtins import ORCHESTRATOR_ACTOR
+from core.agents.lost_runs import Cursor, end_lost_start_jobs
 from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
@@ -127,6 +129,9 @@ def _count_queued_intake_rows() -> int:
 # Proactive hunts (nightly, intel) never hold more than this many slots, so a
 # detection arriving on a quiet fleet still finds one free.
 SCHEDULE_RUN_CEILING = 1
+
+# Seconds between looks for runs whose start job was lost: the look scans the runs table.
+LOST_CHECK_EVERY = 60
 
 
 # A hunt parked out of turns or budget, waiting on Keep going. A park on an
@@ -810,6 +815,9 @@ class Orchestrator:
             "total_cost_usd": 0.0,
         }
         self._intake_surge_active = False
+        # Where the last look for lost start jobs stopped, and when it ran.
+        self._lost_cursor: Optional[Cursor] = None
+        self._lost_checked_at = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -1466,6 +1474,21 @@ class Orchestrator:
                             f"Investigation {w_inv_id} is paused pending human approval.",
                         )
 
+                # A run whose start job was lost has no lease for the worker's
+                # sweeper to find: ended here, as a failed enqueue is. About once a
+                # minute, since it scans the runs table.
+                if (
+                    not self.config.dry_run
+                    and time.monotonic() - self._lost_checked_at >= LOST_CHECK_EVERY
+                ):
+                    self._lost_checked_at = time.monotonic()
+                    try:
+                        self._lost_cursor = await end_lost_start_jobs(
+                            self._lost_cursor, self._fail_lost_investigation
+                        )
+                    except Exception:  # noqa: BLE001 - must not skip the checks below
+                        logger.exception("ending lost start jobs failed")
+
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()
 
@@ -1540,6 +1563,14 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
+
+    def _fail_lost_investigation(self, inv_id: str) -> None:
+        try:
+            self._update_investigation_status(
+                inv_id, "failed", "Could not enqueue: the start job is no longer queued"
+            )
+        except Exception:  # noqa: BLE001 - the run is ended either way
+            logger.exception("could not fail investigation %s", inv_id)
 
     def _in_flight(self) -> int:
         try:
