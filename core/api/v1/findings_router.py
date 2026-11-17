@@ -1,10 +1,9 @@
 """Findings — versioned contract surface (``/api/v1/findings``).
 
 The read and record-update routes an external consumer relies on: list, get,
-summary, and the enrich-metadata PATCH. Enrichment *generation*
-(``/{id}/enrich``) and the destructive ``/all`` wipe stay on the unversioned
-router in ``services/api/routers/findings.py``. They are operator/console
-actions, not part of the frozen surface.
+summary, and the enrich-metadata PATCH. The destructive ``/all`` wipe stays
+on the unversioned router in ``services/api/routers/findings.py``. It is an
+operator/console action, not part of the frozen surface.
 """
 
 import logging

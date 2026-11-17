@@ -6192,20 +6192,6 @@
       color: var(--tx-3);
    }
 
-   .fp-list {
-      margin: 0;
-      padding-left: 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-   }
-
-   .fp-list li {
-      font-size: 13px;
-      color: var(--tx-2);
-      line-height: 1.45;
-   }
-
    .fp-ai-progress {
       min-height: 20px;
    }
@@ -6218,20 +6204,6 @@
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: soc-spin .7s linear infinite;
-   }
-
-   .fp-raw-ai-output {
-      max-height: 280px;
-      margin: 0;
-      padding: 12px;
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--bg-2);
-      color: var(--tx-2);
-      font: 12px/1.5 var(--font-mono);
-      white-space: pre-wrap;
-      word-break: break-word;
    }
 
    .fp-actions {
@@ -8182,12 +8154,10 @@
 .fd-sec p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--tx); }
 .fd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .fd-chips a.chip { text-decoration: none; }
-.fd-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; color: var(--tx-2); }
 .fd-kv { display: grid; grid-template-columns: minmax(110px, max-content) 1fr; gap: 3px 12px; margin: 0; font-size: 12.5px; }
 .fd-kv > div { display: contents; }
 .fd-kv dt { color: var(--tx-3); }
 .fd-kv dd { margin: 0; color: var(--tx); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
-.fd-muted { color: var(--tx-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* What holds intake: the Overview board's notice strip, said on every screen that would otherwise read as work moving */
 .autoops-off {
