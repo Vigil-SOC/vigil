@@ -105,6 +105,16 @@ def skill_digest(folder: Path) -> str:
     return digest.hexdigest()
 
 
+def files_digest(files: Dict[str, bytes]) -> str:
+    """``skill_digest`` of a folder holding exactly ``files`` ({posix path: bytes})."""
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        data = files[rel]
+        digest.update(len(rel.encode()).to_bytes(8, "big") + rel.encode())
+        digest.update(len(data).to_bytes(8, "big") + data)
+    return digest.hexdigest()
+
+
 def scan_mode(settings: Optional[Settings] = None) -> str:
     """``static``, or ``llm:<model>`` when a scanner model is configured."""
     model = ((settings or get_settings()).vigil_skill_scanner_model or "").strip()
