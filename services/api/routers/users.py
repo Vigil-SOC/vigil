@@ -1299,6 +1299,8 @@ def link_pending_push(
         _refuse_erased(user)
         if not _is_person_account(user, session):
             _refuse("A service account can't take a directory link")
+        if user.break_glass_at is not None:
+            _refuse("Remove the break-glass mark at the host first")
         _require_privileges_cover_target(current_user, user, session, action="link")
         issuer = sso_settings.read_row(session)[0].settings.issuer
         if not issuer:

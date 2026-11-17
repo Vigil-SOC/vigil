@@ -1534,6 +1534,10 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         raise sso.Refused("service_account", principal=pid)
     if not user.is_active:
         raise sso.Refused("account_deactivated", sso.DEACTIVATED, pid)
+    if user.break_glass_at is not None:
+        # Never linked: found by email, or by a link made before the mark.
+        code = sso.BREAK_GLASS_EMAIL if link is None else sso.BREAK_GLASS_LINKED
+        raise sso.Refused("break_glass_account", code, principal=pid, attempted=email)
     if link is None:
         other = session.query(SsoLink).filter(
             SsoLink.principal_id == pid, SsoLink.issuer == s.issuer
