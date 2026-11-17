@@ -60,6 +60,9 @@ export interface StartRequest {
   // resolved Python-side. Journaled on the spec, so a resume needs no request.
   manifest?: string;
   manifest_skills?: SkillSpec[];
+  // The skills an operator added, less any a content scan holds, resolved Python-side.
+  // Every run is offered them beside its plugin's own. Journaled on the spec.
+  added_skills?: SkillSpec[];
 }
 
 // A resume carries no request, so a resume path that read one would not compile.

@@ -167,14 +167,54 @@ def vet_manifest(text: str, registry: Any = None) -> str:
     return checked
 
 
-# The start request's operator fields for a definition that carries a manifest,
-# else nothing. The prompt and skills are resolved now, so the run journals the
-# text and bodies it used; the stored manifest keeps its placeholders.
-def operator_request(metadata: Mapping[str, Any]) -> Dict[str, Any]:
+# The skills an operator added that the content scan allows, for every run to
+# be offered beside its plugin's own. Bundled skills stay out: a plugin names the
+# ones it uses. One with no body, or gone since it was listed, has nothing to
+# offer and is left out rather than failing the run.
+def added_skills() -> List[Dict[str, str]]:
+    from core.skills.skill_hold import agent_skills
+    from core.skills.skill_library import is_bundled, skill_body
+
+    added = []
+    for skill in agent_skills():
+        if is_bundled(skill) or not skill.description.strip():
+            continue
+        try:
+            body = skill_body(skill)
+        except OSError:
+            continue
+        if body.strip():
+            added.append(
+                {"name": skill.name, "description": skill.description, "body": body}
+            )
+    return added
+
+
+# Run kinds with no run-wide skill index or loader to offer them through: root
+# cause runs its own engine, and a playbook's phases run under their own agents'
+# prompts and grants. Neither is sent them.
+NO_ADDED_SKILLS = frozenset({"root_cause", "compose"})
+
+
+# The start request's field for those skills, for every run whatever started it.
+def added_request(run_kind: str) -> Dict[str, Any]:
+    if run_kind in NO_ADDED_SKILLS:
+        return {}
+    added = added_skills()
+    return {"added_skills": added} if added else {}
+
+
+# The start request's operator fields: the skills an operator added, and for a
+# definition that carries a manifest, that manifest. The prompt and skills are
+# resolved now, so the run journals the text and bodies it used; the stored
+# manifest keeps its placeholders.
+def operator_request(metadata: Mapping[str, Any], run_kind: str) -> Dict[str, Any]:
+    fields = added_request(run_kind)
     text = metadata.get("operator_manifest")
     if not text:
-        return {}
+        return fields
     return {
+        **fields,
         "manifest": rendered_manifest(text),
         "manifest_skills": manifest_skills(read_manifest(text)),
     }

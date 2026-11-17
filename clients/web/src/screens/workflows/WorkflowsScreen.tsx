@@ -4075,7 +4075,7 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
   )
 }
 
-const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. How much each skill is used is on its card.'
+const SKILL_GRANT_INFO = 'Each of these is offered the whole library, not a chosen set. Every workflow run except root cause and playbooks is also offered the skills you add, beside the built-in ones its kind uses. How much each skill is used is on its card.'
 const SKILL_USAGE_INFO = 'Reads of the skill body by an agent, counted over the last 7 days. Reads of a supporting file do not count again.'
 
 // The card's usage line (#1560): skill reads are recorded now, so this

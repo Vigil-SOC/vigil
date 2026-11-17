@@ -82,7 +82,7 @@ except Exception:
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
-from core.agents.operator_manifest import operator_request
+from core.agents.operator_manifest import added_request, operator_request
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
@@ -1725,7 +1725,9 @@ class Orchestrator:
                 {
                     **request,
                     **await asyncio.to_thread(
-                        operator_request, workflow.metadata if workflow else {}
+                        operator_request,
+                        workflow.metadata if workflow else {},
+                        run_kind,
                     ),
                 },
                 enqueued_by=started_by or "orchestrator",
@@ -1850,7 +1852,8 @@ class Orchestrator:
         job = build_start_job(
             shadow_id,
             "adjudicate",
-            shadow,
+            # The skills an operator added ride the job, not the trail entry.
+            {**shadow, **await asyncio.to_thread(added_request, "adjudicate")},
             enqueued_by=started_by or "orchestrator",
             principal=token,
             actor=actor,

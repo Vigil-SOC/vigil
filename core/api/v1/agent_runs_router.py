@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Dict, Optional
@@ -28,6 +29,7 @@ from core.agents.directives import (
     enqueue_directive,
     refuse_unpermitted,
 )
+from core.agents.operator_manifest import added_request
 from core.agents.queue import (
     RUN_KINDS,
     build_start_job,
@@ -226,7 +228,8 @@ async def start_run(
     job = build_start_job(
         run_id=run_id,
         run_kind=request.run_kind,
-        request=payload,
+        # The skills an operator added ride the job, not the trail entry.
+        request={**payload, **await asyncio.to_thread(added_request, request.run_kind)},
         enqueued_by=user.username,
         principal=tool_principal.mint(
             user.username,
