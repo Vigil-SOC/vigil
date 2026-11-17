@@ -13359,6 +13359,8 @@ export interface components {
             mfa_code?: string | null;
             /** Password */
             password: string;
+            /** Reason */
+            reason?: string | null;
             /** Username Or Email */
             username_or_email: string;
             /** Webauthn */

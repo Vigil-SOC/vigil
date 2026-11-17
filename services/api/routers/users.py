@@ -542,7 +542,13 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
         entry["locked_from"] = user.locked_from
         # When an idle account will be deactivated, once it is inside the warning window.
         entry["deactivating_at"] = None
-        if days and user.is_active and not machine and user.user_id in last:
+        if (
+            days
+            and user.is_active
+            and not machine
+            and user.break_glass_at is None  # dormancy skips a break-glass account
+            and user.user_id in last
+        ):
             if now >= dormancy.warning_start(last[user.user_id], days):
                 entry["deactivating_at"] = (
                     dormancy.deadline(last[user.user_id], days).isoformat() + "Z"
