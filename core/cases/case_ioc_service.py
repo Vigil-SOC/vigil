@@ -17,7 +17,7 @@ from core.cases.case_records_service import readable_case
 from core.cases.linked_entities import LINKED_SOURCE
 from core.exceptions import NotFoundError
 from core.storage.models import CaseIOC
-from core.storage.shared_ioc_repository import make_key, marked_keys
+from core.storage.shared_ioc_repository import mark_key, marked_keys
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def is_marked(session: Session, case_id: str, ioc_type: str, value: str) -> bool:
-    """Whether the Case holds a false-positive mark on this value, under any spelling."""
-    key = make_key(ioc_type, value)
+    """Whether the Case holds a false-positive mark on this value, under any spelling or IP role."""
+    key = mark_key(ioc_type, value)
     return key is not None and key in marked_keys(session, [case_id]).get(case_id, ())
 
 
@@ -121,13 +121,14 @@ class CaseIOCService:
     ) -> Tuple[List[CaseIOC], bool]:
         """Mark or clear a value as a false positive on this Case.
 
-        The mark is by folded value (``make_key``), so it covers every row the
-        Case holds for it, whatever the spelling. Marking a value no row holds
+        The mark is by folded value (``mark_key``), so it covers every row the
+        Case holds for it, whatever the spelling or IP role (``src_ip``,
+        ``dst_ip`` and ``ip`` are one value). Marking a value no row holds
         (one a linked alert names) writes the row, flagged. The trail entry is
         written only when something changed. Returns the rows and whether they
         changed. A value that cannot be keyed is a ``ValueError``.
         """
-        key = make_key(ioc_type, value)
+        key = mark_key(ioc_type, value)
         if key is None:
             raise ValueError("ioc_type and value must be set and not oversized")
         with unit_of_work(session) as session:
@@ -135,7 +136,7 @@ class CaseIOCService:
             rows = [
                 r
                 for r in session.query(CaseIOC).filter(CaseIOC.case_id == case_id)
-                if make_key(r.ioc_type, r.value) == key
+                if mark_key(r.ioc_type, r.value) == key
             ]
             stale = [r for r in rows if bool(r.is_false_positive) != marked]
             for r in stale:

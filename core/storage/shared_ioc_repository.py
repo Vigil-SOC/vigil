@@ -71,6 +71,19 @@ def make_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
     return f"{ioc_type}:{value}"
 
 
+def fold_key(key: Optional[str]) -> Optional[str]:
+    """An IP key with its role folded to ``ip``; any other key unchanged."""
+    for role in ("src_ip:", "dst_ip:"):
+        if key and key.startswith(role):
+            return "ip:" + key[len(role) :]
+    return key
+
+
+def mark_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
+    """``make_key`` with the IP role folded: what a false-positive mark is compared by."""
+    return fold_key(make_key(ioc_type, value))
+
+
 def split_key(key: str) -> Optional[Tuple[str, str]]:
     # First colon only — an IPv6 address is all colons after that.
     ioc_type, sep, value = (key or "").partition(":")
@@ -80,9 +93,10 @@ def split_key(key: str) -> Optional[Tuple[str, str]]:
 
 
 def marked_keys(session: Session, case_ids: Iterable[str]) -> Dict[str, Set[str]]:
-    """Each Case's keys a person marked a false positive, by ``make_key``.
+    """Each Case's keys a person marked a false positive, by ``mark_key``.
 
-    The one reading of the mark: matching honours it here, and recording a
+    A mark covers every role of an IP (``src_ip``, ``dst_ip``, ``ip``), so the
+    sets hold role-folded keys; compare with ``mark_key``/``fold_key``. The one reading of the mark: matching honours it here, and recording a
     value again looks it up here, so the two cannot drift.
     """
     ids = set(case_ids)
@@ -95,7 +109,7 @@ def marked_keys(session: Session, case_ids: Iterable[str]) -> Dict[str, Set[str]
         )
     )
     for case_id, ioc_type, value in rows:
-        if key := make_key(ioc_type, value):
+        if key := mark_key(ioc_type, value):
             out.setdefault(case_id, set()).add(key)
     return out
 
@@ -259,7 +273,9 @@ class SharedIOCRepository:
         # A key marked false positive on a Case no longer matches it; its other
         # keys still do. Read here, not at index write, so it holds at once.
         marked = marked_keys(self.session, {r[0] for r in rows})
-        rows = [r for r in rows if f"{r[1]}:{r[2]}" not in marked.get(r[0], ())]
+        rows = [
+            r for r in rows if fold_key(f"{r[1]}:{r[2]}") not in marked.get(r[0], ())
+        ]
 
         rows.sort(key=lambda r: (-r[3].timestamp(), _KEY_RANK.get(r[1], 9)))
         seen: Set[str] = set()
