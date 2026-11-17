@@ -195,9 +195,6 @@ export interface TerminalPayload {
   summary?: string;
   handoffs?: TerminalHandoff[];
   proposed_actions?: ProposedAction[];
-  // How bad the run rated what it found, in case priorities, for the case it was
-  // started from. Only a completed run whose plugin names a severity_field sets it.
-  severity?: Severity;
   // How sure the run said it was of its verdict. Only a completed run whose plugin
   // names a confidence_field sets it.
   confidence?: Confidence;
@@ -211,10 +208,6 @@ export interface TerminalPayload {
   // stores this as finished_at, and the hunt report's Ended line is the same instant.
   finished_at?: string;
 }
-
-// The ratings a run may conclude with: the case priorities, less unknown.
-export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
-export type Severity = (typeof SEVERITIES)[number];
 
 // How sure a run may say it is of its verdict.
 export const CONFIDENCES = ["low", "medium", "high"] as const;

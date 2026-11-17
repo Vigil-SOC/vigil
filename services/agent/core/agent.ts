@@ -14,7 +14,6 @@ import type {
   RunOutcome,
   RunPayload,
   Confidence,
-  Severity,
   TerminalHandoff,
   TerminalPayload,
   UnboundPayload,
@@ -35,7 +34,7 @@ import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from
 import { childRunId, Framer } from "./frames.js";
 import { bridgeHeaders } from "./principal.js";
 import { claimCount, classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
-import { CONFIDENCES, SEVERITIES, type RunEventKind, type StopCause } from "../contracts/events.js";
+import { CONFIDENCES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
 // journaled and resumed from, its answer shape, a second look, a stop honoured mid-call, one end.
@@ -77,8 +76,6 @@ export interface Ending {
   summary?: string | null;
   // Work the run finished by giving away, carried out on the terminal.
   handoffs?: TerminalHandoff[];
-  // The case priority the run proved, raised to on a completed terminal (run_bridge_router.py).
-  severity?: Severity;
 }
 
 // Not an ending: the run stops here and waits, on a question it has raised or on
@@ -339,7 +336,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
         const answered = await harness.state.read(run_id);
         await harness.state.append(run_id, [event(options, "review", await reviewOf(ctx, loop.conclusion, callsIn(answered)))]);
       }
-      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, severity: ending.severity, stop_cause: causeOfEnding(ending, loop.outcome.stop_cause) });
+      return end(ctx, ending.outcome, ending.reason, { summary: ending.summary, handoffs: ending.handoffs, stop_cause: causeOfEnding(ending, loop.outcome.stop_cause) });
     }
     if (loop.outcome.status !== "completed" || loop.outcome.value === null) {
       return end(ctx, loop.outcome.refusal === null ? "failed" : "budget_exhausted", loop.outcome.reason, { stop_cause: loop.outcome.stop_cause });
@@ -362,7 +359,6 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
   const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
   const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
   return end(ctx, blind ? "data_starved" : "completed", summaryOf(options.plugin, conclusion, review), {
-    severity: severityOf(options.plugin, conclusion),
     proposed: proposalsOf(options.plugin, conclusion, review),
     disposition: dispositionOf(options.plugin, conclusion, review),
     title: titleOf(options.plugin, conclusion),
@@ -1295,13 +1291,6 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
-// The rating the answer gave, when its plugin asks for one and it is a case priority.
-export function severityOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Severity | undefined {
-  const field = isStructured(plugin.conclusion) ? plugin.conclusion.severity_field : undefined;
-  const rated = field === undefined ? undefined : conclusion.value[field];
-  return (SEVERITIES as readonly unknown[]).includes(rated) ? (rated as Severity) : undefined;
-}
-
 // How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
 export function confidenceOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Confidence | undefined {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.confidence_field : undefined;
@@ -1456,7 +1445,6 @@ function causeOfEnding(ending: Ending, cause: StopCause | undefined): StopCause 
 interface EndFields {
   summary?: string | null | undefined;
   handoffs?: readonly TerminalHandoff[] | undefined;
-  severity?: Severity | undefined;
   proposed?: readonly ProposedAction[] | undefined;
   disposition?: string | undefined;
   title?: string | undefined;
@@ -1468,7 +1456,7 @@ async function end(
   ctx: PluginContext,
   outcome: RunOutcome,
   reason: string,
-  { summary, handoffs, severity, proposed = [], disposition, title, confidence, stop_cause }: EndFields = {},
+  { summary, handoffs, proposed = [], disposition, title, confidence, stop_cause }: EndFields = {},
 ): Promise<AgentReport> {
   // Something outside the run may have ended it while a call was in flight. Its
   // terminal stands; a second would give the run two endings.
@@ -1490,7 +1478,6 @@ async function end(
     ...(stop_cause === undefined ? {} : { stop_cause }),
     ...(deliver === undefined ? {} : { summary: deliver }),
     ...(handoffs === undefined ? {} : { handoffs: [...handoffs] }),
-    ...(severity === undefined ? {} : { severity }),
     ...(proposed.length === 0 ? {} : { proposed_actions: [...proposed] }),
     ...(finished_at === undefined ? {} : { finished_at }),
     ...(disposition === undefined ? {} : { disposition }),
