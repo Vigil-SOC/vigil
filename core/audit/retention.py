@@ -48,6 +48,8 @@ UNSET_MESSAGE = (
 ERASED_PREFIX = "erased-"
 ERASED_DOMAIN = "erased.invalid"
 ERASED_NAME = "Erased account"
+# What an erased account's token labels become: a free-text label can name a person.
+ERASED_LABEL = "Erased account's token"
 # Queued on the session until the transaction commits. A rollback must not
 # leave an id in the file: restore would blank that principal anyway.
 _QUEUED = "erasure_file_ids"
@@ -113,6 +115,25 @@ def free_identifiers(session, principal_id: str) -> None:
             """),
         params,
     )
+
+
+def drop_personal_rows(session, user_id: str) -> None:
+    """Delete the account's preferences row and blank the label of each token it
+    owns, revoked or not: a label is free text and may name the person. Plain
+    SQL: an upgrade step runs it on its own connection too."""
+    params = {"user_id": user_id, "label": ERASED_LABEL}
+    if _table(session, "user_preferences"):
+        session.execute(
+            text("DELETE FROM public.user_preferences WHERE user_id = :user_id"),
+            params,
+        )
+    if _table(session, "mcp_credentials"):
+        session.execute(
+            text(
+                "UPDATE public.mcp_credentials SET label = :label WHERE user_id = :user_id"
+            ),
+            params,
+        )
 
 
 def outside_path() -> Optional[Path]:
@@ -497,7 +518,8 @@ def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:
 
 def _revoke(session, principal_id: str) -> None:
     """Deactivate the account, free its username and email, revoke MCP credentials
-    and end sign-ins, and keep those rows.
+    and blank their labels, drop its preferences, and end sign-ins, and keep the
+    other rows.
 
     The user row stays, and the principal is not marked deleted. Deactivating
     is what stops the password signing in again and the role being honoured.
@@ -530,6 +552,7 @@ def _revoke(session, principal_id: str) -> None:
         return
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
+    drop_personal_rows(session, user_id)
     sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
     # A synced team refuses a hand remove. Leave it here, while the user row
     # still answers remove_member, before the group rows that named them are gone.
