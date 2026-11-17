@@ -48,6 +48,7 @@ def may_receive(session: Session, case: Optional[Case], name: str) -> bool:
 WATCHER_NOTIFICATION_TYPES = frozenset(
     {
         "new_comment",  # core/cases/case_collaboration_service.py
+        "alert_joined",  # services/daemon/orchestrator.py, through notices.notify
     }
 )
 

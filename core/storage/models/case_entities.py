@@ -252,6 +252,31 @@ class CaseWatcher(Base):
     )
 
 
+class CaseFindingRemoval(Base):
+    """A finding a person took off a Case, so intake does not join it back (#4682).
+
+    Written when an update unlinks the finding and cleared when it is linked
+    again. ``finding_id`` has no foreign key: the row does not depend on the
+    finding's retention.
+    """
+
+    __tablename__ = "case_finding_removals"
+
+    case_id: Mapped[str] = mapped_column(
+        String(50), ForeignKey("cases.case_id", ondelete="CASCADE"), primary_key=True
+    )
+    finding_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    # Naive UTC, as everywhere else (core/time.py).
+    removed_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        server_default=text("(now() AT TIME ZONE 'utc')"),
+    )
+
+    __table_args__ = (Index("idx_case_finding_removals_finding", "finding_id"),)
+
+
 class CaseEvidence(Base):
     """
     Case Evidence - Tracks evidence and artifacts for cases.
