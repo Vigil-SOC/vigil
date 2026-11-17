@@ -7,6 +7,8 @@ Recover an account from the host, without email.
     reset_password.py --reset-mfa <user> [--suspected-compromise]
     reset_password.py --reactivate <user> [--suspected-compromise]
     reset_password.py --restore <user> [--suspected-compromise]
+    reset_password.py --mark-break-glass <user>
+    reset_password.py --unmark-break-glass <user>
 
 Each act asks for your name, a reason, and how you confirmed the person
 (in person, a video call, a call back to a number on file, or another
@@ -17,6 +19,11 @@ also revokes their API tokens.
 The link opens the console's /reset-password screen. Nothing is printed
 for localhost: set VIGIL_FRONTEND_URL, pass --base-url, or type the public
 address when asked. A restore comes back deactivated and prints no link.
+
+Marking an account break-glass lets it sign in with its password, a recovery
+code and a reason while single sign-on is required. It prints 10 fresh codes
+once, for the safe; they replace any the account held. Only the host marks or
+unmarks an account.
 
 Natively, run it through scripts/reset-password.sh; on compose, use
 ``docker exec -it deeptempo-backend python scripts/reset_password.py``.
@@ -35,6 +42,7 @@ from core.audit.trail import SYSTEM  # noqa: E402
 from core.auth import (  # noqa: E402
     invites,
     mcp_credential_service,
+    password_hash,
     security_keys,
     sign_ins,
     sso,
@@ -53,9 +61,10 @@ from core.auth.password_reset import reset_link  # noqa: E402
 from core.auth.password_validator import USERS_LINK  # noqa: E402
 from core.auth.principals import restore as restore_principal  # noqa: E402
 from core.config import get_settings  # noqa: E402
+from core.platform.email_service import mail_is_configured  # noqa: E402
 from core.platform.notices import notify  # noqa: E402
 from core.storage.connection import get_db_manager, init_database  # noqa: E402
-from core.storage.models import Principal, User  # noqa: E402
+from core.storage.models import Principal, SsoLink, User  # noqa: E402
 from core.teams import join_default_if_none  # noqa: E402
 from core.time import utcnow  # noqa: E402
 
@@ -75,8 +84,9 @@ def list_users(session) -> int:
     return 0
 
 
-def _one(session, who: str):
-    """The single account ``who`` names, or None after saying why not."""
+def _one(session, who: str, service: bool = False):
+    """The single account ``who`` names, or None after saying why not.
+    ``service``: a service account is returned for the caller to refuse."""
     matches = matching_accounts(session, who)
     if not matches:
         print(f"No user with username or email {who!r}. Try --list.", file=sys.stderr)
@@ -90,7 +100,7 @@ def _one(session, who: str):
             print(f"  {user.username} <{user.email}>", file=sys.stderr)
         return None
     user = matches[0]
-    if user.service_account is True:
+    if user.service_account is True and not service:
         print(
             f"{user.username!r} is a service account: it has no password or "
             "two-step sign-in to recover.",
@@ -243,7 +253,8 @@ def _base_url(given: str | None) -> str | None:
 
 def _link_blocked(session, user) -> bool:
     """True when this account must not be given a link. Said, and nothing written."""
-    if sso.required():
+    # A break-glass account's link is the way to reset it under Require.
+    if sso.required() and user.break_glass_at is None:
         print(
             "Single sign-on is required, so reset links are not issued. "
             "Turn it off first: python -m core.auth.require_sso_off",
@@ -413,6 +424,123 @@ def restore(session, who: str, compromise: bool):
     return user.principal_id, user.username, shown
 
 
+# How to make an account that can be marked, when the one named can't be.
+_BY_INVITE = (
+    "Create the break-glass account by invite in the console, at an address no "
+    "identity provider uses, then mark it."
+)
+
+
+def _mark_blocked(session, user) -> bool:
+    """True when this account must not be marked. Said, and nothing written."""
+    name = user.username
+    problem = None
+    if user.service_account is True:
+        problem = f"{name!r} is a service account; only a person can be break-glass."
+    elif _is_deleted(session, user):
+        problem = f"{name!r} is deleted. {_BY_INVITE}"
+    elif not user.is_active:
+        problem = f"{name!r} is inactive; reactivate it (--reactivate), then mark it."
+    elif session.query(SsoLink).filter_by(principal_id=user.principal_id).first():
+        problem = f"{name!r} is linked to the identity provider. {_BY_INVITE}"
+    elif (
+        not user.password_hash
+        or password_hash.unreadable(user.password_hash)
+        or password_hash.needs_rewrite(user.password_hash)
+    ):
+        problem = f"{name!r} has no password on the current scheme. " + (
+            "Create the break-glass account by invite in the console (its password "
+            "starts on the current scheme), then mark it."
+            if sso.required()
+            else "Have them sign in once, or reset it, first."
+        )
+    elif not AuthService.get_user_permissions(user.user_id, session).get(
+        "roles.manage"
+    ):
+        problem = (
+            f"The role of {name!r} can't manage roles. Give it a role that can, in "
+            "the console, then mark it."
+        )
+    elif tokens := len(
+        mcp_credential_service.list_for_user(user.user_id, session=session)
+    ):
+        problem = (
+            f"{name!r} holds {tokens} live API token{'' if tokens == 1 else 's'}. "
+            "Revoke them in the console, then mark it."
+        )
+    if problem:
+        print(problem, file=sys.stderr)
+    return problem is not None
+
+
+def mark(session, who: str):
+    user = _one(session, who, service=True)
+    if user is None or _say_erased(user) or _mark_blocked(session, user):
+        return None
+    user_id = user.user_id
+    session.rollback()
+    op = _ask_operator(session, False)
+    if op is None:
+        return None
+    user = _lock(session, user_id)
+    if user is None or _say_erased(user) or _mark_blocked(session, user):
+        return None
+    again = user.break_glass_at is not None
+    # The safe's codes replace any the account held. Never logged.
+    codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+    user.mfa_enabled = True
+    user.break_glass_at = user.break_glass_at or utcnow()
+    clear_lock(user)  # a lock from before the mark may last until unlocked
+    ended = sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, session)
+    _record(
+        session,
+        "user.break_glass_marked",
+        user,
+        op,
+        sign_ins_ended=ended,
+        again=True if again else None,
+    )
+    shown = f"{user.username} <{user.email}>: " + (
+        "still break-glass; its codes were replaced" if again else "marked break-glass"
+    ) + f", {ended} sign-in{'' if ended == 1 else 's'} ended.\n" "Recovery codes, shown once. Put them in the safe; each signs in once:\n" + "\n".join(
+        f"  {code}" for code in codes
+    )
+    if not mail_is_configured():
+        shown += (
+            "\nMail isn't configured: while the identity provider is down, no "
+            "manager will hear about uses of or attacks on this account."
+        )
+    return user.principal_id, user.username, shown
+
+
+def unmark(session, who: str):
+    user = _one(session, who, service=True)
+    if user is None or _say_erased(user):
+        return None
+    if user.break_glass_at is None:
+        print(f"{user.username!r} is not marked break-glass.", file=sys.stderr)
+        return None
+    user_id = user.user_id
+    session.rollback()
+    op = _ask_operator(session, False)
+    if op is None:
+        return None
+    user = _lock(session, user_id)
+    if user is None or user.break_glass_at is None:
+        print(f"{who!r} is not marked break-glass.", file=sys.stderr)
+        return None
+    user.break_glass_at = None
+    # Its break-glass sign-ins skip "Confirm it's you": they end with the mark.
+    ended = sign_ins.end_all_for_user(user.user_id, sign_ins.ACCOUNT_CHANGED, session)
+    _record(session, "user.break_glass_unmarked", user, op, sign_ins_ended=ended)
+    shown = (
+        f"{user.username}: no longer break-glass, {ended} sign-in"
+        f"{'' if ended == 1 else 's'} ended. Its password and recovery codes are "
+        "unchanged; under required single sign-on it can't sign in with them."
+    )
+    return user.principal_id, user.username, shown
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].strip())
     group = parser.add_mutually_exclusive_group(required=True)
@@ -433,6 +561,18 @@ def main(argv=None) -> int:
         metavar="USER",
         help="restore a deleted account; it comes back deactivated, with no link",
     )
+    group.add_argument(
+        "--mark-break-glass",
+        dest="mark",
+        metavar="USER",
+        help="mark a break-glass account and print 10 fresh recovery codes once",
+    )
+    group.add_argument(
+        "--unmark-break-glass",
+        dest="unmark",
+        metavar="USER",
+        help="remove the break-glass mark",
+    )
     group.add_argument("user", nargs="?", help="username or email to reset")
     parser.add_argument("--base-url", help="console URL the link opens")
     parser.add_argument(
@@ -441,9 +581,9 @@ def main(argv=None) -> int:
         help="revoke this person's API tokens and record that compromise is suspected",
     )
     args = parser.parse_args(argv)
-    if args.list and args.suspected_compromise:
+    if (args.list or args.mark or args.unmark) and args.suspected_compromise:
         print(
-            "error: suspected compromise applies to a recovery, not --list",
+            "error: suspected compromise applies to a recovery, not --list or a mark",
             file=sys.stderr,
         )
         return 1
@@ -458,6 +598,10 @@ def main(argv=None) -> int:
             done = reactivate(session, args.reactivate, args.suspected_compromise)
         elif args.restore:
             done = restore(session, args.restore, args.suspected_compromise)
+        elif args.mark:
+            done = mark(session, args.mark)
+        elif args.unmark:
+            done = unmark(session, args.unmark)
         else:
             done = issue_link(
                 session, args.user, args.base_url, args.suspected_compromise
@@ -497,6 +641,30 @@ def main(argv=None) -> int:
             "stay revoked: mint new ones." + extra,
             f"An administrator on the server reactivated {name}." + managers_extra,
             "",
+        )
+    elif args.mark:
+        _tell(
+            principal,
+            name,
+            "Your account was marked break-glass",
+            "An administrator on the server marked your account break-glass and "
+            "issued fresh recovery codes for the safe; your earlier codes no longer "
+            "work and your sign-ins ended. While single sign-on is required, it signs "
+            "in with its password, one of those codes and a reason.",
+            f"An administrator on the server marked {name}'s account break-glass. "
+            "Each sign-in with it tells you who, why and from where.",
+            "If you didn't ask for this, tell an admin.",
+        )
+    elif args.unmark:
+        _tell(
+            principal,
+            name,
+            "Your account is no longer break-glass",
+            "An administrator on the server removed the break-glass mark from your "
+            "account.",
+            f"An administrator on the server removed the break-glass mark from {name}'s "
+            "account.",
+            "If you didn't ask for this, tell an admin.",
         )
     elif args.restore:
         _tell(

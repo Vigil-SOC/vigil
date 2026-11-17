@@ -479,7 +479,9 @@ class AuthService:
                 # The count is not reset when a timed lock ends: each failure
                 # after it locks again, and LOCK_UNTIL_UNLOCKED of them in a
                 # row lock until unlocked.
-                timed = (
+                # A break-glass account's lock is always timed: a lock until
+                # unlocked would shut the way back in until someone acts.
+                timed = user.break_glass_at is not None or (
                     policy.lockout_timed
                     and user.failed_login_count < session_policy.LOCK_UNTIL_UNLOCKED
                 )
@@ -718,7 +720,9 @@ class AuthService:
                 # A person with keys and no app has only the recovery codes to
                 # give, and only at the login step (count_failures): a check
                 # that needs a key never takes a code in its place.
-                if not app and not (keyed and count_failures):
+                # A break-glass account's codes are its sign-in factor.
+                marked = user.break_glass_at is not None
+                if not app and not ((keyed or marked) and count_failures):
                     return None
 
                 # Try TOTP first. An undecryptable secret must not block recovery

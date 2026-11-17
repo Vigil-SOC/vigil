@@ -61,7 +61,9 @@ export type GapDisposition = (typeof GAP_DISPOSITIONS)[number];
 // The rule is `defang` then case-fold, in plugins/hunt/entities.ts. The
 // exception is the half that breaks silently: an ARN's resource part and an AWS
 // key id are case-significant, so folding them makes two principals one key and
-// the join still returns rows, just the wrong ones.
+// the join still returns rows, just the wrong ones. These types keep case whole;
+// `process` and `url` keep it in part (an absolute POSIX path, and a URL's path,
+// query and fragment) -- see `normalize` in plugins/hunt/entities.ts (#4542).
 export const KEY_CASE_SENSITIVE_TYPES = ["arn", "aws_key"] as const;
 
 // Both ends inclusive. Separate from a conclusion date, because a sweep that

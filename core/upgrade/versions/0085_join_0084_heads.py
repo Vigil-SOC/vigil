@@ -1,10 +1,12 @@
-"""Join the three heads main was left with into one.
+"""Join the three dangling revisions into one head.
 
-0083_merge_0081_heads (#4551), 0084_join_0083_heads (#4561) and
-0084_merge_0083_heads (#4563) each joined their own set of parents and landed
-side by side, and the API refuses to start on more than one head. None of them
-runs anything, so there is nothing to run here. A database at any of them
-upgrades through this.
+0083_merge_0081_heads (#4561) joined the 0081 series and nothing was built on
+it. 0084_join_0083_heads (#4567) and 0084_merge_0083_heads (#4563) each joined
+the same two 0083 revisions and landed side by side. That leaves three heads,
+and the API refuses to start on more than one. None of the three runs any
+DDL, so there is nothing to run here. A database at any of them upgrades
+through this; neither 0084 file is removed, because a database may already
+be stamped at either.
 """
 
 revision = "0085_join_0084_heads"

@@ -248,7 +248,9 @@ DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap")
 # case-fold, in `services/agent/plugins/hunt/entities.ts`; Python reproduces
 # it. The exception is the half that breaks silently: an ARN's resource part and
 # an AWS key id are case-significant, so folding them makes two principals one
-# key and the join still returns rows, just the wrong ones.
+# key and the join still returns rows, just the wrong ones. These types keep case
+# whole; `process` and `url` keep it in part (an absolute POSIX path, and a URL's
+# path, query and fragment), in `_fold` in core/memory/entity_keys.py (#4542).
 KEY_CASE_SENSITIVE_TYPES: Tuple[str, ...] = ("arn", "aws_key")
 
 # The entity types a key may name. Owned by ENTITY_TYPES in

@@ -8,7 +8,9 @@ The rule is ``defang`` (``core.storage.defang``) then case-fold, mirroring
 ``services/agent/plugins/hunt/entities.ts``. The exception is the half that
 breaks silently: an ARN's resource part and an AWS key id are case-significant,
 so folding them makes two principals one key — and the join still returns rows,
-just the wrong ones.
+just the wrong ones. Two types keep case in part (#4542): a ``process`` that is
+an absolute POSIX path keeps it whole, and a ``url`` folds only its scheme and
+authority, since its path, query and fragment are case-significant.
 """
 
 from __future__ import annotations
@@ -22,6 +24,25 @@ from core.memory.tlds import TLDS
 from core.storage.defang import defang
 
 
+def _fold(kind: str, text: str) -> str:
+    """Case-fold ``text`` as an Entity Key value of ``kind``.
+
+    Plain string operations, as in entities.ts: a URL parser re-serialises
+    (trailing slash, percent-encoding, port) and the two languages would drift.
+    """
+    if kind in KEY_CASE_SENSITIVE_TYPES:
+        return text
+    if kind == "process" and text.startswith("/"):
+        return text  # an absolute POSIX path: case-significant on Linux
+    if kind == "url":
+        # Scheme and authority fold; from the first / ? # after them, case stays.
+        sep = text.find("://")
+        start = sep + 3 if sep >= 0 else 0
+        end = next((i for i in range(start, len(text)) if text[i] in "/?#"), len(text))
+        return text[:end].lower() + text[end:]
+    return text.lower()
+
+
 def entity_key(entity_type: str, value: str) -> str:
     """Return ``type:value``, or ``""`` when either half is absent.
 
@@ -32,9 +53,7 @@ def entity_key(entity_type: str, value: str) -> str:
     text = defang((value or "").strip())
     if not kind or not text:
         return ""
-    if kind not in KEY_CASE_SENSITIVE_TYPES:
-        text = text.lower()
-    return f"{kind}:{text}"
+    return f"{kind}:{_fold(kind, text)}"
 
 
 def _deduped(minted: Iterable[str]) -> List[str]:
@@ -143,9 +162,7 @@ def text_entity_keys(raw: str) -> List[str]:
     minted: List[str] = []
     for kind, pattern in _TEXT_PATTERNS:
         for match in pattern.finditer(text):
-            value = _TRAILING_PUNCT.sub("", match.group(0))
-            if kind not in KEY_CASE_SENSITIVE_TYPES:
-                value = value.lower()
+            value = _fold(kind, _TRAILING_PUNCT.sub("", match.group(0)))
             # A dotted quad after a version word is a release, not a host.
             before = text[max(0, match.start() - 12) : match.start()]
             if kind == "ip" and _VERSION_WORD.search(before):

@@ -8,6 +8,8 @@ A row in the trail is not rewritten. The application may insert a row, and it ma
 
 Erasure blanks those beside-columns for a principal, and blanks the same details on a row that is still waiting to be recorded. A name or any other detail already inside the hashed payload of an older row stays there. The chain still verifies after the beside-columns are blanked.
 
+Erasure needs `audit.manage`. Erasing a principal that has an account also deactivates that account, so it asks what deactivating does as well: `users.write` with "Confirm it's you", a role that grants everything the account's role grants, and someone left who can manage roles. An erasure that waited seven days stays waiting if applying it would leave nobody holding `roles.manage`.
+
 Once a retention period is in force, entries older than that period are removed from the oldest end of the trail, as a prefix, and the chain's anchor moves to the last removed entry. That removes rows. It does not rewrite a row that remains. The period is at least 365 days and takes effect 7 days after it is set.
 
 The agent ledger (`agent_events`), one chain per run, is separate. The application may read it and insert into it. It may not update or delete a ledger row. Erasure and trail retention do not change it.
