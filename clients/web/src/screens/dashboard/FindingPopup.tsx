@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
+import { ipRoleLabels } from '../../data/ipRoles'
 import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, rankTechniques, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
@@ -174,6 +175,7 @@ export default function FindingPopup({
   const ec = raw?.entity_context || {}
   const sourceEvidence = parseSourceEvidence(ec.source_evidence)
   const ips = findingIps(ec)
+  const ipRoles = ipRoleLabels(ec)
   const excludedSet = new Set((raw?.excluded_ips ?? []).map((ip) => ip.toLowerCase()))
 
   const title =
@@ -282,6 +284,7 @@ export default function FindingPopup({
                   return (
                     <li key={ip} className="fp-ip">
                       <span className="chip mono">{ip}</span>
+                      {ipRoles.get(ip.toLowerCase()) && <span className="fp-ip-role mono">{ipRoles.get(ip.toLowerCase())}</span>}
                       {excluded ? (
                         <span className="tag excluded-tag" title="Findings naming this address are hidden from the queue">excluded</span>
                       ) : (
