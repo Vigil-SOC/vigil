@@ -49,6 +49,7 @@ from core.skills.skill_scan import (
     scan_skill,
     skill_digest,
 )
+from core.storage.connection import get_db_manager
 from core.storage.models import SkillScan
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -228,16 +229,25 @@ def scan_states(
                 states[skill.name] = ScanState(PENDING)
     if digests:
         rows: Dict[str, SkillScan] = {}
-        try:
-            with unit_of_work() as session:
-                found = session.execute(
-                    select(SkillScan).where(SkillScan.digest.in_(set(digests.values())))
-                ).scalars()
-                for row in found:
-                    session.expunge(row)
-                    rows[row.digest] = row
-        except Exception:  # noqa: BLE001 - fail closed, the next call asks again
-            logger.exception("skill scan verdicts unreadable; holding operator skills")
+        if get_db_manager().engine is None:
+            # Not connected yet: the API builds its agent list on import, before
+            # startup connects. Held as when unreadable, but nothing failed.
+            logger.debug("database not connected yet; holding operator skills")
+        else:
+            try:
+                with unit_of_work() as session:
+                    found = session.execute(
+                        select(SkillScan).where(
+                            SkillScan.digest.in_(set(digests.values()))
+                        )
+                    ).scalars()
+                    for row in found:
+                        session.expunge(row)
+                        rows[row.digest] = row
+            except Exception:  # noqa: BLE001 - fail closed, the next call asks again
+                logger.exception(
+                    "skill scan verdicts unreadable; holding operator skills"
+                )
         for name, digest in digests.items():
             states[name] = replace(_decide(rows.get(digest), mode), digest=digest)
     return states
