@@ -933,6 +933,60 @@ def add_case_ioc(
         return jdump({"error": str(e)})
 
 
+@tool("Mark case IOC false positive")
+@requires("cases.write")
+def set_case_ioc_false_positive(
+    case_id: str, ioc_type: str, value: str, is_false_positive: bool = True
+) -> str:
+    """
+    Mark an indicator on a case as a false positive, or clear the mark.
+
+    While marked, no alert joins the case or links to it on that value. The
+    mark covers the value under any spelling (``src_ip``, ``dst_ip``, ``ip``).
+    An indicator only a linked alert names gets a recorded, marked row. Name
+    it by type and value as ``get_case_iocs`` lists it.
+
+    Args:
+        case_id: The case ID
+        ioc_type: The indicator's type, e.g. "ip", "domain", "hash"
+        value: The indicator's value
+        is_false_positive: True to mark it, False to clear the mark
+
+    Example:
+        set_case_ioc_false_positive("case-123", "ip", "203.0.113.7")
+        set_case_ioc_false_positive("case-123", "ip", "203.0.113.7", False)
+    """
+    if (refused := _not_found(case_id)) is not None:
+        return refused
+    try:
+        from core.cases.case_ioc_service import CaseIOCService
+
+        with service_session() as session:
+            rows, changed = CaseIOCService().set_false_positive(
+                case_id,
+                ioc_type,
+                value,
+                is_false_positive,
+                session=session,
+                added_by=actor(),
+            )
+            session.flush()
+            payload = CaseIOCSchema.dump_many(rows)
+
+        verb = "Marked" if is_false_positive else "Cleared the mark on"
+        return jdump(
+            {
+                "success": True,
+                "changed": changed,
+                "message": f"{verb} {ioc_type}:{value} on {case_id}"
+                + ("" if changed else " (nothing to change)"),
+                "iocs": payload,
+            }
+        )
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
 @tool("Add case IOCs")
 @requires("cases.write")
 def bulk_add_iocs(case_id: str, iocs: list) -> str:

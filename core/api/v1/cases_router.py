@@ -388,6 +388,17 @@ class IOCAdd(BaseModel):
     context: Optional[str] = None
 
 
+class IOCMark(BaseModel):
+    """Mark or clear an indicator as a false positive on this case.
+
+    Named by type and value, not id: an indicator a linked alert names has none.
+    """
+
+    ioc_type: str
+    value: str
+    is_false_positive: bool = True
+
+
 class IOCBulkAdd(BaseModel):
     """Bulk add IOCs."""
 
@@ -1251,6 +1262,38 @@ def add_ioc(
         _missing_case(case_id)
         raise HTTPException(status_code=500, detail="Failed to add IOC")
     return CaseIOCSchema.dump(ioc)
+
+
+@router.put(
+    "/{case_id}/iocs/false-positive",
+    dependencies=_CASES_WRITE,
+    response_model=CaseIOCListResponse,
+)
+def mark_ioc_false_positive(
+    case_id: str,
+    data: IOCMark,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_user),
+):
+    """Mark or clear an indicator as a false positive on this case.
+
+    While marked, no alert joins the case or links to it on that value. It
+    covers the value under any spelling, and a value a linked alert names gets
+    a recorded, marked row.
+    """
+    try:
+        rows, _ = CaseIOCService().set_false_positive(
+            case_id,
+            data.ioc_type,
+            data.value,
+            data.is_false_positive,
+            session=session,
+            added_by=current_user.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    session.flush()
+    return {"iocs": CaseIOCSchema.dump_many(rows)}
 
 
 @router.get("/{case_id}/iocs", response_model=CaseIOCListResponse)
