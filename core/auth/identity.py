@@ -36,7 +36,7 @@ def fold(value: str) -> str:
     )
 
 
-def _sql_fold(column):
+def sql_fold(column):
     return func.lower(func.normalize(column, literal_column("NFKC")))
 
 
@@ -142,8 +142,8 @@ def identifier_in_use(
         or_(
             User.username == value,
             User.email == value,
-            _sql_fold(User.username) == key,
-            _sql_fold(User.email) == key,
+            sql_fold(User.username) == key,
+            sql_fold(User.email) == key,
         )
     ]
     if except_user_id is not None:
@@ -152,6 +152,13 @@ def identifier_in_use(
         return IN_USE
     if pending_invites and _invited(session, key, except_link_id):
         return IN_USE
+    # An account's own identifier is never held against it by a reservation.
+    if except_user_id is not None:
+        own = session.query(User.username, User.email).filter(
+            User.user_id == except_user_id
+        ).first()
+        if own is not None and key in {fold(own.username), fold(own.email)}:
+            return None
     # Read order closes the erasure race: accounts and invites above, the
     # reservation last, as its own statement. Erasure rewrites the account and
     # writes the reservation in one transaction, so a check that no longer
@@ -166,7 +173,7 @@ def _invited(session: Session, key: str, except_link_id: Optional[str]) -> bool:
         AuthLink.used_at.is_(None),
         AuthLink.revoked_at.is_(None),
         AuthLink.expires_at > utcnow(),
-        _sql_fold(AuthLink.email) == key,
+        sql_fold(AuthLink.email) == key,
     ]
     if except_link_id is not None:
         pending.append(AuthLink.link_id != except_link_id)

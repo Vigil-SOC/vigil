@@ -69,6 +69,7 @@ from core.auth.current_user import (
 from core.auth.deactivation import when_committed
 from core.auth.identity import (
     claim_sign_in_names,
+    fold,
     identifier_in_use,
     matching_accounts,
 )
@@ -112,6 +113,8 @@ logger = logging.getLogger(__name__)
 # A service account (Medic's gateway, D2-17b) may log in and refresh through the
 # API and nothing else here, so a leaked password can't become a console session.
 SERVICE_ACCOUNT_DETAIL = "Service accounts can't use this endpoint"
+# One answer for everyone but managers: not which of the two it was.
+_IN_USE_OR_RESERVED = "That username or email is in use or reserved. Choose another."
 _INVALID_REFRESH_TOKEN = "Invalid refresh token"
 _INVALID_RESET_TOKEN = "Invalid or expired reset token"
 # The 400 body's code when the minimum password age refuses a change.
@@ -587,10 +590,9 @@ def bootstrap_admin(
         session=session,
     )
     if not user:
-        # Nothing to collide with on an empty instance except a racing bootstrap.
+        # None means the username or email is in use or reserved.
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Could not create the account. Try again.",
+            status_code=status.HTTP_409_CONFLICT, detail=_IN_USE_OR_RESERVED
         )
 
     trail_events.record(
@@ -2163,7 +2165,7 @@ def _apply_profile_update(
     The mailbox is checked before any column is written. A rejected email
     change must not depend on the request transaction rolling the name back.
     """
-    changing_email = bool(email) and email.casefold() != user.email.casefold()
+    changing_email = bool(email) and fold(email) != fold(user.email)
     old_email = user.email if changing_email else None
     if changing_email:
         # Password reset is mailed to the address on the account, so a live
@@ -2184,7 +2186,7 @@ def _apply_profile_update(
         if identifier_in_use(session, email, except_user_id=user.user_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already in use",
+                detail="That email is in use or reserved. Choose another.",
             )
 
     changed = []
@@ -3448,7 +3450,9 @@ def accept_invite(
         return refused("username_invalid", bad)
     claim_sign_in_names(session, username, row.email)
     if identifier_in_use(session, username, except_link_id=row.link_id):
-        return refused("username_taken", "That username is taken. Choose another.")
+        return refused(
+            "username_taken", "That username is in use or reserved. Choose another."
+        )
     try:
         validate_password_strength(body.password, user_inputs=[username, row.email])
     except PasswordPolicyError as exc:
@@ -3464,10 +3468,7 @@ def accept_invite(
         invite_link_id=row.link_id,
     )
     if user is None:
-        return refused(
-            "address_in_use",
-            "An account for this address already exists. Ask for a new invite.",
-        )
+        return refused("address_in_use", _IN_USE_OR_RESERVED)
     row.used_at = utcnow()
     trail_events.record(
         session,

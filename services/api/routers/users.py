@@ -52,7 +52,14 @@ from core.auth.deactivation import (
     deactivate_account,
     when_committed,
 )
-from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.identity import (
+    RESERVED,
+    UNAVAILABLE,
+    claim_sign_in_names,
+    fold,
+    identifier_in_use,
+    sql_fold,
+)
 from core.auth.password_reset import reset_link
 from core.auth.password_validator import USERS_LINK
 from core.auth.permissions import (
@@ -803,12 +810,21 @@ def _refuse_invite_actor(current_user: User, session: Session) -> None:
         )
 
 
+def _held_detail(value: str, held: str, in_use: str) -> str:
+    """What a manager is told: a reserved value is named apart from one in use."""
+    if held == RESERVED:
+        return f"{value} is reserved and can't be used as a sign-in name."
+    if held == UNAVAILABLE:
+        return f"{value} can't be checked right now. Try again."
+    return in_use
+
+
 def _refuse_held_address(session: Session, email: str) -> None:
     """An address an account already holds is not invited: bring that account back."""
     held = (
         session.query(User, Principal.deleted_at)
         .join(Principal, Principal.principal_id == User.principal_id)
-        .filter(func.lower(User.email) == email.casefold())
+        .filter(sql_fold(User.email) == fold(email))
         .first()
     )
     if held:
@@ -824,10 +840,13 @@ def _refuse_held_address(session: Session, email: str) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     # Its own pending invite is the one being replaced.
     mine = invites.open_for(session, email)
-    if identifier_in_use(session, email, except_link_id=mine and mine.link_id):
+    held = identifier_in_use(session, email, except_link_id=mine and mine.link_id)
+    if held:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"{email} is already used as a sign-in name.",
+            detail=_held_detail(
+                email, held, f"{email} is already used as a sign-in name."
+            ),
         )
 
 
@@ -1245,14 +1264,14 @@ def list_pending_pushes(
     rows = session.query(DirectoryPending).order_by(DirectoryPending.received_at).all()
     out = []
     for row in rows:
-        names = {row.username.casefold(), row.email.casefold()}
+        names = {fold(row.username), fold(row.email)}
         holders = (
             _not_deleted(session.query(User))
             .filter(
                 User.service_account.isnot(True),
                 or_(
-                    func.lower(User.username).in_(names),
-                    func.lower(User.email).in_(names),
+                    sql_fold(User.username).in_(names),
+                    sql_fold(User.email).in_(names),
                 ),
             )
             .order_by(User.username)
@@ -2236,11 +2255,13 @@ def create_service_account(
             detail="directory.sync is held only by directory sync and can't be granted",
         )
     claim_sign_in_names(session, name, email)
-    if identifier_in_use(session, name) or identifier_in_use(session, email):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username or email already exists",
-        )
+    for value in (name, email):
+        held = identifier_in_use(session, value)
+        if held:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_held_detail(value, held, "Username or email already exists"),
+            )
     user = User(
         user_id=f"user-{uuid.uuid4().hex[:12]}",
         username=name,
@@ -2397,7 +2418,7 @@ def _apply_user_update(
     user = _live_user(session, user_id)
     _require_privileges_cover_target(current_user, user, session, action="update")
 
-    if request.email is not None and request.email.casefold() != user.email.casefold():
+    if request.email is not None and fold(request.email) != fold(user.email):
         if _is_service_account(user):
             # A reachable address is the first step to a password reset.
             raise HTTPException(
