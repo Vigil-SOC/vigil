@@ -68,7 +68,10 @@ from core.auth.current_user import (
 )
 from core.auth.deactivation import when_committed
 from core.auth.identity import (
+    RESERVED,
+    UNAVAILABLE,
     claim_sign_in_names,
+    fold,
     identifier_in_use,
     matching_accounts,
 )
@@ -1498,7 +1501,7 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         claim_sign_in_names(session, email)
         matches = (
             session.query(User)
-            .filter(func.lower(User.email) == email.casefold())
+            .filter(func.lower(User.email) == email.lower())
             .with_for_update()
             .all()
         )
@@ -1508,7 +1511,13 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         if user is None:
             # Signing in here answers a pending invite for the address.
             invites.revoke_for_sso(session, email)
-            if identifier_in_use(session, email):
+            taken = identifier_in_use(session, email)
+            if taken in (RESERVED, UNAVAILABLE):
+                # The trail names the provider's subject, never the address.
+                raise sso.Refused(
+                    "email_reserved", attempted=f"{s.issuer}#{claims['sub']}"
+                )
+            if taken:
                 raise sso.Refused("email_in_use")
             notes["linked_by"] = "created"
             return None
@@ -1618,7 +1627,10 @@ def _sso_sign_in(
             changed.append("full_name")
         if email != user.email:
             claim_sign_in_names(session, email)
-            if identifier_in_use(session, email, except_user_id=user.user_id):
+            taken = identifier_in_use(session, email, except_user_id=user.user_id)
+            if taken in (RESERVED, UNAVAILABLE):
+                notes["email_reserved"] = True
+            elif taken:
                 notes["email_conflict"] = True
             else:
                 user.email = email
@@ -2163,7 +2175,7 @@ def _apply_profile_update(
     The mailbox is checked before any column is written. A rejected email
     change must not depend on the request transaction rolling the name back.
     """
-    changing_email = bool(email) and email.casefold() != user.email.casefold()
+    changing_email = bool(email) and fold(email) != fold(user.email)
     old_email = user.email if changing_email else None
     if changing_email:
         # Password reset is mailed to the address on the account, so a live
