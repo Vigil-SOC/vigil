@@ -254,6 +254,10 @@ if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && frontend_deps_stale cli
     fi
 fi
 
+# --- MCP connectors (the runner image's pinned tree; exports VIGIL_MCP_PREFIX) ---
+MCP_CONNECTORS_PROBLEM=""
+install_mcp_connectors "$NODE_PROBLEM"
+
 # --- Launch ---
 export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 LOGS_DIR="${PWD}/logs"
@@ -271,6 +275,7 @@ print_ready() {
         echo "Frontend: not started ($NODE_PROBLEM), and neither is the agent layer"
     fi
     echo "Docs:     http://localhost:6987/docs"
+    [ -n "$MCP_CONNECTORS_PROBLEM" ] && echo "MCP:      connectors $MCP_CONNECTORS_PROBLEM"
     echo ""
     if [ "$SKIP_FRONTEND" -eq 1 ]; then
         echo "Install Node.js 20 or later (Ubuntu's apt package is older; nvm works:"
