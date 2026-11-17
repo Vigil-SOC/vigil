@@ -24,6 +24,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { CloseCaseDialog } from '../cases/ClosureFields'
 import { closesOnCase } from '../../shared/closesOnCase'
 import './home.css'
+import { caseLabel } from '../../shared/caseLabel'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
@@ -132,7 +133,7 @@ function DecisionCard({
   const restricted = Boolean(item.restricted)
   const meta = restricted
     ? 'Only the readers of its case can see or decide it'
-    : [caseId && `Case ${caseId}`, asking > 1 && `requested by ${asking} cases`, item.waiting || item.reason]
+    : [caseId && caseLabel(caseId), asking > 1 && `requested by ${asking} cases`, item.waiting || item.reason]
         .filter(Boolean)
         .join(' · ')
   const ask = cardAsk(item)

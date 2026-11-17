@@ -42,6 +42,7 @@ import { LATER_RELEASE } from '../shared/later'
 import { errorText } from '../shared/errorText'
 import { attachRefusal } from './commandBarModel'
 import type { ChatSeed, SeedDocument } from '../shared/types'
+import { caseLabel } from '../shared/caseLabel'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -127,7 +128,7 @@ function histTime(ts: number | null): string {
   return isNaN(d.getTime()) ? '' : format(d, 'HH:mm')
 }
 function histContext(caseId?: string | null, pageContext?: string | null): string {
-  if (caseId) return `Case ${caseId}`
+  if (caseId) return caseLabel(caseId)
   const titles = TITLES as Record<string, [string, string] | undefined>
   return (pageContext && titles[pageContext]?.[0]) || 'General'
 }
