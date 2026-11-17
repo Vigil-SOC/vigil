@@ -340,9 +340,8 @@ def p3a_verify(s: Stack, faulted: bool) -> None:
 # rule_for binds it to pipeline.daemon-component-failed-compose. The lane-1
 # rule is a suppression child, so it stays held for 5 minutes after it fires;
 # the route wait and the click are in revert, after detect_within_s.
-# Medic loads the source pack for these two cells. The eval image's bundled
-# pack does not have the rule until a release bundles 0.7.0, and daemon_health
-# does not use the API, so it keeps running while those sensors are off.
+# The stack imports the source pack at bring-up (Stack.enable_medic), because
+# the image's bundled pack is older than these lane-1 rules.
 
 HUNG_RULE = "pipeline.daemon-component-hung-compose"
 # 15m changes window plus for: 5m. The 5-minute route hold is not part of this.
@@ -352,11 +351,6 @@ P3E_DETECT_S = P3D_DETECT_S + 5 * 60 + 60
 # The scheduler counts a pass and then sleeps 60s (services/daemon/scheduler.py).
 # Longer than the 60s sleep: a pass also runs its tasks before sleeping again.
 _TICK_S = 90
-_SOURCE = "MEDIC_EVAL_SOURCE_PACK"
-_RULE_FILE = (
-    "/app/services/medic/packs/medic-core/rules/"
-    "pipeline-daemon-component-hung-compose.yaml"
-)
 
 
 def _health_body(s: Stack) -> tuple[int, dict]:
@@ -395,39 +389,6 @@ def _scheduler_pass(s: Stack) -> tuple[int, str, int | None]:
 def _daemon_started(s: Stack) -> str:
     cid = s.compose("ps", "-q", "soc-daemon").stdout.strip()
     return docker_api(f"/containers/{cid}/json")["State"]["StartedAt"]
-
-
-def _source_pack(s: Stack, on: bool) -> None:
-    """Medic loads packs/medic-core from the image when its DEV_MODE is on."""
-    want = "true" if on else "false"
-    if s.env.get(_SOURCE, "false") == want:
-        got = medic_api.status(s) or {}
-        if got.get("dev_mode") is on and (not on or _rule_in_image(s)):
-            return
-    s.env[_SOURCE] = want
-    s.up("medic")
-    s.wait(
-        lambda: s.compose("ps", "--format", "json", "medic").stdout,
-        lambda o: '"healthy"' in o,
-        timeout=420,
-    )
-    s.wait(
-        lambda: (medic_api.status(s) or {}).get("dev_mode"),
-        lambda v: v is on,
-        timeout=180,
-    )
-    if on:
-        assert _rule_in_image(s), "the medic image has no lane-1 hang rule"
-
-
-def _rule_in_image(s: Stack) -> bool:
-    code = (
-        "from pathlib import Path; p = Path("
-        + repr(_RULE_FILE)
-        + "); print(p.read_text() if p.is_file() else '')"
-    )
-    out = s.medic_exec("python", "-c", code)
-    return "id: pipeline.daemon-component-hung-compose" in out
 
 
 def _incidents(s: Stack) -> list:
@@ -491,7 +452,6 @@ def _passes_moved(s: Stack) -> bool:
 
 
 def p3d_inject(s: Stack) -> None:
-    _source_pack(s, True)
     status, comp, count = _scheduler_pass(s)
     if (
         status == 200
@@ -517,32 +477,29 @@ def p3d_inject(s: Stack) -> None:
 
 
 def p3d_revert(s: Stack) -> None:
-    try:
-        if s.marks.get("p3d_clear") and _scheduler_pass(s)[:2] == (200, "running"):
-            return
-        opened_after = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(s.marks.get("p3d_at", 0))
-        )
-        incident = _wait_routed(s, opened_after)
-        started = _daemon_started(s)
-        status, body = medic_api.post(
-            s, f"/v1/incidents/{incident['incident_id']}/fix", "{}"
-        )
-        if status == 409 and json.loads(body).get("reason") == "fix_running":
-            pass
-        elif status != 201:
-            raise AssertionError(f"run-fix answered {status}: {body[:300]}")
-        s.wait(lambda: _passes_moved(s), lambda ok: ok, timeout=300, every=5)
-        assert _daemon_started(s) != started, "soc-daemon was not restarted"
-        s.wait(
-            lambda: _fix_cleared(s, incident["incident_id"]),
-            lambda ok: ok,
-            timeout=240,
-            every=5,
-        )
-        s.marks["p3d_clear"] = 1
-    finally:
-        _source_pack(s, False)
+    if s.marks.get("p3d_clear") and _scheduler_pass(s)[:2] == (200, "running"):
+        return
+    opened_after = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(s.marks.get("p3d_at", 0))
+    )
+    incident = _wait_routed(s, opened_after)
+    started = _daemon_started(s)
+    status, body = medic_api.post(
+        s, f"/v1/incidents/{incident['incident_id']}/fix", "{}"
+    )
+    if status == 409 and json.loads(body).get("reason") == "fix_running":
+        pass
+    elif status != 201:
+        raise AssertionError(f"run-fix answered {status}: {body[:300]}")
+    s.wait(lambda: _passes_moved(s), lambda ok: ok, timeout=300, every=5)
+    assert _daemon_started(s) != started, "soc-daemon was not restarted"
+    s.wait(
+        lambda: _fix_cleared(s, incident["incident_id"]),
+        lambda ok: ok,
+        timeout=240,
+        every=5,
+    )
+    s.marks["p3d_clear"] = 1
 
 
 def p3d_verify(s: Stack, faulted: bool) -> None:
@@ -559,7 +516,6 @@ def p3e_inject(s: Stack) -> None:
     ingest.processor-without-database and reset the pass counters."""
     if s.marks.get("p3e"):
         return
-    _source_pack(s, True)
     s.p3e = {  # type: ignore[attr-defined]
         "started": _daemon_started(s),
         "fixes": tuple(_fix_seqs(s)),
@@ -584,7 +540,6 @@ def p3e_revert(s: Stack) -> None:
         assert tuple(_fix_seqs(s)) == held.get("fixes", ()), "a fix_run was recorded"
         assert _daemon_started(s) == held.get("started"), "State.StartedAt changed"
     finally:
-        _source_pack(s, False)
         s.marks.pop("p3e", None)
         if "postgres" in s.not_running():
             s.compose("start", "postgres")
