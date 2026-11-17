@@ -9737,6 +9737,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/tools/skill-reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Note Skill Read
+         * @description Count a skill a run loaded with load_skill, which the agent layer answers itself.
+         *
+         *     The same count a read_skill call through ``/invoke`` makes, for the skill
+         *     bodies a run reads without coming here. A failed insert is logged and
+         *     swallowed, as there.
+         */
+        post: operations["post_internal_tools_skill-reads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scim/v2/Groups": {
         parameters: {
             query?: never;
@@ -15161,6 +15185,13 @@ export interface components {
         /** SkillGenerateResponse */
         SkillGenerateResponse: {
             draft: components["schemas"]["SkillDraft"];
+        };
+        /** SkillReadRequest */
+        SkillReadRequest: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Name */
+            name: string;
         };
         /** SkillResponse */
         SkillResponse: {
@@ -33767,6 +33798,39 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_internal_tools_skill-reads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
