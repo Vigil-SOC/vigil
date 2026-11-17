@@ -117,7 +117,7 @@ the v1 functions, staying in-router with the literal siblings.
 
 | Resource   | Status        | In / total | Notes                                        |
 |------------|---------------|------------|----------------------------------------------|
-| findings   | done          | 5 / 7      | 2 console routes stay (enrich, wipe) |
+| findings   | done          | 5 / 6      | 1 console route stays (wipe); enrich was removed |
 | approvals  | done          | 5 / 5      | whole router is contract; moved wholesale    |
 | cases      | done          | 16 / 39    | record + lifecycle (close/merge) + findings link + evidence + iocs. OUT (ruled): delete-all, delete-case, activities, resolution-steps, chain-of-custody, sla ×4, comments ×4, watchers ×3, tasks ×3, relationships ×2, escalate ×2. |
 | workflows  | done          | 2 / 16     | catalog only (list + get); runs are agent-runs, not workflow runs. Additive v1 + console delegates (see below) |
