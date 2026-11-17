@@ -229,7 +229,7 @@ async def start_run(
         run_id=run_id,
         run_kind=request.run_kind,
         # The skills an operator added ride the job, not the trail entry.
-        request={**payload, **await asyncio.to_thread(added_request)},
+        request={**payload, **await asyncio.to_thread(added_request, request.run_kind)},
         enqueued_by=user.username,
         principal=tool_principal.mint(
             user.username,

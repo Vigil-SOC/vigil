@@ -1725,7 +1725,9 @@ class Orchestrator:
                 {
                     **request,
                     **await asyncio.to_thread(
-                        operator_request, workflow.metadata if workflow else {}
+                        operator_request,
+                        workflow.metadata if workflow else {},
+                        run_kind,
                     ),
                 },
                 enqueued_by=started_by or "orchestrator",
@@ -1851,7 +1853,7 @@ class Orchestrator:
             shadow_id,
             "adjudicate",
             # The skills an operator added ride the job, not the trail entry.
-            {**shadow, **await asyncio.to_thread(added_request)},
+            {**shadow, **await asyncio.to_thread(added_request, "adjudicate")},
             enqueued_by=started_by or "orchestrator",
             principal=token,
             actor=actor,

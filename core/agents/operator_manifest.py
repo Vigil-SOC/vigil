@@ -190,8 +190,15 @@ def added_skills() -> List[Dict[str, str]]:
     return added
 
 
+# Root cause runs its own engine, which has no skill index or loader to offer
+# them through, so it is not sent them.
+NO_ADDED_SKILLS = frozenset({"root_cause"})
+
+
 # The start request's field for those skills, for every run whatever started it.
-def added_request() -> Dict[str, Any]:
+def added_request(run_kind: str) -> Dict[str, Any]:
+    if run_kind in NO_ADDED_SKILLS:
+        return {}
     added = added_skills()
     return {"added_skills": added} if added else {}
 
@@ -200,8 +207,8 @@ def added_request() -> Dict[str, Any]:
 # definition that carries a manifest, that manifest. The prompt and skills are
 # resolved now, so the run journals the text and bodies it used; the stored
 # manifest keeps its placeholders.
-def operator_request(metadata: Mapping[str, Any]) -> Dict[str, Any]:
-    fields = added_request()
+def operator_request(metadata: Mapping[str, Any], run_kind: str) -> Dict[str, Any]:
+    fields = added_request(run_kind)
     text = metadata.get("operator_manifest")
     if not text:
         return fields
