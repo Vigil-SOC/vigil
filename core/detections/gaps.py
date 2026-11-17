@@ -23,7 +23,6 @@ from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Tup
 
 from sqlalchemy import String, cast
 
-from core.auth.permissions import case_read_clause, may_read_case
 from core.detections.reconstruction import _entities_from_context, reconstruct
 from core.memory.entity_keys import normalise_keys
 from core.storage.connection import get_db_manager
@@ -93,6 +92,9 @@ def read_alert_labels(
     """Scope by ``context``: empty is every alert, a case id is that case, else a label
     match; with ``since``, only alerts stored at or after it. A case the caller may
     not read is no case: ``context`` is then a label match, as an unknown id is."""
+    # Here, not at import: core.auth needs the JWT secret, which image builds lack.
+    from core.auth.permissions import may_read_case
+
     with get_db_manager().session_scope() as session:
         case = session.get(Case, context) if context else None
         is_case = case is not None and may_read_case(case)
@@ -495,6 +497,8 @@ def read_ledger(since_days: int = 30) -> List[Dict[str, Any]]:
 def _unreadable_runs(session: Any, verdicts: List[Dict[str, Any]]) -> set:
     """The (kind, id) of Verdicts on a restricted Case the caller may not read: a
     Case Verdict on it, or a hunt run on it (trigger_context.case_id)."""
+    from core.auth.permissions import case_read_clause
+
     ids = {
         kind: {
             v["investigation_id"] for v in verdicts if v["investigation_kind"] == kind
