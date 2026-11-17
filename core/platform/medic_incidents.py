@@ -86,9 +86,15 @@ _REFUSAL = {
     "fix_running": "a fix is already running",
     "not_compose": "this install is not Compose",
     "restart_failed": "the restart failed",
+    "observe": "observe is on",
+    "not_on_its_own": "it is not on its own",
+    "not_eligible": "this incident is not eligible",
+    "daily_limit": "3 restarts in 24 hours",
 }
 _CLICK_WAITING = "A click is waiting."
 _RESTARTED = "Medic restarted soc-daemon."
+_WOULD_HAVE = "Medic would have restarted soc-daemon. Observe is on, so nothing ran."
+_LEVELS = frozenset({"L0", "L1", "L2"})
 _REFUSED = "Medic refused."
 _NOT_HELD = "The fix did not hold."
 _NOT_BACK = "The daemon did not come back."
@@ -480,8 +486,26 @@ def _latest_run(records: list, incident_id: str) -> Optional[tuple[str, dict]]:
     return at, body
 
 
-def _opening_sentence(run: Optional[tuple[str, dict]]) -> str:
+def _opening_sentence(
+    run: Optional[tuple[str, dict]],
+    item: _Item,
+    levels: Optional[dict[str, tuple[str, Any]]],
+) -> Optional[str]:
+    """The opening, or None to wait for the next pass (no level, or a run is due)."""
     if run is None:
+        if levels is None:
+            return None
+        # A fix type the pack read does not list (anything but Compose) is L1.
+        level, raised = levels.get(item.rule or "", ("L1", None))
+        if level == "L0":
+            return _WOULD_HAVE
+        if level == "L2":
+            # Medic runs on its own only for an incident stored at L2; its
+            # fix_run, refusals included, is what we wait for.
+            opened, at = _when(item.opened_at), _when(raised)
+            if opened is None or at is None:
+                return None
+            return None if opened >= at else _CLICK_WAITING
         return _CLICK_WAITING
     checks = run[1].get("checks")
     result = checks.get("result") if isinstance(checks, dict) else None
@@ -528,6 +552,7 @@ def _add_fix_notices(
     details: dict[str, Any],
     sent: set[tuple[str, int, str]],
     decisions: list,
+    levels: Optional[dict[str, tuple[str, Any]]],
     frontend: str,
 ) -> None:
     """One opening, then each later outcome once. Held and suppressed get nothing.
@@ -562,12 +587,9 @@ def _add_fix_notices(
             continue
         if item.lane != 1 or _l1(details.get(item.id)) != "propose_runbook":
             continue
-        emit(
-            item.id,
-            item.reopen,
-            _FIX_OPEN,
-            _opening_sentence(_latest_run(decisions, item.id)),
-        )
+        sentence = _opening_sentence(_latest_run(decisions, item.id), item, levels)
+        if sentence:
+            emit(item.id, item.reopen, _FIX_OPEN, sentence)
 
     openings = [(iid, reopen) for iid, reopen, event in told if event == _FIX_OPEN]
     for iid, reopen in openings:
@@ -609,6 +631,7 @@ def plan_incident_notices(
     summary_started_at: Optional[str],
     frontend_url: str,
     decisions: Optional[list] = None,
+    levels: Optional[dict[str, tuple[str, Any]]] = None,
 ) -> IncidentPlan:
     """What this pass writes. ``details`` values are bodies, or None if that fetch did not finish."""
     sent = set(sent_text)
@@ -743,7 +766,7 @@ def plan_incident_notices(
         plan.rows.append(_Row(iid, reopen, "cleared", summary, fix))
     # A decisions read that did not finish leaves the plan above as it is.
     if decisions is not None:
-        _add_fix_notices(plan, items, details, sent, decisions, frontend_url)
+        _add_fix_notices(plan, items, details, sent, decisions, levels, frontend_url)
     return plan
 
 
@@ -873,13 +896,39 @@ def _decisions(client: httpx.Client, url: str, key: str) -> Optional[list]:
     return None
 
 
-def _fetch(
-    url: str, key: str
-) -> Optional[tuple[list[_Item], dict[str, Any], Optional[list]]]:
+def _levels(
+    client: httpx.Client, url: str, key: str
+) -> Optional[dict[str, tuple[str, Any]]]:
+    """``{fix_type: (level, raised_on.at)}`` from the pack. None if it did not read or parse."""
+    status, body = _one(client, url, key, "/v1/pack")
+    rows = body.get("fix_types") if isinstance(body, dict) else None
+    if status != 200 or not isinstance(rows, list):
+        return None
+    out: dict[str, tuple[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        fix_type, level = row.get("fix_type"), row.get("level")
+        if not isinstance(fix_type, str) or level not in _LEVELS:
+            return None
+        raised = row.get("raised_on")
+        out[fix_type] = (level, raised.get("at") if isinstance(raised, dict) else None)
+    return out
+
+
+def _fetch(url: str, key: str) -> Optional[
+    tuple[
+        list[_Item],
+        dict[str, Any],
+        Optional[list],
+        Optional[dict[str, tuple[str, Any]]],
+    ]
+]:
     """Open pages, the details this pass may tell, and the fix log.
 
     None if an incident page did not come back 200. A decisions read that
-    did not finish is None in the third place: fix notices wait, the rest do not.
+    did not finish is None in the third place, and a pack read that did not
+    is None in the fourth: fix notices wait, the rest do not.
     """
     timeout = httpx.Timeout(medic_last_seen.REQUEST_TIMEOUT_S)
     with httpx.Client(
@@ -904,7 +953,10 @@ def _fetch(
         decisions = _decisions(client, url, key)
         if decisions is None:
             logger.info("Medic fix notices skipped: the decisions read did not finish")
-        return items, details, decisions
+        levels = _levels(client, url, key)
+        if levels is None:
+            logger.info("Medic fix openings wait: the pack read did not finish")
+        return items, details, decisions, levels
 
 
 def _mark_opened(
@@ -935,8 +987,8 @@ def watch_incidents(settings: Optional[Settings] = None) -> list[int]:
     fetched = _fetch(url, key)
     if fetched is None:
         return []
-    items, details, decisions = fetched
-    return _commit(settings, items, details, decisions)
+    items, details, decisions, levels = fetched
+    return _commit(settings, items, details, decisions, levels)
 
 
 def _commit(
@@ -944,6 +996,7 @@ def _commit(
     items: list[_Item],
     details: dict[str, Any],
     decisions: Optional[list],
+    levels: Optional[dict[str, tuple[str, Any]]],
 ) -> list[int]:
     with get_db_session() as session, session.begin():
         locked = session.execute(
@@ -980,6 +1033,7 @@ def _commit(
             summary_started_at=state.summary_started_at,
             frontend_url=settings.vigil_frontend_url,
             decisions=decisions,
+            levels=levels,
         )
         state.open_count = plan.count
         state.open_count_at = now
