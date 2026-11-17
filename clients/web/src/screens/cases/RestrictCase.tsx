@@ -54,7 +54,7 @@ function loadTeams(): Promise<NamedTeam[]> {
 }
 
 /** The teams a reader may name: the teams list, for users.read holders only; null without it. */
-function useNamedTeams(): NamedTeam[] | null {
+export function useNamedTeams(): NamedTeam[] | null {
   const { hasPermission } = useAuth()
   const canRead = hasPermission('users.read')
   const [teams, setTeams] = useState<NamedTeam[]>([])

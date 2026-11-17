@@ -92,7 +92,7 @@ from core.storage.models.medic import (
     MedicLastSeen,
     MedicWatchState,
 )
-from core.storage.models.skill import SkillRead
+from core.storage.models.skill import SkillRead, SkillScan
 from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -189,6 +189,7 @@ __all__ = [
     "SharedIOC",
     "SketchMapping",
     "SkillRead",
+    "SkillScan",
     "SystemConfig",
     "Team",
     "TeamMembership",

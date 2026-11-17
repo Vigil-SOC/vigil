@@ -6637,9 +6637,12 @@ export interface paths {
         put?: never;
         /**
          * Upload Skill
-         * @description Install a ``SKILL.md`` or a skill ``.zip`` under the operator root.
+         * @description Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
          *
-         *     A name already taken is refused (409); nothing is overwritten.
+         *     All or nothing: a skill refused refuses the upload, and a name already
+         *     taken is refused (409); nothing is overwritten. Skills are found where
+         *     ``npx skills`` looks in a repo; any other ``SKILL.md`` is skipped and
+         *     counted, not installed.
          */
         post: operations["post_api_skills_upload"];
         delete?: never;
@@ -6667,6 +6670,30 @@ export interface paths {
          * @description Delete an operator skill directory. A bundled skill is refused.
          */
         delete: operations["delete_api_skills_name"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Skill
+         * @description Release a held skill's current content to agents.
+         *
+         *     Needs ``skills.approve``, which ``automation.write`` does not carry, so the
+         *     uploader cannot approve their own skill. 409 when the skill needs no
+         *     approval, has no verdict yet, or its content is no longer ``digest``.
+         */
+        post: operations["post_api_skills_name_approve"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -15079,6 +15106,11 @@ export interface components {
             /** Started At */
             started_at: string;
         };
+        /** SkillApproveRequest */
+        SkillApproveRequest: {
+            /** Digest */
+            digest: string;
+        };
         /** SkillCaseResult */
         SkillCaseResult: {
             /** Missing */
@@ -15114,6 +15146,7 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanDetail"];
             /** Source Path */
             source_path: string;
             /** Version */
@@ -15171,8 +15204,61 @@ export interface components {
              * @default 0
              */
             reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
             /** Source Path */
             source_path: string;
+        };
+        /** SkillScanDetail */
+        SkillScanDetail: {
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Digest */
+            digest?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["SkillScanFinding"][];
+            /** Held */
+            held: boolean;
+            /** Max Severity */
+            max_severity?: string | null;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+            /** Scanner Version */
+            scanner_version?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
+        };
+        /** SkillScanFinding */
+        SkillScanFinding: {
+            /** File */
+            file?: string | null;
+            /** Message */
+            message: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Severity */
+            severity: string;
+        };
+        /** SkillScanSummary */
+        SkillScanSummary: {
+            /** Held */
+            held: boolean;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Score */
+            score?: number | null;
+            /** State */
+            state: string;
         };
         /** SkillTestResponse */
         SkillTestResponse: {
@@ -15182,6 +15268,46 @@ export interface components {
             no_cases: boolean;
             /** Results */
             results: components["schemas"]["SkillCaseResult"][];
+        };
+        /**
+         * SkillUploadResponse
+         * @description The first skill installed, as a single upload always returned, plus all of them.
+         *
+         *     A zip may hold several skills; ``skills`` lists every skill installed, and
+         *     ``skipped`` counts the ``SKILL.md`` left out, which ``skipped_note``
+         *     explains.
+         */
+        SkillUploadResponse: {
+            /**
+             * Agents 7D
+             * @default 0
+             */
+            agents_7d: number;
+            /** Bundled */
+            bundled: boolean;
+            /** Description */
+            description: string;
+            /** File Count */
+            file_count: number;
+            /** Name */
+            name: string;
+            /**
+             * Reads 7D
+             * @default 0
+             */
+            reads_7d: number;
+            scan: components["schemas"]["SkillScanSummary"];
+            /** Skills */
+            skills: components["schemas"]["SkillResponse"][];
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Skipped Note */
+            skipped_note?: string | null;
+            /** Source Path */
+            source_path: string;
         };
         /** SkillWriteRequest */
         SkillWriteRequest: {
@@ -28163,7 +28289,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SkillResponse"];
+                    "application/json": components["schemas"]["SkillUploadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -28230,6 +28356,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_name_approve: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillResponse"];
                 };
             };
             /** @description Validation Error */

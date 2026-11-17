@@ -152,6 +152,14 @@ class Settings(BaseSettings):
     # skills. Unset (None) is the State Directory's skills/ folder; empty turns
     # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
+    # The SkillSpector program that scans a skill folder (core.skills.skill_scan).
+    # Empty, the default, turns scanning off; the backend image sets it to the
+    # copy it installs. A path that does not exist reads as "scanner
+    # unavailable", never a crash.
+    vigil_skill_scanner: str = ""
+    # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
+    # uses its bundled list of known-bad packages and sends nothing out.
+    vigil_skill_scanner_osv: bool = False
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.
     vigil_upgrade_dir: Optional[str] = None
