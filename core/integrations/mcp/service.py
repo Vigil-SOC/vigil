@@ -327,7 +327,7 @@ class MCPService:
                 }
                 # Substitution reads this process's environment; the server
                 # keeps only its declared keys. The rest of the child's env is
-                # built at connect time (MCPClient._stdio_env, runner_env).
+                # built at connect time (child_env.stdio_env).
                 source = dict(os.environ)  # noqa: ENV001 - substitution source
                 # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
                 # would substitute to "" and root child paths at "/".
