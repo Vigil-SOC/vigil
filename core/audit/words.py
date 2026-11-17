@@ -445,6 +445,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),
+    "threat_indicators.normalized": lambda p: "Normalised threat-feed indicators"
+    + (f" ({p['rows_merged']} merged)" if p.get("rows_merged") else ""),
     # Config (core/storage/config_service.py)
     "config.change": _config,
     # Cases and approvals (core/cases/case_trail.py, agent_closure.py)
