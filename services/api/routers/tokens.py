@@ -13,10 +13,11 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from core.auth import break_glass
 from core.auth import current_user as current_user_module
 from core.auth import directory_sync
 from core.auth import mcp_credential_service as tokens
-from core.auth import break_glass, step_up, trail_events
+from core.auth import step_up, trail_events
 from core.auth.auth_service import _is_service_account, with_dispute
 from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
