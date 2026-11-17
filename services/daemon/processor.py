@@ -1021,6 +1021,10 @@ REASONING: one sentence summing up the verdict
         # the action line said: the two are one decision.
         if verdict == "benign":
             action = "dismiss"
+        # A threat verdict with dismiss is a contradiction; dismiss would keep the
+        # alert out of intake, so the action is set aside and the verdict stands.
+        elif verdict in ("malicious", "suspicious") and action == "dismiss":
+            action = ""
         # No usable verdict: record a failure, not a finished triage, so the
         # backfill sweep asks again.
         if (
