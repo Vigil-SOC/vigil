@@ -1004,8 +1004,8 @@ REASONING: one sentence summing up the verdict
         triage_result = {}
         fields = _reply_fields(response)
 
-        verdict = (fields.get("VERDICT") or "").lower()
-        verdict = verdict if verdict in TRIAGE_VERDICTS else None
+        said = (fields.get("VERDICT") or "").lower()
+        verdict = said if said in TRIAGE_VERDICTS else None
         severity = (fields.get("SEVERITY") or "").lower()
         action = (fields.get("RECOMMENDED_ACTION") or "").lower()
         # A benign verdict is a false positive, so its action is dismiss whatever
@@ -1053,8 +1053,8 @@ REASONING: one sentence summing up the verdict
 
         # What we know, why we believe it, where the evidence came from.
         for key in ("KNOWN", "BELIEVE", "EVIDENCE"):
-            if fields.get(key):
-                triage_result[key.lower()] = fields[key]
+            if stated := fields.get(key):
+                triage_result[key.lower()] = stated
 
         reasoning = fields.get("REASONING")
         if reasoning:
