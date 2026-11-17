@@ -83,6 +83,7 @@ _REFUSAL = {
     "upgrade_window": "an upgrade window is open",
     "no_container": "soc-daemon has no container",
     "container_restarted": "soc-daemon was already restarted",
+    "rollout": "soc-daemon is mid-rollout",
     "fix_running": "a fix is already running",
     "not_compose": "this install is not Compose",
     "restart_failed": "the restart failed",

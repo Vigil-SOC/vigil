@@ -15,12 +15,15 @@ import json
 import secrets
 import subprocess
 import time
+from pathlib import Path
 
 from tests.medic_compose.compose import REPO
+from tests.medic_eval import medic_api
 from tests.medic_eval.inject.stack import NODE_FETCH, ComposeFailed, Stack
 
 E2E = REPO / "infra" / "helm" / "vigil" / "medic-tests" / "kind" / "e2e.sh"
 STUB = REPO / "tests" / "medic_compose" / "stub.py"
+INJECT = Path(__file__).parent  # sitecustomize.py, for the test-only daemon image
 # The Elastic the daemon polls (I-4.b): tests/medic_compose/stub.py in a pod, as
 # Compose's siem-stub is. Runs in the backend image (Python, already on the node).
 STUB_YAML = """\
@@ -207,6 +210,36 @@ class HelmStack(Stack):
                 bad.append(name)
         return bad
 
+    # ---- soc-daemon: the pod, and the test-only image -------------------------------
+
+    def daemon_pod(self) -> str:
+        return self.workloads["soc-daemon"].replace("sts/", "") + "-0"  # replicas is 1
+
+    def signal_daemon(self, name: str) -> None:
+        """Signal the daemon container's PID 1 (python); the pod is not recreated."""
+        self.kubectl("exec", self.workloads["soc-daemon"], "--", "sh", "-c", f"kill -{name.removeprefix('SIG')} 1")
+
+    def daemon_started(self) -> str:
+        """The pod's UID: a pod Medic deleted comes back with another."""
+        return self.kubectl("get", "pod", self.daemon_pod(), "-o", "jsonpath={.metadata.uid}").stdout.strip()
+
+    def use_eval_daemon(self) -> None:
+        """The daemon image plus sitecustomize.py (SIGUSR1 fails the scheduler task, SIGUSR2
+        stalls it), built here, loaded into kind and never pushed. The chart gets no volume."""
+        base = self.kubectl("get", self.workloads["soc-daemon"], "-o", "jsonpath={.spec.template.spec.containers[0].image}").stdout.strip()
+        image = "vigil-daemon-eval:" + base.rsplit(":", 1)[-1]
+        subprocess.run(
+            ["docker", "build", "-t", image, "-f", "-", str(INJECT)], check=True, capture_output=True, text=True,
+            input=f"FROM {base}\nCOPY sitecustomize.py /eval-site/sitecustomize.py\n",
+        )
+        subprocess.run(["kind", "load", "docker-image", image, "--name", self.cluster], check=True, capture_output=True)
+        patch = {"spec": {"template": {"spec": {"containers": [{
+            "name": "daemon", "image": image, "imagePullPolicy": "Never",
+            "env": [{"name": "PYTHONPATH", "value": "/app:/eval-site"}],  # as compose.eval.yml sets it
+        }]}}}}
+        self.kubectl("patch", self.workloads["soc-daemon"], "-p", json.dumps(patch))
+        self.rollout(self.workloads["soc-daemon"])
+
     # ---- the faults Compose makes with its environment ---------------------------
 
     def set_webhook_token(self, token: str) -> None:
@@ -235,8 +268,11 @@ class HelmStack(Stack):
         tag = self.kubectl("get", self.workloads["backend"], "-o", "jsonpath={..image}").stdout.split(":")[-1]
         self.kubectl("apply", "-f", "-", input=STUB_YAML.format(tag=tag))
         self.rollout(self.workloads["siem-stub"])
+        self.use_eval_daemon()
         self.set_webhook_token(self.good_webhook_token)
         self.bootstrap_admin()
+        # The image's bundled pack is the last release's and lacks the lane-1 rules.
+        medic_api.import_source_pack(self)
 
     def stop(self) -> None:
         subprocess.run(["kind", "delete", "cluster", "--name", self.cluster], capture_output=True, check=False)

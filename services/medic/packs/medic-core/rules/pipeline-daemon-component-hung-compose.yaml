@@ -1,5 +1,6 @@
-# P-3.d on Compose, lane 1. Same signals and condition as
-# pipeline.daemon-component-hung. Helm and host-native keep the lane-3 rule.
+# P-3.d on Compose and Helm, lane 1. Same signals and condition as
+# pipeline.daemon-component-hung. Host-native keeps the lane-3 rule. On Helm the
+# restart deletes the daemon pod; a dead component there stays with liveness.
 # P-3.d is this cell's cause. P-3.c is host-native's stale /health listener,
 # and P-3.a stays the death cell, which rule_for binds to
 # pipeline.daemon-component-failed-compose. A database outage is a parent
@@ -12,7 +13,7 @@ revision: 1
 fault: {class: pipeline, mode: P-3, causes: [P-3.a, P-3.b, P-3.d]}
 lane: 1
 detection: absence
-shapes: [compose]
+shapes: [compose, helm]
 signals:
   processor:          {sample: {signal: daemon_health, key: components.processor}}
   poller:             {sample: {signal: daemon_health, key: components.poller}}

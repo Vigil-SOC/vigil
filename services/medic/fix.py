@@ -1,4 +1,5 @@
-"""Restart soc-daemon on Compose, from one click or on its own.
+"""Restart soc-daemon on Compose, from one click or on its own. On Helm a
+click clears a hang by deleting the daemon pod (see `_helm_restart`).
 
 On its own (level L2, levels.py) Medic's loop hands a routed death incident to a
 thread that takes this lock and runs the same checks and the same restart, plus
@@ -7,7 +8,8 @@ three more: the level is L2, the stored would-have L2 is `run_runbook` (so
 24 hours. A person's click is never capped.
 
 One function: the checks, then a POST of the container id those checks just
-read, then a verify after the runbook's wait. No executor class and no second
+read (on Helm a DELETE of the pod UID they read), then a verify after the
+runbook's wait. No executor class and no second
 action. A refused check is a fix_run that runs nothing. On start, a fix_run
 with no fix_verified is closed: verified if its deadline has passed, otherwise
 "not verified: Medic stopped", so a later click is not blocked forever.
@@ -18,6 +20,7 @@ counters that must have advanced) without a second function.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -26,6 +29,7 @@ import time
 import urllib.parse
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -34,6 +38,7 @@ from services.medic.api.decisions import Problem
 from services.medic.engine.suppress import selects
 from services.medic.levels import DAILY_MAX, FIX_TYPES, MEDIC, RULE_ID, Levels
 from services.medic.sensors.containers import Containers
+from services.medic.sensors import kube
 from services.medic.sensors.daemon import DaemonHealth
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import utc_now
@@ -60,6 +65,11 @@ _SERVICE_LABEL = "com.docker.compose.service"
 _PROXY_S = 15.0
 _RESTART_S = 90.0
 _HEALTH_S = 5.0
+# Helm: the API server, and the restart ServiceAccount's token. Its Role can delete
+# the daemon pod and nothing else; the read token (kube._TOKEN_PATH) never deletes.
+_KUBE = "https://kubernetes.default.svc:443"
+_RESTART_TOKEN = Path("/var/run/secrets/vigil-medic-restart/token")
+_POD_WAIT_S = 80.0
 
 _FIXES = (
     "SELECT record FROM records"
@@ -223,7 +233,8 @@ class Fixer:
                 self._not_verified(rec)
 
     def _run(self, incident_id: str, who: str, *, auto: bool = False) -> dict | Problem:
-        if self.medic.shape != "compose":
+        helm = self.medic.shape == "helm"
+        if self.medic.shape != "compose" and not helm:
             return self._refuse(incident_id, who, "not_compose", [], None, None)
         row = _status_row(self.medic.engine, incident_id)
         if row is None or row.get("state") not in _OPEN:
@@ -247,6 +258,8 @@ class Fixer:
                 incident_id, who, "upgrade_window", passed, opened, None
             )
         passed.append("upgrade")
+        if helm:
+            return self._helm_restart(incident_id, who, passed, opened, runbook)
         if self.proxy is None:
             return self._refuse(incident_id, who, "no_container", passed, opened, None)
         try:
@@ -313,6 +326,63 @@ class Fixer:
         self._arm(record)
         if auto:
             self.levels.restarted(RULE_ID)
+        return {"record": record}
+
+    def _helm_restart(
+        self, incident_id: str, who: str, passed: list[str], opened: dict, runbook: dict
+    ) -> dict | Problem:
+        """The Helm counterpart of the container checks and the restart: read the
+        daemon pod, refuse mid-rollout or a pod that restarted since the incident
+        opened, then DELETE that pod with its UID as a precondition."""
+        sts = self.daemon[0].split(".")[0] if self.daemon else None
+        read = asyncio.run(_helm_read(sts)) if sts else None
+        if read is None or read[1] is None:
+            return self._refuse(incident_id, who, "no_container", passed, opened, None)
+        workload, pod = read
+        name, uid, started = _pod_state(pod)
+        pod_id = f"{name}:{uid}"
+        if _mid_rollout(workload):
+            return self._refuse(incident_id, who, "rollout", passed, opened, pod_id)
+        records = _records(self.medic.writer.root)
+        opened_at = _machine_opened(self.medic.engine, incident_id)
+        ok = _start_ok(started, opened_at, records, pod_id)
+        passed.append("container")
+        if not ok:
+            return self._refuse(
+                incident_id, who, "container_restarted", passed, opened, pod_id
+            )
+        if _awaiting(records):
+            return self._refuse(incident_id, who, "fix_running", passed, opened, pod_id)
+        passed.append("idle")
+        previous = self.medic.engine.upgrade.excused.get(SERVICE)
+        self.medic.engine.upgrade.note_recorded(SERVICE, time.time())
+        deleted_at = datetime.now(UTC)
+        status = asyncio.run(_helm_delete(name, uid))
+        if status not in (200, 202):
+            self.medic.engine.upgrade.restore_excuse(SERVICE, previous)
+            if status == 409:  # the UID moved on: nothing was deleted
+                log.warning("fix %s: pod uid changed since the checks", incident_id)
+            return self._refuse(
+                incident_id, who, "restart_failed", passed, opened, pod_id
+            )
+        fresh = asyncio.run(_helm_new_pod(sts, uid))
+        if fresh is not None:
+            pod_id, started = f"{fresh[0]}:{fresh[1]}", fresh[2]
+        record = self._write(
+            incident_id,
+            who,
+            "passed",
+            passed,
+            opened,
+            pod_id,
+            _covered(self.medic.engine, incident_id),
+            # Without the new pod's start, any process that began after the delete.
+            started_at=started if fresh is not None else deleted_at,
+            verify_after_s=int(runbook["verify_after_s"]),
+        )
+        if isinstance(record, Problem):
+            return record
+        self._arm(record)
         return {"record": record}
 
     def _level_check(
@@ -776,6 +846,103 @@ def _restart(proxy: tuple[str, int], container_id: str) -> int:
     except httpx.HTTPError:
         return 0
     return response.status_code
+
+
+async def _kube_session(token_path: Path):
+    """(client, namespace, token) for the API server; None if a file is unreadable."""
+    ns, bad = await kube._read_namespace(kube._NAMESPACE_PATH)
+    token, worse = await kube._read_token(token_path)
+    if bad or worse or ns is None:
+        return None
+    client = httpx.AsyncClient(
+        trust_env=False, follow_redirects=False, verify=str(kube._CA_PATH)
+    )
+    return client, ns, token
+
+
+async def _helm_read(sts: str) -> tuple[dict, dict | None] | None:
+    """The daemon StatefulSet and its pod (None if absent), read with the read-only
+    token. None when the StatefulSet cannot be read. replicas is 1, so the pod is -0."""
+    try:
+        session = await _kube_session(kube._TOKEN_PATH)
+        if session is None:
+            return None
+        client, ns, token = session
+        async with client:
+            deadline = time.monotonic() + _PROXY_S
+            got, error = await kube._kube_get(
+                client, f"{_KUBE}/apis/apps/v1/namespaces/{ns}/statefulsets/{sts}",
+                None, token, deadline,
+            )
+            if error is not None or not isinstance(got, dict):
+                return None
+            pod, error = await kube._kube_get(
+                client, f"{_KUBE}/api/v1/namespaces/{ns}/pods/{sts}-0",
+                None, token, deadline,
+            )
+            return got, pod if error is None and isinstance(pod, dict) else None
+    except (httpx.HTTPError, OSError):
+        return None
+
+
+async def _helm_delete(name: str, uid: str) -> int:
+    """DELETE the pod with the restart token, only if its UID is still `uid`.
+    409 is a UID mismatch (nothing deleted); 0 is an error."""
+    try:
+        session = await _kube_session(_RESTART_TOKEN)
+        if session is None:
+            return 0
+        client, ns, token = session
+        async with client:
+            response = await client.request(
+                "DELETE",
+                f"{_KUBE}/api/v1/namespaces/{ns}/pods/{name}",
+                json={"kind": "DeleteOptions", "apiVersion": "v1",
+                      "preconditions": {"uid": uid}},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=_PROXY_S,
+            )
+            return response.status_code
+    except (httpx.HTTPError, OSError):
+        return 0
+
+
+async def _helm_new_pod(sts: str, old_uid: str) -> tuple[str, str, datetime] | None:
+    """The replacement pod (name, uid, container start) once its container runs."""
+    end = time.monotonic() + _POD_WAIT_S
+    while time.monotonic() < end:
+        await asyncio.sleep(2)
+        read = await _helm_read(sts)
+        if read is not None and read[1] is not None:
+            name, uid, started = _pod_state(read[1])
+            if uid != old_uid and started is not None:
+                return name, uid, started
+    return None
+
+
+def _pod_state(pod: dict) -> tuple[str, str, datetime | None]:
+    """Name, UID and the daemon container's start. No start while the pod is
+    terminating or the container is not running."""
+    meta = pod.get("metadata") or {}
+    started = None
+    if "deletionTimestamp" not in meta:
+        for item in (pod.get("status") or {}).get("containerStatuses") or []:
+            running = (item.get("state") or {}).get("running")
+            if item.get("name") == "daemon" and isinstance(running, dict):
+                started = _parse_time(running.get("startedAt"))
+    return str(meta.get("name", "")), str(meta.get("uid", "")), started
+
+
+def _mid_rollout(workload: dict) -> bool:
+    """A StatefulSet that has not finished rolling out its latest spec."""
+    status = workload.get("status") or {}
+    want = (workload.get("spec") or {}).get("replicas", 1)
+    return (
+        status.get("observedGeneration") != (workload.get("metadata") or {}).get("generation")
+        or status.get("currentRevision") != status.get("updateRevision")
+        or (status.get("updatedReplicas") or 0) < want
+        or (status.get("readyReplicas") or 0) < want
+    )
 
 
 def _health(addr: tuple[str, int]) -> tuple[int, Any]:

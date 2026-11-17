@@ -5,7 +5,9 @@
 {{- /*
 Identity (C3 §4.5): Medic's own ServiceAccount, the only one in the chart that
 mounts a token, bound to a namespace Role of reads. Nothing cluster-scoped, and
-this identity never gains a verb (Phase 1 restarts get a separate one).
+this identity never gains a verb. The soc-daemon restart has a separate one
+(below): a pod has one serviceAccountName, so Medic's pod keeps this one and
+mounts the restart identity's token as a file only the delete call reads.
 */}}
 apiVersion: v1
 kind: ServiceAccount
@@ -55,6 +57,63 @@ subjects:
     name: {{ $fn }}
     namespace: {{ .Release.Namespace }}
 ---
+{{- if .Values.daemon.enabled }}
+{{- /*
+Restart identity: may delete the soc-daemon pod and nothing else (a hang on Helm
+is cleared by deleting the pod Medic just read, with its UID as a precondition).
+Mounted by no pod as a ServiceAccount; its token is the Secret below, read by
+Medic's one delete call. The StatefulSet has replicas: 1, so its pod is -0.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fn }}-restart
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fn }}-restart
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: [{{ printf "%s-0" (include "vigil.daemon.fullname" .) | quote }}]
+    verbs: ["delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fn }}-restart
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fn }}-restart
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fn }}-restart
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fn }}-restart-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.medic.labels" $medic | nindent 4 }}
+  annotations:
+    kubernetes.io/service-account.name: {{ $fn }}-restart
+type: kubernetes.io/service-account-token
+---
+{{- end }}
 {{- if .Values.medic.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -164,6 +223,10 @@ spec:
             # the chart's shared env would hand Medic every secret.
             - name: VIGIL_MEDIC_GATEWAY_ADDR
               value: {{ printf "%s:%s" (include "vigil.medicGateway.fullname" .) (include "vigil.medicGateway.outPort" .) | quote }}
+            # Off only when medic.persistence.enabled is false: the data dir is then
+            # an emptyDir, and a raise to "on its own" would not survive a restart.
+            - name: VIGIL_MEDIC_PERSISTENCE
+              value: {{ .Values.medic.persistence.enabled | quote }}
             - name: DEV_MODE
               value: {{ .Values.config.DEV_MODE | default "false" | quote }}
             # The key its API checks (X2), re-read per request. In the pod Medic
@@ -178,6 +241,12 @@ spec:
             - name: data
               mountPath: /var/lib/vigil-medic
             {{- include "vigil.medic.apiKeyMount" . | nindent 12 }}
+            {{- if .Values.daemon.enabled }}
+            # The restart identity's token, at a path only the delete call reads.
+            - name: restart-token
+              mountPath: /var/run/secrets/vigil-medic-restart
+              readOnly: true
+            {{- end }}
           # C5 §5.2: `check` fails once the heartbeat is 120 s old. The 180 s
           # watchdog exits a hung loop before liveness (4 × 30 s) acts; liveness
           # catches a frozen process the watchdog can't. Readiness is
@@ -207,6 +276,15 @@ spec:
             {{- toYaml .Values.medic.resources | nindent 12 }}
       volumes:
         {{- include "vigil.medic.apiKeyVolume" (dict "context" . "optional" false) | nindent 8 }}
+        {{- if .Values.daemon.enabled }}
+        - name: restart-token
+          secret:
+            secretName: {{ $fn }}-restart-token
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token
+        {{- end }}
         - name: data
           {{- if .Values.medic.persistence.enabled }}
           persistentVolumeClaim:

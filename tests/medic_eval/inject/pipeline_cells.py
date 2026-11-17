@@ -21,7 +21,7 @@ from tests.medic_eval.inject.config_cells import (
     _expect,
 )
 from tests.medic_eval.inject.contract import Cell
-from tests.medic_eval.inject.stack import Stack, docker_api
+from tests.medic_eval.inject.stack import Stack
 from tests.medic_eval.inject.survival_checks import restore
 
 # ---- I-3: federation polling Elastic ----------------------------------------
@@ -387,8 +387,7 @@ def _scheduler_pass(s: Stack) -> tuple[int, str, int | None]:
 
 
 def _daemon_started(s: Stack) -> str:
-    cid = s.compose("ps", "-q", "soc-daemon").stdout.strip()
-    return docker_api(f"/containers/{cid}/json")["State"]["StartedAt"]
+    return s.daemon_started()
 
 
 def _incidents(s: Stack) -> list:
@@ -463,7 +462,7 @@ def p3d_inject(s: Stack) -> None:
     _expect(status, 200, "GET :9091/health before the stall")
     _expect(comp, "running", "components.scheduler before the stall")
     assert count is not None, "passes.scheduler missing"
-    s.compose("kill", "-s", "SIGUSR2", "soc-daemon")  # PID 1; does not recreate
+    s.signal_daemon("SIGUSR2")
     time.sleep(2)  # the wrapper cancels the real loop within one check
     status, comp, stalled = _scheduler_pass(s)
     time.sleep(_TICK_S)

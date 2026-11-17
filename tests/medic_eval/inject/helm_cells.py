@@ -5,14 +5,16 @@ the injects that go through the API or `recreate` (I-1.b, I-4.b, I-5.b, L-1.c).
 Only what Compose does with its environment is made here with kubectl: I-5.a on
 the daemon StatefulSet and P-1.c on the agent Deployments. I-5.b pushes from the
 backend pod, in the namespace: the chart's Ingress routes only to the backend.
-P-3.a is left out: it needs a patched image.
+P-3.d is pipeline_cells' cell on the test-only daemon image (HelmStack.use_eval_daemon):
+SIGUSR2 stalls the scheduler loop, and the run-fix deletes the daemon pod. P-3.a is left
+out: a dead component on Helm stays with the liveness probe, so no rule or fix covers it.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from tests.medic_eval.inject import config_cells
+from tests.medic_eval.inject import config_cells, pipeline_cells
 from tests.medic_eval.inject.contract import Cell
 from tests.medic_eval.inject.helm_stack import HelmStack
 
@@ -35,6 +37,7 @@ def p1c_revert(s: HelmStack) -> None:
 
 RESTART = "kubectl rollout restart statefulset/<release>-vigil-daemon"
 _by = {c.cause: c for c in config_cells.CELLS}
+_p3d = next(c for c in pipeline_cells.CELLS if c.cause == "P-3.d")
 
 CELLS = (
     replace(
@@ -59,4 +62,9 @@ CELLS = (
         undo=("kubectl set env deployment/<release>-vigil-agent-serve deployment/<release>-vigil-agent-worker AGENT_INTERNAL_TOKEN-",),
     ),
     _by["L-1.c"],
+    replace(
+        _p3d,
+        actions=("kubectl exec sts/<release>-vigil-daemon -- kill -USR2 1 (scheduler loop stalls)",),
+        undo=("POST /v1/incidents/{id}/fix once routed (deletes the daemon pod, by UID)",),
+    ),
 )
