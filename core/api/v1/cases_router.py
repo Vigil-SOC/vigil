@@ -77,7 +77,7 @@ from core.integrations.elastic.ingestion import ElasticIngestion, elastic_alert_
 from core.memory.entity_keys import finding_entity_keys
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
-from core.storage.case_repository import PAGE_LIMIT, CaseRepository
+from core.storage.case_repository import PAGE_LIMIT, CaseRepository, first_finding_id
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import Case, CaseClosureInfo, Finding, User, case_findings
 from core.storage.schemas import (
@@ -705,6 +705,7 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
     are newest first; the audit run is ``run_id_for`` of the latest, never the
     shadow adjudication. ``linked_findings`` is one entry per linked finding
     that still exists, with ``source_link`` when the resolver can fill one.
+    ``opened_from`` is the first finding linked to the case.
 
     Args:
         case_id: The case ID
@@ -741,6 +742,9 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
         case["linked_findings"] = linked_findings(case.get("finding_ids"), findings)
     else:
         case["linked_findings"] = _linked_findings(session, case.get("finding_ids"))
+    case["opened_from"] = (
+        first_finding_id(session, case_id) if session is not None else None
+    )
     return case
 
 

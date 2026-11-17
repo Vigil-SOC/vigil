@@ -1050,6 +1050,17 @@
             "title": "Notes",
             "type": "array"
           },
+          "opened_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened From"
+          },
           "owner_cannot_read": {
             "anyOf": [
               {

@@ -8,6 +8,7 @@ import { useNoSideways } from '../../shared/useNoSideways'
 import { utcDay } from '../../shared/utc'
 import { commentCount, CommentsView, inputCls, SectionCard, TasksView, useComments, useResource, useTasks, type Resource } from './CaseSections'
 import { errorDetail, STALE_OWNER_NOTE, timeLeft, when } from './caseFormat'
+import FindingPopup from '../dashboard/FindingPopup'
 import { entityShown, type RunFold } from './caseFold'
 import { cardsByFinding, ruleLine, type CaseRuleCard } from './caseRuleLine'
 import type { CaseInvestigationRef, CaseLinkedFinding } from './useCases'
@@ -23,9 +24,10 @@ function Block({ title, children, anchor }: { title: string; children: ReactNode
   )
 }
 
-function Details({ linked, latest, workflowNames, sla, closed, fold, anchor }: {
+function Details({ linked, openedFrom, latest, workflowNames, sla, closed, fold, anchor }: {
   anchor: RefObject<HTMLElement | null>
   linked: CaseLinkedFinding[]
+  openedFrom: string | null
   latest: CaseInvestigationRef | null
   workflowNames: Record<string, string>
   sla: Sla
@@ -39,6 +41,12 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, anchor }: {
   return (
     <Block title="Details" anchor={anchor}>
       <dl className="side-kv">
+        {openedFrom && (
+          <>
+            <dt>Opened from</dt>
+            <dd><OpenedFrom id={openedFrom} finding={linked.find((f) => f.finding_id === openedFrom)} /></dd>
+          </>
+        )}
         <dt>Workflow</dt>
         <dd>{latest ? workflowNames[latest.workflow_id] || latest.workflow_name || latest.workflow_id : '—'}</dd>
         <dt>Resolve by</dt>
@@ -55,6 +63,18 @@ function Details({ linked, latest, workflowNames, sla, closed, fold, anchor }: {
         <dd>{entities.length ? <Entities values={entities} /> : '—'}</dd>
       </dl>
     </Block>
+  )
+}
+
+/** The finding that opened the case, by id, its title on hover; it opens in the finding popup. */
+function OpenedFrom({ id, finding }: { id: string; finding?: CaseLinkedFinding }) {
+  const [viewing, setViewing] = useState(false)
+  const title = finding?.title || finding?.description || id
+  return (
+    <>
+      <button type="button" className="side-more side-opened" title={title} onClick={() => setViewing(true)}>{id}</button>
+      {viewing && <FindingPopup id={id} onClose={() => setViewing(false)} />}
+    </>
   )
 }
 
@@ -448,9 +468,11 @@ function People({ caseId, owner, ownerStale, onWritten }: { caseId: string; owne
 }
 
 /** The Details, Alerts, Related cases, Known and People blocks of the case side panel. */
-export function CaseSide({ caseId, linked, owner, ownerStale, latest, workflowNames, sla, closed, fold, onWritten }: {
+export function CaseSide({ caseId, linked, openedFrom = null, owner, ownerStale, latest, workflowNames, sla, closed, fold, onWritten }: {
   caseId: string
   linked: CaseLinkedFinding[]
+  /** The finding the case was opened from (the first linked). */
+  openedFrom?: string | null
   owner: string
   /** The stored owner is not a current account. */
   ownerStale: boolean
@@ -469,7 +491,7 @@ export function CaseSide({ caseId, linked, owner, ownerStale, latest, workflowNa
   const keys = [...new Set([...recalled, ...linked.flatMap((f) => f.entity_keys)])]
   return (
     <>
-      <Details anchor={anchor} linked={linked} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
+      <Details anchor={anchor} linked={linked} openedFrom={openedFrom} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} />
       <Alerts caseId={caseId} items={linked} />
       <RelatedCases caseId={caseId} />
       <Known fold={fold} hasRun={latest !== null} keys={keys} onWritten={onWritten} />

@@ -2352,6 +2352,7 @@ export interface paths {
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
          *     shadow adjudication. ``linked_findings`` is one entry per linked finding
          *     that still exists, with ``source_link`` when the resolver can fill one.
+         *     ``opened_from`` is the first finding linked to the case.
          *
          *     Args:
          *         case_id: The case ID
@@ -8633,6 +8634,7 @@ export interface paths {
          *     are newest first; the audit run is ``run_id_for`` of the latest, never the
          *     shadow adjudication. ``linked_findings`` is one entry per linked finding
          *     that still exists, with ``source_link`` when the resolver can fill one.
+         *     ``opened_from`` is the first finding linked to the case.
          *
          *     Args:
          *         case_id: The case ID
@@ -10572,6 +10574,8 @@ export interface components {
              * @default []
              */
             notes: unknown[];
+            /** Opened From */
+            opened_from?: string | null;
             /** Owner Cannot Read */
             owner_cannot_read?: boolean | null;
             /** Owner On Team */

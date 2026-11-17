@@ -1039,6 +1039,7 @@ export function CasePage({
   investigations,
   closure,
   linkedFindings,
+  openedFrom = null,
   phase,
   error,
   pageKey,
@@ -1069,6 +1070,8 @@ export function CasePage({
   investigations: CaseInvestigationRef[]
   closure: CaseClosureView | null
   linkedFindings: CaseLinkedFinding[]
+  /** The finding the case was opened from (the first linked). */
+  openedFrom?: string | null
   phase: Phase
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
@@ -2033,7 +2036,7 @@ export function CasePage({
         </div>
 
         <aside className="case-side" aria-label="Case details">
-          <CaseSide key={id} caseId={id} linked={linkedFindings} owner={c ? c.ownerName || 'Unassigned' : '—'} ownerStale={c?.ownerStale ?? false} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
+          <CaseSide key={id} caseId={id} linked={linkedFindings} openedFrom={openedFrom} owner={c ? c.ownerName || 'Unassigned' : '—'} ownerStale={c?.ownerStale ?? false} latest={latest} workflowNames={workflowNames} sla={sla} closed={closed} fold={fold} onWritten={onSideWrite} />
           <details className="case-fold">
             <summary>Files</summary>
             <EvidenceCard caseId={id} title="Files" onWritten={onSideWrite} />
