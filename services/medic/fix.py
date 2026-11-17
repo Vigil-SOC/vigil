@@ -37,8 +37,8 @@ import httpx
 from services.medic.api.decisions import Problem
 from services.medic.engine.suppress import selects
 from services.medic.levels import DAILY_MAX, FIX_TYPES, MEDIC, RULE_ID, Levels
-from services.medic.sensors.containers import Containers
 from services.medic.sensors import kube
+from services.medic.sensors.containers import Containers
 from services.medic.sensors.daemon import DaemonHealth
 from services.medic.store import StoreError, open_reader
 from services.medic.store.writer import utc_now
@@ -871,14 +871,20 @@ async def _helm_read(sts: str) -> tuple[dict, dict | None] | None:
         async with client:
             deadline = time.monotonic() + _PROXY_S
             got, error = await kube._kube_get(
-                client, f"{_KUBE}/apis/apps/v1/namespaces/{ns}/statefulsets/{sts}",
-                None, token, deadline,
+                client,
+                f"{_KUBE}/apis/apps/v1/namespaces/{ns}/statefulsets/{sts}",
+                None,
+                token,
+                deadline,
             )
             if error is not None or not isinstance(got, dict):
                 return None
             pod, error = await kube._kube_get(
-                client, f"{_KUBE}/api/v1/namespaces/{ns}/pods/{sts}-0",
-                None, token, deadline,
+                client,
+                f"{_KUBE}/api/v1/namespaces/{ns}/pods/{sts}-0",
+                None,
+                token,
+                deadline,
             )
             return got, pod if error is None and isinstance(pod, dict) else None
     except (httpx.HTTPError, OSError):
@@ -897,8 +903,11 @@ async def _helm_delete(name: str, uid: str) -> int:
             response = await client.request(
                 "DELETE",
                 f"{_KUBE}/api/v1/namespaces/{ns}/pods/{name}",
-                json={"kind": "DeleteOptions", "apiVersion": "v1",
-                      "preconditions": {"uid": uid}},
+                json={
+                    "kind": "DeleteOptions",
+                    "apiVersion": "v1",
+                    "preconditions": {"uid": uid},
+                },
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=_PROXY_S,
             )
@@ -938,7 +947,8 @@ def _mid_rollout(workload: dict) -> bool:
     status = workload.get("status") or {}
     want = (workload.get("spec") or {}).get("replicas", 1)
     return (
-        status.get("observedGeneration") != (workload.get("metadata") or {}).get("generation")
+        status.get("observedGeneration")
+        != (workload.get("metadata") or {}).get("generation")
         or status.get("currentRevision") != status.get("updateRevision")
         or (status.get("updatedReplicas") or 0) < want
         or (status.get("readyReplicas") or 0) < want
