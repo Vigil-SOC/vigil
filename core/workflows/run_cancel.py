@@ -60,7 +60,7 @@ def request_stop(run_id: str, reason: str, actor: str) -> bool:
 
 # The backstop. Idempotent by the terminal's own index, so a run that settled itself
 # keeps its outcome and its report.
-def force_terminal(run_id: str, reason: str) -> bool:
+def force_terminal(run_id: str, reason: str, outcome: str = "aborted") -> bool:
     if not _is_run_id(run_id):
         return False
     try:
@@ -84,7 +84,7 @@ def force_terminal(run_id: str, reason: str) -> bool:
                 ),
                 {
                     "run_id": run_id,
-                    "payload": json.dumps({"outcome": "aborted", "reason": reason}),
+                    "payload": json.dumps({"outcome": outcome, "reason": reason}),
                     "version": EVENT_SCHEMA_VERSION,
                 },
             ).one_or_none()

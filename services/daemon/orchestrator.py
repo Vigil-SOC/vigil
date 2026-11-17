@@ -27,6 +27,7 @@ from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
 from core.storage.case_insert import insert_case
 from core.time import utcnow
+from core.workflows.orphaned_runs import end_orphaned_runs
 from services.daemon.config import OrchestratorConfig
 
 try:
@@ -1465,6 +1466,10 @@ class Orchestrator:
                             f"Approval required: {w_inv_id}",
                             f"Investigation {w_inv_id} is paused pending human approval.",
                         )
+
+                # A run no worker holds is ended here: the worker's own sweeper
+                # cannot, when no worker is running or the start job was lost.
+                await asyncio.to_thread(end_orphaned_runs)
 
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()
