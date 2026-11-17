@@ -96,7 +96,7 @@ CURSOR = ("[A-Za-z0-9_-]{1,256}", 1)
 BOOL = ("true|false", 1)
 TYPES = (
     "incident_opened|incident_updated|incident_resolved|feedback|anchor"
-    "|store_reset|pack_event|gap|fix_run|fix_verified"
+    "|store_reset|pack_event|gap|fix_run|fix_verified|level_changed"
 )
 INBOUND = [
     Route("GET", "/v1/status"),
@@ -137,6 +137,7 @@ INBOUND = [
     Route("GET", "/v1/decisions/{seq}", segs={"seq": SEQ}),
     Route("GET", "/v1/sensors"),
     Route("GET", "/v1/pack"),
+    Route("POST", "/v1/fix-level"),
     Route(
         "POST",
         "/v1/pack/import",

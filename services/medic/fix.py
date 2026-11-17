@@ -1,4 +1,10 @@
-"""Restart soc-daemon on Compose from one click.
+"""Restart soc-daemon on Compose, from one click or on its own.
+
+On its own (level L2, levels.py) Medic's loop hands a routed death incident to a
+thread that takes this lock and runs the same checks and the same restart, plus
+three more: the level is L2, the stored would-have L2 is `run_runbook` (so
+`runtime_untrusted` stays at the click), and fewer than 3 restarts by Medic in
+24 hours. A person's click is never capped.
 
 One function: the checks, then a POST of the container id those checks just
 read, then a verify after the runbook's wait. No executor class and no second
@@ -26,6 +32,7 @@ import httpx
 
 from services.medic.api.decisions import Problem
 from services.medic.engine.suppress import selects
+from services.medic.levels import DAILY_MAX, FIX_TYPES, MEDIC, RULE_ID, Levels
 from services.medic.sensors.containers import Containers
 from services.medic.sensors.daemon import DaemonHealth
 from services.medic.store import StoreError, open_reader
@@ -33,7 +40,6 @@ from services.medic.store.writer import utc_now
 
 log = logging.getLogger("services.medic")
 
-RULE_ID = "pipeline.daemon-component-failed-compose"
 SIBLING_RULE = "pipeline.daemon-component-failed"
 HUNG_RULE = "pipeline.daemon-component-hung-compose"
 HUNG_SIBLING = "pipeline.daemon-component-hung"
@@ -134,8 +140,9 @@ def _parse_time(raw: object) -> datetime | None:
 class Fixer:
     """The click, and the verifies that follow it. One restart at a time."""
 
-    def __init__(self, medic) -> None:
+    def __init__(self, medic, *, persistence: bool = True) -> None:
         self.medic = medic
+        self.levels = Levels(medic, persistence=persistence)
         self._lock = threading.Lock()
         self._timers: list[threading.Timer] = []
         # seq -> (monotonic time, passes from the first /health of the new process).
@@ -159,6 +166,46 @@ class Fixer:
         with self._lock:
             return self._run(incident_id, who)
 
+    def on_stored(self, stored: list[dict]) -> None:
+        """The loop's hook: a death incident stored as routed runs on its own when
+        its fix type is at L2. Off the loop's thread, which the restart POST (up to
+        90 s) would stall until the watchdog ended Medic."""
+        try:
+            for rec in stored:
+                body = rec["body"]
+                if rec["type"] != "incident_opened" or body.get("route") != "routed":
+                    continue
+                if (body.get("rule") or {}).get("id") != RULE_ID:
+                    continue
+                if self.levels.level(RULE_ID) == "L2":
+                    threading.Thread(
+                        target=self._on_its_own,
+                        args=(body["incident_id"],),
+                        name="medic-fix",
+                        daemon=True,
+                    ).start()
+        except Exception as exc:  # noqa: BLE001 (never the loop's problem)
+            log.error("fix on its own not started: %s", type(exc).__name__)
+
+    def _on_its_own(self, incident_id: str) -> None:
+        try:
+            with self._lock:
+                self._run(incident_id, MEDIC, auto=True)
+        except Exception as exc:  # noqa: BLE001 (a thread's failure is only logged)
+            log.error("fix on its own failed: %s", type(exc).__name__)
+
+    def reconcile(self) -> None:
+        try:
+            self.levels.reconcile()
+        except Exception as exc:  # noqa: BLE001 (never the loop's problem)
+            log.error("levels not reconciled: %s", type(exc).__name__)
+
+    def fix_types(self) -> list[dict]:
+        """Each fix type's level and track record, for GET /v1/pack."""
+        if self.medic.shape != "compose":
+            return []
+        return [self.levels.view(fix_type) for fix_type in FIX_TYPES]
+
     def _settle(self) -> None:
         now = time.time()
         records = _records(self.medic.writer.root)
@@ -175,7 +222,7 @@ class Fixer:
             else:
                 self._not_verified(rec)
 
-    def _run(self, incident_id: str, who: str) -> dict | Problem:
+    def _run(self, incident_id: str, who: str, *, auto: bool = False) -> dict | Problem:
         if self.medic.shape != "compose":
             return self._refuse(incident_id, who, "not_compose", [], None, None)
         row = _status_row(self.medic.engine, incident_id)
@@ -192,6 +239,9 @@ class Fixer:
         if not isinstance(runbook, dict) or runbook.get("id") != RUNBOOK_ID:
             return self._refuse(incident_id, who, "no_runbook", passed, opened, None)
         passed.append("runbook")
+        refused = self._level_check(incident_id, who, passed, opened, auto)
+        if refused is not None:
+            return refused
         if self.medic.engine.upgrade.active(time.time()):
             return self._refuse(
                 incident_id, who, "upgrade_window", passed, opened, None
@@ -227,6 +277,10 @@ class Fixer:
                 incident_id, who, "fix_running", passed, opened, ready[0][0]
             )
         passed.append("idle")
+        if auto and self.levels.level(RULE_ID) != "L2":  # lowered while we checked
+            return self._refuse(
+                incident_id, who, "not_on_its_own", passed, opened, ready[0][0]
+            )
         # Before the POST, so a sensor that sees the new start is not a marker.
         # A POST that does not restart puts the previous excuse back.
         previous = self.medic.engine.upgrade.excused.get(SERVICE)
@@ -257,7 +311,30 @@ class Fixer:
         if isinstance(record, Problem):
             return record
         self._arm(record)
+        if auto:
+            self.levels.restarted(RULE_ID)
         return {"record": record}
+
+    def _level_check(
+        self, incident_id: str, who: str, passed: list[str], opened: dict, auto: bool
+    ) -> dict | Problem | None:
+        """L0 refuses a click. On its own also needs L2, a stored L2 that runs the
+        runbook, and room under the daily limit (reaching it lowers the level)."""
+        fix_type = _rule_id(opened)
+        level = self.levels.level(fix_type)
+        why = None
+        if level == "L0":
+            why = "observe"
+        elif auto and level != "L2":
+            why = "not_on_its_own"
+        elif auto and _would_l2(opened) != "run_runbook":
+            why = "not_eligible"
+        elif auto and self.levels.restarts_today(fix_type) >= DAILY_MAX:
+            self.levels.limit_reached(fix_type)
+            why = "daily_limit"
+        if why is None:
+            return None
+        return self._refuse(incident_id, who, why, passed, opened, None)
 
     def _refuse(
         self,
@@ -299,7 +376,7 @@ class Fixer:
             "fix_type": "restart_service",
             "would_have": would,
             "action": {"type": "restart_service", "service": SERVICE},
-            "level": "L1",
+            "level": self.levels.level(_rule_id(opened)),
             "who": who,
             "checks": {"result": result, "passed": passed},
             "covered": covered,
@@ -417,6 +494,9 @@ class Fixer:
         self._hang_base.pop(rec["seq"], None)
         self._hang_tries.pop(rec["seq"], None)
         log.info("fix verified %s", result)
+        if rec["body"]["who"] == MEDIC:
+            opened = _opened(self.medic.writer.root, rec["body"]["incident_id"])
+            self.levels.verified(_rule_id(opened), result)
 
     def _append_verified(self, body: dict[str, Any]) -> bool:
         for _ in range(3):
@@ -444,6 +524,16 @@ def _addrs(medic) -> tuple[tuple[str, int] | None, tuple[str, int] | None]:
         elif isinstance(sensor, Containers):
             proxy = (sensor.host, sensor.port)
     return daemon, proxy
+
+
+def _rule_id(opened: dict | None) -> str | None:
+    rule = ((opened or {}).get("body") or {}).get("rule") or {}
+    return rule.get("id")
+
+
+def _would_l2(opened: dict | None) -> str | None:
+    would = ((opened or {}).get("body") or {}).get("would_have") or {}
+    return (would.get("L2") or {}).get("action")
 
 
 def _status_row(engine, incident_id: str) -> dict | None:
