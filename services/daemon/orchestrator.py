@@ -830,6 +830,7 @@ class Orchestrator:
             "_intake_loop": self._intake_loop,
             "_supervision_loop": self._supervision_loop,
             "_distil_loop": self._distil_loop,
+            "_run_retry_loop": self._run_retry_loop,
         }
         tasks = []
         for name, loop in loops.items():
@@ -2077,6 +2078,77 @@ class Orchestrator:
                 logger.error(f"Distil loop error: {e}", exc_info=True)
 
             await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _run_retry_loop(self, shutdown_event: asyncio.Event):
+        """Run again each case investigation that failed for a passing reason."""
+        while not shutdown_event.is_set():
+            try:
+                if self._enabled:
+                    settings = get_settings()
+                    await self._run_retry_tick(
+                        timedelta(seconds=settings.case_run_retry_after_seconds),
+                        settings.case_run_retries,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Run retry loop error: {e}", exc_info=True)
+
+            await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _run_retry_tick(self, after: timedelta, attempts: int) -> int:
+        """Launch again each case investigation that failed for a passing reason
+        (core/cases/run_retry.py), through the same path intake uses, while there
+        is capacity and budget."""
+        from core.cases.run_retry import note_retry, retries_due
+
+        def due():
+            with get_db_manager().session_scope() as session:
+                return retries_due(session, after, attempts)
+
+        launched = 0
+        for item in await asyncio.to_thread(due):
+            if self._running() >= self.config.max_concurrent_agents:
+                break
+            if self._hourly_budget_exhausted():
+                break
+            findings = [
+                lift_ai_enrichment(f)
+                for f in await asyncio.to_thread(
+                    lambda: [_load_finding(i) for i in item["finding_ids"]]
+                )
+                if f
+            ]
+            if not findings:
+                continue
+            workflow_id = item["workflow_id"]
+            if not is_enabled(workflow_id):
+                workflow_id = FALLBACK_WORKFLOW
+            await self._create_investigation(
+                workflow_id=workflow_id,
+                findings=findings,
+                trigger_type="finding",
+                priority=item["priority"],
+                case_id=item["case_id"],
+                shutdown_event=self._shutdown_event,
+            )
+
+            def note():
+                with get_db_manager().session_scope() as session:
+                    note_retry(session, item)
+
+            try:
+                await asyncio.to_thread(note)
+            except Exception:  # noqa: BLE001 — the run launched either way
+                logger.warning("could not note the retry on %s", item["case_id"])
+            logger.info(
+                "Case %s run %s failed (%s); launched again",
+                item["case_id"],
+                item["run_id"],
+                str(item["reason"])[:120],
+            )
+            launched += 1
+        return launched
 
     async def _case_distil_tick(self):
         """Turn closed Cases into Verdicts (#733).
