@@ -29,7 +29,10 @@ from core.storage.connection import get_db_session
 from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from core.workflows.handoff_cases import handoff_case_id
-from core.workflows.workflow_run_service import WorkflowRunService
+from core.workflows.workflow_run_service import (
+    ORPHANED_STOP_CAUSE,
+    WorkflowRunService,
+)
 
 # The agent layer writes a run's outputs onto its case, restricted or not: the
 # built-in reader class until #4345 scopes each call to its run's principal.
@@ -264,6 +267,18 @@ def record_terminal(
         "run outcome", run_id, x_vigil_run_principal, authorization=authorization
     )
 
+    apply_terminal(run_id, update, run_service, approvals, registry)
+
+
+# What /terminal does once the caller is known. The daemon replays a terminal the
+# ledger holds and the report never delivered through here too.
+def apply_terminal(
+    run_id: str,
+    update: TerminalUpdate,
+    run_service: WorkflowRunService,
+    approvals: ApprovalService,
+    registry: Optional[MCPRegistry],
+) -> None:
     withdraw_for_run(
         run_id,
         f"the run ended before this was answered: {update.reason or update.outcome}",
@@ -271,7 +286,7 @@ def record_terminal(
     )
 
     status = TERMINAL_STATUS.get(update.outcome, "failed")
-    run_service.finalize_run(
+    finalized = run_service.finalize_run(
         run_id,
         status=status,
         result_summary=update.summary or None,
@@ -285,6 +300,11 @@ def record_terminal(
         stop_cause=update.stop_cause,
         finished_at=_parse_finished_at(update.finished_at),
     )
+
+    if not finalized and _ended_as_orphaned(run_id, run_service):
+        # The daemon ended this run for want of a worker. What a late terminal
+        # would add to the case (report, proposals, title, closure) is not wanted.
+        return
 
     # The case the run was started from, so its report reaches the case rather than
     # living only in the run row.
@@ -320,6 +340,11 @@ def record_terminal(
             run_service,
             registry,
         )
+
+
+def _ended_as_orphaned(run_id: str, run_service: WorkflowRunService) -> bool:
+    row = run_service.get_run(run_id) or {}
+    return bool(row.get("stop_cause") == ORPHANED_STOP_CAUSE)
 
 
 @router.post("/{run_id}/children", status_code=204)

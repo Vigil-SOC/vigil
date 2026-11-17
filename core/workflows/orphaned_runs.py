@@ -15,21 +15,31 @@ means no worker has looked at it for that long. A worker outage longer than that
 therefore also ends a paused run still waiting on a human.
 
 A run whose ledger already holds a terminal is not failed: the worker finished it
-and only the report to the console was lost, so the row takes that outcome.
-A run ended here is sealed (``stop_cause``): a worker that later dequeues a
-lost start job cannot overwrite it with its own terminal.
+and only the report to the console was lost, so that terminal is replayed through
+the same code as the worker's own report.
+A run ended here gets a terminal in its ledger, even when it has no ledger yet, so
+a worker that later dequeues the lost start job refuses to run it. Its row is also
+sealed (``stop_cause``) against a late terminal.
+
+The lease timings below are the agent layer's defaults. They are read from this
+process's environment, which no deployment config sets: an operator who overrides
+VIGIL_PARK_POLL_MS, VIGIL_DENIAL_RECHECK_MS, VIGIL_SWEEP_MS or VIGIL_LEASE_TTL_MS
+on the agent must give the daemon the same values.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic import ValidationError
 from sqlalchemy import text
 
 from core.storage.connection import get_db_manager
 from core.workflows.workflow_run_service import (
+    DURATION_MS_MAX,
     IN_FLIGHT_STATUSES,
     ORPHANED_STOP_CAUSE,
     WorkflowRunService,
@@ -87,88 +97,133 @@ def _params() -> Dict[str, Any]:
     }
 
 
-def _orphans() -> List[Tuple[str, Optional[str]]]:
+def _uuid(run_id: str) -> bool:
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        return False
+    return True
+
+
+def _orphans() -> List[Tuple[str, Optional[str], Optional[str]]]:
     with get_db_manager().session_scope() as session:
         rows = session.execute(
             text(
-                "SELECT r.run_id, r.trigger_context->>'case_id' "
+                "SELECT r.run_id, r.trigger_context->>'case_id', "
+                "       r.trigger_context->>'run_kind' "
                 f"FROM workflow_runs r WHERE {_ORPHANED}"
             ),
             _params(),
         ).all()
-    return [(r[0], r[1]) for r in rows]
+    return [(r[0], r[1], r[2]) for r in rows]
 
 
 def _ledger_terminal(run_id: str) -> Optional[Dict[str, Any]]:
     """The terminal the run's ledger holds, if it journaled one."""
+    if not _uuid(run_id):
+        return None
     with get_db_manager().session_scope() as session:
         row = session.execute(
             text(
                 "SELECT payload FROM agent_events "
-                "WHERE run_id::text = :run_id AND kind = 'terminal' "
-                "ORDER BY seq DESC LIMIT 1"
+                "WHERE run_id = CAST(:run_id AS uuid) AND kind = 'terminal' "
+                "ORDER BY seq LIMIT 1"
             ),
             {"run_id": run_id},
         ).first()
     return dict(row[0]) if row is not None else None
 
 
-def _claim(run_id: str, status: str) -> bool:
-    """Move the run out of flight, if it is still an orphan. One caller wins: the
-    status filter and the lease conditions are re-read by the write itself."""
+def _claim(run_id: str) -> bool:
+    """End the run as failed, if it is still an orphan, with the row complete.
+    One caller wins: the write re-reads the status and lease conditions itself."""
     with get_db_manager().session_scope() as session:
         won = session.execute(
             text(
-                "UPDATE workflow_runs r SET status = :status, stop_cause = :cause "
+                "UPDATE workflow_runs r SET status = 'failed', "
+                "  stop_cause = :cause, outcome = 'failed', error = :reason, "
+                "  reason = :reason, finished_at = timezone('utc', now()), "
+                "  duration_ms = CASE WHEN r.started_at IS NULL THEN r.duration_ms "
+                "    WHEN extract(epoch FROM timezone('utc', now()) - r.started_at) "
+                "         * 1000 > :int4_max THEN NULL "
+                "    ELSE (extract(epoch FROM timezone('utc', now()) "
+                "          - r.started_at) * 1000)::int END "
                 f"WHERE r.run_id = :run_id AND {_ORPHANED} "
                 "RETURNING r.run_id"
             ),
             {
                 **_params(),
                 "run_id": run_id,
-                "status": status,
                 "cause": ORPHANED_STOP_CAUSE,
+                "reason": REASON,
+                "int4_max": DURATION_MS_MAX,
             },
         ).first()
     return won is not None
 
 
-def end_orphaned_runs() -> int:
-    """End each orphaned run; returns how many this call ended.
+def _replay(run_id: str, held: Dict[str, Any]) -> None:
+    """Deliver the terminal the worker journaled and the report lost."""
+    from core.response.approval_service import ApprovalService
+    from core.workflows.run_bridge_router import TerminalUpdate, apply_terminal
 
-    A run with no terminal in its ledger fails. One that has a terminal takes it,
-    as the report that never arrived would have set it. Approvals, the ledger and
-    the run row are written as when the worker ends a run itself.
+    try:
+        update = TerminalUpdate(
+            **{k: v for k, v in held.items() if k in TerminalUpdate.model_fields}
+        )
+    except ValidationError:
+        logger.warning("terminal of %s is not replayable whole", run_id)
+        update = TerminalUpdate(
+            outcome=str(held.get("outcome") or "failed"),
+            reason=str(held.get("reason") or ""),
+        )
+    # No MCP registry in the daemon: a handoff's root-cause run is not started here.
+    apply_terminal(run_id, update, WorkflowRunService(), ApprovalService(), None)
+
+
+def end_orphaned_runs() -> int:
+    """End each orphaned run; returns how many this call ended or replayed.
+
+    A run with no terminal in its ledger is failed. One that has a terminal gets
+    it replayed, as the report that never arrived would have. A failed run has a
+    terminal journaled first (so no worker takes it up later), then its row
+    completed in one write, then its approvals withdrawn and its case told.
     """
     from core.response.checkpoints import withdraw_for_run
-    from core.workflows.run_bridge_router import TERMINAL_STATUS, _add_activity
+    from core.workflows.run_bridge_router import _add_activity
     from core.workflows.run_cancel import force_terminal
+    from core.workflows.workflow_run_service import _runs_finished_counter
 
-    runs = WorkflowRunService()
     ended = 0
-    for run_id, case_id in _orphans():
+    for run_id, case_id, run_kind in _orphans():
         held = _ledger_terminal(run_id)
-        outcome = str(held.get("outcome")) if held else "failed"
-        status = TERMINAL_STATUS.get(outcome, "failed") if held else "failed"
-        reason = (str(held.get("reason")) if held else "") or None
-        if not held:
-            reason = REASON
-        if not _claim(run_id, status):
+        if held is not None:
+            _replay(run_id, held)
+            ended += 1
+            logger.warning("replayed the terminal of orphaned run %s", run_id)
             continue
-        withdraw_for_run(run_id, reason or REASON)
-        if not held:
-            force_terminal(run_id, REASON, outcome="failed")
-        runs.finalize_run(
-            run_id,
-            status=status,
-            error=reason if status == "failed" else None,
-            outcome=outcome,
-            reason=reason,
-            stop_cause=ORPHANED_STOP_CAUSE,
-        )
+        # A console id that is not a uuid has no ledger and no worker to refuse. A
+        # run with no run_kind was never enqueued by a known path, so there is no
+        # job to refuse; it is ended without one.
+        if _uuid(run_id):
+            written = force_terminal(
+                run_id, REASON, outcome="failed", run_kind=run_kind
+            )
+            if not written and run_kind:
+                logger.error("could not journal a terminal for orphaned run %s", run_id)
+                continue
+        if not _claim(run_id):
+            continue
         ended += 1
-        logger.warning("ended orphaned run %s as %s", run_id, status)
-        if case_id and not held:
+        logger.warning("ended orphaned run %s", run_id)
+        _runs_finished_counter().add(
+            1, {"run_kind": str(run_kind or "unknown"), "status": "failed"}
+        )
+        try:
+            withdraw_for_run(run_id, REASON)
+        except Exception:  # noqa: BLE001 - the run ended either way
+            logger.exception("could not withdraw the approvals of %s", run_id)
+        if case_id:
             try:
                 _add_activity(
                     case_id,

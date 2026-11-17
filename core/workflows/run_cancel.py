@@ -59,8 +59,15 @@ def request_stop(run_id: str, reason: str, actor: str) -> bool:
 
 
 # The backstop. Idempotent by the terminal's own index, so a run that settled itself
-# keeps its outcome and its report.
-def force_terminal(run_id: str, reason: str, outcome: str = "aborted") -> bool:
+# keeps its outcome and its report. A run with no ledger yet (a start job not picked
+# up) gets one only when its run_kind is given: the terminal then stands alone, and
+# the worker's advance() refuses a run that has one.
+def force_terminal(
+    run_id: str,
+    reason: str,
+    outcome: str = "aborted",
+    run_kind: Optional[str] = None,
+) -> bool:
     if not _is_run_id(run_id):
         return False
     try:
@@ -70,13 +77,15 @@ def force_terminal(run_id: str, reason: str, outcome: str = "aborted") -> bool:
                     "INSERT INTO agent_events "
                     "(run_id, run_kind, seq, kind, payload, schema_version) "
                     "SELECT CAST(:run_id AS uuid), "
-                    "  (SELECT run_kind FROM agent_events "
+                    "  coalesce((SELECT run_kind FROM agent_events "
                     "   WHERE run_id = CAST(:run_id AS uuid) ORDER BY seq LIMIT 1), "
+                    "   CAST(:run_kind AS text)), "
                     "  coalesce((SELECT max(seq) FROM agent_events "
                     "            WHERE run_id = CAST(:run_id AS uuid)), -1) + 1, "
                     "  'terminal', CAST(:payload AS jsonb), :version "
-                    "WHERE EXISTS (SELECT 1 FROM agent_events "
-                    "              WHERE run_id = CAST(:run_id AS uuid)) "
+                    "WHERE (EXISTS (SELECT 1 FROM agent_events "
+                    "               WHERE run_id = CAST(:run_id AS uuid)) "
+                    "       OR CAST(:run_kind AS text) IS NOT NULL) "
                     "  AND NOT EXISTS (SELECT 1 FROM agent_events "
                     "                  WHERE run_id = CAST(:run_id AS uuid) "
                     "                    AND kind = 'terminal') "
@@ -86,6 +95,7 @@ def force_terminal(run_id: str, reason: str, outcome: str = "aborted") -> bool:
                     "run_id": run_id,
                     "payload": json.dumps({"outcome": outcome, "reason": reason}),
                     "version": EVENT_SCHEMA_VERSION,
+                    "run_kind": run_kind,
                 },
             ).one_or_none()
             session.commit()
