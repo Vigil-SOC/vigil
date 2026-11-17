@@ -56,13 +56,16 @@ def sweep() -> None:
         return
     with unit_of_work() as session:
         last = dormancy.activity(session)
-        # Active people only: a service account is never deactivated for idleness.
+        # Active people only: a service account or a break-glass account is never
+        # deactivated for idleness.
         people = (
             session.query(User.user_id)
             .join(Principal, Principal.principal_id == User.principal_id)
             .filter(
                 User.is_active.is_(True),
                 User.service_account.isnot(True),
+                # A break-glass account is unused by design.
+                User.break_glass_at.is_(None),
                 Principal.kind == principals.PERSON,
                 Principal.deleted_at.is_(None),
             )
@@ -91,7 +94,12 @@ def _handle(user_id: str, days: int, now) -> None:
             .with_for_update()
             .first()
         )
-        if user is None or not user.is_active or user.service_account is True:
+        if (
+            user is None
+            or not user.is_active
+            or user.service_account is True
+            or user.break_glass_at is not None
+        ):
             return
         last = dormancy.activity(session, [user_id])[user_id]
         start = dormancy.warning_start(last, days)

@@ -7345,6 +7345,11 @@
    margin-bottom: 16px;
 }
 
+/* a second field inside a step's field (the break-glass reason under its code) */
+.auth .field .field {
+   margin: 16px 0 0;
+}
+
 .auth .field>label {
    display: block;
    margin-bottom: 7px;
