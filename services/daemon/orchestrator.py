@@ -1469,7 +1469,11 @@ class Orchestrator:
 
                 # A run no worker holds is ended here: the worker's own sweeper
                 # cannot, when no worker is running or the start job was lost.
-                await asyncio.to_thread(end_orphaned_runs)
+                if not self.config.dry_run:
+                    try:
+                        await asyncio.to_thread(end_orphaned_runs)
+                    except Exception:  # noqa: BLE001 - must not skip the checks below
+                        logger.exception("ending orphaned runs failed")
 
                 executing = self._get_investigations_by_status("executing")
                 now = utcnow()

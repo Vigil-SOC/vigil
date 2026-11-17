@@ -25,6 +25,10 @@ IN_FLIGHT_STATUSES = ("running", "paused")
 # duration_ms columns are int4; a longer duration (~24.8 days) is stored as NULL.
 DURATION_MS_MAX = 2_147_483_647
 
+# stop_cause of a run the daemon ended because no worker held it. Such a row is
+# sealed: a worker that later runs the lost job cannot finalize it again.
+ORPHANED_STOP_CAUSE = "orphaned"
+
 _runs_finished: Any = None
 
 
@@ -242,6 +246,12 @@ class WorkflowRunService:
                 row = session.get(WorkflowRun, run_id)
                 if row is None:
                     logger.warning("finalize_run: unknown run %s", run_id)
+                    return False
+                if (
+                    row.stop_cause == ORPHANED_STOP_CAUSE
+                    and stop_cause != ORPHANED_STOP_CAUSE
+                ):
+                    logger.warning("finalize_run: %s was ended as orphaned", run_id)
                     return False
                 # Only runs begun via the agent-runs or workflows start routes
                 # carry it; anything else is labelled rather than dropped.
