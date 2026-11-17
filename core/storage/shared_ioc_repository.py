@@ -12,6 +12,7 @@ from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from core.storage.defang import defang
+from core.storage.entity_context import context_candidates
 from core.storage.models import (
     Case,
     CaseIOC,
@@ -48,13 +49,17 @@ TYPE_ALIASES = {
     "username": "user",
 }
 
+# An IP's role rides in its ioc_type (no new column). A key with no role -- ``ip``,
+# written before roles or from an IOC typed plain ``ip`` -- never attaches an alert.
+ROLE_TYPES = {"src_ip": "src_ip", "dst_ip": "dst_ip", "dest_ip": "dst_ip"}
+
 _MAX_TYPE_LEN = 30
 _MAX_VALUE_LEN = 500
 
 
 def make_key(ioc_type: Optional[str], value: Optional[str]) -> Optional[str]:
     ioc_type = (ioc_type or "").strip().lower()
-    ioc_type = TYPE_ALIASES.get(ioc_type, ioc_type)
+    ioc_type = ROLE_TYPES.get(ioc_type) or TYPE_ALIASES.get(ioc_type, ioc_type)
     value = defang((value or "").strip()).lower()
     if not ioc_type or not value:
         return None
@@ -112,43 +117,44 @@ def index_case_iocs_on_close(session: Session, case_id: str) -> int:
         return 0
 
 
+# Types whose match is not enough to attach an alert: where the IP was a target, or
+# its role was never recorded. Such a Case is linked instead.
+LINK_ONLY_TYPES = ("dst_ip", "ip")
+
+
 class CaseMatch(NamedTuple):
     """A Case a finding belongs with, and the key that says so."""
 
     case_id: str
-    key: str  # ``ip:…``, ``hash:…`` or ``hostname:…``
+    key: str  # ``src_ip:…``, ``dst_ip:…``, ``ip:…``, ``hash:…`` or ``hostname:…``
     same_alert: bool = False  # a hostname match, backed by the same data_source + title
 
+    @property
+    def attaches(self) -> bool:
+        return self.key.partition(":")[0] not in LINK_ONLY_TYPES
 
-# Listed in the order a match is preferred when one Case matches several ways.
-_KEY_RANK = {"ip": 0, "hash": 1, "hostname": 2}
+
+# Listed in the order a match is preferred when one Case matches several ways:
+# the ways that attach first, so a Case matching both ways attaches.
+_KEY_RANK = {"src_ip": 0, "hash": 1, "hostname": 2, "dst_ip": 3, "ip": 4}
 
 
 def finding_match_keys(finding: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
     """The keys a finding can join a Case on: ``(ip and hash keys, hostname keys)``.
 
-    Read straight off ``entity_context``, spelled as ``core.memory.entity_keys``
-    maps it (storage may not import memory). Source IPs are ``src_ip``/``src_ips``
-    alone: an attacker is the source, and memory's map yields destinations as
-    ``ip`` too.
+    Read off the same map indexing writes (``core.storage.entity_context``). An
+    attacker is the source, so only source IPs are looked up, under every type an
+    IP is stored as: ``src_ip`` attaches, ``dst_ip`` and role-less ``ip`` link.
     """
-    context = finding.get("entity_context")
-    context = context if isinstance(context, dict) else {}
-
-    def values(*names: str) -> List[str]:
-        out: List[str] = []
-        for name in names:
-            value = context.get(name)
-            out += (
-                [str(v) for v in value]
-                if isinstance(value, (list, tuple))
-                else ([str(value)] if value else [])
-            )
-        return out
-
-    entity = {make_key("ip", v) for v in values("src_ips", "src_ip")}
-    entity |= {make_key("hash", v) for v in values("file_hashes")}
-    hosts = {make_key("hostname", v) for v in values("hostnames", "hostname")}
+    entity: Set[Optional[str]] = set()
+    hosts: Set[Optional[str]] = set()
+    for kind, value, indexed in context_candidates(finding):
+        if indexed == "src_ip":
+            entity |= {make_key(t, value) for t in ("src_ip", *LINK_ONLY_TYPES)}
+        elif kind == "hash":
+            entity.add(make_key(kind, value))
+        elif kind == "host":
+            hosts.add(make_key("hostname", value))
     return entity - {None}, hosts - {None}
 
 
@@ -207,7 +213,8 @@ class SharedIOCRepository:
         """Open (or closed) Cases this finding belongs with, newest ``updated_at`` first.
 
         A Case matches on a source IP or file hash shared with one of its
-        investigations, or on a hostname shared with one of them while the Case
+        investigations (an IP that was only a destination there, or whose role
+        was never recorded, matches too but doesn't ``attach``), or on a hostname shared with one of them while the Case
         holds a finding with the same ``data_source`` and trimmed, case-insensitive
         ``title``. Raises on a failed read: the caller decides what that means.
         """
