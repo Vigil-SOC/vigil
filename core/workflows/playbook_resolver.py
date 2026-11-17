@@ -11,7 +11,7 @@ import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
 from core.llm.defaults import DEFAULT_MODEL
-from core.response.ceiling import gated_tools
+from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, gated_tools, tool_classes
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -433,6 +433,32 @@ def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
     return [tool["id"] for tool in tools if tool["id"] in gated]
 
 
+# The tools that change something when they succeed: one of Vigil's own whose
+# permission is more than a read, and an outside one stored as reversible or
+# irreversible. The agent layer reads the mark at the run's end, so an answer that
+# claims a save whose call failed is followed by Vigil's own line saying so.
+# An unclassified outside tool is not marked: it may be a read.
+def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from core.agents.tool_registry import required_permission
+
+    names = [tool["id"] for tool in tools]
+    own = {
+        name
+        for name in names
+        if (permission := required_permission(name)) is not None
+        and not permission.endswith(".read")
+    }
+    outside = {
+        name
+        for name, effect in tool_classes(names).items()
+        if effect in (REVERSIBLE, IRREVERSIBLE)
+    }
+    writes = own | outside
+    return [
+        {**tool, "writes": True} if tool["id"] in writes else tool for tool in tools
+    ]
+
+
 def resolve(
     workflow_id: str,
     model: Optional[str] = None,
@@ -464,11 +490,14 @@ def resolve(
         if definition.run_kind == "investigate"
         else []
     )
-    tools = lead + [
-        tool
-        for tool in _tools_of(phases, catalogue)
-        if tool["id"] not in {held["id"] for held in lead}
-    ]
+    tools = _mark_writes(
+        lead
+        + [
+            tool
+            for tool in _tools_of(phases, catalogue)
+            if tool["id"] not in {held["id"] for held in lead}
+        ]
+    )
 
     playbook = {
         "name": definition.name,
