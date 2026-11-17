@@ -1334,7 +1334,10 @@ export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayloa
   const listed = field === undefined ? undefined : conclusion.value[field];
   const proposals = Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
   const note = review === undefined || heldBecause(review) === null ? undefined : guardFor(plugin, conclusion.value)?.proposals_note;
-  return note === undefined ? proposals : proposals.map((one) => ({ ...one, reason: `${note} ${one.reason ?? ""}`.trim() }));
+  // A proposal with no reason stays without one, so the backend still drops it.
+  return note === undefined
+    ? proposals
+    : proposals.map((one) => (typeof one.reason === "string" && one.reason.trim() ? { ...one, reason: `${note} ${one.reason}` } : one));
 }
 
 // Why the guard moved the answer off what was asked; null when it did not.
