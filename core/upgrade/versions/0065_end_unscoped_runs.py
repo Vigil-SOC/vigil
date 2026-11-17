@@ -62,7 +62,10 @@ def _end(conn, run_id: str) -> None:
             "UPDATE workflow_runs SET status = 'failed',"
             " finished_at = timezone('utc', now()), error = :reason,"
             " outcome = 'failed', reason = :reason, stop_cause = NULL,"
-            " duration_ms = CASE WHEN started_at IS NULL THEN duration_ms ELSE"
+            # A run stuck past int4's ceiling (~24.8 days) gets no duration.
+            " duration_ms = CASE WHEN started_at IS NULL THEN duration_ms"
+            "  WHEN extract(epoch FROM timezone('utc', now()) - started_at) * 1000"
+            "   > 2147483647 THEN NULL ELSE"
             "  (extract(epoch FROM timezone('utc', now()) - started_at) * 1000)::int"
             "  END"
             " WHERE run_id = :run_id AND status = ANY(:live)"
