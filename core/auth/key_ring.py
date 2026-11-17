@@ -485,7 +485,9 @@ def _add_missing(session, secret: str) -> list[str]:
     version 1: nothing derived from the secret existed for it before."""
     current = set(
         session.execute(
-            text("SELECT DISTINCT purpose FROM public.auth_keys WHERE state = 'current'")
+            text(
+                "SELECT DISTINCT purpose FROM public.auth_keys WHERE state = 'current'"
+            )
         )
         .scalars()
         .all()
