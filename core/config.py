@@ -146,9 +146,25 @@ class Settings(BaseSettings):
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
     # One extra root of SKILL.md directories, read alongside core/skills/library
-    # and written by the skills API. Unset (None) is the State Directory's
-    # skills/ folder; empty turns operator skills off, as the Helm chart does.
+    # and written by the skills API. A top-level folder without its own SKILL.md
+    # is searched where `npx skills add` searches a repo, so category folders
+    # and whole cloned skills repos load; a skill folder's subfolders are never
+    # skills. Unset (None) is the State Directory's skills/ folder; empty turns
+    # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
+    # The SkillSpector program that scans a skill folder (core.skills.skill_scan).
+    # Empty, the default, turns scanning off; the backend image sets it to the
+    # copy it installs. A path that does not exist reads as "scanner
+    # unavailable", never a crash.
+    vigil_skill_scanner: str = ""
+    # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
+    # uses its bundled list of known-bad packages and sends nothing out.
+    vigil_skill_scanner_osv: bool = False
+    # A Bifrost model id (e.g. vertex/gemini-2.5-pro) to run the scanner's
+    # model-backed analyzers with, sending each skill's full content to it.
+    # Empty, the default, keeps the scan static with no model calls. The hold's
+    # rule depends on the mode, so every process must agree on it.
+    vigil_skill_scanner_model: str = ""
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.
     vigil_upgrade_dir: Optional[str] = None
@@ -259,6 +275,9 @@ class Settings(BaseSettings):
     mcp_auto_connect_on_startup: Optional[bool] = None
     # The MCP runner; empty runs each server as a stdio child (start.sh).
     mcp_runner_url: str = ""
+    # Root of the pinned MCP connectors (npm/ and uv-tools/ under it), installed
+    # from infra/docker/mcp-packages. start.sh sets it to the repo's .mcp/.
+    vigil_mcp_prefix: str = "/opt/vigil/mcp"
     llm_budget_unlimited: bool = False
     extension_connector_allowlist: Annotated[List[str], NoDecode] = []
 
@@ -347,6 +366,11 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+    # A case investigation that failed for a passing reason (a provider 5xx, a
+    # timeout) is launched again once it is case_run_retry_after_seconds old, at
+    # most case_run_retries times in a row (core/cases/run_retry.py). 0 turns it off.
+    case_run_retries: int = 1
+    case_run_retry_after_seconds: int = 300
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False

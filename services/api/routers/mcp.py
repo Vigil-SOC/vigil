@@ -265,9 +265,10 @@ def _spawn_changed(old, new) -> bool:
     """Whether ``new`` would start differently from ``old``.
 
     Env counts only as mcp-config.json declares it (substituted), plus the
-    credentials it names: the rest is this process's own environment. A runner
-    launches from its own catalog with only that env (``runner_env``), so there
-    command, args and cwd do not count.
+    credentials it names: the rest is resolved from saved integration settings
+    at each connect (``runner_env``), stdio child or runner alike. A runner
+    launches from its own catalog with only that env, so there command, args
+    and cwd do not count.
     """
     from core.integrations.mcp.runner import runner_url
 

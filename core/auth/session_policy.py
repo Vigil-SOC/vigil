@@ -65,7 +65,7 @@ class SessionPolicy(BaseModel):
     # Failures in a row that lock an account. Off, the lock holds until an
     # administrator's Unlock or the person's reset link; on, it ends after
     # lockout_minutes. LOCK_UNTIL_UNLOCKED failures lock until unlocked either way.
-    lockout_threshold: int = Field(3, ge=1, le=20)
+    lockout_threshold: int = Field(3, ge=3, le=10)
     lockout_timed: bool = False
     lockout_minutes: int = Field(30, ge=30, le=1440)
     # Days without a sign-in or a personal MCP token's use before an account is

@@ -3,3 +3,4 @@
 secrets:
   postgresPassword: test-password
   vigilAppPassword: test-app-password
+  vigilAgentPassword: test-agent-password

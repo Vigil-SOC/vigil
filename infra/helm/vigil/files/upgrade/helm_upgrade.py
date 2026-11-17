@@ -285,7 +285,7 @@ def terminate_app_sessions() -> None:
 
 
 def set_app_password() -> None:
-    """vigil_app's password, as Compose's 00_apply.sh sets it: never the owner's."""
+    """vigil_app's and vigil_agent's passwords, as Compose's 00_apply.sh sets them."""
     app_pw = os.environ.get("POSTGRES_APP_PASSWORD", "")
     if not app_pw:
         raise RuntimeError(
@@ -295,17 +295,30 @@ def set_app_password() -> None:
         raise RuntimeError(
             "POSTGRES_APP_PASSWORD must differ from the database owner password"
         )
+    # The chart always supplies it. Unset (the script run outside the chart),
+    # vigil_agent keeps whatever it has: a role with no password cannot log in.
+    agent_pw = os.environ.get("POSTGRES_AGENT_PASSWORD", "")
+    if agent_pw and agent_pw in (app_pw, os.environ.get("POSTGRES_PASSWORD")):
+        raise RuntimeError(
+            "POSTGRES_AGENT_PASSWORD must differ from the vigil_app and owner passwords"
+        )
     conn = connect()
     try:
         with conn, conn.cursor() as cur:
             cur.execute("ALTER ROLE vigil_app PASSWORD %s", (app_pw,))
+            if agent_pw:
+                cur.execute("ALTER ROLE vigil_agent PASSWORD %s", (agent_pw,))
             cur.execute(
                 "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.alembic_version FROM vigil_app"
             )
             cur.execute("GRANT SELECT ON TABLE public.alembic_version TO vigil_app")
     finally:
         conn.close()
-    say("set vigil_app password")
+    say(
+        "set vigil_app and vigil_agent passwords"
+        if agent_pw
+        else "set vigil_app password; POSTGRES_AGENT_PASSWORD unset, vigil_agent left as it was"
+    )
 
 
 def upgrade() -> int:

@@ -69,31 +69,54 @@ def _naive(moment: Optional[datetime]) -> Optional[datetime]:
 def has_app(user: User, keyed: bool) -> bool:
     """Whether the person's authenticator app is confirmed. ``mfa_enabled`` means
     "has a method", so for a person with keys a secret whose first code never
-    came (no TOTP step yet) is a setup still pending, not a method."""
+    came (no TOTP step yet) is a setup still pending, not a method. So it is for
+    a break-glass account, which holds MFA through the safe's codes."""
+    held = keyed or user.break_glass_at is not None
     return bool(
         user.mfa_secret
         and user.mfa_enabled
-        and (user.mfa_last_totp_step is not None or not keyed)
+        and (user.mfa_last_totp_step is not None or not held)
     )
+
+
+def method_types(user: User, keyed: bool) -> list[str]:
+    """The method types ``user`` has, in the order ``methods()`` lists them.
+
+    Each type at most once. No key name, time or codes-left count: anyone who
+    can read the people list sees this. Empty without MFA. ``keyed`` is whether
+    the person has a security key.
+    """
+    if not user.mfa_enabled:
+        return []
+    found: list[str] = []
+    if has_app(user, keyed):
+        found.append("authenticator_app")
+    if keyed:
+        found.append("security_key")
+    if user.mfa_recovery_codes:
+        found.append("recovery_codes")
+    return found
 
 
 def methods(session: Session, user: User) -> list[dict]:
     """The methods ``user`` has enrolled. Empty without MFA."""
-    if not user.mfa_enabled:
-        return []
+    # No key lookup until MFA is on: the type decision is the same guard.
+    keys = security_keys.keys_of(session, user.principal_id) if user.mfa_enabled else []
+    wanted = set(method_types(user, bool(keys)))
     principal = user.principal_id
-    keys = security_keys.keys_of(session, principal)
-    found = [
-        MfaMethod(
-            type="security_key",
-            name=key.name,
-            key_id=key.key_id,
-            added_at=_naive(key.created_at),
-            last_used_at=_naive(key.last_used_at),
+    found: list[MfaMethod] = []
+    if "security_key" in wanted:
+        found.extend(
+            MfaMethod(
+                type="security_key",
+                name=key.name,
+                key_id=key.key_id,
+                added_at=_naive(key.created_at),
+                last_used_at=_naive(key.last_used_at),
+            )
+            for key in keys
         )
-        for key in keys
-    ]
-    if has_app(user, bool(keys)):
+    if "authenticator_app" in wanted:
         step = user.mfa_last_totp_step
         used = None
         if step is not None:
@@ -107,8 +130,7 @@ def methods(session: Session, user: User) -> list[dict]:
                 last_used_at=_naive(used),
             ),
         )
-    codes = len(user.mfa_recovery_codes or [])
-    if codes:
+    if "recovery_codes" in wanted:
         found.append(
             MfaMethod(
                 type="recovery_codes",
@@ -121,7 +143,7 @@ def methods(session: Session, user: User) -> list[dict]:
                         "auth.recovery_codes_regenerated",
                     )
                 ),
-                remaining=codes,
+                remaining=len(user.mfa_recovery_codes or []),
             )
         )
     return [m.model_dump() for m in found]

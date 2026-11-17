@@ -1,14 +1,14 @@
 {
   "name": "vigil-mcp-connectors",
   "private": true,
-  "description": "npx connectors from mcp-config.json, baked into the backend image at the exact versions it pins. Keep the two in step.",
+  "description": "npx connectors from mcp-config.json, installed into the MCP runner image and, by start.sh, on host-native installs at the exact versions it pins. Keep the two in step.",
   "dependencies": {
     "@burtthecoder/mcp-shodan": "1.0.37",
     "@burtthecoder/mcp-virustotal": "1.0.38",
     "@modelcontextprotocol/server-github": "2025.4.8",
     "@pebbletek/cribl-mcp": "0.1.12",
-    "firecrawl-mcp": "3.37.0",
-    "mcp-remote": "0.16.1",
+    "firecrawl-mcp": "3.40.0",
+    "mcp-remote": "0.16.6",
     "security-detections-mcp": "3.3.4"
   },
   "scripts": {

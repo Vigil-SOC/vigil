@@ -286,6 +286,28 @@
 .de-rollout-err { margin: 0; display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--tx2); }
 
 
+/* Proposed: Vigil's drafts after a gap, listed beside the picked one (Cases' split view). */
+.de-prop { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+.de-prop-list { padding: 0; position: sticky; top: 0; overflow: hidden; }
+.de-prop-list-head { padding: 16px 16px 8px; }
+.de-prop-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ln0); max-height: clamp(300px, calc(100vh - 260px), 1400px); overscroll-behavior: contain; }
+.de-prop-rows .case-row { padding: 12px 14px; }
+.de-prop-rows .case-row:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.de-prop-rows .case-row .cr-meta { flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.de-prop-rows .case-row .de-prop-sub { margin-top: 4px; }
+.de-prop-name { font-size: 13.5px; font-weight: 600; color: var(--tx0); overflow-wrap: anywhere; }
+.de-prop-tech { font-size: 12px; color: var(--tx2); }
+.de-prop-gone { opacity: .55; }
+.de-prop-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.de-prop-copies { display: flex; gap: 4px; }
+.de-prop-query { margin-top: 12px; }
+.de-prop-ask { margin-top: 12px; max-width: none; }
+@container main (max-width: 999px) {
+  .de-prop { grid-template-columns: minmax(0, 1fr); }
+  .de-prop-list { position: static; }
+  .de-prop-rows { max-height: 320px; }
+}
+
 /* The coverage heat map (#4103), Alex's 1.x matrix: one column per tactic, one cell per technique. */
 .de-cov { display: grid; gap: 12px; }
 .de-cov-head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }

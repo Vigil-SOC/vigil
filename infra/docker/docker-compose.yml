@@ -8,8 +8,9 @@ x-agent-env: &agent-env
   - POSTGRES_HOST=postgres
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
-  - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+  # vigil_agent, not vigil_app: the agent tables and nothing else (0081_agent_role).
+  - POSTGRES_USER=vigil_agent
+  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
   - REDIS_URL=redis://redis:6379/0
   # The agent reads REDIS_PASSWORD only beside REDIS_HOST, and the password is
   # never put in a URL, so the parts are named as the Helm chart names them.
@@ -61,6 +62,17 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_COST: ${ORCHESTRATOR_MAX_COST:-5.0}
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
+  # Skill scanning, and so the hold on unscanned or flagged skills. Every process
+  # that builds a prompt (backend, soc-daemon, llm-worker) must agree on whether
+  # it is on, or one of them would hand held skills to its runs. All three use
+  # the backend image, which carries the scanner, so one path serves them; only
+  # the backend runs scans, the others just read the verdicts. Set it empty in
+  # .env to turn scanning off everywhere. llm-worker repeats this line below
+  # because it does not take this anchor.
+  VIGIL_SKILL_SCANNER: ${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
+  # Empty = static scans. A Bifrost model id adds model-backed scanning and
+  # changes the hold's rule, so all three processes must agree on it too.
+  VIGIL_SKILL_SCANNER_MODEL: ${VIGIL_SKILL_SCANNER_MODEL:-}
 
 # One build for the API and the backup services. A second image tag would
 # compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
@@ -124,6 +136,7 @@ services:
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
@@ -211,6 +224,8 @@ services:
       # mint one with `openssl rand -base64 48` or reuse ~/.vigil/jwt_secret from
       # start.sh. DEV_MODE=true is the opt-in auth bypass for a developer machine.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      # Whole days, shorter than 12 months (365). Empty keeps 12 months.
+      KEY_ROTATION_DAYS: ${KEY_ROTATION_DAYS:-}
       DEV_MODE: ${DEV_MODE:-false}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
@@ -316,6 +331,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
+      # A restore empties the agent-run queue.
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Inherited by backup-pre-upgrade. History and the no-setup repo live here.
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       # The only bypass: both must be set, and the version must be this image.
@@ -339,6 +357,9 @@ services:
       disable: true
     depends_on:
       postgres:
+        condition: service_healthy
+      # `start.sh restore` runs this service and discards the queue in redis.
+      redis:
         condition: service_healthy
       backup-pre-upgrade:
         condition: service_completed_successfully
@@ -545,6 +566,9 @@ services:
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
       - REDIS_URL=redis://redis:6379/0
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
+      # Same value as the backend and daemon (see x-intent-env).
+      - VIGIL_SKILL_SCANNER=${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
+      - VIGIL_SKILL_SCANNER_MODEL=${VIGIL_SKILL_SCANNER_MODEL:-}
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -812,13 +836,17 @@ services:
       VIGIL_MEDIC_GATEWAY_MEDIC: medic:8470
       VIGIL_MEDIC_GATEWAY_OUT_BIND: medic-gateway-out:8471
       VIGIL_MEDIC_GATEWAY_IN_BIND: medic-gateway-in:8470
-      # The Viewer account the gateway logs in as. Its password is a file, never
-      # env: the gateway refuses to start with one in its environment.
+      # Its credential is a file, never env: the gateway refuses to start with
+      # one in its environment. The token (medic_gateway_token) wins whenever
+      # it is readable and non-empty; the password is the upgraded site's
+      # fallback until enable-compose.sh mints a token (#4425).
+      # The Viewer account the password logs in as; the token path needs none.
       # medic-<12 random a-z0-9>, minted by scripts/medic/enable-compose.sh (D2-17).
-      # No default: unset, the gateway refuses to start rather than try a
+      # No default: unset, the password path is off rather than try a
       # guessable name.
       VIGIL_MEDIC_GATEWAY_VIEWER_USER: ${VIGIL_MEDIC_VIEWER_USER:-}
     secrets:
+      - medic_gateway_token
       - medic_viewer_password
     restart: unless-stopped
     networks:
@@ -1460,11 +1488,15 @@ volumes:
   medic_data:
     driver: local
 
-# Medic's two secrets, generated by scripts/medic/enable-compose.sh (random,
-# 0600, outside the repo and outside Vigil's ~/.vigil). Only the --profile medic
-# services use them, so with the profile off they don't render and the files
-# needn't exist.
+# Medic's secrets, written by scripts/medic/enable-compose.sh (0600, outside
+# the repo and outside Vigil's ~/.vigil). Only the --profile medic services use
+# them, so with the profile off they don't render and the files needn't exist.
+# The gateway's token and an upgraded site's password are each optional: lib.sh's
+# dc makes an empty placeholder for a missing one, which the gateway treats as
+# absent (a missing file would stop the container from starting).
 secrets:
+  medic_gateway_token:
+    file: ${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}/medic_gateway_token
   medic_viewer_password:
     file: ${VIGIL_MEDIC_SECRETS_DIR:-${HOME:-}/.vigil-medic/secrets}/viewer_password
   medic_api_key:

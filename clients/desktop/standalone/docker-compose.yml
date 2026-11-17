@@ -5,9 +5,10 @@
 # Its own project name and unnamed containers keep it isolated from a dev stack
 # (project "docker", containers deeptempo-*) so both can coexist on one machine.
 # Only the backend publishes a port; everything else stays on the internal
-# network. The app mints two Postgres passwords per install: the owner password,
-# and a different one for vigil_app. It resets both on every start, so older
-# volumes pick them up too. App containers receive only the vigil_app password.
+# network. The app mints three Postgres passwords per install: the owner's,
+# vigil_app's and vigil_agent's, all different. It resets them on every start,
+# so older volumes pick them up too. App containers receive only the vigil_app
+# password, and the agent containers only the vigil_agent one.
 # It also mints a Redis password once per install; redis takes it on every
 # start, so a volume from before it existed is password-protected from then on.
 name: vigil
@@ -19,8 +20,10 @@ x-agent-env: &agent-env
   - POSTGRES_HOST=postgres
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
-  - POSTGRES_USER=vigil_app
-  - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:?set by the desktop app}
+  # vigil_agent, not vigil_app: the agent tables and nothing else (0081_agent_role).
+  # Set by the desktop app; empty, the upgrade one-shot refuses and nothing starts.
+  - POSTGRES_USER=vigil_agent
+  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-}
   - REDIS_URL=redis://redis:6379/0
   # services/agent/core/db.ts reads the password only beside host/port, not the URL.
   - REDIS_HOST=redis
@@ -276,6 +279,9 @@ services:
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
+      # The desktop restore runs this service and empties the agent-run queue.
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set by the desktop app}
     volumes:
       - vigil_home:/home/vigil/.vigil
       - upgrade_state:/var/lib/vigil-upgrade
@@ -296,7 +302,7 @@ services:
     networks:
       - vigil
 
-  # Schema, then vigil_app's password. restart "no": a refusal leaves the API
+  # Schema, then vigil_app's and vigil_agent's passwords. restart "no": a refusal leaves the API
   # and the agent processes unstarted.
   upgrade:
     image: ghcr.io/vigil-soc/vigil-backend:${VIGIL_VERSION}
@@ -308,6 +314,7 @@ services:
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by the desktop app}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set by the desktop app}
+      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-}
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { FilterChip } from '../../shared/FilterChip'
 import { InfoTip } from '../../shared/InfoTip'
@@ -6,8 +6,8 @@ import { EmptyState } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
 import type { DecisionRecord, FeedbackBody, IncidentOpened, StatusRead } from './medicTypes'
 import { safeText, safeTitle } from './safeText'
-import { postFeedback, problemCode, useIncidentDetail } from './useMedic'
-import { durationWord, evidenceOf, feedbackWord, ratingWord, stamp, stateTone, stateWord, timeline, wouldHave } from './words'
+import { postFeedback, postFix, problemCode, problemReason, useIncidentDetail } from './useMedic'
+import { durationWord, evidenceOf, feedbackWord, fixClickError, fixFailureCount, hasRunbook, ratingWord, stamp, stateTone, stateWord, timeline, wouldHave } from './words'
 import './medic.css'
 
 const MAX_COMMENT = 500
@@ -38,7 +38,12 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState('')
   const [stored, setStored] = useState<string | null>(null)
-  useEffect(() => { setPick(null); setLane(null); setComment(''); setFailed(''); setStored(null) }, [id])
+  const [running, setRunning] = useState(false)
+  const [fixNote, setFixNote] = useState('')
+  // the incident on screen; a restart still in flight must not write into the next one
+  const shown = useRef(id)
+  shown.current = id
+  useEffect(() => { setPick(null); setLane(null); setComment(''); setFailed(''); setStored(null); setFixNote(''); setRunning(false) }, [id])
 
   const view = useMemo(() => {
     if (!detail) return null
@@ -52,6 +57,8 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
       would: wouldHave(opened, detail.summary.lane.value, all, detail.told),
       rows: timeline(detail.opened, all),
       evidence: evidenceOf(opened, all.filter((r) => r.seq !== detail.opened.seq)),
+      failures: fixFailureCount(all),
+      runbook: hasRunbook(opened),
     }
   }, [detail, records])
 
@@ -74,6 +81,23 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
       setFailed(SAVE_FAILED[problemCode(e)] ?? "Couldn't save the rating. Nothing was saved.")
     } finally {
       setSaving(false)
+    }
+  }
+
+  const runFix = async () => {
+    const target = id
+    setRunning(true)
+    setFixNote('')
+    try {
+      await postFix(target)
+      if (shown.current !== target) return
+      await reload()
+    } catch (e) {
+      if (shown.current !== target) return
+      setFixNote(fixClickError(problemCode(e), problemReason(e)))
+      await reload()
+    } finally {
+      if (shown.current === target) setRunning(false)
     }
   }
 
@@ -108,6 +132,8 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
   const canRate = hasPermission('medic.admin') && s.rateable && offered.length > 0
   const chosen = pick ?? mine?.value ?? null
   const chosenLane = chosen === 'wrong_lane' ? lane ?? mine?.suggested_lane ?? null : null
+  const canRun = hasPermission('medic.admin') && view.runbook && (s.state === 'firing' || s.state === 'resolving')
+  const runLabel = running ? 'Restarting soc-daemon…' : view.failures > 0 ? `Run fix · ${view.failures} failed` : 'Run fix'
 
   return (
     <div className="mdc-body">
@@ -151,6 +177,16 @@ export function IncidentPane({ id, status, onBack, onOpen }: {
         <h3>What Medic would have done</h3>
         {view.would.map((l, n) => <p key={n} className={n === view.would.length - 1 ? 'mdc-nothing' : undefined}>{safeText(l)}</p>)}
       </section>
+
+      {canRun && (
+        <section className="mdc-card mdc-run-card" aria-label="Run fix">
+          <button type="button" className="mdc-run" disabled={running} aria-busy={running} onClick={runFix}>
+            <span className="mdc-run-name">{runLabel}</span>
+            <span className="mdc-run-cost">Restart soc-daemon. Ingestion stops, and findings accepted but not yet stored are dropped. Polled and webhook sources do not resend them. Kafka is re-read.</span>
+          </button>
+          {fixNote && <p className="mdc-save-failed" role="alert">{fixNote}</p>}
+        </section>
+      )}
 
       {advice && (
         <section className="mdc-card" aria-label="Pack advice">

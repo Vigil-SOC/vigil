@@ -18,6 +18,7 @@ import requests.auth
 
 from core.memory.entity_keys import entity_key, text_entity_keys
 from core.memory.recall_contract import ENTITY_KEY_TYPES
+from core.storage.defang import defang
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,20 @@ _STIX_TO_VIGIL_TYPE: Dict[str, str] = {
     "file:hashes.'SHA-256'": "hash_sha256",
     "email-addr:value": "email",
 }
+
+
+# Types matched without regard to case or defanging. URL paths and email local
+# parts are case-significant, so those stay as the feed wrote them.
+FOLDED_INDICATOR_TYPES = frozenset(
+    {"ip", "domain", "hash_md5", "hash_sha1", "hash_sha256"}
+)
+
+
+def normalize_indicator_value(indicator_type: str, value: str) -> str:
+    """The stored and looked-up form: Vigil's defang rule, then case-folded."""
+    if indicator_type not in FOLDED_INDICATOR_TYPES:
+        return value
+    return defang(value.strip()).lower()
 
 
 _STIX_TOKEN = re.compile(
@@ -83,6 +98,9 @@ def parse_stix_indicator(
     valid_until = _parse_dt(obj.get("valid_until"))
 
     for vigil_type, value in _extract_observables(pattern):
+        value = normalize_indicator_value(vigil_type, value)
+        if not value:
+            continue
         out.append(
             NormalizedIndicator(
                 indicator_type=vigil_type,
@@ -357,6 +375,10 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
     with db.session_scope() as session:
         for ind in indicators:
             try:
+                # Normalised here too, so any re-published spelling finds its row.
+                value = normalize_indicator_value(
+                    ind.indicator_type, ind.indicator_value
+                )
                 # A savepoint per row, flushed inside it: a flush-time error
                 # (constraint, oversized value) rolls back only this row instead
                 # of poisoning the session and failing the whole commit.
@@ -366,7 +388,7 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
                         .filter_by(
                             source=ind.source,
                             indicator_type=ind.indicator_type,
-                            indicator_value=ind.indicator_value,
+                            indicator_value=value,
                         )
                         .one_or_none()
                     )
@@ -374,7 +396,7 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
                         session.add(
                             ThreatIndicator(
                                 indicator_type=ind.indicator_type,
-                                indicator_value=ind.indicator_value,
+                                indicator_value=value,
                                 source=ind.source,
                                 collection_id=ind.collection_id,
                                 confidence=ind.confidence,
@@ -437,19 +459,24 @@ def _unexpired_clause(now: datetime):
 def lookup_indicators(
     indicator_type: str, values: List[str]
 ) -> Dict[str, Dict[str, Any]]:
-    """Look up a batch of currently-valid indicator values; keyed by value.
+    """Look up a batch of currently-valid indicator values.
 
-    Expired rows (``valid_until`` in the past) are omitted. A NULL expiry is live.
+    Matches on the normalised form, but keys the answer by each value exactly as
+    the caller passed it. Expired rows (``valid_until`` in the past) are
+    omitted. A NULL expiry is live. Raises when storage is unavailable: a
+    lookup that could not run is not an answer that nothing matched (#4612).
     """
     if not values:
         return {}
-    try:
-        from core.storage.connection import get_db_manager
-        from core.storage.models import ThreatIndicator
-        from core.storage.schemas import ThreatIndicatorSchema
-    except Exception as e:  # noqa: BLE001
-        logger.debug("ThreatIndicator lookup unavailable: %s", e)
-        return {}
+    from core.storage.connection import get_db_manager
+    from core.storage.models import ThreatIndicator
+    from core.storage.schemas import ThreatIndicatorSchema
+
+    asked: Dict[str, List[str]] = {}
+    for value in values:
+        asked.setdefault(normalize_indicator_value(indicator_type, value), []).append(
+            value
+        )
     db = get_db_manager()
     out: Dict[str, Dict[str, Any]] = {}
     now = utcnow()
@@ -457,12 +484,13 @@ def lookup_indicators(
         rows = (
             session.query(ThreatIndicator)
             .filter(ThreatIndicator.indicator_type == indicator_type)
-            .filter(ThreatIndicator.indicator_value.in_(values))
+            .filter(ThreatIndicator.indicator_value.in_(list(asked)))
             .filter(_unexpired_clause(now))
             .all()
         )
         for row in rows:
-            out.setdefault(row.indicator_value, ThreatIndicatorSchema.dump(row))
+            for value in asked.get(row.indicator_value, ()):
+                out.setdefault(value, ThreatIndicatorSchema.dump(row))
     return out
 
 

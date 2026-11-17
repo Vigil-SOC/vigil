@@ -96,11 +96,10 @@ class AIDecisionLog(Base):
 
 
 class LLMInteractionLog(Base):
-    """Durable audit log of Claude API interactions for chain-of-thought visibility.
+    """Durable log of ``ClaudeService`` completions.
 
-    One row per Anthropic API response (per tool-use iteration). Captures
-    full untruncated thinking blocks, tool call chains, token usage, and
-    cost so analysts can audit AI decision-making post-hoc.
+    One row per completion, with its token usage and cost. Read by the cost
+    and usage reports and the chain-of-custody export.
     """
 
     __tablename__ = "llm_interaction_logs"

@@ -11,7 +11,7 @@ import logging
 from typing import Callable, Union
 from urllib.parse import quote
 
-from sqlalchemy import event, func, or_
+from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
 from core.auth import invites, mcp_credential_service, sign_ins, trail_events
@@ -19,6 +19,7 @@ from core.auth.permissions import case_reader_for, may_read_case
 from core.cases.assignee import TASK_DONE
 from core.platform.notices import notify
 from core.storage.models import Case, CaseTask, User
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,17 @@ def when_committed(session: Session, send: Callable[[], None]) -> None:
     event.listen(session, "after_commit", run)
 
 
+ROUTES = ("sync", "person", "dormancy")
+
+
+def clear_deactivation(user: User) -> None:
+    """A reactivation: the route and the time are gone, so a later push can
+    deactivate again and a sync push will not treat a person's deactivation as its own.
+    """
+    user.deactivation_route = None
+    user.deactivated_at = None
+
+
 def deactivate_account(
     session: Session,
     user: User,
@@ -53,6 +65,7 @@ def deactivate_account(
     actor: str,
     by_person: bool,
     record_trail: bool = True,
+    route: str | None = None,
 ) -> list[str]:
     """Deactivate ``user`` in ``session``; returns the credential ids revoked.
 
@@ -60,8 +73,16 @@ def deactivate_account(
     are told if the account owned open work. ``record_trail=False`` leaves the
     ``credential.revoked`` entries to the caller, for a disable that commits on
     its own ahead of the rest of a request.
+
+    ``route`` is who did it (``sync``, ``person`` or ``dormancy``). Callers pass
+    it. It is the only writer of ``deactivation_route`` and ``deactivated_at``.
     """
+    if route is not None and route not in ROUTES:
+        raise ValueError(f"unknown deactivation route {route}")
     user.is_active = False
+    if route is not None:
+        user.deactivation_route = route
+        user.deactivated_at = utcnow()
     # Row before trail lock, the order every other path takes them in.
     session.flush()
     revoked = []
@@ -98,19 +119,26 @@ def _tell_managers_of_work(session: Session, user: User) -> None:
         .filter(Case.assignee == user.username, Case.status != "closed")
         .all()
     )
+    # Each open task with its case's reader lists: a task is read as its case is.
     tasks = (
-        session.query(func.count())
+        session.query(Case.reader_principal_ids, Case.reader_team_ids)
         .select_from(CaseTask)
+        .join(Case, Case.case_id == CaseTask.case_id)
         .filter(CaseTask.assignee == user.username, OPEN_TASKS)
-        .scalar()
+        .all()
     )
     if not (cases or tasks):
         return
 
-    def message(principal: str) -> str:
+    def message(principal: str) -> str | None:
         reader = case_reader_for(principal, session)
         shown = sum(1 for case in cases if may_read_case(case, reader))
-        return _work_message(user.username, shown, len(cases) - shown, tasks)
+        hidden = len(cases) - shown
+        # Tasks on a case they can't read are left out, not counted.
+        readable_tasks = sum(1 for task in tasks if may_read_case(task, reader))
+        if not (shown or hidden or readable_tasks):
+            return None  # nothing they may know of: no notice
+        return _work_message(user.username, shown, hidden, readable_tasks)
 
     link = f"/cases?owner={quote(user.username, safe='')}" if cases else None
     title = f"{user.username} was deactivated and owns open work"
@@ -147,11 +175,12 @@ def tell_managers(
     user: User,
     kind: str,
     title: str,
-    message: Union[str, Callable[[str], str]],
+    message: Union[str, Callable[[str], str | None]],
     **notice,
 ) -> None:
     """A notice about ``user`` to each manager, once ``session`` commits.
-    ``message`` may be worded per manager: a callable given their principal id."""
+    ``message`` may be worded per manager: a callable given their principal id,
+    which returns ``None`` for a manager who is not to be told."""
     # Read now: the row is expired once the commit has happened.
     about = user.principal_id
 
@@ -161,6 +190,8 @@ def tell_managers(
         for principal in managers(about):
             try:
                 text = message(principal) if callable(message) else message
+                if text is None:
+                    continue
                 notify(principal, kind, title, text, **notice)
             except Exception:  # noqa: BLE001 - the others are still told
                 logger.exception("could not send a %s notice to %s", kind, principal)

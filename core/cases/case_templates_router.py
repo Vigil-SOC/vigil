@@ -8,10 +8,12 @@ from pydantic import BaseModel
 from core.auth.current_user import get_current_user
 from core.auth.permissions import deny_unless, permission_gate
 from core.cases.assignee import resolve_assignee
+from core.cases.case_handoff import require_owner_can_write, require_owner_on_team
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.schemas import CaseSchema, CaseTemplateSchema
+from core.teams import default_team
 
 router = APIRouter()
 router.dependencies.append(permission_gate("cases.read"))
@@ -190,8 +192,14 @@ async def create_case_from_template(
     if data.assignee:
         deny_unless(current_user.user_id, "cases.assign", session)
     # Before the call: it swallows errors, so a refusal inside would read as
-    # "Failed to create case from template".
+    # "Failed to create case from template". Refused whole, as on every create.
     assignee = resolve_assignee(session, data.assignee)
+    if assignee:
+        require_owner_can_write(session, assignee)
+        # The insert puts the case on the default team.
+        require_owner_on_team(
+            session, assignee, default_team(session).team_id, "{case_id}"
+        )
     case = workflow_service.create_case_from_template(
         template_id=template_id,
         title=data.title,
@@ -199,6 +207,7 @@ async def create_case_from_template(
         assignee=assignee,
         finding_ids=data.finding_ids,
         override_priority=data.override_priority,
+        session=session,
     )
 
     if not case:

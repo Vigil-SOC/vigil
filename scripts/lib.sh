@@ -101,6 +101,13 @@ _dc_medic() {
         echo "Warning: can't read $settings; Compose runs without Medic's overlay." >&2
         return 0
     fi
+    # The gateway's two credential files are each optional, but Compose won't
+    # start a container whose secret file is missing. An empty 0600 placeholder
+    # reads as absent to the gateway; an existing file is never touched.
+    for f in medic_gateway_token viewer_password; do
+        f="${settings%/*}/$f"
+        [ -e "$f" ] || [ -L "$f" ] || (umask 077 && : > "$f") 2>/dev/null || true
+    done
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in VIGIL_MEDIC_*=*) ;; *) continue ;; esac
         # Override files come from Vigil's own environment, never from compose.env.
@@ -367,6 +374,66 @@ frontend_deps_stale() {
     [ -f "$dir/package-lock.json" ] || return 1
     [ -f "$dir/node_modules/.package-lock.json" ] || return 0
     [ "$dir/package-lock.json" -nt "$dir/node_modules/.package-lock.json" ]
+}
+
+# sha256 of the given files' concatenated contents followed by stdin.
+files_digest() {
+    { cat "$@"; cat; } | if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi | cut -d' ' -f1
+}
+
+# Install the pinned MCP connectors from infra/docker/mcp-packages under
+# $VIGIL_MCP_PREFIX (default: the repo's .mcp/), as Dockerfile.mcp-runner does,
+# so installed_launch runs them instead of npx/uvx resolving at runtime. Each
+# half is skipped while its stamp matches its sources. Never fatal: on failure
+# it sets MCP_CONNECTORS_PROBLEM, and connectors fall back to npx/uvx.
+#   $1 non-empty to skip the npm half (no usable node)
+install_mcp_connectors() {
+    local no_node="$1" src="$REPO_ROOT/infra/docker/mcp-packages"
+    export VIGIL_MCP_PREFIX="${VIGIL_MCP_PREFIX:-$REPO_ROOT/.mcp}"
+    local npm_dir="$VIGIL_MCP_PREFIX/npm" uv_dir="$VIGIL_MCP_PREFIX/uv-tools"
+    local log="$REPO_ROOT/logs/mcp-install.log" failed="" stamp
+    mkdir -p "$REPO_ROOT/logs" "$VIGIL_MCP_PREFIX" || { MCP_CONNECTORS_PROBLEM="cannot create $VIGIL_MCP_PREFIX"; return 0; }
+
+    local npm_files=("$src/package.json" "$src/package-lock.json" "$src/.npmrc" "$src/postinstall.mjs")
+    stamp=$(files_digest "${npm_files[@]}" </dev/null)
+    if [ -n "$no_node" ] || ! command -v npm >/dev/null; then
+        failed="npm (no Node.js 20+)"
+    elif [ "$(cat "$npm_dir/.vigil-stamp" 2>/dev/null)" != "$stamp" ]; then
+        echo "Installing pinned npm MCP connectors into $npm_dir (log: $log)..."
+        rm -rf "$npm_dir" && mkdir -p "$npm_dir" && cp "${npm_files[@]}" "$npm_dir/"
+        if (cd "$npm_dir" && npm ci --omit=dev --no-audit --no-fund) >>"$log" 2>&1; then
+            echo "$stamp" > "$npm_dir/.vigil-stamp"
+        else
+            # A half-done tree may hold unpatched connectors at their pins.
+            rm -rf "$npm_dir"; failed="npm"
+        fi
+    fi
+
+    # The tool venvs are built on the venv's interpreter, so its pin is in the stamp.
+    stamp=$(python_pin | files_digest "$src/uv-tools.txt")
+    if ! ensure_uv; then
+        failed="${failed:+$failed, }uv (no uv)"
+    elif [ "$(cat "$uv_dir/.vigil-stamp" 2>/dev/null)" != "$stamp" ]; then
+        echo "Installing pinned uv MCP connectors into $uv_dir (log: $log)..."
+        rm -rf "$uv_dir" && mkdir -p "$uv_dir"
+        local line uv_failed=0
+        while read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
+            # Unquoted on purpose: a line is a spec plus its flags, as xargs -L1 reads it.
+            # shellcheck disable=SC2086
+            UV_TOOL_DIR="$uv_dir" UV_TOOL_BIN_DIR="$uv_dir/.bin" UV_PYTHON_DOWNLOADS=never \
+                "$UV" tool install --python "$REPO_ROOT/venv/bin/python" $line >>"$log" 2>&1 \
+                || { uv_failed=1; echo "uv tool install failed: $line" >>"$log"; }
+        done < "$src/uv-tools.txt"
+        # Tools that did install stay usable; no stamp, so the next start retries.
+        if [ "$uv_failed" -eq 0 ]; then echo "$stamp" > "$uv_dir/.vigil-stamp"; else failed="${failed:+$failed, }uv"; fi
+    fi
+
+    if [ -n "$failed" ]; then
+        MCP_CONNECTORS_PROBLEM="not installed: $failed (see $log); those connectors fall back to npx/uvx"
+        echo "Warning: MCP connectors: $MCP_CONNECTORS_PROBLEM" >&2
+    fi
+    return 0
 }
 
 # Where dependency versions come from. requirements.lock is fully pinned and
@@ -809,9 +876,24 @@ host_state_dir() {
     (cd "$state" && pwd)
 }
 
+# The user the backup and upgrade one-shots run as: the host's uid:gid, so what
+# they write in the bind mounts is the host user's. On macOS the host uid (501)
+# cannot enter the image's /home/vigil, owned by its vigil user (1000), and
+# Docker Desktop writes bind mounts as the host user whatever the container's
+# uid, so there they run as the image's user. VIGIL_BACKUP_RUN_USER overrides both.
+backup_run_user() {
+    if [ -n "${VIGIL_BACKUP_RUN_USER:-}" ]; then
+        echo "$VIGIL_BACKUP_RUN_USER"
+    elif [ "$(uname -s)" = Darwin ]; then
+        echo "1000:1000"
+    else
+        echo "$(id -u):$(id -g)"
+    fi
+}
+
 # Host paths and `docker compose run` flags every backup container shares.
 # Exports the State Directory and investigation workdir the compose `backup`
-# service mounts and sets BACKUP_RUN_ARGS (host user, plus the repo-root .env
+# service mounts and sets BACKUP_RUN_ARGS (backup_run_user, plus the repo-root .env
 # when present, mounted $1: ro by default).
 prepare_backup_mounts() {
     local env_mode="${1:-ro}"
@@ -826,7 +908,7 @@ prepare_backup_mounts() {
     export VIGIL_BACKUP_INVESTIGATIONS_DIR="$(cd "$investigations" && pwd)"
     mkdir -p "$upgrade"
     export VIGIL_UPGRADE_HOST_DIR="$(cd "$upgrade" && pwd)"
-    BACKUP_RUN_ARGS=(--user "$(id -u):$(id -g)")
+    BACKUP_RUN_ARGS=(--user "$(backup_run_user)")
     if [ -f "$REPO_ROOT/.env" ]; then
         BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
     fi

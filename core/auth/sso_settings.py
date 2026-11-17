@@ -7,6 +7,7 @@ store, and the read model says only whether one is set.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import NamedTuple, Optional
 
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from core.storage.models import SystemConfig
 from core.storage.unit_of_work import unit_of_work
+
+logger = logging.getLogger(__name__)
 
 KEY = "auth.sso"
 SECRET_KEY = "VIGIL_SSO_CLIENT_SECRET"
@@ -37,8 +40,16 @@ def missing(endpoint: str) -> str:
 
 
 class GroupRole(BaseModel):
-    group: str = Field(min_length=1, max_length=256)
+    # A claim string while sync is off. While sync is on, the group's externalId.
+    group: str = Field(min_length=1, max_length=1024)
     role_id: str = Field(min_length=1)
+
+
+class TeamLine(BaseModel):
+    """A pushed group's externalId, and the team its members join."""
+
+    group: str = Field(min_length=1, max_length=1024)
+    team_id: str = Field(min_length=1, max_length=50)
 
 
 class SsoSettings(BaseModel):
@@ -47,8 +58,14 @@ class SsoSettings(BaseModel):
     client_id: str = Field("", max_length=512)
     # The provider's issuer from the last successful discovery check; None: never reached.
     issuer: Optional[str] = None
-    # Checked top to bottom at sign-in; the first match wins.
+    # Checked top to bottom; the first match wins. Sign-in reads these for an
+    # account that is not managed. A saved mapping reads them for one that is.
     group_roles: list[GroupRole] = Field(default_factory=list, max_length=200)
+    # Teams kept in step with pushed groups. Empty until a mapping is saved.
+    team_lines: list[TeamLine] = Field(default_factory=list, max_length=200)
+    # The person who last saved the role lines or the team lines. None until then,
+    # and while it is none a push stores membership and changes no role or team.
+    mapping_author: Optional[str] = None
     default_role_id: str = DEFAULT_ROLE
     groups_claim: str = Field("groups", min_length=1, max_length=128)
     # Password sign-in and reset links are refused for people while on (#4286).
@@ -56,6 +73,10 @@ class SsoSettings(BaseModel):
     # When the discovery URL or client ID last changed; None: before this was kept,
     # which no sign-in qualifies against until the next such save.
     provider_changed_at: Optional[datetime] = None
+    # Directory sync (#4423). Off until someone turns it on. The claim is the
+    # sign-in value the provider also sends as SCIM externalId.
+    sync_enabled: bool = False
+    directory_id_claim: str = Field("sub", min_length=1, max_length=128)
 
 
 class Stored(NamedTuple):
@@ -84,8 +105,15 @@ def settings() -> SsoSettings:
         try:
             return read_row(session)[0].settings
         except (ValidationError, TypeError, ValueError):
-            # A row edited by hand into something invalid: the defaults hold.
-            return SsoSettings()
+            # A row edited by hand into something invalid: the defaults hold,
+            # except Require single sign-on, which a broken row never turns off.
+            row = session.get(SystemConfig, KEY)
+            value = row.value if row is not None else None
+            required = isinstance(value, dict) and value.get("require_sso") is True
+            logger.error(
+                "The auth.sso settings row is invalid; SSO is off until it is re-saved"
+            )
+            return SsoSettings(require_sso=required)
 
 
 class DiscoveryRefused(Exception):

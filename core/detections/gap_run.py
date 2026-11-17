@@ -1,23 +1,24 @@
 """What the daily detection gaps run raises: the gaps in identify_gaps' report over a
 rolling window, counting only evidence no earlier run raised, at or above a floor,
-not on a technique an open Case already carries, ranked by count. Plain code over the
-report; the agent the run queues reads the full report again itself.
+not on a technique a rule is already proposed or in shadow for, ranked by count.
+Plain code over the report; the agent the run queues reads the full report again
+itself.
 
 The run remembers what it raised, not when it last ran: each missed run and each
-alert it raised (or found covered by an open Case), by id, and each blind spot. A
-window re-read each day catches what a time marker would skip for good: evidence
-committed after a run started, an alert labelled after it was stored, and sightings
-that reach the floor only over several days."""
+alert it raised (or held back because a rule for its technique is already being
+worked), by id, and each blind spot. A window re-read each day catches what a time
+marker would skip for good: evidence committed after a run started, an alert
+labelled after it was stored, and sightings that reach the floor only over several
+days."""
 
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
-from core.cases.case_status import CLOSED
 from core.detections.gaps import TECHNIQUE_ID, read_alert_labels
 from core.storage.connection import get_db_manager
-from core.storage.models import Case, SystemConfig
+from core.storage.models import SystemConfig
 
 logger = logging.getLogger(__name__)
 
@@ -204,15 +205,6 @@ async def recent_intel() -> Dict[str, List[str]]:
         await service.close()
 
 
-def open_case_techniques() -> Set[str]:
-    """Techniques an open Case already carries: a gap on one is not raised again."""
-    with get_db_manager().session_scope() as session:
-        rows = session.query(Case.mitre_techniques).filter(Case.status != CLOSED)
-        return {
-            t.strip().upper() for (techniques,) in rows for t in techniques or () if t
-        }
-
-
 def _run_key(run: Mapping[str, Any]) -> str:
     return f"{run['investigation_kind']}:{run['investigation_id']}"
 
@@ -262,7 +254,9 @@ def to_raise(
     floor: int = GAP_FLOOR,
     window_start: Optional[datetime] = None,
 ) -> Tuple[List[Gap], List[Gap]]:
-    """(the gaps to raise, biggest first; the technique gaps an open Case covers).
+    """(the gaps to raise, biggest first; the technique gaps held back).
+    ``covered`` is the techniques a rule is already proposed or in shadow for
+    (proposals.worked_techniques): a gap on one is held back, its evidence kept.
     A technique is raised at or above the floor of new evidence (or one new
     confirmed run); a blind spot when no run raised it while it stayed open."""
     # An intel gap raised before the window is raised again while intel names it.
@@ -291,10 +285,10 @@ def after_run(
     to: Iterable[Gap],
     held: Iterable[Gap],
 ) -> Raised:
-    """What is remembered once the run succeeds: the evidence it raised, and what an
-    open Case covered (that Case is looking at it), at ``started``; what was raised
-    before the window drops out (its evidence is older, so the window can't hold it
-    again); a blind spot stays while it is still open."""
+    """What is remembered once the run succeeds: the evidence it raised, and what it
+    held back (a rule for that technique is already being worked), at ``started``;
+    what was raised before the window drops out (its evidence is older, so the window
+    can't hold it again); a blind spot stays while it is still open."""
     at = started.isoformat()
     start = window_start.isoformat()
     runs = {k: v for k, v in raised.runs.items() if v >= start}
@@ -312,6 +306,7 @@ def after_run(
     return Raised(runs, alerts, frozenset(blind), intel)
 
 
-def case_techniques(raised: Iterable[Gap]) -> List[str]:
-    """The techniques the run's Case carries, so the next run sees them covered."""
-    return sorted({g.subject.upper() for g in raised if g.kind != BLIND})
+def rule_gaps(raised: Iterable[Gap]) -> List[Gap]:
+    """The raised gaps the run is handed, in order: all but blind spots. A blind spot
+    is a missing data source no rule answers; the Detections page shows it."""
+    return [g for g in raised if g.kind != BLIND]

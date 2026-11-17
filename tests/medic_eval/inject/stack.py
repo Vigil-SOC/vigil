@@ -28,6 +28,7 @@ from tests.medic_compose.compose import (
     compose_project,
     require_compose_project,
 )
+from tests.medic_eval import medic_api
 from tests.medic_eval.sample import SERVICES as SAMPLED
 
 HERE = Path(__file__).resolve().parent
@@ -246,8 +247,11 @@ class Stack:
         out = self.wait(
             lambda: self.logs("backend"), lambda out: SETUP_CODE_LOG_MARK in out
         )
-        line = [ln for ln in out.splitlines() if SETUP_CODE_LOG_MARK in ln][-1]
-        code = line.split(SETUP_CODE_LOG_MARK, 1)[1].strip()
+        # The line is JSON by default (message and msg_template both contain the
+        # mark). Take the hex value, which is what a text line has too.
+        found = re.findall(r"First-run setup code:\s*([0-9a-fA-F]{32})", out)
+        assert found, "the setup code was not in the backend log"
+        code = found[-1]
         status, body = self.api(
             "POST",
             "/api/auth/bootstrap",
@@ -284,6 +288,8 @@ class Stack:
             lambda: self.http("GET", "backend", 6987, "/api/health")[0],
             lambda c: c == 200,
         )
+        # The image's bundled pack is the last release's and lacks the lane-1 rules.
+        medic_api.import_source_pack(self)
 
     def stop(self) -> None:
         self.compose("down", "-v", "--remove-orphans", check=False)

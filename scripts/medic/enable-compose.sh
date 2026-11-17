@@ -8,27 +8,30 @@
 #    they already exist:
 #      viewer_username  medic-<12 random a-z0-9>: the gateway's Viewer login
 #                       (D2-17: not guessable)
-#      viewer_password  that login's password (C3 §4.6, K1 T-34)
 #      api_key          X-Medic-Key (X2): what the backend presents to Medic's API
+#    An upgraded site's viewer_password is left as it is, never made or rotated
+#    now: the gateway stops using it once it can read a token (#4425).
 # 2. compose.env beside them: VIGIL_MEDIC_ENABLED=true and the host-specific
 #    values Compose needs. Every later compose command that should keep Medic
 #    passes it (the script prints the command).
 # 3. Builds the three Medic images.
-# 4. Starts (or recreates) the backend with the flag on, then creates the
-#    Viewer service account inside it: `python -m core.auth.service_account`,
-#    the password on stdin, never on a command line. Lockout-exempt, Viewer only.
-# 5. On Linux, hands each secret file to whoever reads it: viewer_password to
-#    the gateway (10002); api_key to root:10010 0640, the group Medic and the
+# 4. Starts (or recreates) the backend with the flag on, then, unless
+#    medic_gateway_token already holds one, mints the gateway's token inside it
+#    with `python -m core.auth.service_account token`, which creates the Viewer
+#    service account if it is missing. Its stdout goes straight into the file,
+#    never to the terminal or a command line. Lockout-exempt, Viewer only.
+# 5. On Linux, hands each secret file to whoever reads it: medic_gateway_token
+#    and viewer_password to the gateway (10002); api_key to root:10010 0640, the group Medic and the
 #    backend join with `group_add` (S6-3). Compose ignores uid/mode on file
 #    secrets and bind-mounts them as they are; Docker Desktop's file sharing
 #    needs no change.
 # 6. Starts Medic, its gateway and Docker proxy, and recreates the running Vigil
 #    services the overlay puts on medic-net.
 #
-#   --secrets-only  steps 1 and 2 only: no Docker
-#   --rotate        new viewer_password and api_key (the name stays). Changes the
-#                   account's password and recreates medic and medic-gateway,
-#                   which hold the old files until then.
+#   --secrets-only  steps 1 and 2 only: no Docker, so no token is minted
+#   --rotate        new api_key and a new token (the name stays; the old token
+#                   keeps working for 24 hours). Recreates the backend, medic and
+#                   medic-gateway, which hold the old files until then.
 #
 # Environment:
 #   VIGIL_MEDIC_SECRETS_DIR   absolute path, default ~/.vigil-medic/secrets (not
@@ -96,9 +99,6 @@ if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then
     exit 1
 fi
 
-is_secret() {
-    printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'
-}
 # X2's X-Medic-Key: 32 random bytes, base64url, no padding (the gateway's check).
 is_api_key() {
     printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{43}$'
@@ -117,32 +117,26 @@ write_private() {
     mv -f "$tmp" "$dir/$1"
 }
 
-# Sets $made to kept|created. Called directly, never inside $(...): bash turns
-# `set -e` off in command substitutions, which would hide a failed write.
-# Plain variables, not an associative array: macOS ships bash 3.2.
-make_secret() {
-    local name="$1" file="$dir/$1" value check=is_secret
-    [ "$name" = api_key ] && check=is_api_key
+# api_key. Sets $made to kept|created. Called directly, never inside $(...):
+# bash turns `set -e` off in command substitutions, which would hide a failed
+# write.
+make_api_key() {
+    local file="$dir/api_key" value
     if [ -s "$file" ] && [ "$rotate" = 0 ]; then
         # Unreadable here means it was handed to the container's uid (Linux).
-        if [ -r "$file" ] && ! "$check" "$(cat "$file")"; then
+        if [ -r "$file" ] && ! is_api_key "$(cat "$file")"; then
             echo "error: $file isn't a secret this script wrote; re-run with --rotate" >&2
             exit 1
         fi
         made=kept
         return
     fi
-    if [ "$name" = api_key ]; then
-        value="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
-    else
-        # 256 bits as 64 hex characters: alphanumeric, so it survives any login form.
-        value="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
-    fi
-    "$check" "$value" || {
+    value="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
+    is_api_key "$value" || {
         echo "error: couldn't read 32 random bytes from /dev/urandom" >&2
         exit 1
     }
-    write_private "$name" "$value"
+    write_private api_key "$value"
     made=created
 }
 
@@ -175,11 +169,22 @@ make_username() {
 made=
 make_username
 user_outcome="$made"
-make_secret viewer_password
-viewer_outcome="$made"
-make_secret api_key
+make_api_key
 api_outcome="$made"
 viewer_user="$(cat "$dir/viewer_username")"
+# Empty placeholders for the gateway's optional credential files, as lib.sh's dc
+# makes them: Compose won't start it with a secret file missing, even from the
+# printed command after --secrets-only. Empty reads as absent.
+for f in medic_gateway_token viewer_password; do
+    [ -e "$dir/$f" ] || [ -L "$dir/$f" ] || (umask 077 && : > "$dir/$f")
+done
+# Minted by the full run once the backend is up. A file that holds one is kept:
+# `token` rotates whatever is active, so calling it again is not harmless.
+if [ -s "$dir/medic_gateway_token" ] && [ "$rotate" = 0 ] && [ ! -e "$dir/.mint" ]; then
+    token_outcome=kept
+else
+    token_outcome="still to do"
+fi
 
 if [ -n "${VIGIL_MEDIC_DOCKER_GID:-}" ]; then
     docker_gid="$VIGIL_MEDIC_DOCKER_GID"
@@ -226,18 +231,6 @@ dcm() {
     dc "${env_files[@]}" --profile medic "$@"
 }
 
-# Prints a secret on stdout, for a pipe only. On Linux a re-run finds the file
-# already handed to the container's uid, so read it as root in a throwaway
-# container with no network.
-read_secret() {
-    if [ -r "$dir/$1" ]; then
-        cat "$dir/$1"
-    else
-        docker run --rm --network none --user 0:0 -v "$dir:/s:ro" \
-            --entrypoint cat vigil-medic-gateway:local "/s/$1"
-    fi
-}
-
 # Whether the backend's rendered config has a line matching $1. The secrets in
 # it go down a pipe, never to the screen. No grep -q: exiting early would
 # SIGPIPE compose, and pipefail would turn a match into a failure.
@@ -245,8 +238,13 @@ backend_renders() {
     dcm config backend | grep -E "$1" > /dev/null
 }
 
-ensure_account() {
-    local err rc running up=0 _
+# Mints the gateway's token into medic_gateway_token (rotating an active one)
+# and sets $token_outcome. stdout goes straight into a 0600 file in the secrets
+# dir, renamed into place only once it holds a token, so a failed mint leaves
+# the old file as it was. Never `ensure`: it refuses (77) once the account has a
+# token, and `token` creates a missing account itself.
+mint_token() {
+    local err tmp rc running up=0 _
     for _ in $(seq 1 60); do
         # An assignment, so a failing compose call stops the run (set -e)
         # rather than reading as a backend that isn't up.
@@ -261,35 +259,63 @@ ensure_account() {
         echo "error: the backend container isn't running; see: docker compose logs backend" >&2
         exit 1
     fi
+    # Until the new token is in place: `token` commits a rotation before the
+    # file is written, so a run cut short here must mint again next time, or
+    # the kept file would hold a token that ends in 24 hours.
+    : > "$dir/.mint"
     err="$(mktemp)"
-    # Only 75 (schema or Viewer role not there yet) is
-    # retried. Anything else is final: 64 usage, 70 database error, 77 refused,
-    # 1 an image without this code (rebuild the backend).
+    tmp="$(umask 077 && mktemp "$dir/.medic_gateway_token.XXXXXX")"
+    # A run that stops early leaves no copy of a token behind.
+    trap "rm -f $(printf '%q ' "$tmp" "$err")" EXIT
+    # Only 75 (schema or Viewer role not there yet) is retried. Anything else
+    # is final: 64 usage, 70 database error, 77 refused, 1 an image without
+    # this code (rebuild the backend).
     for _ in $(seq 1 60); do
         rc=0
-        # ensure's stdout names the account. The name is not a credential, but
-        # it is the thing a password guess needs, so the script keeps it in the
-        # secrets file and prints only the outcomes below.
-        read_secret viewer_password \
-            | dcm exec -T backend python -m core.auth.service_account ensure "$viewer_user" \
-            >/dev/null 2> "$err" || rc=$?
-        case "$rc" in
-            0) rm -f "$err"; return 0 ;;
-            75) ;;
-            *) break ;;
-        esac
+        dcm exec -T backend python -m core.auth.service_account token "$viewer_user" \
+            > "$tmp" 2> "$err" || rc=$?
+        [ "$rc" = 75 ] || break
         sleep 3
     done
-    echo "error: couldn't create the Medic service account (exit $rc):" >&2
-    cat "$err" >&2
+    if [ "$rc" = 0 ] && ! grep -Eqx 'vgl_api_[A-Za-z0-9_-]+' "$tmp"; then
+        rc=1
+        echo "no token on its output" >> "$err"
+    fi
+    if [ "$rc" != 0 ]; then
+        rm -f "$tmp"
+        echo "error: couldn't mint the gateway's token (exit $rc):" >&2
+        cat "$err" >&2
+        rm -f "$err"
+        exit 1
+    fi
+    # Its status line, "service account <name>: created|minted|rotated", goes
+    # to stderr. Only the word is kept: the name is never printed.
+    case "$(cat "$err")" in
+        *": rotated"*) token_outcome=rotated ;;
+        *) token_outcome=minted ;;
+    esac
     rm -f "$err"
-    exit 1
+    # The gateway's before it is in place; the rename keeps the owner.
+    if [ "$(uname -s)" = Linux ]; then
+        if [ "$(id -u)" = 0 ]; then
+            chown 10002:10002 "$tmp"
+        else
+            docker run --rm --network none --user 0:0 -v "$dir:/s" \
+                --entrypoint chown vigil-medic-gateway:local 10002:10002 "/s/${tmp##*/}"
+        fi
+    fi
+    mv -f "$tmp" "$dir/medic_gateway_token"
+    trap - EXIT
+    rm -f "$dir/.mint"
 }
 
-if [ "$secrets_only" = 1 ] && { [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ]; }; then
+if [ "$secrets_only" = 1 ] && [ "$api_outcome" = created ]; then
     # The next full run must recreate medic and the gateway even though it
     # finds these files "kept".
     : > "$dir/.recreate"
+fi
+if [ "$secrets_only" = 1 ] && [ "$rotate" = 1 ]; then
+    : > "$dir/.mint" # the next full run rotates the token, with or without --rotate
 fi
 if [ "$secrets_only" = 0 ]; then
     # Recreating the backend re-renders its environment. Refuse if this shell
@@ -306,9 +332,12 @@ if [ "$secrets_only" = 0 ]; then
     if [ "$(uname -s)" = Linux ]; then
         # api_key: read by Medic and the backend through their shared group,
         # never gid 1000, which on Linux is often a person's own group.
-        own="chown 10002:10002 /s/viewer_password && chown 0:$MEDIC_KEY_GID /s/api_key && chmod 0640 /s/api_key"
+        # The token and password files exist by now: kept, or the empty
+        # placeholders lib.sh's dc makes. A new token is handed over as it is
+        # minted (mint_token).
+        own="chown 10002:10002 /s/medic_gateway_token /s/viewer_password && chown 0:$MEDIC_KEY_GID /s/api_key && chmod 0640 /s/api_key"
         if [ "$(id -u)" = 0 ]; then
-            chown 10002:10002 "$dir/viewer_password"
+            chown 10002:10002 "$dir/medic_gateway_token" "$dir/viewer_password"
             chown "0:$MEDIC_KEY_GID" "$dir/api_key"
             chmod 0640 "$dir/api_key"
         else
@@ -324,14 +353,13 @@ if [ "$secrets_only" = 0 ]; then
         dcm up -d --force-recreate backend
     fi
     # The upgrade one-shot is a dependency of backend, so this applies the schema
-    # and the Viewer role before the account step.
+    # and the Viewer role before the token step.
     dcm up -d backend
-    ensure_account
-    if [ "$viewer_outcome" = created ] || [ "$api_outcome" = created ] \
+    [ "$token_outcome" = kept ] || mint_token
+    if [ "$token_outcome" != kept ] || [ "$api_outcome" = created ] \
         || [ -e "$dir/.recreate" ]; then
         # A new file (--rotate, or one deleted and re-minted): Compose
-        # bind-mounts the old inode, so only a recreate sees it. Straight after
-        # the password changed, since the gateway stops after two refusals.
+        # bind-mounts the old inode, so only a recreate sees it.
         dcm up -d --force-recreate medic medic-gateway
         rm -f "$dir/.recreate"
     fi
@@ -347,25 +375,31 @@ if [ "$secrets_only" = 0 ]; then
 fi
 
 echo "Medic secrets in $dir:"
-echo "  viewer_username  $user_outcome"
-echo "  viewer_password  $viewer_outcome"
-echo "  api_key          $api_outcome"
+echo "  viewer_username      $user_outcome"
+echo "  api_key              $api_outcome"
+echo "  medic_gateway_token  $token_outcome"
+# An upgraded site's: the gateway reads the token first, and the backend ends
+# the password on the token's first use. A later release deletes the file.
+if [ -s "$dir/viewer_password" ]; then
+    echo "  viewer_password      left in place, unused once the gateway reads the token"
+fi
 if [ "$secrets_only" = 1 ]; then
     cat <<EOF
 
---secrets-only: nothing started. Run without it to build the images, create the
-Viewer service account and start Medic.
+--secrets-only: nothing started and no token minted. Run without it to build
+the images, mint the gateway's token (creating the Viewer service account) and
+start Medic.
 EOF
     if [ "$rotate" = 1 ]; then
         cat <<EOF2
 After --rotate the running containers still hold the old files: the full run
-changes the account's password, recreates the backend and does
+rotates the token, recreates the backend and does
   up -d --force-recreate medic medic-gateway
 EOF2
     fi
 else
     echo
-    echo "Medic is on: service account ready, medic, medic-gateway and medic-dockerproxy started."
+    echo "Medic is on: gateway token $token_outcome; medic, medic-gateway and medic-dockerproxy started."
 fi
 env_hint=""
 [ -f "$REPO_ROOT/.env" ] && env_hint="--env-file $REPO_ROOT/.env "

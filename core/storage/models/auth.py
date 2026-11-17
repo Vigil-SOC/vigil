@@ -106,7 +106,8 @@ class SignIn(Base):
             "end_reason IN ('sign_out', 'expiry', 'revoked', 'idle', 'length_limit',"
             " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased',"
             " 'ended_by_person', 'ended_by_admin', 'everyone_signed_out',"
-            " 'sign_in_limit', 'too_many_confirmations', 'restore')",
+            " 'sign_in_limit', 'too_many_confirmations', 'restore',"
+            " 'recovery', 'mfa_reset')",
             name="sign_ins_end_reason_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),
@@ -167,6 +168,12 @@ class SsoLink(Base):
     )
     issuer: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str] = mapped_column(Text, nullable=False)
+    # The provider's externalId. Nullable until a sign-in or a push records it.
+    # Unique per issuer when set. ``managed`` is set by a push, not by sign-in.
+    directory_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    managed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
@@ -174,14 +181,21 @@ class SsoLink(Base):
     __table_args__ = (
         Index("idx_sso_links_principal", "principal_id"),
         Index("uq_sso_links_subject", "issuer", "subject", unique=True),
+        Index(
+            "uq_sso_links_directory",
+            "issuer",
+            "directory_id",
+            unique=True,
+            postgresql_where=text("directory_id IS NOT NULL"),
+        ),
     )
 
 
 class AuthLink(Base):
-    """A single-use link that reaches a public screen: an invite (#4226) or, for
-    the recovery sibling, a reset. Only the SHA-256 of the random value is kept;
-    the value itself is shown once and never stored. ``core/auth/invites.py``
-    owns it.
+    """A single-use link that reaches a public screen: an invite (#4226), a
+    password reset, or a confirmation of an address the person changed. Only
+    the SHA-256 of the random value is kept; the value itself is shown once
+    and never stored. ``core/auth/invites.py`` owns it.
     """
 
     __tablename__ = "auth_links"
@@ -220,7 +234,9 @@ class AuthLink(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("kind IN ('invite', 'reset')", name="auth_links_kind_check"),
+        CheckConstraint(
+            "kind IN ('invite', 'reset', 'email')", name="auth_links_kind_check"
+        ),
         Index("uq_auth_links_token_hash", "token_hash", unique=True),
         # One open invite per address, whatever its expiry: replacing closes it.
         Index(
@@ -229,6 +245,15 @@ class AuthLink(Base):
             unique=True,
             postgresql_where=text(
                 "kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL"
+            ),
+        ),
+        # One open email-confirmation link per account: a new one closes the last.
+        Index(
+            "uq_auth_links_open_email",
+            "principal_id",
+            unique=True,
+            postgresql_where=text(
+                "kind = 'email' AND used_at IS NULL AND revoked_at IS NULL"
             ),
         ),
     )
@@ -270,6 +295,14 @@ class User(Base):
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Why the account is inactive, written only by deactivate_account and cleared
+    # on reactivate. Null on rows deactivated before this existed, and that is
+    # not a sync deactivation. scim_version is the If-Match token for a push.
+    deactivation_route: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    scim_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
 
     # MFA
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -306,6 +339,12 @@ class User(Base):
     dormancy_held_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
     )
+
+    # Break-glass (#4532): when the host marked this account. Set and cleared only
+    # by scripts/reset_password.py. A marked account signs in under Require SSO
+    # with its password, a code and a reason; its lock is always timed, and it is
+    # left out of dormancy and password expiry.
+    break_glass_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.

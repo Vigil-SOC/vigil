@@ -85,7 +85,10 @@ def insert_case(
             .scalars()
             .all()
         )
-        case.findings.extend(findings)
+        # Linked in the order given, so the first one is the earliest link: the
+        # finding the case was opened from.
+        given = {fid: n for n, fid in enumerate(finding_ids)}
+        case.findings.extend(sorted(findings, key=lambda f: given[f.finding_id]))
         session.flush()
 
     if writer := case_trail_hook.writer(session):

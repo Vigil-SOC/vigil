@@ -50,10 +50,10 @@ Choose by what leaked:
 The ring is only as secret as `JWT_SECRET_KEY` plus the database. If both were exposed, rotating ring keys does not help, because the attacker can read the new keys as they are written. Replace the wrapping secret first:
 
 1. Set a new `JWT_SECRET_KEY` where it is defined (`.env`, the shell Compose reads, or the secret store).
-2. Run `python -m core.auth.key_ring rewrap`. It asks for the previous value and wraps the ring under the new one. (A secret that Vigil keeps in `secrets.enc` rotates by itself after 12 months.)
+2. Run `python -m core.auth.key_ring rewrap`. It asks for the previous value and wraps the ring under the new one. (A secret that Vigil keeps in `secrets.enc` rotates by itself once it is older than `KEY_ROTATION_DAYS`. That is 12 months when unset, and it cannot be set longer.)
 3. Run `emergency all`.
 
-Vigil rotates every key older than 12 months on its own, with its normal overlap. When a rotation fails the old key stays and the bell warns people who hold `sessions.manage`. A `JWT_SECRET_KEY` that is set outside Vigil cannot be changed by Vigil: the trail notes it 30 days before 12 months, and the bell warns once it is overdue.
+Vigil rotates every key older than its rotation period on its own, with its normal overlap. The period is `KEY_ROTATION_DAYS`: a whole number of days, 12 months (365) when unset, and never longer. A longer or unreadable value is ignored, 12 months still applies, and the API logs that once at start. When a rotation fails the old key stays and the bell warns people who hold `sessions.manage`. A `JWT_SECRET_KEY` that is set outside Vigil cannot be changed by Vigil: the trail notes it 30 days before the period ends (at once, when the period is 30 days or less), and the bell warns once the period has passed.
 
 ## 4. The `mfa` key and the database were both exposed
 
@@ -78,7 +78,7 @@ What people see, and what you do:
 - **Recovery codes.** They are removed at the reset when they can't be read. The person makes new ones in their two-step settings; the authenticator app and security keys are not touched.
 - **Service accounts** are not affected: their gateway writes its password again at its next start.
 - **A restore** whose ring cannot be opened (4, 5) replaces the pepper too. The restore notice counts the people who must reset their password, and the restore's trail entry records it as `passwords_to_reset`. A pepper version retired before the restore stays retired after it.
-- **`recover_admin`** gives a role, never touches a password. If the person it names must also reset their password, issue the link as above.
+- **`recover_admin <username>`** gives a role, never touches a password. It asks for your name, a reason and how you confirmed the person (and optionally your own Vigil account), so on Compose run it with `docker exec -it`. The trail's `user.role_changed` entry keeps those beside it, with this machine's account, the invoking user under sudo and the host, where erasure blanks them. If the person it names must also reset their password, issue the link as above.
 
 ## 4b. Restricted cases nobody can read
 
@@ -108,3 +108,4 @@ A key retired before a restore stays retired after it, and its version number is
 - [ ] The trail reviewed for `auth.key_rotated`, `auth.key_retired` and `auth.emergency_rotation` entries.
 - [ ] Integration credentials and API tokens revoked or rotated where the incident touched them.
 - [ ] A fresh backup taken, so the paired `wrapping-key` snapshot holds the new secret.
+- [ ] Break-glass accounts given fresh codes, and a host reset link after `emergency pepper` or `all`: see [break-glass accounts](break-glass.md).

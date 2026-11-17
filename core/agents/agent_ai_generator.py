@@ -4,6 +4,7 @@ A draft is checked the way a PUT /api/v1/agents/{id} is before it is returned,
 so the console never shows a manifest it could not save.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -62,8 +63,10 @@ class AgentAIGenerator:
 
         try:
             raw = await complete(
-                message=self._build_user_prompt(description, current_draft, feedback),
-                system_prompt=self._build_system_prompt(),
+                message=await asyncio.to_thread(
+                    self._build_user_prompt, description, current_draft, feedback
+                ),
+                system_prompt=await asyncio.to_thread(self._build_system_prompt),
                 max_tokens=4096,
             )
         except NoProviderConfigured as e:
@@ -78,7 +81,7 @@ class AgentAIGenerator:
         if text is None:
             return _failed("Could not read a manifest from the model's answer.")
         try:
-            vet_manifest(text, self._mcp_registry)
+            await asyncio.to_thread(vet_manifest, text, self._mcp_registry)
         except ManifestRefused as e:
             return {**_failed(str(e)), "refused": True}
         except CheckUnavailable as e:
@@ -172,9 +175,9 @@ class AgentAIGenerator:
 
     def _skills_context(self) -> str:
         try:
-            from core.skills.skill_library import load_skills, skill_roots
+            from core.skills.skill_hold import agent_skills
 
-            skills = load_skills(skill_roots())
+            skills = agent_skills()
         except Exception as e:
             logger.warning(f"Could not load skills: {e}")
             return "(none)"

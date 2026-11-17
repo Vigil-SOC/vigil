@@ -225,12 +225,21 @@ either way.
 
 Which incidents are in the file is Medic's command, not this script. It is the
 set whose stored `would_have` action is `prepare_support_bundle`: today, every
-lane-3 incident that was open during `--since`. Vigil's lane-3 notice
-(`core/platform/medic_incidents.py`, `_BUNDLE`) still tells the admin to run
-`sh scripts/vigil-support/vigil-support.sh` with no flag, and that run does
-not collect this section. Add `--medic` when the report should include it.
-An unknown option makes an older copy of the script exit before it writes
-anything, which is why that notice stays the no-flag command.
+lane-3 incident that was open during `--since`. A lane-1 daemon death or hang
+(`pipeline.daemon-component-failed-compose`,
+`pipeline.daemon-component-hung-compose`) that Medic restarted is in it too, so
+the defect stays reported after the restart cleared it. Each incident has a
+`fix` list, empty when nothing was run: one object per restart attempt with
+`action` (the incident's L1 name), `who` (`admin` or `medic`; the session id is
+never written), `level` (`L0`, `L1` or `L2`) and `result` (`cleared`,
+`not_cleared`, `not_back`, `not_verified`, or `""` until verified). Vigil's lane-3 notice
+(`core/platform/medic_incidents.py`, `_BUNDLE`) and the first-start summary's
+defect line tell the admin to run
+`sh scripts/vigil-support/vigil-support.sh --medic`, so the bundle holds the
+incident the notice is about, and say the script must be from Vigil 1.1.3 or
+later. A copy older than 1.1.3 does not know `--medic`: it stops on the
+unknown option and writes nothing. Run without `--medic`, the script does not
+collect this section.
 
 Lane reasons in the file, and the words those notices use. `_GATE` and
 `_UNKNOWN` in `core/platform/medic_incidents.py` are quoted here as they stand:

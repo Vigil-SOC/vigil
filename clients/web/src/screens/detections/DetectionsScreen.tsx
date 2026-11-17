@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { errorText } from '../../shared/errorText'
 import { detectionRulesApi } from '../../services/api'
@@ -14,6 +14,7 @@ import DeployAgain from './DeployAgain'
 import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
 import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
+import ProposedRules from './ProposedRules'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
@@ -207,22 +208,33 @@ function prompt(r: RuleRow, days: number): string {
   }
 }
 
-type Section = 'rules' | 'coverage'
+type Section = 'rules' | 'coverage' | 'proposed'
 const SECTIONS: readonly { id: Section; label: string }[] = [
   { id: 'rules', label: 'Rules' },
   { id: 'coverage', label: 'Coverage' },
+  { id: 'proposed', label: 'Proposed' },
 ]
 
-/** The shell heads the page (TITLES); under it, Import rules, then the rule health or the ATT&CK coverage map. */
+/** The shell heads the page (TITLES); under it, Import rules, then the rule health, the
+ * ATT&CK coverage map or the rules Vigil proposed. The tab is in the address (?tab=). */
 export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreenProps) {
-  const [section, setSection] = useState<Section>('rules')
+  const [params, setParams] = useSearchParams()
+  const section = SECTIONS.find((s) => s.id === params.get('tab'))?.id ?? 'rules'
+  // Only the tab changes: ?rules= (a rule-health link) stays, and a picked proposal goes with its tab.
+  const setSection = (id: Section) => setParams((now) => {
+    const next = new URLSearchParams(now)
+    if (id === 'rules') next.delete('tab')
+    else next.set('tab', id)
+    if (id !== 'proposed') next.delete('proposal')
+    return next
+  })
   return (
     <div className="x1 de">
       <div className="de-top de-top-tabs">
         <TabStrip label="Detections sections" tabs={SECTIONS} active={section} onChange={setSection} />
         <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
       </div>
-      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} /> : <CoverageMap goSettings={goSettings} />}
+      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} /> : section === 'coverage' ? <CoverageMap goSettings={goSettings} /> : <ProposedRules />}
     </div>
   )
 }
@@ -726,7 +738,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       </section>
 
       <p className="de-note">{report.limits}</p>
-      <FindingPopup id={finding} onClose={() => setFinding(null)} onConfigureAi={() => goSettings('ai-config')} />
+      <FindingPopup id={finding} onClose={() => setFinding(null)} />
       <ProofCardExport open={exporting} onClose={() => setExporting(false)} viewName={exportName} viewCount={matched} viewIds={viewIds} />
     </>
   )

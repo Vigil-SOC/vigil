@@ -237,6 +237,8 @@ def expiry_warning(user: User) -> list[dict[str, str]]:
     # No password (SSO-only person; stored as "") means nothing to change
     if due is None or user.service_account is True or not user.password_hash:
         return []
+    if user.break_glass_at is not None:  # a break-glass password never expires
+        return []
     left = math.ceil((due - utcnow()).total_seconds() / 86400)
     if left > WARN_DAYS:
         return []

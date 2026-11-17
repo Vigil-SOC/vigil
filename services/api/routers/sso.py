@@ -20,17 +20,30 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.dialects.postgresql import insert
 
-from core.auth import sign_ins, sso, sso_settings, trail_events
+from core.auth import (
+    directory_groups,
+    directory_sync,
+    sign_ins,
+    sso,
+    sso_settings,
+    trail_events,
+)
+from core.auth.auth_cookies import context_path_prefix
 from core.auth.password_reset import default_base_url
-from core.auth.permissions import require_permission
+from core.auth.permissions import (
+    deny_unless,
+    require_permission,
+    require_person_permission,
+)
 from core.config import get_settings
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import get_secret, secret_write_failure_detail, set_secret
-from core.storage.models import Role, SignIn, SystemConfig, User
+from core.storage.models import DirectoryPending, Role, SignIn, SystemConfig, User
 from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
+from services.api import group_mapping
 from services.api.routers.auth import _session_sid
-from services.api.routers.users import _can_assign_role
+from services.api.routers.users import _can_assign_role, _leaves_no_manager
 
 router = APIRouter()
 
@@ -41,6 +54,10 @@ ROUTER_META = RouterMeta(
 )
 
 _MANAGE = require_permission("roles.manage")
+# Every write here can widen access (group and default roles, turning off Require
+# single sign-on, choosing the provider), so it is a person's own act: a service
+# account or an API token may read but not save.
+_PERSON_MANAGE = require_person_permission("roles.manage", refuse_machine=True)
 
 NOT_REACHED = (
     "Single sign-on can be turned on only after a save has reached the provider"
@@ -56,6 +73,11 @@ REQUIRE_STALE = (
     "sign in with SSO again"
 )
 REQUIRE_FIRST = "Turn off Require single sign-on first"
+SYNC_HOLDS_PROVIDER = (
+    "Directory sync is on, so single sign-on stays on and the discovery URL "
+    "and client ID stay as they are. Turn directory sync off on the host first: "
+    "python -m core.auth.directory_sync_off"
+)
 
 
 def require_blockers(
@@ -167,7 +189,7 @@ def put_sso_settings(
     request: Request,
     response: Response,
     session: UnitOfWorkSession,
-    user: User = Depends(_MANAGE),
+    user: User = Depends(_PERSON_MANAGE),
     if_match: Optional[str] = Header(None),
 ):
     """Replace the settings, checking the provider when its address or client changes."""
@@ -195,16 +217,24 @@ def put_sso_settings(
         discovery_url=body.discovery_url.strip(),
         client_id=body.client_id.strip(),
         issuer=old.settings.issuer,
-        group_roles=[
-            sso_settings.GroupRole(group=g.group.strip(), role_id=g.role_id)
-            for g in body.group_roles
-        ],
+        group_roles=(
+            old.settings.group_roles
+            if old.settings.sync_enabled
+            else [
+                sso_settings.GroupRole(group=g.group.strip(), role_id=g.role_id)
+                for g in body.group_roles
+            ]
+        ),
+        team_lines=old.settings.team_lines,
+        mapping_author=old.settings.mapping_author,
         default_role_id=body.default_role_id,
         groups_claim=body.groups_claim.strip(),
         require_sso=(
             old.settings.require_sso if body.require_sso is None else body.require_sso
         ),
         provider_changed_at=old.settings.provider_changed_at,
+        sync_enabled=old.settings.sync_enabled,
+        directory_id_claim=old.settings.directory_id_claim,
     )
     changes = {
         "old": old.settings.model_dump(mode="json"),
@@ -219,7 +249,13 @@ def put_sso_settings(
         raise HTTPException(status_code=status, detail=reason)
 
     # Every role a group could grant, and the default, must be one the caller could assign by hand.
-    uses = [(g.role_id, "map a group to") for g in new.group_roles]
+    # While sync is on the mapping save is the only writer of those lines, and a
+    # raise is judged then, per account. This save leaves the lines as stored.
+    uses = (
+        []
+        if old.settings.sync_enabled
+        else [(g.role_id, "map a group to") for g in new.group_roles]
+    )
     for role_id, use in [*uses, (new.default_role_id, "make the default role")]:
         role = session.get(Role, role_id)
         if role is None:
@@ -231,6 +267,9 @@ def put_sso_settings(
         new.discovery_url != old.settings.discovery_url
         or new.client_id != old.settings.client_id
     )
+    # While directory sync is on, the provider it pushes against stays put.
+    if old.settings.sync_enabled and (client_changed or not new.enabled):
+        refuse(409, SYNC_HOLDS_PROVIDER)
     # While required, the provider people sign in through stays put.
     if old.settings.require_sso and (client_changed or not new.enabled):
         refuse(409, REQUIRE_FIRST)
@@ -298,3 +337,260 @@ def put_sso_settings(
     stored = sso_settings.read_row(session)[0]
     response.headers["ETag"] = _etag(stored.version)
     return _out(stored, session, request)
+
+
+_SYNC_PERMS = ("roles.manage", "users.write", "teams.manage")
+
+
+class SyncIn(BaseModel):
+    directory_id_claim: str = Field("sub", min_length=1, max_length=128)
+    # When sync is already on, mint a replacement token and revoke the previous one.
+    mint: bool = False
+
+
+class BrokenLine(BaseModel):
+    external_id: str
+    # "role" or "team": which list still names a group the provider has deleted.
+    on: str
+
+
+class SyncOut(BaseModel):
+    sync_enabled: bool
+    directory_id_claim: str
+    last_push: Optional[str] = None
+    token_expires_at: Optional[str] = None
+    failed_authentications: int
+    last_manager_refusals: list[str]
+    skipped_joins: int = 0
+    # Pushes refused for a username or email in use, waiting for a link.
+    pending_links: int = 0
+    broken_lines: list[BrokenLine] = []
+    # Set until a mapping is saved, and again when that person is gone or inactive.
+    mapping_note: Optional[str] = None
+    role_refusals: list[str] = []
+    scim_path: str
+    # Present only in the response that mints it.
+    token: Optional[str] = None
+
+
+def _stamp(value) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.isoformat()
+    if getattr(value, "tzinfo", None) is None:
+        return text + "Z"
+    return text
+
+
+def _sync_caller(user: User, session) -> None:
+    for permission in _SYNC_PERMS:
+        deny_unless(user.user_id, permission, session)
+
+
+def _sync_out(session, token: Optional[str] = None) -> SyncOut:
+    settings = sso_settings.read_row(session)[0].settings
+    refusals = []
+    for user_id in directory_sync.last_manager_ids(session):
+        held = session.get(User, user_id)
+        if held is None or not held.is_active:
+            continue
+        if _leaves_no_manager(session, users={held.user_id: (held.role_id, False)}):
+            refusals.append(held.username)
+    return SyncOut(
+        sync_enabled=settings.sync_enabled,
+        directory_id_claim=settings.directory_id_claim,
+        last_push=_stamp(directory_sync.latest_push(session)),
+        token_expires_at=_stamp(directory_sync.token_expiry(session)),
+        failed_authentications=directory_sync.failed_authentications(session),
+        last_manager_refusals=refusals,
+        skipped_joins=group_mapping.skipped_joins(session),
+        pending_links=session.query(DirectoryPending).count(),
+        broken_lines=[
+            BrokenLine(**line) for line in group_mapping.broken_lines(session, settings)
+        ],
+        mapping_note=group_mapping.mapping_note(session, settings),
+        role_refusals=group_mapping.role_refusals(session),
+        scim_path=f"{context_path_prefix()}/scim/v2",
+        token=token,
+    )
+
+
+@router.get("/sync", response_model=SyncOut)
+def get_sync(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
+    """Whether directory sync is on, and what the last push did. No token."""
+    return _sync_out(session)
+
+
+@router.post("/sync", response_model=SyncOut)
+def post_sync(
+    body: SyncIn, session: UnitOfWorkSession, user: User = Depends(_PERSON_MANAGE)
+):
+    """Turn directory sync on, or change its claim, and optionally mint a new token.
+
+    Turning it on mints the token once. Minting again revokes the previous one.
+    Needs roles.manage, users.write and teams.manage, and one step-up.
+    """
+    _sync_caller(user, session)
+    try:
+        current = sso_settings.read_row(session)[0].settings
+        token = None
+        if not current.sync_enabled:
+            token = directory_sync.turn_on(session, user, body.directory_id_claim)
+        else:
+            directory_sync.set_claim(session, user, body.directory_id_claim)
+            if body.mint:
+                token = directory_sync.remint(session, user)
+    except directory_sync.SyncRefused as refusal:
+        raise HTTPException(status_code=refusal.status, detail=refusal.detail) from None
+    return _sync_out(session, token)
+
+
+class PushedGroup(BaseModel):
+    id: str
+    external_id: str
+    display_name: str
+
+
+class MappingOut(BaseModel):
+    group_roles: list[sso_settings.GroupRole]
+    team_lines: list[sso_settings.TeamLine]
+    groups: list[PushedGroup]
+    version: int
+    mapping_author: Optional[str] = None
+
+
+class MappingIn(BaseModel):
+    group_roles: list[sso_settings.GroupRole] = Field(
+        default_factory=list, max_length=200
+    )
+    team_lines: list[sso_settings.TeamLine] = Field(
+        default_factory=list, max_length=200
+    )
+
+
+class MappingEffect(BaseModel):
+    roles_rise: int = 0
+    roles_fall: int = 0
+    roles_default: int = 0
+    memberships_added: int = 0
+    memberships_removed: int = 0
+    applied: bool
+    version: int
+
+
+def _mapping_out(stored: sso_settings.Stored, session) -> MappingOut:
+    return MappingOut(
+        group_roles=stored.settings.group_roles,
+        team_lines=stored.settings.team_lines,
+        groups=[
+            PushedGroup(
+                id=group.group_id,
+                external_id=group.external_id,
+                display_name=group.display_name,
+            )
+            for group in directory_groups.list_groups(session)
+        ],
+        version=stored.version,
+        mapping_author=stored.settings.mapping_author,
+    )
+
+
+def _clean_lines(
+    body: MappingIn,
+) -> tuple[list[sso_settings.GroupRole], list[sso_settings.TeamLine]]:
+    roles = [
+        sso_settings.GroupRole(group=line.group.strip(), role_id=line.role_id)
+        for line in body.group_roles
+    ]
+    team_lines = []
+    for line in body.team_lines:
+        group = line.group.strip()
+        team_id = line.team_id.strip()
+        if not group or not team_id:
+            raise HTTPException(
+                status_code=400, detail="A mapping line needs a group and a team"
+            )
+        team_lines.append(sso_settings.TeamLine(group=group, team_id=team_id))
+    return roles, team_lines
+
+
+@router.get("/mapping", response_model=MappingOut)
+def get_mapping(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
+    """Pushed groups and the role and team lines. The version is the settings version."""
+    return _mapping_out(sso_settings.read_row(session)[0], session)
+
+
+@router.post("/mapping", response_model=MappingEffect)
+def post_mapping(
+    body: MappingIn,
+    session: UnitOfWorkSession,
+    user: User = Depends(_PERSON_MANAGE),
+    if_match: Optional[str] = Header(None),
+    dry_run: bool = False,
+):
+    """Save the group mapping, or count what saving it would change.
+
+    ``dry_run`` writes nothing. The real save is the one that sets
+    ``mapping_author`` and applies roles and team membership. Needs
+    roles.manage, users.write and teams.manage, and one step-up.
+    """
+    _sync_caller(user, session)
+    expected = _version_of(if_match)
+    old, found = sso_settings.read_row(session, lock=not dry_run)
+    if not found or not old.settings.sync_enabled:
+        raise HTTPException(status_code=409, detail="Directory sync is off")
+    if old.version != expected:
+        raise HTTPException(
+            status_code=412,
+            detail="The single sign-on settings changed since you read them",
+        )
+    roles, team_lines = _clean_lines(body)
+    for role_id in {line.role_id for line in roles}:
+        if session.get(Role, role_id) is None:
+            raise HTTPException(status_code=403, detail=f"There is no role {role_id}")
+    if group_mapping.names_default_team(session, team_lines):
+        raise HTTPException(status_code=409, detail=group_mapping.DEFAULT_TEAM)
+    lines_changed = [(line.group, line.role_id) for line in roles] != [
+        (line.group, line.role_id) for line in old.settings.group_roles
+    ] or [(line.group, line.team_id) for line in team_lines] != [
+        (line.group, line.team_id) for line in old.settings.team_lines
+    ]
+    stored_author = group_mapping.author_of(session, old.settings)
+    if lines_changed or stored_author is None:
+        author_id = user.user_id
+        acting = user
+    else:
+        author_id = old.settings.mapping_author
+        acting = stored_author
+    new = old.settings.model_copy(
+        update={
+            "group_roles": roles,
+            "team_lines": team_lines,
+            "mapping_author": author_id,
+        }
+    )
+    writing = (not dry_run) and (
+        lines_changed or author_id != old.settings.mapping_author
+    )
+    version = old.version + 1 if writing else old.version
+    if writing:
+        row = session.get(SystemConfig, sso_settings.KEY)
+        row.value = {**new.model_dump(mode="json"), "version": version}
+        row.updated_by = user.user_id
+        row.updated_at = utcnow()
+        session.flush()
+        trail_events.record(
+            session,
+            "directory.mapping_saved",
+            actor=user.principal_id,
+            version=version,
+        )
+    effect = group_mapping.reconcile(
+        session,
+        new,
+        acting,
+        principals=None,
+        version=version,
+        write=not dry_run,
+    )
+    return MappingEffect(**effect.as_dict(), applied=not dry_run, version=version)

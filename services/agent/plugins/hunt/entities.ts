@@ -34,10 +34,22 @@ export function defang(text: string): string {
 
 // Case folds for the types where it carries no meaning, so one host is one node.
 // An ARN's resource part and an AWS key id are case-significant, and a lowercased
+// key would merge them. Two keep case in part (#4542): a process that is an
+// absolute POSIX path, and a url's path, query and fragment -- only its scheme
+// and authority fold. Plain string ops, mirroring `_fold` in
+// core/memory/entity_keys.py; `new URL()` re-serialises and the two would drift.
 const CASE_SENSITIVE = new Set(["arn", "aws_key"]);
 
 function normalize(type: EntityType, value: string): string {
-  return CASE_SENSITIVE.has(type) ? value : value.toLowerCase();
+  if (CASE_SENSITIVE.has(type) || (type === "process" && value.startsWith("/"))) return value;
+  if (type === "url") {
+    const sep = value.indexOf("://");
+    const start = sep >= 0 ? sep + 3 : 0;
+    const tail = value.slice(start).search(/[/?#]/);
+    const end = tail < 0 ? value.length : start + tail;
+    return value.slice(0, end).toLowerCase() + value.slice(end);
+  }
+  return value.toLowerCase();
 }
 
 function hasKnownTld(value: string): boolean {

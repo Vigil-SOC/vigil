@@ -107,6 +107,33 @@
 .mdc-note { margin: 0; font-size: 13px; color: var(--tx1); }
 .mdc-would p { margin: 0 0 4px; font-size: 13px; line-height: 1.5; color: var(--tx1); }
 .mdc-would p.mdc-nothing { margin-top: 6px; color: var(--tx0); font-weight: 600; }
+/* the restart's cost is the button's own text, so it wraps inside the card instead of running off the page */
+.mdc-run-card { max-width: 640px; }
+.mdc-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--poor-ln);
+  border-radius: 10px;
+  background: var(--poor-bg);
+  color: var(--tx1);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.mdc-run:hover:not(:disabled) { border-color: var(--poor); }
+.mdc-run:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.mdc-run:disabled { cursor: wait; }
+.mdc-run-name { font-weight: 650; color: var(--poor); }
+.mdc-run-cost { overflow-wrap: anywhere; }
 .mdc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 @container main (max-width: 1100px) { .mdc-cols { grid-template-columns: minmax(0, 1fr); } }
 

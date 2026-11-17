@@ -93,6 +93,8 @@ export interface Skill {
   reads7d: number
   /** distinct agents that read it in the last 7 days */
   agents7d: number
+  /** true while its content scan keeps it from agents */
+  held: boolean
 }
 
 /** The usage line the card and the drawer subtitle share (#1560). */

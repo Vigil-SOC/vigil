@@ -416,6 +416,28 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
             _outcome(record, tool, raw, outcome)
 
 
+class SkillReadRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    agent_id: Optional[str] = None
+
+
+@router.post("/skill-reads", status_code=204)
+async def note_skill_read(
+    body: SkillReadRequest, authorization: Optional[str] = Header(default=None)
+) -> None:
+    """Count a skill a run loaded with load_skill, which the agent layer answers itself.
+
+    The same count a read_skill call through ``/invoke`` makes, for the skill
+    bodies a run reads without coming here. A failed insert is logged and
+    swallowed, as there.
+    """
+    authorise(authorization, "skill read")
+    try:
+        await asyncio.to_thread(record_skill_read, body.name, body.agent_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("recording the read of skill %s failed", body.name)
+
+
 @router.post("/invoke")
 async def invoke(
     body: InvokeRequest,

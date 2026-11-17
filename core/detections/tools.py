@@ -32,6 +32,7 @@ from core.detections.reconstruction import (
 )
 from core.detections.replay import replay_sigma
 from core.storage.database_data_service import DatabaseDataService
+from core.workflows.workflow_run_service import run_unreadable
 
 
 class SecurityDetectionsTools:
@@ -76,7 +77,9 @@ class SecurityDetectionsTools:
         if isinstance(steps, list) and steps:
             trace: List = steps
         elif run_id:
-            projection = await read_projection(run_id)
+            # A run on a case the caller can't read (#4359) reads as no run.
+            hidden = await asyncio.to_thread(run_unreadable, run_id)
+            projection = None if hidden else await read_projection(run_id)
             if projection is None:
                 return {
                     "run_id": run_id,

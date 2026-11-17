@@ -144,6 +144,11 @@ def stack(tmp_path_factory):
     )
     assert enable.returncode == 0, enable.stdout + enable.stderr
     s.enable_output = enable.stdout
+    # The stub backend takes a password login only, so this stack is a site
+    # enabled before tokens: --secrets-only mints nothing and leaves the token
+    # file an empty placeholder, which the gateway reads as absent (#4429).
+    pw = s.secrets_dir / "viewer_password"
+    pw.write_text(secrets.token_hex(32) + "\n")
     # V1: enable-compose.sh writes Medic's settings to compose.env (the
     # gateway's Viewer account, this host's socket group) and every compose
     # command with Medic on passes it, as test_enable_live.py's stack does.

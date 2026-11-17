@@ -15,20 +15,28 @@ Two passwords, and they must differ.
 and mounted only on the in-chart Postgres and the upgrade Jobs. It is not in the
 application Secret those pods load with `envFrom`.
 
-`secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon, workers
-and agents log in as that role and receive only this password, as
+`secrets.vigilAppPassword` is the `vigil_app` role. The backend, daemon and
+workers log in as that role and receive only this password, as
 `POSTGRES_PASSWORD`. The upgrade Jobs set it with `ALTER ROLE vigil_app` on
 install and upgrade.
 
-Neither has a default. Set both (`openssl rand -hex 24`). With
+`secrets.vigilAgentPassword` is the `vigil_agent` role. agent-serve and
+agent-worker log in as that role, which holds only the agent ledger, run leases
+and directives, and receive only this password; `POSTGRES_APP_PASSWORD` is
+blanked in their environment. The upgrade Jobs set it beside `vigil_app`'s.
+
+None has a default, except that an unset `secrets.vigilAgentPassword` is
+generated once and kept across upgrades with `lookup` (set it under
+`helm template` or a GitOps controller, where `lookup` sees nothing). Set all
+three (`openssl rand -hex 24`). With
 `secrets.existingSecret` or `secrets.externalSecret`, that Secret must contain
-`POSTGRES_APP_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
+`POSTGRES_APP_PASSWORD` and `POSTGRES_AGENT_PASSWORD`. Put the owner password in `postgresql.auth.existingSecret`
 (or `postgresql.external.existingSecret`) rather than in the application Secret.
 If the application Secret also holds `POSTGRES_PASSWORD`, the workload env
 replaces that variable with `POSTGRES_APP_PASSWORD` before the process starts.
 The chart refuses to render the old published default
-`change-me-before-production`, and it refuses to render when the two values
-are equal.
+`change-me-before-production`, and it refuses to render when any two of the
+three values are equal.
 
 A database whose owner password is still that published default must be changed
 in Postgres first (`ALTER ROLE` for `postgresql.auth.username`). The chart does
@@ -78,22 +86,31 @@ their image's revision. See [docs/upgrading.md](../../../docs/upgrading.md#helm)
 
 `agentShell` (on by default) runs the read-only case shell behind the backend's
 `read_case_shell` tool: the agent image's `node dist/shell.js`, on port 6992. The
-backend gets `SHELL_URL`; with the shell off the tool leaves the catalogue.
+backend gets `SHELL_URL` and `SHELL_TOKEN`; with the shell off the tool leaves
+the catalogue.
 
 | Value | Default | |
 |---|---|---|
 | `agentShell.enabled` | `true` | Render the shell Deployment, Service and NetworkPolicy. |
 | `agentShell.replicas` | `1` | Each replica runs up to 8 calls at once. |
 | `agentShell.resources` | 50m / 128Mi requests, 1Gi limit | The limit also bounds `/work`, an in-memory emptyDir. |
+| `secrets.agentShellToken` | generated | The bearer the backend presents to the shell, in `<fullname>-agent-shell`. |
 
 - **No network but the backend's calls.** Its NetworkPolicy admits backend pods
   on 6992 and denies all egress, and renders whatever `networkPolicies.enabled`
   says; the chart's `-deny-all` policy leaves the shell out, as its open egress
   would undo that. Only a network plugin that enforces NetworkPolicy makes this
   real.
+- **Token.** `POST /run` requires `Authorization: Bearer $SHELL_TOKEN`, so a pod
+  the policy fails to keep out still cannot run commands. Generated and kept as
+  `secrets.mcpRunnerToken` is (set it under `helm template` or GitOps). With
+  `secrets.existingSecret` or `secrets.externalSecret.enabled` that Secret must
+  carry a `SHELL_TOKEN` key; without it the shell pod does not start and
+  `read_case_shell` reports unavailable. The token opens nothing but the shell.
 - **Runs as root** with only SETUID, SETGID and KILL, to drop each call to its
   own uid: `baseline` Pod Security admits it, `restricted` does not. No
-  credentials, secrets or service account token are mounted.
+  credentials or service account token are mounted; `SHELL_TOKEN` is its only
+  secret, and no command it runs sees it.
 
 ## MCP runner
 

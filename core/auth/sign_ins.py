@@ -33,6 +33,10 @@ TOKEN_REUSE = "token_reuse"
 UPGRADE = "upgrade"
 # Role, password or email changed, or a password reset: sign in again.
 ACCOUNT_CHANGED = "account_changed"
+# A recovery code at sign-in removed the methods and ended the other sign-ins.
+RECOVERY = "recovery"
+# An admin, or the host script, reset two-step sign-in and ended the sign-ins.
+MFA_RESET = "mfa_reset"
 DEACTIVATED = "deactivated"
 ERASED = "erased"
 # Ended from the sign-in list or the person's detail (#4172).
@@ -47,7 +51,13 @@ MFA_STEP_DOWN = "mfa_step_down"
 RECOVERY_STEP_DOWN = "recovery_step_down"
 # Through the single sign-on provider, which carries its own MFA (#4284).
 SSO = "sso"
-WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO)
+# A break-glass account's password, code and reason (#4532): "Confirm it's you"
+# passes for the life of the sign-in.
+BREAK_GLASS = "break_glass"
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO, BREAK_GLASS)
+# Never held at MFA or key setup: the provider carries the MFA, or the
+# break-glass code did, and a hold would strand the custodian mid-incident.
+NOT_HELD = (SSO, BREAK_GLASS)
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
@@ -64,6 +74,8 @@ STOPS_RUNS = frozenset(
     {
         TOKEN_REUSE,
         ACCOUNT_CHANGED,
+        RECOVERY,
+        MFA_RESET,
         DEACTIVATED,
         ERASED,
         ENDED_BY_PERSON,
@@ -85,6 +97,8 @@ REASON_WORDS = {
     TOKEN_REUSE: "Token reuse",
     UPGRADE: "Ended by an upgrade",
     ACCOUNT_CHANGED: "Role, password, email or methods changed",
+    RECOVERY: "Signed in with a recovery code",
+    MFA_RESET: "Two-step sign-in was reset",
     DEACTIVATED: "Account deactivated or deleted",
     ERASED: "The person's details were erased",
     ENDED_BY_PERSON: "Ended by the person",

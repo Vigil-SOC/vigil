@@ -113,11 +113,115 @@ function closing(told: 'none' | 'opened' | 'summary' | undefined): string {
   }
 }
 
-/** UX-15: the "would have" lines for L0, L1 and L2. The last line reads `told`. */
+/** The opened record can be restarted when `runbook` is an object. Null is no runbook. */
+export function hasRunbook(opened: IncidentOpened): boolean {
+  return typeof opened.runbook === 'object' && opened.runbook !== null && !Array.isArray(opened.runbook)
+}
+
+const REFUSAL: Record<string, string> = {
+  not_open: 'the incident is not open',
+  not_firing: 'the rule is not firing',
+  no_runbook: 'there is no runbook',
+  upgrade_window: 'an upgrade is in progress',
+  no_container: 'there is no soc-daemon container',
+  container_restarted: 'the container already restarted',
+  fix_running: 'a restart is already waiting to be checked',
+  not_compose: 'this install is not Compose',
+  restart_failed: 'the restart failed',
+}
+
+const asRecord = (v: unknown): Record<string, unknown> =>
+  (typeof v === 'object' && v !== null && !Array.isArray(v) ? v : {}) as Record<string, unknown>
+
+/** How a refused check reads. An unknown reason stays a fixed sentence. */
+export function refusalPhrase(reason: string): string {
+  const why = REFUSAL[reason]
+  return why ? `Refused (${reason}): ${why}. Nothing ran.` : 'Refused. Nothing ran.'
+}
+
+/** The 409 the click just got. A known reason names the check; nothing was restarted. */
+export function fixClickError(code: string, reason: string): string {
+  if (code === 'fix_refused') {
+    const why = REFUSAL[reason]
+    return why
+      ? `Refused (${reason}): ${why}. Nothing was restarted.`
+      : 'Medic refused the restart. Nothing was restarted.'
+  }
+  if (code === 'not_found') return 'This incident is gone. Nothing was restarted.'
+  if (code === 'medic_off') return 'Medic is off. Nothing was restarted.'
+  return "Couldn't finish the restart. Check the timeline before trying again."
+}
+
+/** How a `fix_verified` reads. `not_verified` names Medic stopping when that is the detail. */
+export function verifiedPhrase(body: Record<string, unknown>): string {
+  switch (body.result) {
+    case 'cleared': return 'Cleared.'
+    case 'not_cleared': return 'Not cleared.'
+    case 'not_back': return 'Did not come back.'
+    case 'not_verified':
+      return body.detail === 'medic_stopped' ? 'Not verified: Medic stopped.' : 'Not verified.'
+    default:
+      return body.result == null ? 'Checked.' : `Checked: ${str(body.result)}.`
+  }
+}
+
+export interface FixAttempt {
+  seq: number
+  who: string
+  /** The check that refused it, or the following verification, or waiting. */
+  end: string
+}
+
+/**
+ * One line per `fix_run` already in the list. A check that did not pass is the end.
+ * A passed check takes the next `fix_verified` after it that an earlier pass has not
+ * taken: a later refusal can be stored before that verification. Otherwise waiting,
+ * when `verify_at` is set.
+ */
+export function fixAttempts(records: DecisionRecord[]): FixAttempt[] {
+  const sorted = [...records].sort((a, b) => a.seq - b.seq)
+  const runs = sorted.filter((r) => r.type === 'fix_run')
+  const verified = sorted.filter((r) => r.type === 'fix_verified')
+  let taken = 0
+  return runs.map((run) => {
+    const body = asRecord(run.body)
+    const result = asRecord(body.checks).result
+    let end: string
+    if (result !== 'passed') end = refusalPhrase(str(result))
+    else {
+      const at = verified.findIndex((v, i) => i >= taken && v.seq > run.seq)
+      if (at >= 0) {
+        taken = at + 1
+        end = verifiedPhrase(asRecord(verified[at].body))
+      } else if (typeof body.verify_at === 'string' && body.verify_at) end = 'Waiting.'
+      else end = 'Restarted soc-daemon.'
+    }
+    return { seq: run.seq, who: str(body.who), end }
+  })
+}
+
+/** `fix_verified` results that count as a failed restart. A click is not capped by this. */
+export function fixFailureCount(records: DecisionRecord[]): number {
+  return records.filter((r) => {
+    if (r.type !== 'fix_verified') return false
+    const result = asRecord(r.body).result
+    return result === 'not_cleared' || result === 'not_back'
+  }).length
+}
+
+function runbookClosing(records: DecisionRecord[]): string[] {
+  const attempts = fixAttempts(records)
+  const lines = attempts.map((a) => `${a.who}: ${a.end}`)
+  lines.push(attempts.length ? attempts[attempts.length - 1].end : 'A click restarts soc-daemon. Nothing has run.')
+  return lines
+}
+
+/** UX-15: the "would have" lines for L0, L1 and L2. The last line reads `told`, unless a runbook is set. */
 export function wouldHave(opened: IncidentOpened, lane: number, updates: DecisionRecord[], told?: string): string[] {
   const end = closing(told === 'opened' || told === 'summary' || told === 'none' ? told : undefined)
+  const runnable = hasRunbook(opened)
   const w = opened.would_have
-  if (!w) return [end]
+  if (!w) return runnable ? runbookClosing(updates) : [end]
   const fix = opened.advice?.fix
   const lines = ['Observe only (L0): recorded this incident.', `Recommend (L1): ${action(w.L1, fix)}`]
   const { action: a2, not_eligible: why } = w.L2 ?? {}
@@ -130,7 +234,7 @@ export function wouldHave(opened: IncidentOpened, lane: number, updates: Decisio
   lines.push(`Autonomous (L2): ${l2}${l2.endsWith('.') ? '' : '.'}`)
   const esc = [...updates].reverse().find((r) => r.type === 'incident_updated' && r.body.change === 'escalation_simulated')
   if (esc) lines.push(`Still open after ${num(esc.body.simulated_failures)} fix attempts: would have escalated to support (lane unchanged).`)
-  lines.push(end)
+  lines.push(...(runnable ? runbookClosing(updates) : [end]))
   return lines
 }
 
@@ -179,6 +283,12 @@ export function timeline(opened: DecisionRecord, records: DecisionRecord[]): Tim
     } else if (r.type === 'feedback') {
       const c = b.comment as { text?: string } | undefined
       rows.push({ key: k, at: r.at, text: `${str(b.admin)}: ${feedbackWord(String(b.value), b.suggested_lane as number | undefined)}`, note: c?.text })
+    } else if (r.type === 'fix_run') {
+      const result = asRecord(b.checks).result
+      const phrase = result === 'passed' ? 'Restarted soc-daemon.' : refusalPhrase(str(result))
+      rows.push({ key: k, at: r.at, text: `${str(b.who)}: ${phrase}` })
+    } else if (r.type === 'fix_verified') {
+      rows.push({ key: k, at: r.at, text: verifiedPhrase(b) })
     } else {
       rows.push({ key: k, at: r.at, text: `Record: ${str(r.type)}` })
     }

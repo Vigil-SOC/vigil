@@ -404,7 +404,7 @@ SECURITY_DETECTION_TOOLS = [
 DEEPTEMPO_FINDING_TOOLS = [
     {
         "name": "list_findings",
-        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the finding's triage and a sample of its source records. Supports filtering by severity, data_source, state, and pagination via offset/limit. Each summary carries the finding's terminal state (e.g. waiting, working, resolved_auto, dismissed).",
+        "description": "List security findings with server-side pagination and compact summaries. Each summary names the hosts, users and indicators the finding carries; use get_finding for the finding's triage and a sample of its source records. Supports filtering by severity, data_source, state, and pagination via offset/limit. Each summary carries the finding's terminal state (e.g. waiting, working, resolved_auto, dismissed). Findings on an analyst-excluded IP are left out of the counts and results; excluded_ip_findings, when present, says how many were left out.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -459,7 +459,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "search_findings",
-        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_state as open/dismissed/resolved, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the triage and a sample of the source records behind a specific result.',
+        "description": 'Search findings by text query across finding IDs, descriptions, and entity context. Returns counts over every match (total, by_severity, by_data_source, by_state as open/dismissed/resolved, and the top 10 by_source_ip / by_destination_ip, with *_omitted giving how many more addresses were left out), then one page of compact summaries, each naming the hosts, users and indicators the finding carries. Answer count questions ("how many findings involve X, by severity?") from those counts in one call with a low limit; do not page through results to count them. Use get_finding for the triage and a sample of the source records behind a specific result. Findings on an analyst-excluded IP are left out of the counts and results; excluded_ip_findings, when present, says how many were left out.',
         "input_schema": {
             "type": "object",
             "properties": {
@@ -505,7 +505,7 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_findings_stats",
-        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and state (open, dismissed, resolved). Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings.",
+        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source and state (open, dismissed, resolved). Takes no filters: for counts over a subset, use search_findings. Use this to get an overview before drilling into specific findings. Findings on an analyst-excluded IP are left out of the counts and results; excluded_ip_findings, when present, says how many were left out.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

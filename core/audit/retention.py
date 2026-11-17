@@ -48,6 +48,8 @@ UNSET_MESSAGE = (
 ERASED_PREFIX = "erased-"
 ERASED_DOMAIN = "erased.invalid"
 ERASED_NAME = "Erased account"
+# What an erased account's token labels become: a free-text label can name a person.
+ERASED_LABEL = "Erased account's token"
 # Queued on the session until the transaction commits. A rollback must not
 # leave an id in the file: restore would blank that principal anyway.
 _QUEUED = "erasure_file_ids"
@@ -113,6 +115,25 @@ def free_identifiers(session, principal_id: str) -> None:
             """),
         params,
     )
+
+
+def drop_personal_rows(session, user_id: str) -> None:
+    """Delete the account's preferences row and blank the label of each token it
+    owns, revoked or not: a label is free text and may name the person. Plain
+    SQL: an upgrade step runs it on its own connection too."""
+    params = {"user_id": user_id, "label": ERASED_LABEL}
+    if _table(session, "user_preferences"):
+        session.execute(
+            text("DELETE FROM public.user_preferences WHERE user_id = :user_id"),
+            params,
+        )
+    if _table(session, "mcp_credentials"):
+        session.execute(
+            text(
+                "UPDATE public.mcp_credentials SET label = :label WHERE user_id = :user_id"
+            ),
+            params,
+        )
 
 
 def outside_path() -> Optional[Path]:
@@ -368,13 +389,19 @@ def _apply_erasures(session, now: datetime) -> None:
     # The request-time guard is not enough: the others may have been disabled
     # during the wait. Blanking the one who is now last is still refused.
     active = _managers(session, active_only=True)
+    # Nor may it take the last active role manager: the request checked that,
+    # and the wait may have changed it.
+    roles = _managers(session, active_only=True, permission="roles.manage")
     gone = set()
     for item in due:
         principal_id = item["principal_id"]
         if principal_id in active and len(active) == 1:
             continue
+        if roles == {principal_id}:
+            continue
         _perform(session, principal_id)
         active.discard(principal_id)
+        roles.discard(principal_id)
         gone.add((principal_id, item["set_at"]))
     stored["erasures"] = [
         item
@@ -474,15 +501,51 @@ def _drop_notices(session, principal_id: str) -> None:
         )
 
 
+def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:
+    """Drop synced-team membership. A hand remove of that team is refused."""
+    if not _table(session, "team_memberships"):
+        return
+    # Imported here: teams pulls auth, and auth imports this module.
+    from core import teams
+
+    mapped = teams.mapped_team_ids(session)
+    if not mapped:
+        return
+    held = session.execute(
+        text("SELECT team_id FROM public.team_memberships WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).scalars()
+    for team_id in list(held):
+        if team_id in mapped:
+            teams.remove_member(
+                session, team_id, user_id, actor=trail.SYSTEM, by_mapping=True
+            )
+
+
 def _revoke(session, principal_id: str) -> None:
     """Deactivate the account, free its username and email, revoke MCP credentials
-    and end sign-ins, and keep those rows.
+    and blank their labels, drop its preferences, and end sign-ins, and keep the
+    other rows.
 
     The user row stays, and the principal is not marked deleted. Deactivating
     is what stops the password signing in again and the role being honoured.
     """
     if not _table(session, "users"):
         return
+    # Pushes waiting for a link to this account carry its names: read them first.
+    names = session.execute(
+        text("SELECT username, email FROM public.users WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).first()
+    if names and _table(session, "directory_pending"):
+        session.execute(
+            text("""
+                DELETE FROM public.directory_pending
+                WHERE lower(username) IN (lower(:u), lower(:e))
+                   OR lower(email) IN (lower(:u), lower(:e))
+                """),
+            {"u": names.username, "e": names.email},
+        )
     free_identifiers(session, principal_id)
     user_id = session.execute(
         text(
@@ -495,8 +558,12 @@ def _revoke(session, principal_id: str) -> None:
         return
     for credential in mcp_credential_service.list_for_user(user_id, session=session):
         mcp_credential_service.revoke(credential.credential_id, session=session)
+    drop_personal_rows(session, user_id)
     sign_ins.end_all_for_user(user_id, sign_ins.ERASED, session=session)
-    for table in ("security_keys", "sso_links"):
+    # A synced team refuses a hand remove. Leave it here, while the user row
+    # still answers remove_member, before the group rows that named them are gone.
+    _leave_mapped_teams(session, principal_id, user_id)
+    for table in ("security_keys", "sso_links", "directory_group_members"):
         if _table(session, table):
             # {table} is one of the fixed names above.
             session.execute(
@@ -627,8 +694,10 @@ def _exists(session, principal_id: str) -> bool:
     )
 
 
-def _managers(session, *, active_only: bool) -> set[str]:
-    """Principals whose role holds ``audit.manage``.
+def _managers(
+    session, *, active_only: bool, permission: str = "audit.manage"
+) -> set[str]:
+    """Principals whose role holds ``permission`` (``audit.manage``).
 
     ``active_only`` is the last-manager guard. A disabled account still holds
     the permission, so erasing it waits seven days like any other holder. A
@@ -647,9 +716,9 @@ def _managers(session, *, active_only: bool) -> set[str]:
             WHERE p.deleted_at IS NULL
               AND p.kind = :person
               {active}
-              AND (r.permissions -> 'audit.manage') = 'true'::jsonb
+              AND (r.permissions -> :permission) = 'true'::jsonb
             """),
-        {"person": principals.PERSON},
+        {"person": principals.PERSON, "permission": permission},
     ).scalars()
     found = set(rows)
     if active_only:

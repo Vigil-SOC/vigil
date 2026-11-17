@@ -13,10 +13,33 @@ Rules: the raw request-target is checked against a narrow character set and an
 exact list; anything ambiguous (`%`, `.`, `//`, `;`, `\`, absolute-form, unknown or
 repeated query) is refused, never normalised. The target sent upstream is rebuilt
 from the list entry. Upstream headers are built from scratch, redirects are never
-followed, and `/api/auth/*` can't be listed. The gateway logs in as a Viewer
-itself (fixed User-Agent, password from a file, refresh before expiry and once
-on a 401, stop after 2 bad passwords until the file changes). Medic never holds
-that credential.
+followed, and `/api/auth/*` can't be listed. Medic never holds the gateway's
+credential.
+
+## Credential
+
+Each request picks the credential from the files at that moment (#4425):
+
+1. **Token.** A readable, non-empty token file: its content goes out as
+   `Authorization: Bearer`, with no sign-in or refresh. The file is read on every
+   request, so a rotated token is used at once, without a restart. A 401 sets the
+   state `unauthorized` and the token is tried again after 300 s, or at once when
+   the file's mtime changes. It never stops for good, and a refused token never
+   falls back to the password.
+2. **Password.** Otherwise, a readable, non-empty password file plus
+   `VIEWER_USER`: the gateway logs in as a Viewer itself (fixed User-Agent,
+   refresh before expiry and once on a 401, stop after 2 bad passwords until the
+   file changes). An empty password file counts as absent. This path is kept for
+   now and removed by a later issue.
+3. **Neither:** state `no_credential`.
+
+`GET /_gw/status` returns `{"state", "since", "credential"}`, with `credential`
+one of `token`, `password` or `none`. The states are `init`, `ok`,
+`unauthorized` and `no_credential`, plus the password path's `bad_password`,
+`bad_password_stopped`, `locked`, `rate_limited`, `rejected_after_login`,
+`backend_unreachable` and `login_error` (`no_password` is no longer set; Medic
+still accepts it). Medic's `gateway_session` sensor reads the state and ignores
+`credential`.
 
 ## Settings
 
@@ -26,14 +49,16 @@ that credential.
 | `VIGIL_MEDIC_GATEWAY_MEDIC` | `medic:8470` |
 | `VIGIL_MEDIC_GATEWAY_OUT_BIND` | `medic-gateway-out:8471` (an alias on `medic-private`) |
 | `VIGIL_MEDIC_GATEWAY_IN_BIND` | `medic-gateway-in:8470` (an alias on `deeptempo-network`) |
-| `VIGIL_MEDIC_GATEWAY_VIEWER_USER` | the service account's username |
+| `VIGIL_MEDIC_GATEWAY_TOKEN_FILE` | default `/run/secrets/medic_gateway_token` |
+| `VIGIL_MEDIC_GATEWAY_VIEWER_USER` | the service account's username; needed only for the password path |
 | `VIGIL_MEDIC_GATEWAY_VIEWER_PASSWORD_FILE` | default `/run/secrets/medic_viewer_password` |
 | `VIGIL_CONTEXT_PATH` | Vigil's own; the gateway adds it to every upstream path |
 
 Each bind name is resolved at start-up and the listener binds to that address
 only. It refuses to start (exit 2) if `AGENT_INTERNAL_TOKEN`, `AGENT_INTERNAL_TOKEN_PREVIOUS`, `VIGIL_TOOLS_TOKEN`,
-`DAEMON_WEBHOOK_TOKEN`, `VIGIL_MEDIC_API_KEY` or a Viewer password is in its
-environment.
+`DAEMON_WEBHOOK_TOKEN`, `VIGIL_MEDIC_API_KEY`, a Viewer password or
+`VIGIL_MEDIC_GATEWAY_TOKEN` is in its environment. It starts without
+`VIEWER_USER`; the password path then has no credential to use.
 
 ```
 python -m services.medic_gateway run

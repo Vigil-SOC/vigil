@@ -29,6 +29,7 @@ import {
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
 import FindingDetails from '../../shared/FindingDetails'
+import { caseLabel } from '../../shared/caseLabel'
 
 const NOISE_INFO =
   'The alert reads Dropped and leaves this feed and any read of open findings. Triage does not learn from the mark yet. Undo clears it.'
@@ -355,7 +356,7 @@ export default function OverviewScreen({ go, goSettings, openCase, setViewFull, 
                 <dd>
                   {open.case_id ? (
                     <button type="button" className="ov-case-link" onClick={() => openCaseFromPopup(open.case_id!)}>
-                      Case {open.case_id}
+                      {caseLabel(open.case_id)}
                     </button>
                   ) : (
                     'Not in a case yet'

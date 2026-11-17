@@ -857,8 +857,6 @@ export interface EndedRun {
   line: string
   /** What follows the Idle pill: "hunt concluded, handed to IR", or "hunt concluded · " and the line. */
   reason: string
-  /** The reason as the server wrote it, model prose included; '' when none was recorded. */
-  raw: string
   question: OpenQuestionRow | null
   /** A model call is why it ended here (a gateway budget refusal keeps its report): said beside the line. */
   cause: StopCause | null
@@ -878,7 +876,7 @@ export function endedRun(fold: RunFold | null): EndedRun | null {
   const record = foldRecord(fold)
   if (!record) {
     const line = plural(fold.kind === 'lead' ? fold.findings.length : 0, 'finding')
-    return { line, reason: said ?? `${concluded} · ${line}`, raw: fold.reason, question: null, cause }
+    return { line, reason: said ?? `${concluded} · ${line}`, question: null, cause }
   }
   const tally = new Map<string, number>()
   for (const row of record.hypotheses) {
@@ -894,10 +892,17 @@ export function endedRun(fold: RunFold | null): EndedRun | null {
   return {
     line,
     reason: said ?? (handedOff ? `${concluded}, handed to IR` : `${concluded} · ${line}`),
-    raw: fold.reason,
     question: cited ? record.openQuestions.find((q) => q.question_id === cited) ?? null : null,
     cause,
   }
+}
+
+/** What the latest concluded run reported, as the server wrote it ('' when it has not concluded or said nothing).
+ *  Unlike endedRun it does not depend on the case's state, so a closed case still has its report. */
+export function runReport(fold: RunFold | null): string {
+  if (!fold || ENDED.includes(fold.run.status)) return ''
+  if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return ''
+  return fold.reason.trim()
 }
 
 /** Model or worker text as one plain line: list markers, headings and emphasis dropped, so no raw markdown shows. */

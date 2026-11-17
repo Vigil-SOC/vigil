@@ -16,6 +16,37 @@ export interface ApiSkill {
   /** Reads of the skill body in the last 7 days, and the distinct agents that made them. Absent from an API that predates usage recording. */
   reads_7d?: number
   agents_7d?: number
+  /** Where the skill's content scan stands. Held skills are kept from agents. Absent from an API that predates scanning. */
+  scan?: ApiSkillScan
+}
+
+/** bundled, unchecked (scanning off), safe and approved reach agents; pending, flagged, failed and refused are held. */
+export type SkillScanState = 'bundled' | 'unchecked' | 'pending' | 'safe' | 'flagged' | 'failed' | 'refused' | 'approved'
+
+export interface ApiSkillScan {
+  state: SkillScanState
+  held: boolean
+  /** SAFE | CAUTION | DO_NOT_INSTALL */
+  recommendation?: string | null
+  score?: number | null
+}
+
+/** GET /api/skills/{name}: the verdict in full, and the digest POST /{name}/approve takes back. */
+export interface ApiSkillScanDetail extends ApiSkillScan {
+  max_severity?: string | null
+  findings: { rule_id: string; severity: string; message: string; file?: string | null }[]
+  digest?: string | null
+  error?: string | null
+  approved_by?: string | null
+  approved_at?: string | null
+}
+
+/** POST /api/skills/upload: the first skill installed, plus every skill the upload installed
+ *  and the SKILL.md files a zip skipped, with a clause saying why. */
+export interface ApiSkillUpload extends ApiSkill {
+  skills: ApiSkill[]
+  skipped: number
+  skipped_note?: string | null
 }
 
 /** A file in the skill folder: posix path relative to it, and size in bytes. */
@@ -26,6 +57,7 @@ interface ApiSkillFile {
 
 /** GET /api/skills/{name}: the Markdown body, without frontmatter, the folder's files and the version. */
 export interface ApiSkillDetail extends ApiSkill {
+  scan?: ApiSkillScanDetail
   body: string
   operator_root_set: boolean
   version: number
@@ -67,12 +99,12 @@ export const skillsApi = {
       )
       .then((r) => r.data),
   save: (skill: SkillWrite) => api.post<ApiSkill>('/skills', skill).then((r) => r.data),
-  /** Installs a SKILL.md or a skill .zip under the operator root; a taken name is refused (409). */
+  /** Installs a SKILL.md or a .zip of one or more skills under the operator root, all or none; a taken name is refused (409). */
   upload: (file: File) => {
     const form = new FormData()
     form.append('file', file)
     return api
-      .post<ApiSkill>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .post<ApiSkillUpload>('/skills/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       .then((r) => r.data)
   },
   generate: (description: string) =>
@@ -82,4 +114,7 @@ export const skillsApi = {
       .post<ApiSkillTest>(`/skills/${encodeURIComponent(name)}/test`, null, { timeout: LLM_TIMEOUT })
       .then((r) => r.data),
   delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`).then((r) => r.data),
+  /** Releases a held skill to agents. `digest` is the scanned content the approver read; refused (409) if the skill has changed since. */
+  approve: (name: string, digest: string) =>
+    api.post<ApiSkill>(`/skills/${encodeURIComponent(name)}/approve`, { digest }).then((r) => r.data),
 }

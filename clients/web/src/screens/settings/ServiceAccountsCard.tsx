@@ -57,14 +57,15 @@ export default function ServiceAccountsCard({ notify, canWrite }: SectionProps &
     const r = roles.find((x) => x.role_id === id)
     return r ? roleLabel(r) : id
   }
-  const roleOptions = roles.map((r) => ({ value: r.role_id, label: roleLabel(r) }))
+  const assignable = roles.filter((r) => !r.reserved)
+  const roleOptions = assignable.map((r) => ({ value: r.role_id, label: roleLabel(r) }))
   const personOptions = people.map((p) => ({
     value: p.user_id,
     label: p.full_name && p.full_name !== p.username ? `${p.full_name} (${p.username})` : p.username,
   }))
 
   const openCreate = () => {
-    const viewer = roles.find((r) => r.role_id === 'role-viewer') ?? roles.find((r) => r.kind !== 'legacy')
+    const viewer = assignable.find((r) => r.role_id === 'role-viewer') ?? assignable.find((r) => r.kind !== 'legacy')
     setForm({ ...EMPTY, role_id: viewer?.role_id ?? '' })
     setError('')
     setCreating(true)

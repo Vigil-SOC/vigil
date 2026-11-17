@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -15,7 +16,7 @@ from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
-from core.cases.agent_closure import actor, service_session
+from core.cases.agent_closure import actor, service_session, title_edited_activities
 from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
@@ -42,16 +43,15 @@ from core.cases.closure import (
 from core.cases.linked_entities import finding_entity_summary
 from core.detections.inventory.catalog import rule_for_finding
 from core.findings.anomaly_score import stored_anomaly_score
+from core.integrations.mcp.surface import current_caller
 from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
-from core.llm.tool_schemas import (
-    CALL_INTEGRATION_TOOL,
-    FIND_INTEGRATION_TOOLS,
-    INTEGRATION_TOOLS,
-)
+from core.llm.tool_schemas import FIND_INTEGRATION_TOOLS, INTEGRATION_TOOLS
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_hold import agent_skills
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 from core.storage.models import Finding
 from core.teams import default_team
+from core.workflows.workflow_run_service import run_unreadable
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -66,7 +66,8 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 
 Args = Dict[str, Any]
 
-# Every chat tool names the permission execute_backend_tool checks. A run no
+# Every chat tool names the permission execute_backend_tool checks, except
+# call_integration_tool: it is checked as the tool it names. A run no
 # person started is bound by its run claims and holds no role: the autonomy
 # ceiling governs it at invoke. A caller bound to nothing is refused.
 TOOL_PERMISSIONS: Dict[str, str] = {
@@ -111,7 +112,6 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "export_learning_episodes": "automation.read",
     READ_SKILL_TOOL: "automation.read",
     FIND_INTEGRATION_TOOLS: "integrations.read",
-    CALL_INTEGRATION_TOOL: "integrations.write",
 }
 
 
@@ -239,6 +239,7 @@ def list_findings(
         "state": state,
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
+        "exclusions": "hide",
     }
     limit = _page_limit(limit)
     data = _data()
@@ -252,17 +253,27 @@ def list_findings(
     )
     return {
         "total": total,
+        **_excluded_note(data, filters, total),
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
+def _excluded_note(data: Any, filters: Args, shown: int) -> Args:
+    """How many matches name an analyst-excluded IP. Those are left out of the
+    page and the counts, as the analysts' own queue leaves them out, and only
+    counted here so the agent knows they exist."""
+    hidden = data.count_findings(**{**filters, "exclusions": "include"}) - shown
+    return {"excluded_ip_findings": hidden} if hidden > 0 else {}
+
+
 # The counts cover every match, not the page, and come before it so a capped
-# result keeps them (#2312).
+# result keeps them (#2312). Findings on an excluded IP are left out of both.
 def search_findings(**args: Any) -> Args:
     filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
     if (bad := _bad_state(filters["state"])) is not None:
         return bad
     filters["search_query"] = args.get("query", "")
+    filters["exclusions"] = "hide"
     limit = _page_limit(args.get("limit", 20))
     offset = args.get("offset", 0)
     data = _data()
@@ -278,14 +289,18 @@ def search_findings(**args: Any) -> Args:
     return {
         "query": filters["search_query"],
         "total": total,
+        **_excluded_note(data, filters, total),
         **counts,
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
+# Counted as list_findings and search_findings count: excluded-IP findings out.
 def get_findings_stats(**_args: Any) -> Args:
-    summary = _data().get_findings_summary()
-    return {"total_findings": summary.pop("total"), **summary}
+    data = _data()
+    summary = data.get_findings_summary(exclusions="hide")
+    total = summary.pop("total")
+    return {"total_findings": total, **summary, **_excluded_note(data, {}, total)}
 
 
 # What an agent reads of one finding (#3276): the small fields and the stored
@@ -612,6 +627,10 @@ def update_case(
     updates: Args = {}
     if title:
         updates["title"] = title
+        # Marked only when a principal stands behind the call (chat, /mcp): a run's
+        # own agent renaming the case must not hold off the run's retitle.
+        if current_caller() and (edited := title_edited_activities(case, title)):
+            updates["activities"] = edited
     if description:
         updates["description"] = description
     if status is not None:
@@ -802,7 +821,7 @@ async def _read_case_shell(args: Args) -> Args:
 
     import httpx
 
-    from core.cases.case_view import render_case_view, shell_address
+    from core.cases.case_view import render_case_view, shell_address, shell_token
 
     case_id = str(args.get("case_id") or "")
     command = str(args.get("command") or "")
@@ -819,11 +838,13 @@ async def _read_case_shell(args: Args) -> Args:
     if view is None:
         raise MCPFailure("invalid_args", f"case {case_id} not found")
     transport = httpx.AsyncHTTPTransport(uds=socket) if socket else None
+    token = shell_token()
     try:
         async with httpx.AsyncClient(
             transport=transport,
             base_url=url or "http://shell",
             timeout=httpx.Timeout(None, connect=5.0),
+            headers={"Authorization": f"Bearer {token}"} if token else None,
         ) as client:
             response = await client.post(
                 "/run",
@@ -840,6 +861,15 @@ async def _read_case_shell(args: Args) -> Args:
     )
     if response.status_code == 400:
         raise MCPFailure("invalid_args", str(answer.get("error") or response.text))
+    if response.status_code == 401:
+        raise MCPFailure(
+            "unavailable",
+            (
+                "the case shell refused this backend's SHELL_TOKEN"
+                if token
+                else "the case shell requires a bearer and this backend has no SHELL_TOKEN"
+            ),
+        )
     if response.status_code != 200:
         raise MCPFailure(
             "unavailable",
@@ -1019,7 +1049,12 @@ async def replay_hunt(
     only = _step(step, "step")
     if only is not None:
         first = last = only
-    report = await read_replay(str(run_id), decision_id or None)
+    # agent-serve answers any run id, so a run on a case the caller can't read
+    # (#4359) is refused here, worded as one with nothing to replay.
+    if await asyncio.to_thread(run_unreadable, str(run_id)):
+        report = None
+    else:
+        report = await read_replay(str(run_id), decision_id or None)
     if report is None:
         return {"error": f"Nothing to replay for run {run_id}"}
     return _replay_summary(report, first, last)
@@ -1064,10 +1099,11 @@ def _indicator_lookup(args: Args) -> Any:
     hits = lookup_indicators(indicator_type, [str(v) for v in values])
     return [
         {
+            **(hits.get(value) or {}),
+            # The row names the value as asked, not the feed's stored spelling.
             "indicator_type": indicator_type,
             "indicator_value": value,
             "known": value in hits,
-            **(hits.get(value) or {}),
         }
         for value in values
     ]
@@ -1277,8 +1313,11 @@ async def execute_backend_tool(
             result = await result
         return result, True
 
-    # Agent skills (#925): reads from disk only, never a database.
+    # Agent skills: read from disk, except those the scan holds, which read as
+    # absent so the agent cannot learn their content. The verdicts come from the
+    # database, hence off the event loop.
     if tool_name == READ_SKILL_TOOL:
-        return read_skill(args.get("name"), args.get("file")), True
+        visible = await asyncio.to_thread(agent_skills)
+        return read_skill(args.get("name"), args.get("file"), skills=visible), True
 
     return None, False

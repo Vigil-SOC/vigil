@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session, object_session
 from core.audit.retention import ERASED_PREFIX, is_erased
 from core.audit.trail import SYSTEM
 from core.auth import (
+    break_glass,
+    directory_sync,
     invites,
     key_ring,
     mfa_methods,
@@ -54,6 +56,7 @@ from core.auth.auth_service import (
     managers,
     password_matches_any,
     raise_if_locked,
+    with_dispute,
 )
 from core.auth.bootstrap_code import has_human_user, setup_code_matches
 from core.auth.current_user import (
@@ -92,6 +95,7 @@ from core.time import utcnow
 from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.auth_rate_key import (
     bootstrap_rate_key,
+    confirm_email_rate_key,
     invite_rate_key,
     login_rate_key,
     refresh_rate_key,
@@ -246,6 +250,8 @@ class LoginRequest(BaseModel):
     # challenge the first call's 401 carried.
     webauthn: Optional[dict] = None
     webauthn_challenge: Optional[str] = None
+    # A break-glass account's reason, sent with its code (#4532).
+    reason: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -502,7 +508,7 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
             user,
             [name for name, on in payload["permissions"].items() if on],
             session_policy.policy(),
-            via_sso=row is not None and row.auth_method == sign_ins.SSO,
+            via_sso=row is not None and row.auth_method in sign_ins.NOT_HELD,
         )
     )
     # Whether this install has security keys, and why not when it has none.
@@ -600,14 +606,22 @@ def bootstrap_admin(
 
 
 def _end_others_after_change(
-    session: Session, user: User, keep: Optional[str], source: Optional[str]
+    session: Session,
+    user: User,
+    keep: Optional[str],
+    source: Optional[str],
+    reason: str = sign_ins.ACCOUNT_CHANGED,
 ) -> None:
     """A method change ends the person's other sign-ins and stops their runs;
-    ``keep``, the one making the change, stays open with its runs."""
+    ``keep``, the one making the change, stays open with its runs.
+
+    ``reason`` stays ``account_changed`` for a role, code or method change.
+    A recovery-code sign-in passes ``recovery``.
+    """
     ids = [sid for sid, _ in sign_ins.open_ids(session, user.principal_id, keep=keep)]
     sign_ins.end_all_for_user(
         user.user_id,
-        sign_ins.ACCOUNT_CHANGED,
+        reason,
         session,
         except_sign_in_id=keep,
     )
@@ -619,18 +633,84 @@ def _end_others_after_change(
             actor=user.principal_id,
             principal=user.principal_id,
             sign_in=sid,
-            end_reason=sign_ins.ACCOUNT_CHANGED,
+            end_reason=reason,
         )
 
 
 def _tell_person(
-    session: Session, user: User, title: str, message: str, kind: str = "mfa_change"
+    session: Session,
+    user: User,
+    title: str,
+    message: str,
+    kind: str = "mfa_change",
+    fallback: str = "",
 ) -> None:
-    """Tell the person once the change commits. Never a code: notices are emailed."""
+    """Tell the person once the change commits. Never a code: notices are emailed.
+
+    ``fallback`` is the dispute sentence already in ``message``. It is left as
+    written when the person has no other account manager."""
+    message = with_dispute(user.principal_id, message, fallback, session)
     principal = user.principal_id
 
     def send() -> None:
         notify(principal, kind, title, message, link="/settings", priority="high")
+
+    when_committed(session, send)
+
+
+# The dispute sentences already on the notices. Replaced only when the person
+# has another account manager to name.
+_DISPUTE_PASSWORD = "If this wasn't you, change your password and tell an admin."
+_DISPUTE_NOW = "If this wasn't you, tell an admin now."
+_DISPUTE_SHORT = "If this wasn't you, tell an admin."
+_DISPUTE_SIGN_OUT = (
+    "If this wasn't you, sign out everywhere else from your sign-ins in the "
+    "console, change your password and tell an admin."
+)
+_NO_CONFIRM_LINK = (
+    "No confirmation link could be sent. The address stays unconfirmed until "
+    "mail is configured and the install's public address is set."
+)
+
+
+def _confirm_mail_ready() -> bool:
+    """The same test an emailed invite uses: mail, and a public console address."""
+    return bool(mail_is_configured() and get_settings().vigil_frontend_url.strip())
+
+
+def _change_notice(
+    session: Session, user: User, what: str, source: Optional[str]
+) -> str:
+    """What changed, when, and the address the request came from. No link."""
+    at = f"{utcnow():%Y-%m-%d %H:%M} UTC"
+    where = source if source else "an unknown address"
+    return f"{what} at {at} from {where}. {_DISPUTE_SHORT}"
+
+
+def _send_confirm_link(session: Session, user: User, token: str) -> None:
+    """Mail the confirmation link once the change commits. The value is only here."""
+    link = invites.confirm_link(get_settings().vigil_frontend_url.strip(), token)
+    to = user.email
+    name = user.full_name or user.username
+    body = (
+        f"Hello {name},\n\n"
+        "Confirm this address for your Vigil account. Open the link below. "
+        "It is valid for 24 hours and can only be used once.\n\n"
+        f"{link}\n\n"
+        "If you did not change your email, you can ignore this email."
+    )
+
+    def send() -> None:
+        send_email(to=to, subject="Confirm your Vigil email address", body=body)
+
+    when_committed(session, send)
+
+
+def _tell_address(session: Session, address: str, title: str, message: str) -> None:
+    """The same notice, mailed to an address that is no longer on the account."""
+
+    def send() -> None:
+        send_email(to=address, subject=title, body=message)
 
     when_committed(session, send)
 
@@ -647,7 +727,7 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
         actor=user.principal_id,
         principal=user.principal_id,
     )
-    _end_others_after_change(session, user, None, source)
+    _end_others_after_change(session, user, None, source, sign_ins.RECOVERY)
     _tell_person(
         session,
         user,
@@ -656,6 +736,7 @@ def _recover(session: Session, user: User, source: Optional[str]) -> None:
         "app and remaining recovery codes were removed and your other sign-ins "
         "ended; two-step sign-in has to be set up again. If this wasn't you, "
         "change your password and tell an admin.",
+        fallback=_DISPUTE_PASSWORD,
     )
 
 
@@ -677,6 +758,7 @@ def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> 
         "A recovery code was used to sign in to your account because security keys "
         "are unavailable. The code is spent; nothing else was removed. If this "
         "wasn't you, change your password and tell an admin.",
+        fallback=_DISPUTE_PASSWORD,
     )
     principal, name = user.principal_id, user.username
 
@@ -698,8 +780,47 @@ def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> 
     when_committed(session, tell_managers)
 
 
+def _break_glass_used(
+    session: Session, user: User, reason: str, source: Optional[str], factor: str
+) -> None:
+    """A break-glass account's second factor was accepted: on the trail with its
+    reason, and one notice to each manager once committed."""
+    trail_events.record(
+        session,
+        "auth.break_glass_used",
+        {"source_ip": source, "personal": {"reason": reason}},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        factor=factor,
+    )
+    principal, name = user.principal_id, user.username
+    left = len(user.mfa_recovery_codes or [])
+    where = source or "an unknown address"
+    message = (
+        f"{name}, a break-glass account, signed in from {where}. "
+        f"Reason given: {reason}. "
+        f"{left} recovery code{'' if left == 1 else 's'} left."
+    )
+
+    def tell_managers() -> None:
+        for to in managers(principal):
+            try:
+                notify(
+                    to,
+                    "break_glass_used",
+                    f"Break-glass sign-in: {name}",
+                    message,
+                    USERS_LINK,
+                    priority="high",
+                )
+            except Exception:  # noqa: BLE001 - the rest are still told
+                logger.exception("could not send a break-glass notice for %s", name)
+
+    when_committed(session, tell_managers)
+
+
 def _mfa_required(
-    session: Session, user: User, key_required: bool = False
+    session: Session, user: User, key_required: bool = False, marked: bool = False
 ) -> JSONResponse:
     """The first login call's 401 for a person with MFA: ``X-MFA-Required`` as
     ever, and with security keys the request options and signed challenge for the
@@ -723,7 +844,13 @@ def _mfa_required(
             detail = str(exc) if methods == ["security_key"] else detail
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": detail, "methods": methods, "security_key": challenge},
+        content={
+            "detail": detail,
+            "methods": methods,
+            "security_key": challenge,
+            # The console asks for a code and a reason together.
+            "break_glass": marked,
+        },
         headers={"X-MFA-Required": "true"},
     )
 
@@ -758,6 +885,7 @@ def _tell_of_eviction(
     where = f"{sign_ins.browser_of(ua)} ({sign_ins.device_of(ua)})"
     if source:
         where += f", address {source}"
+    text = with_dispute(principal, EVICTION_TEXT, _DISPUTE_PASSWORD, session)
 
     def send() -> None:
         try:
@@ -765,11 +893,11 @@ def _tell_of_eviction(
                 principal,
                 SIGN_IN_LIMIT_KIND,
                 "A new sign-in ended your oldest one",
-                EVICTION_TEXT,
+                text,
                 link="/overview?sign_ins=1",
                 priority="high",
                 metadata={"sign_in_id": sid},
-                mail_body=f"{EVICTION_TEXT} It came from {where}.",
+                mail_body=f"{text} It came from {where}.",
             )
         except Exception:  # noqa: BLE001 - the managers are still told
             logger.exception("could not send a sign-in limit notice for %s", name)
@@ -835,10 +963,12 @@ def login(
     # counts toward a lock nor tells a right password from a wrong one. Only a
     # service account goes on, and not from a browser, where it is refused anyway:
     # there every name, known or not, gets the same answer.
+    # A break-glass account goes on to its password, from anywhere (#4532).
     if sso.required():
         matches = matching_accounts(session, payload.username_or_email)
         machine = len(matches) == 1 and _is_service_account(matches[0])
-        if not machine or _is_browser_request(request):
+        marked = len(matches) == 1 and matches[0].break_glass_at is not None
+        if not marked and (not machine or _is_browser_request(request)):
             if len(matches) == 1:
                 refusal["principal"] = matches[0].principal_id
             failed("sso_required")
@@ -889,6 +1019,8 @@ def login(
         raise _invalid_credentials()
 
     service_account = _is_service_account(user)
+    # The host never marks a service account; the check keeps it that way here.
+    marked = user.break_glass_at is not None and not service_account
     if service_account and _is_browser_request(request):
         # Exactly a wrong password, so the console can't tell the account apart.
         # Not a login either: drop authenticate_user's pending last_login /
@@ -917,10 +1049,21 @@ def login(
     # Whether the account had MFA when the password was given: a recovery below
     # clears it, and the length rule must still be the one the account signed in under.
     had_mfa = user.mfa_enabled
-    # Check MFA if enabled (a method of any kind: app, recovery codes or a key)
-    if user.mfa_enabled:
+    reason = (payload.reason or "").strip()
+    # Check MFA if enabled (a method of any kind: app, recovery codes or a key).
+    # A break-glass account always reaches it, even with two-step turned off.
+    if user.mfa_enabled or marked:
         if not payload.mfa_code and not payload.webauthn:
-            return _mfa_required(session, user, key_required)
+            return _mfa_required(session, user, key_required, marked)
+        if marked and not reason:
+            # Before the code is checked, so nothing is spent or counted.
+            if user in session:
+                session.expire(user)
+            failed("break_glass_no_reason")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Give a reason for using this break-glass account.",
+            )
 
         # authenticate_user clears the lockout counter on this session before
         # the code is checked. verify_mfa_code opens a savepoint, and
@@ -986,7 +1129,19 @@ def login(
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
         key_only = keyed and not mfa_methods.has_app(user, keyed)
-        if accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
+        if marked:
+            # A break-glass factor: a code is spent and nothing else changes; the
+            # host's codes are never replaced here.
+            _break_glass_used(
+                session,
+                user,
+                reason,
+                source,
+                {CODE_APP: "authenticator_app", CODE_KEY: "security_key"}.get(
+                    accepted, "recovery_code"
+                ),
+            )
+        elif accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
             # The one exception to recovery: with keys unavailable the code is
             # spent and nothing else changes, so the person can add the app.
             step_down = "recovery_code"
@@ -998,7 +1153,8 @@ def login(
             _recover(session, user, source)
             recovered = True
         # Whether TOTP or an old code got in, an old-scheme set ends here.
-        new_recovery_codes = AuthService.upgrade_recovery_codes(user)
+        if not marked:
+            new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # The password and any MFA code are good; the password may have joined the
     # breached list since it was set, be too short for one factor, or be past the
@@ -1009,7 +1165,8 @@ def login(
     if not service_account:
         try:
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
-            check_not_expired(user)
+            if not marked:  # a break-glass password never expires
+                check_not_expired(user)
             if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
                 raise PasswordPolicyError(
                     f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
@@ -1054,6 +1211,8 @@ def login(
             if step_down == "app"
             else sign_ins.RECOVERY_STEP_DOWN
         )
+    if marked:
+        auth_method = sign_ins.BREAK_GLASS
     sign_ins.start(
         session,
         sid,
@@ -1305,17 +1464,36 @@ def _sso_username(session: Session, claims: dict) -> str:
 
 def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[User]:
     """The account this subject signs in as (None: create one), refused when it
-    can't. Nothing is written here, so a refusal leaves no trace but the trail's."""
+    can't. A directory id on an unmanaged link is refreshed here; a refusal
+    rolls that back with the sign-in."""
     email = claims["email"].strip()
+    claim = directory_sync.claim_value(claims, s.directory_id_claim)
+    if claim:
+        notes["directory_claim"] = claim
     link = sso.linked(session, s.issuer, claims["sub"])
     if link is not None:
+        if claim:
+            directory_sync.note_directory_id(session, link, s.issuer, claim)
+        notes["linked_by"] = "subject"
+    elif claim:
+        # Sync on: this is how a push is found. Sync off: a placeholder subject
+        # (still the externalId) is still replaced, so turning sync off does not
+        # strand that person on the email match.
+        link = sso.linked_by_directory(session, s.issuer, claim)
+        if link is not None:
+            directory_sync.adopt_subject(session, link, s.issuer, claims["sub"])
+            notes["linked_by"] = "directory"
+    if link is not None:
+        if link.managed:
+            notes["managed"] = True
         user = (
             session.query(User)
             .filter(User.principal_id == link.principal_id)
             .with_for_update()
             .first()
         )
-        notes["linked_by"] = "subject"
+    elif s.sync_enabled:
+        raise sso.Refused("not_provisioned", sso.NOT_PROVISIONED, attempted=email)
     else:
         claim_sign_in_names(session, email)
         matches = (
@@ -1334,6 +1512,16 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
                 raise sso.Refused("email_in_use")
             notes["linked_by"] = "created"
             return None
+        # Taking over an existing account on its email needs the provider to
+        # vouch for that address; a missing claim is not a yes. Some providers
+        # send the claim as a string.
+        if claims.get("email_verified") not in (True, "true"):
+            raise sso.Refused(
+                "email_link_unverified",
+                sso.EMAIL_NOT_VERIFIED,
+                principal=user.principal_id,
+                attempted=email,
+            )
         notes["linked_by"] = "email"
     if user is None:
         raise sso.Refused("linked_account_missing")
@@ -1347,6 +1535,10 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         raise sso.Refused("service_account", principal=pid)
     if not user.is_active:
         raise sso.Refused("account_deactivated", sso.DEACTIVATED, pid)
+    if user.break_glass_at is not None:
+        # Never linked: found by email, or by a link made before the mark.
+        code = sso.BREAK_GLASS_EMAIL if link is None else sso.BREAK_GLASS_LINKED
+        raise sso.Refused("break_glass_account", code, principal=pid, attempted=email)
     if link is None:
         other = session.query(SsoLink).filter(
             SsoLink.principal_id == pid, SsoLink.issuer == s.issuer
@@ -1419,7 +1611,7 @@ def _sso_sign_in(
             provider=s.issuer,
             group=match[1] if match else None,
         )
-    else:
+    elif not notes.get("managed"):
         changed = []
         if name and name != user.full_name:
             user.full_name = name
@@ -1430,6 +1622,8 @@ def _sso_sign_in(
                 notes["email_conflict"] = True
             else:
                 user.email = email
+                user.is_verified = True
+                invites.revoke_confirms(session, user.principal_id, SYSTEM, "sso")
                 changed.append("email")
         if changed:
             trail_events.record(
@@ -1473,8 +1667,11 @@ def _sso_sign_in(
                 user.role_id = role.role_id
                 # The new sign-in starts after this, so every open one ends.
                 _end_others_after_change(session, user, None, source)
-    if notes.get("linked_by") != "subject":
-        sso.link(session, user.principal_id, s.issuer, claims["sub"])
+    if notes.get("linked_by") not in ("subject", "directory"):
+        created = sso.link(session, user.principal_id, s.issuer, claims["sub"])
+        claim = notes.get("directory_claim")
+        if isinstance(claim, str):
+            directory_sync.note_directory_id(session, created, s.issuer, claim)
     session.flush()
 
     ua = request.headers.get("user-agent")
@@ -1597,17 +1794,57 @@ def _confirm_it_is_you(
     request: Request, user: User, body: ConfirmRequest, session: Session
 ) -> None:
     """A fresh one-factor check on every call. It shares the confirmation's
-    window and its count of failures in a row."""
+    window and its count of failures in a row.
+
+    With a trail, the window opens only in the transaction that appends
+    ``auth.confirmed``. A refused insert is held and the window stays shut,
+    so the check grants nothing further; the sign-ins still end.
+    """
+    sid = _session_sid(request)
+    source = client_host(request)
+    if not trail_events.ready(session):
+        step_up.confirm(
+            user,
+            session,
+            sid,
+            password=body.password,
+            code=body.code,
+            assertion=body.assertion,
+            challenge=body.challenge,
+            source=source,
+        )
+        return
     step_up.confirm(
         user,
         session,
-        _session_sid(request),
+        sid,
         password=body.password,
         code=body.code,
         assertion=body.assertion,
         challenge=body.challenge,
-        source=client_host(request),
+        source=source,
+        settle=False,
     )
+    _settle_end_confirmation(user, sid, source)
+
+
+def _settle_end_confirmation(
+    user: User, sid: Optional[str], source: Optional[str]
+) -> None:
+    """Append ``auth.confirmed`` and open the window together, or hold it shut."""
+    beside = {"source_ip": source}
+    fields = dict(actor=user.principal_id, principal=user.principal_id, sign_in=sid)
+    try:
+        with unit_of_work() as own:
+            if sid and not step_up.open_window(own, sid):
+                return
+            trail_events.record(own, "auth.confirmed", beside, **fields)
+        return
+    except Exception:  # noqa: BLE001 - the sign-ins still end; the entry is held
+        logger.exception("auth.confirmed was not written with the window")
+    if trail_events.safety("auth.confirmed", beside, **fields) is not None and sid:
+        with unit_of_work() as own:
+            step_up.open_window(own, sid)
 
 
 class ConfirmItRequest(ConfirmRequest):
@@ -1657,19 +1894,33 @@ def _end_own(
     user: User,
     ids: List[str],
 ) -> sign_ins.EndedSignIns:
-    """End these sign-ins of the caller's, then write their entries (the rows
-    are locked before the trail's lock, the order every path takes)."""
-    ended = [sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, session)]
-    for sid in ended:
-        trail_events.record(
-            session,
-            "auth.sign_in_ended",
-            {"source_ip": client_host(request)},
-            actor=user.principal_id,
-            principal=user.principal_id,
-            sign_in=sid,
-            end_reason=sign_ins.ENDED_BY_PERSON,
-        )
+    """End these sign-ins of the caller's.
+
+    With a trail, the ends commit first and each entry is appended or held.
+    Without one, both stay in the request transaction (rows locked before the
+    trail's lock, the order every other path takes).
+    """
+    beside = {"source_ip": client_host(request)}
+    fields = dict(
+        actor=user.principal_id,
+        principal=user.principal_id,
+        end_reason=sign_ins.ENDED_BY_PERSON,
+    )
+    if trail_events.ready(session):
+        with unit_of_work() as own:
+            ended = [
+                sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, own)
+            ]
+        for sid in ended:
+            trail_events.safety("auth.sign_in_ended", beside, sign_in=sid, **fields)
+    else:
+        ended = [
+            sid for sid in ids if sign_ins.end(sid, sign_ins.ENDED_BY_PERSON, session)
+        ]
+        for sid in ended:
+            trail_events.record(
+                session, "auth.sign_in_ended", beside, sign_in=sid, **fields
+            )
     here = _session_sid(request) in ended
     if here:
         clear_auth_cookies(response)
@@ -1913,6 +2164,7 @@ def _apply_profile_update(
     change must not depend on the request transaction rolling the name back.
     """
     changing_email = bool(email) and email.casefold() != user.email.casefold()
+    old_email = user.email if changing_email else None
     if changing_email:
         # Password reset is mailed to the address on the account, so a live
         # session is not enough to point that address somewhere else: the strong
@@ -1948,6 +2200,14 @@ def _apply_profile_update(
         invites.revoke_resets(
             session, user.principal_id, user.principal_id, "email_changed"
         )
+        # A confirmation of the previous address must not confirm this one.
+        if _confirm_mail_ready():
+            _, token = invites.issue_confirm(session, user, user.principal_id)
+            _send_confirm_link(session, user, token)
+        else:
+            invites.revoke_confirms(
+                session, user.principal_id, user.principal_id, "email_changed"
+            )
 
     # Flush so the read-back sees server defaults; the request's unit
     # of work commits.
@@ -1963,7 +2223,25 @@ def _apply_profile_update(
             sign_in=sign_in,
             changed=changed,
         )
-    return changing_email, UserSchema.dump(user)
+    payload = UserSchema.dump(user)
+    if changing_email:
+        title = "Your email address was changed"
+        message = _change_notice(
+            session, user, "Your email address was changed", source
+        )
+        _tell_person(
+            session, user, title, message, kind="email_changed", fallback=_DISPUTE_SHORT
+        )
+        if old_email:
+            _tell_address(
+                session,
+                old_email,
+                title,
+                with_dispute(user.principal_id, message, _DISPUTE_SHORT, session),
+            )
+        if not _confirm_mail_ready():
+            payload["message"] = _NO_CONFIRM_LINK
+    return changing_email, payload
 
 
 @router.put("/me")
@@ -2031,6 +2309,85 @@ async def update_current_user(
         )
 
 
+@router.post("/email-confirmation")
+@limiter.limit("5/minute", key_func=session_rate_key)
+def resend_email_confirmation(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: UnitOfWorkSession,
+):
+    """Send another confirmation link for the signed-in person's address.
+
+    Replaces the open one. Mail and the install's public address both have to
+    be set; otherwise the address stays unconfirmed and the response says so.
+    """
+    user = session.get(User, current_user.user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email address is already confirmed",
+        )
+    if not _confirm_mail_ready():
+        return {"message": _NO_CONFIRM_LINK}
+    _, token = invites.issue_confirm(session, user, user.principal_id)
+    _send_confirm_link(session, user, token)
+    return {"message": "A confirmation link has been sent."}
+
+
+class EmailConfirmation(BaseModel):
+    """The value from the confirmation link. Opening the page does not send it."""
+
+    token: str
+
+
+_INVALID_CONFIRM = "This confirmation link isn't valid any more. Ask for a new one."
+
+
+@router.post("/email-confirmation/confirm")
+@limiter.limit("5/hour", key_func=confirm_email_rate_key)
+def confirm_email_address(
+    request: Request,
+    body: EmailConfirmation,
+    session: UnitOfWorkSession,
+):
+    """Confirm the address. The link is used up by this request, not by opening it."""
+    row = invites.find(session, body.token, lock=True, kind=invites.CONFIRM)
+    if not invites.usable(row):
+        if row is not None:
+            invites.note_expired(session, row)
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": _INVALID_CONFIRM},
+        )
+    user = (
+        session.query(User)
+        .filter(User.principal_id == row.principal_id)
+        .with_for_update()
+        .first()
+    )
+    if user is None or not user.is_active:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": _INVALID_CONFIRM},
+        )
+    row.used_at = utcnow()
+    user.is_verified = True
+    trail_events.record(
+        session,
+        "email.confirmed",
+        {"source_ip": client_host(request)},
+        actor=user.principal_id,
+        principal=user.principal_id,
+        link_id=row.link_id,
+    )
+    return {"message": "Email address confirmed."}
+
+
 @router.post("/change-password")
 @limiter.limit("5/minute", key_func=session_rate_key)
 async def change_password(
@@ -2058,6 +2415,12 @@ async def change_password(
     ):
         # 400, not 401: the session is valid, a body field is wrong. A 401 would
         # make the web client refresh and retry, spending two rate-limit slots.
+        # Own transaction: this raise rolls the request's back.
+        await asyncio.to_thread(
+            trail_events.password_change_failed,
+            current_user.principal_id,
+            _session_sid(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
@@ -2099,6 +2462,16 @@ async def change_password(
         )
         if body.suspected_leak:
             _tell_managers_of_leak(session, user)
+        _tell_person(
+            session,
+            user,
+            "Your password was changed",
+            _change_notice(
+                session, user, "Your password was changed", client_host(request)
+            ),
+            kind="password_changed",
+            fallback=_DISPUTE_SHORT,
+        )
 
         # End every sign-in, this one included; the client should re-login.
         # In this transaction: the change does not commit without it.
@@ -2262,14 +2635,21 @@ def verify_mfa(
     _record_mfa(session, request, current_user, "auth.mfa_enabled")
     if adding_app:
         # Adding ends no sign-in; the notice says how to end the others.
-        _tell_person(session, current_user, *_ADDED_APP)
-    elif again and codes:
+        _tell_person(
+            session,
+            current_user,
+            _ADDED_APP[0],
+            _ADDED_APP[1],
+            fallback=_DISPUTE_SIGN_OUT,
+        )
+    elif again and (codes or current_user.break_glass_at is not None):
         _tell_person(
             session,
             current_user,
             "Two-step sign-in was turned on again",
             "Two-step sign-in was turned on again for your account. If this "
             "wasn't you, change your password and tell an admin.",
+            fallback=_DISPUTE_PASSWORD,
         )
     # Setting it up proved the person holds the factor: the window starts.
     step_up.open_window(session, _session_sid(request))
@@ -2282,8 +2662,12 @@ def verify_mfa(
 def _recovery_window(request: Request, session: Session) -> bool:
     """Whether this is a key-only person's recovery sign-in, still inside its
     privileged window and with keys still unavailable: the sign-in stands in for the code.
+    A break-glass sign-in does for its whole life: its code was spent to get in, and
+    asking for another would spend the safe's codes on adding a method.
     """
     row = session.get(SignIn, _session_sid(request) or "")
+    if row and row.ended_at is None and row.auth_method == sign_ins.BREAK_GLASS:
+        return True
     return bool(
         row
         and row.auth_method == sign_ins.RECOVERY_STEP_DOWN
@@ -2341,6 +2725,10 @@ def regenerate_recovery_codes(
         The new plaintext recovery codes, shown only once.
     """
     raise_if_locked(current_user)
+    # A break-glass account's codes are the safe's; refused before the check
+    # so no code is spent.
+    if current_user.break_glass_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, break_glass.MARKED)
     _strong_check(request, current_user, body, session)
     codes = AuthService.get_mfa_recovery_codes(current_user.user_id, session)
     if codes is None:
@@ -2348,6 +2736,19 @@ def regenerate_recovery_codes(
             status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled"
         )
     _record_mfa(session, request, current_user, "auth.recovery_codes_regenerated")
+    _tell_person(
+        session,
+        current_user,
+        "Your recovery codes were regenerated",
+        _change_notice(
+            session,
+            current_user,
+            "Recovery codes for your account were regenerated",
+            client_host(request),
+        ),
+        kind="recovery_codes",
+        fallback=_DISPUTE_SHORT,
+    )
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
     )
@@ -2393,6 +2794,26 @@ def disable_mfa(
     )
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
+    )
+    if keyed:
+        title, what, kind = (
+            "Your authenticator app was removed",
+            "The authenticator app was removed from your account",
+            "authenticator_removed",
+        )
+    else:
+        title, what, kind = (
+            "Two-step sign-in was turned off",
+            "Two-step sign-in was turned off",
+            "mfa_disabled",
+        )
+    _tell_person(
+        session,
+        current_user,
+        title,
+        _change_notice(session, current_user, what, client_host(request)),
+        kind=kind,
+        fallback=_DISPUTE_SHORT,
     )
 
     return {"message": "MFA disabled successfully"}
@@ -2611,7 +3032,13 @@ def register_security_key(
         _record_mfa(session, request, current_user, "auth.mfa_enabled")
     _record_mfa(session, request, current_user, "auth.security_key_added")
     if not first:
-        _tell_person(session, current_user, *_ADDED_KEY)
+        _tell_person(
+            session,
+            current_user,
+            _ADDED_KEY[0],
+            _ADDED_KEY[1],
+            fallback=_DISPUTE_SIGN_OUT,
+        )
     elif again:
         _tell_person(
             session,
@@ -2619,6 +3046,7 @@ def register_security_key(
             "Two-step sign-in was turned on again",
             "Two-step sign-in was turned on again for your account. If this "
             "wasn't you, change your password and tell an admin.",
+            fallback=_DISPUTE_PASSWORD,
         )
     # Registering proved the person holds the key: the window starts.
     step_up.open_window(session, _session_sid(request))
@@ -2666,7 +3094,13 @@ def remove_security_key(
     _end_others_after_change(
         session, current_user, _session_sid(request), client_host(request)
     )
-    _tell_person(session, current_user, *_REMOVED_KEY)
+    _tell_person(
+        session,
+        current_user,
+        _REMOVED_KEY[0],
+        _REMOVED_KEY[1],
+        fallback=_DISPUTE_PASSWORD,
+    )
     return {"message": "Security key removed"}
 
 
@@ -2698,7 +3132,10 @@ def password_reset_request(
     # any while single sign-on is required; the answer stays the same.
     if sso.required():
         logger.info("Password reset refused: single sign-on is required")
-    elif user and user.is_active and not _is_service_account(user):
+    elif user and sso.sso_only(session, user):
+        # The provider is this account's only way in; a mailbox is not.
+        logger.info("Password reset refused: %s signs in only with SSO", user.user_id)
+    elif user and user.is_active and user.is_verified and not _is_service_account(user):
         _, token = invites.issue_reset(session, user, invites.SELF, user.principal_id)
         link = reset_link(default_base_url(settings), token)
         subject = "Vigil SOC — password reset"
@@ -2716,6 +3153,14 @@ def password_reset_request(
             session, lambda: send_email(to=to, subject=subject, body=body_text)
         )
         logger.info("Password reset requested for %s", user.user_id)
+    elif (
+        user
+        and user.is_active
+        and not user.is_verified
+        and not _is_service_account(user)
+    ):
+        # Same reply as every other request. The address has not proved itself.
+        logger.info("Password reset skipped; email not confirmed for %s", user.user_id)
     else:
         # Unknown address, inactive user or service account — log for ops visibility but
         # return the same response. Constant-time comparison isn't needed
@@ -2729,7 +3174,10 @@ def _reset_request_message(settings) -> str:
     """What the requester is told. Depends only on how mail is configured,
     never on the account, so the reply still can't enumerate emails."""
     if mail_is_configured():
-        return "If that email matches an active account, a reset link has been sent."
+        return (
+            "If that email matches an active account, a reset link has been sent. "
+            "An address changed but not yet confirmed gets no link — ask an admin."
+        )
     if settings.dev_mode:
         return (
             "Email isn't set up on this server. If that email matches an active "
@@ -2740,6 +3188,29 @@ def _reset_request_message(settings) -> str:
         "administrator to issue one with scripts/reset-password.sh (on a compose "
         "install: docker exec deeptempo-backend python scripts/reset_password.py)."
     )
+
+
+def _break_glass_link(session: Session, row) -> bool:
+    """A reset link the host issued, or a sign-in's forced change, for a marked account."""
+    if row is None or row.channel not in (invites.HOST, invites.SIGNIN):
+        return False
+    marked = (
+        session.query(User.break_glass_at)
+        .filter(User.principal_id == row.principal_id)
+        .scalar()
+    )
+    return marked is not None
+
+
+def _link_problem(row: Optional[invites.AuthLink]) -> str:
+    """Why ``invites.usable`` failed a link, for the trail."""
+    if row is None:
+        return "unknown"
+    if row.used_at is not None:
+        return "used"
+    if row.revoked_at is not None:
+        return "revoked"
+    return "expired" if invites.is_expired(row) else "too_many_attempts"
 
 
 @router.post("/password-reset/confirm")
@@ -2755,13 +3226,30 @@ def password_reset_confirm(
     policy and reuse check, uses the link up, closes every other open one, and
     ends the account's sign-ins. A rejected password leaves the link usable.
     """
-    # A link issued before single sign-on was required is not honoured now.
-    if sso.required():
+    source = client_host(request)
+
+    def refuse(reason, row=None):
+        # Own transaction: two of the refusals raise, which rolls this one back.
+        trail_events.reset_refused(
+            source,
+            reason,
+            body.token,
+            row.link_id if row else None,
+            row.principal_id if row else None,
+        )
+
+    row = invites.find(session, body.token, lock=True, kind=invites.RESET)
+    # A link issued before single sign-on was required is not honoured now. A
+    # break-glass account's host link or its own forced-change token still is.
+    if sso.required() and not _break_glass_link(session, row):
+        refuse("sso_required")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=sso.REQUIRED_DETAIL
         )
-    row = invites.find(session, body.token, lock=True, kind=invites.RESET)
     if not invites.usable(row):
+        # First: note_expired holds the trail's lock until this request ends,
+        # which the refusal's own transaction would wait on.
+        refuse(_link_problem(row), row)
         if row is not None:
             invites.note_expired(session, row)
         # Returned, not raised, so the expiry's trail entry stays.
@@ -2778,14 +3266,24 @@ def password_reset_confirm(
     )
     if user is not None and _is_service_account(user):
         logger.warning("Refused password reset for service account %s", user.username)
+        refuse("not_eligible", row)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_INVALID_RESET_TOKEN,
         )
     if not user or not user.is_active:
+        refuse("not_eligible", row)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account no longer eligible for reset",
+        )
+    # A self-service link never gives an SSO-only account a password; an
+    # administrator's or the host script's still can.
+    if row.channel == invites.SELF and sso.sso_only(session, user):
+        refuse("sso_required", row)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_INVALID_RESET_TOKEN,
         )
 
     # The minimum age limits a voluntary change only: not the reset sign-in
@@ -2829,6 +3327,7 @@ def password_reset_confirm(
         "Your password was reset through a reset link and your sign-ins ended. "
         "If this wasn't you, tell an admin now.",
         kind="password_reset",
+        fallback=_DISPUTE_NOW,
     )
     logger.info("Password reset completed for user: %s", user.username)
     return {
