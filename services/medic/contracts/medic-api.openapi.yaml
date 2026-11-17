@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Medic API
-  version: "2.1.0"
-  summary: "Medic's API: reads, plus admin writes (decision feedback, a Compose restart, and the content pack)."
+  version: "2.2.0"
+  summary: "Medic's API: reads, plus admin writes (decision feedback, a Compose restart and its level, and the content pack)."
   description: |
     Contract X2 (2026-10-07). G3 builds this API inside the Medic process; H3 (the backend
     proxy) is its only caller. ADR: outputs/X2-medic-api-adr.md.
@@ -407,7 +407,10 @@ components:
         reason:
           description: |
             For not_rateable: why feedback was refused. For fix_refused: the check that
-            failed, and nothing was restarted.
+            failed, and nothing was restarted (`observe`: the fix type is at L0). On
+            `POST /v1/fix-level`: `no_change` (already at that level), `persistence_off` (Medic
+            is told persistence is off: turn persistence on before raising to L2) or `no_rule`
+            (the pack has no such rule).
           type: string
           enum:
             - suppressed
@@ -418,6 +421,13 @@ components:
             - not_firing
             - no_runbook
             - upgrade_window
+            - observe
+            - not_on_its_own
+            - not_eligible
+            - daily_limit
+            - no_change
+            - persistence_off
+            - no_rule
             - no_container
             - container_restarted
             - fix_running
@@ -903,11 +913,86 @@ components:
           minimum: 0
           x-medic-type: number
 
+    FixLevel:
+      description: |
+        One fix type, the lane-1 rule it is for. `level`: L0 observe (a click is refused), L1
+        one-click (the default: no settings and no `level_changed` in the log), L2 on its own
+        (Medic runs the restart when the incident routes). `unreadable`: the level was set once
+        and the settings can no longer be read, so the level is L0 until an admin raises it.
+        Medic lowers L2 to L1 by itself on two failed restarts in 21 minutes, a daemon that did
+        not come back, 3 restarts in 24 hours, a changed rule or pack, or a store reset; each is
+        a `level_changed`.
+      type: object
+      required: [fix_type, level, unreadable, raised_on, track_record]
+      additionalProperties: false
+      properties:
+        fix_type: { $ref: "./decision-record.schema.json#/$defs/rule_id" }
+        level: { enum: [L0, L1, L2], x-medic-type: enum }
+        unreadable: { type: boolean, x-medic-type: enum }
+        raised_on:
+          description: When L2 was raised, and the rule revision and pack it was raised on. Null at any other level.
+          oneOf:
+            - type: "null"
+              x-medic-type: enum
+            - type: object
+              required: [at, revision, pack_id]
+              additionalProperties: false
+              properties:
+                at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+                revision: { type: integer, minimum: 1, x-medic-type: number }
+                pack_id: { $ref: "./decision-record.schema.json#/$defs/id" }
+        track_record:
+          description: |
+            Null when the decision log could not be read. Otherwise counted from the decision log, which retention and the size cap thin: `since` is the
+            oldest record it covers, and `resets` lists every store reset and early purge in it.
+            `proposed`: incidents of this rule whose L1 would-have was `propose_runbook`.
+            `ran`: restarts that ran, by a person's click or by Medic. `cleared`, `failed`
+            (`not_cleared`), `not_back` and `not_verified` count those restarts' verifies.
+            `escalations`: stops after two failures. `lowered_by_medic`: every level Medic lowered.
+          type: [object, "null"]
+          required: [since, proposed, ran, cleared, failed, not_back, not_verified, escalations, lowered_by_medic, resets]
+          additionalProperties: false
+          properties:
+            since:
+              oneOf:
+                - type: "null"
+                  x-medic-type: enum
+                - { $ref: "./decision-record.schema.json#/$defs/ts" }
+            proposed: { type: integer, minimum: 0, x-medic-type: number }
+            ran:
+              type: object
+              required: [person, medic]
+              additionalProperties: false
+              properties:
+                person: { type: integer, minimum: 0, x-medic-type: number }
+                medic: { type: integer, minimum: 0, x-medic-type: number }
+            cleared: { type: integer, minimum: 0, x-medic-type: number }
+            failed: { type: integer, minimum: 0, x-medic-type: number }
+            not_back: { type: integer, minimum: 0, x-medic-type: number }
+            not_verified: { type: integer, minimum: 0, x-medic-type: number }
+            escalations: { type: integer, minimum: 0, x-medic-type: number }
+            lowered_by_medic: { type: integer, minimum: 0, x-medic-type: number }
+            resets:
+              type: array
+              items:
+                type: object
+                required: [kind, at]
+                additionalProperties: false
+                properties:
+                  kind: { enum: [store_reset, early_purge], x-medic-type: enum }
+                  at: { $ref: "./decision-record.schema.json#/$defs/ts" }
+
     PackState:
       type: object
       required: [active, previous, bundled, withdrawn, suppression_7d]
       additionalProperties: false
       properties:
+        fix_types:
+          description: |
+            Each fix type's level and track record (Compose). Read when asked, so a
+            set-level shows at once. Empty off Compose.
+          type: array
+          items: { $ref: "#/components/schemas/FixLevel" }
         active:
           oneOf:
             - type: "null"
@@ -1218,6 +1303,75 @@ paths:
         "422": { $ref: "#/components/responses/InvalidBody" }
         "503": { $ref: "#/components/responses/Busy" }
 
+  /v1/fix-level:
+    post:
+      operationId: setFixLevel
+      tags: [pack]
+      summary: Raise a fix type one level, or lower it
+      description: |
+        `level` is the target. A raise is one step (L0 to L1, L1 to L2) and needs a `reason`;
+        a lower is any number of steps and the reason is optional. The reason is redacted (K2)
+        like a feedback comment. Raising to L2 is refused (409 `fix_refused`, `persistence_off`)
+        when Medic is told persistence is off, because the level and its counts live in Medic's
+        data directory. Medic never raises. Each change is a `level_changed` record. The only
+        fix type today is `pipeline.daemon-component-failed-compose`.
+      x-medic-permission: admin
+      parameters:
+        - name: X-Medic-Admin
+          in: header
+          required: true
+          description: Set by H3 from the session (`user:<Vigil user id>`); never from the client.
+          schema: { $ref: "./decision-record.schema.json#/$defs/id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fix_type, level]
+              additionalProperties: false
+              properties:
+                fix_type: { $ref: "./decision-record.schema.json#/$defs/rule_id" }
+                level: { enum: [L0, L1, L2], x-medic-type: enum }
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  x-medic-type: admin_input
+            examples:
+              raise:
+                value:
+                  fix_type: pipeline.daemon-component-failed-compose
+                  level: L2
+                  reason: The restart cleared the last three deaths.
+      responses:
+        "200":
+          description: The fix type as `GET /v1/pack` serves it next.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FixLevel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Refused. `reason` says why. Nothing changed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                persistence:
+                  value:
+                    type: "urn:medic:error:fix_refused"
+                    status: 409
+                    code: fix_refused
+                    reason: persistence_off
+                    request_id: 0b6f2a8e-6c0e-4d1e-9b0c-4d3f1a2b3c4d
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidBody" }
+        "503": { $ref: "#/components/responses/Busy" }
+
   /v1/decisions:
     get:
       operationId: listDecisions
@@ -1350,7 +1504,8 @@ paths:
         Read-only; the writes are the three operations under `/v1/pack/` (F6, 1.2.0; 2.0.0). Served from
         the main loop's snapshot, with the same staleness rule as `/v1/status` (older than the
         snapshot age: 503 `busy`). `suppression_7d` is refreshed about once a minute and after
-        every pack write.
+        every pack write. `fix_types` (2.2.0) is not from the snapshot: it is read per request,
+        and the three pack writes answer with it too.
       x-medic-permission: read
       responses:
         "200":
