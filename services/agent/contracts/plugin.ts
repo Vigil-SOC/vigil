@@ -31,7 +31,8 @@ export interface StructuredConclusion {
   // terminal, where the backend scores the verdict against the case's closure.
   confidence_field?: string;
   // Which field holds the run's verdict on the case. Carried onto the terminal as
-  // it stands after the guard, where benign or false_positive closes the case.
+  // it stands after the guard, where benign or false_positive closes the case if
+  // autonomy lets the run act, and otherwise leaves it open for a person.
   disposition_field?: string;
   // Which field holds a short title for the case the run was started from. Carried
   // onto the terminal, where a completed run retitles a case no person has titled.

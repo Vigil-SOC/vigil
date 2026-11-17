@@ -78,15 +78,15 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     const both = escalation_guard.guarded.filter((one) => guard.guarded.includes(one));
     if (both.length > 0) throw new SpecError(`${where}: ${both.join(", ")} is guarded by both guard and escalation_guard`);
   }
-  // A dismissal closes the case without the ceiling, so a verdict that can dismiss
-  // must pass the reviewer's second look first.
+  // A dismissal closes the case with no person looking where autonomy lets the run
+  // act, so a verdict that can dismiss must pass the reviewer's second look first.
   if (isStructured(conclusion) && conclusion.disposition_field !== undefined) {
     const field = conclusion.disposition_field;
     const allowed = ((conclusion.schema["properties"] as Record<string, { enum?: unknown }>)[field]?.enum ?? []) as unknown[];
     // Both, when the enum holds both; a guard may not name a value outside the enum.
     const dismissals = ["benign", "false_positive"].filter((one) => allowed.includes(one));
     if (dismissals.length > 0 && (guard?.field !== field || !dismissals.every((one) => guard.guarded.includes(one)))) {
-      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which closes a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
+      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which can close a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
     }
   }
   const max_turns = raw["max_turns"];
@@ -221,7 +221,7 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
   }
   // A held dismissal must land somewhere that keeps the case open.
   if (field === conclusion.disposition_field && (fallback === "benign" || fallback === "false_positive")) {
-    throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which closes the case`);
+    throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which can close the case`);
   }
   if (guarded.includes(fallback)) throw new SpecError(`${where}: guard.fallback ${fallback} is itself guarded`);
   const min_hypotheses = raw["min_hypotheses"];
