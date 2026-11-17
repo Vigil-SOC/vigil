@@ -2,6 +2,7 @@
    the VStrike provider, which isn't mounted under the console shell. */
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
+import { CopyButton } from '../../shared/CopyButton'
 import { exclusionsApi, findingsApi } from '../../services/api'
 import { findingIps } from '../../data/findingIps'
 import { useToast } from '../../shell/toast'
@@ -321,6 +322,7 @@ export default function FindingPopup({
       <span className="fp-title">
         <span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span>
         <span className="mono fp-id">{id}</span>
+        {id && <CopyButton text={id} label="finding id" />}
       </span>
     ) : (
       id || 'Finding'
