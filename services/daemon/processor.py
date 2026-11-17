@@ -69,10 +69,13 @@ TRIAGE_VERDICTS = ("malicious", "suspicious", "benign", "undetermined")
 
 
 def _unbracket(value: str) -> str:
-    """Drop the [ ] a model copies from the prompt's placeholders."""
+    """Drop the [ ] a model copies from the prompt's placeholders. Only a pair
+    around the whole value: "[note] x [Description]" is two bracketed parts,
+    left as it is."""
     value = value.strip()
-    if value.startswith("[") and value.endswith("]"):
-        value = value[1:-1].strip()
+    inner = value[1:-1]
+    if value.startswith("[") and value.endswith("]") and not set("[]") & set(inner):
+        value = inner.strip()
     return value
 
 
