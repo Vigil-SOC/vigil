@@ -25,6 +25,7 @@ import ijson
 
 from core.auth.permissions import builtin_reader
 from core.cases.assignee import AssigneeRefused, resolve_assignee
+from core.findings import netflow_describe
 from core.findings.source_evidence import (
     loglm_row_evidence,
     normalize_finding_source_evidence,
@@ -1136,7 +1137,7 @@ class IngestionService:
         attack_id = row.get("attack_id")
         cluster_id = attack_id if attack_id else None
 
-        return {
+        finding = {
             "finding_id": finding_id,
             "mitre_predictions": mitre_predictions,
             "anomaly_score": anomaly_score,
@@ -1147,6 +1148,15 @@ class IngestionService:
             "cluster_id": cluster_id,
             "severity": row.get("severity") or None,
         }
+        # What the flows show, in plain words, so the finding doesn't read as
+        # its bare id; never the detector's verdict or score.
+        if netflow_digest is not None:
+            focal, engaged = row.get("focal_ip"), row.get("engaged_ip")
+            finding["title"] = netflow_describe.title(netflow_digest, focal, engaged)
+            finding["description"] = netflow_describe.description(
+                netflow_digest, focal, engaged
+            )
+        return finding
 
     def _detect_parquet_schema(self, col_names: set) -> str:
         """'loglm' for DeepTempo embedding exports, else 'generic'."""
