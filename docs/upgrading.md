@@ -182,7 +182,7 @@ A run whose principal names it and is still live is left alone and resumes after
 
 **Rolling back.**
 
-- Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272).
+- Compose, desktop and `start.sh` roll back by Vigil's restore, which already stops every run (#4272) and discards agent runs still queued.
 - Helm rolls back by restoring the operator's own database backup and running `helm rollback` (see [Helm](#helm)). Vigil's run-stopping restore doesn't run, and the restored runs carry on under the older release, which doesn't check principals.
 
 ## Restricted cases and restores
