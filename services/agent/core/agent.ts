@@ -1498,7 +1498,7 @@ async function end(
   // unset, since its reason is already the error column.
   let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
   // Only under an answer the run gave: a bare reason claims no save.
-  if (typeof summary === "string" && typeof deliver === "string") {
+  if (typeof summary === "string" && summary.trim() !== "" && typeof deliver === "string") {
     const note = unwrittenNote(callsIn(await ctx.harness.state.read(ctx.options.run_id)), ctx.options.spec.tools);
     if (note !== null) deliver = `${deliver}\n\n${note}`;
   }

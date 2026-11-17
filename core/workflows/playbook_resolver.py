@@ -433,8 +433,9 @@ def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
     return [tool["id"] for tool in tools if tool["id"] in gated]
 
 
-# The tools that change something when they succeed: a built-in whose permission
-# is more than a read, one on Vigil's MCP server not hinted read-only, and an
+# The tools that change something when they succeed: one on Vigil's MCP server not
+# hinted read-only, else a built-in whose permission is more than a read (the hint
+# is the finer word: approve_action is gated as a decision but only reads), and an
 # outside one stored as reversible or irreversible. The agent layer reads the mark
 # at the run's end, so an answer that claims a save whose call failed is followed
 # by Vigil's own line saying so. An unclassified outside tool is not marked: it may
@@ -447,10 +448,11 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     own = {
         name
         for name in names
-        if (
-            not TOOL_PERMISSIONS[name].endswith(".read")
-            if name in TOOL_PERMISSIONS
-            else in_process.changes(name) is True
+        if (hint := in_process.changes(name)) is True
+        or (
+            hint is None
+            and name in TOOL_PERMISSIONS
+            and not TOOL_PERMISSIONS[name].endswith(".read")
         )
     }
     outside = {
