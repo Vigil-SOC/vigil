@@ -435,6 +435,9 @@ function PeopleAndRoles({ notify }: SectionProps) {
                   <td>
                     <div className="flex flex-col items-start gap-1">
                       <span className="chip">{roleName(u.role_id)}</span>
+                      {u.break_glass && (
+                        <span className="chip" title="Marked break-glass at the host">Break-glass</span>
+                      )}
                       {u.principal_kind === 'service_account' && (
                         <span className="text-xs text-tx-3 whitespace-nowrap">
                           {u.managed_by_medic ? 'Managed by Medic' : 'Service account'}

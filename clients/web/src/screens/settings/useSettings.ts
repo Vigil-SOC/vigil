@@ -285,6 +285,8 @@ export interface User {
   login_count: number
   principal_kind: 'person' | 'service_account'
   managed_by_medic: boolean
+  /** marked break-glass at the host; shown, never changed here */
+  break_glass?: boolean
   /** a service account's purpose, and the person answerable for it (never Medic's) */
   purpose: string | null
   accountable: { user_id: string; username: string; full_name: string } | null

@@ -512,6 +512,7 @@ def _dump_accounts(session: Session, users: list[User]) -> list[dict]:
             principals.SERVICE_ACCOUNT if machine else principals.PERSON
         )
         entry["managed_by_medic"] = _is_medic(user)
+        entry["break_glass"] = user.break_glass_at is not None
         entry["purpose"] = user.purpose
         entry["accountable"] = None
         entry["accountable_gone"] = False
