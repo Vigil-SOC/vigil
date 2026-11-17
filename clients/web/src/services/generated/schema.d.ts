@@ -638,7 +638,9 @@ export interface paths {
          * Erase Principal
          * @description Blank one principal's label and trail details, deactivate their account, and end their sign-in and credentials.
          *
-         *     An audit manager waits seven days and needs a reason.
+         *     An audit manager waits seven days and needs a reason. Erasing an account
+         *     deactivates it, so it takes what deactivating does: users.write (and
+         *     "Confirm it's you"), a role covering the target's, and a role manager left.
          */
         post: operations["post_api_audit_erasure"];
         delete?: never;

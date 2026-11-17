@@ -368,13 +368,19 @@ def _apply_erasures(session, now: datetime) -> None:
     # The request-time guard is not enough: the others may have been disabled
     # during the wait. Blanking the one who is now last is still refused.
     active = _managers(session, active_only=True)
+    # Nor may it take the last active role manager: the request checked that,
+    # and the wait may have changed it.
+    roles = _managers(session, active_only=True, permission="roles.manage")
     gone = set()
     for item in due:
         principal_id = item["principal_id"]
         if principal_id in active and len(active) == 1:
             continue
+        if roles == {principal_id}:
+            continue
         _perform(session, principal_id)
         active.discard(principal_id)
+        roles.discard(principal_id)
         gone.add((principal_id, item["set_at"]))
     stored["erasures"] = [
         item
@@ -665,8 +671,10 @@ def _exists(session, principal_id: str) -> bool:
     )
 
 
-def _managers(session, *, active_only: bool) -> set[str]:
-    """Principals whose role holds ``audit.manage``.
+def _managers(
+    session, *, active_only: bool, permission: str = "audit.manage"
+) -> set[str]:
+    """Principals whose role holds ``permission`` (``audit.manage``).
 
     ``active_only`` is the last-manager guard. A disabled account still holds
     the permission, so erasing it waits seven days like any other holder. A
@@ -685,9 +693,9 @@ def _managers(session, *, active_only: bool) -> set[str]:
             WHERE p.deleted_at IS NULL
               AND p.kind = :person
               {active}
-              AND (r.permissions -> 'audit.manage') = 'true'::jsonb
+              AND (r.permissions -> :permission) = 'true'::jsonb
             """),
-        {"person": principals.PERSON},
+        {"person": principals.PERSON, "permission": permission},
     ).scalars()
     found = set(rows)
     if active_only:
