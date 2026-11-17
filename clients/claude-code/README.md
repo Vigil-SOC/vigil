@@ -1,6 +1,21 @@
 # The Claude Code client for Vigil
 
-A Claude Code plugin, named `vigil`, that works your own Vigil from a Claude Code session. It holds no logic: an MCP entry that points at your Vigil's `/mcp` surface under a credential you minted, and seven short skills.
+Work your team's Vigil, the open source AI SOC you run yourself, from a Claude Code session.
+
+It works in Claude Code: the terminal, the IDE extensions, and the Code tab of the Claude desktop app. In the Claude chat app the skills load but have no connection to Vigil, because chat reaches a server only at a fixed public address and your Vigil has none.
+
+## What it adds to Claude Code
+
+Claude Code alone can reason about a log you paste into it. It holds no cases, no record of last week's hunt, and no view of what a colleague concluded. Vigil holds those, and this client brings them into the session:
+
+- **A SOC behind the session.** Investigations and hunts run in Vigil, on its agents and the integrations your Vigil already has, not in the session's context. The session starts a run, steers it, and reads its conclusion with citations and declared gaps.
+- **Work shared with colleagues.** Cases, hunts, runs and verdicts live in Vigil. A colleague opens the same case from their own session, reads what you concluded, and builds on it.
+- **Memory across runs.** A new run begins with what earlier runs concluded about the same entities, whoever started them, within the limits of restricted cases.
+- **Your controls.** Each call runs under the analyst's own credential and role and is recorded on Vigil's audit trail under that person. A session cannot approve an action; approval stays with a person in the console.
+
+## What it is
+
+A Claude Code plugin, named `vigil-soc`, that works your own Vigil from a Claude Code session. It holds no logic: an MCP entry that points at your Vigil's `/mcp` surface under a credential you minted, and seven short skills.
 
 Vigil's kernel does the work. The session starts investigations and hunts, steers them and reads what they conclude, with their citations and declared gaps. Vigil enforces role, the autonomy ceiling and approvals, and records every call on its audit trail under the credential's person, the same as the console.
 
@@ -54,3 +69,5 @@ Claude Code then asks for two values: your Vigil's address (for example `http://
 Tool results enter the Claude Code session, and so reach whichever model provider that session uses. For many setups that is a provider outside your environment. If you route Claude Code to a model inside your own boundary, the data stays inside it end to end. Nothing calls DeepTempo and nothing is hosted: the plugin talks only to the Vigil address you enter.
 
 The surface is off until an operator opens it, and an operator can close it or revoke a credential at any time.
+
+The full statement is the project's [privacy policy](https://vigilsoc.org/privacy/), kept in this folder as [PRIVACY.md](PRIVACY.md); use of the plugin is under the [terms of use](https://vigilsoc.org/terms/), kept as [TERMS.md](TERMS.md).

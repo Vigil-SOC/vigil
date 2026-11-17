@@ -1,5 +1,9 @@
 """`section`: one public-safe JSON document of prepare_support_bundle incidents.
 
+A lane-1 daemon death or hang (`pipeline.daemon-component-failed-compose`,
+`pipeline.daemon-component-hung-compose`) is in it too, even though Medic
+restarted it: `fix` lists each attempt (action, who, level, result).
+
 Reads the store through `open_reader` only. The field list below is the only
 copy; the document repeats it as `fields`. No schema file and no version field.
 """
@@ -66,6 +70,7 @@ FIELDS = (
     "would_have",
     "evidence",
     "sensor",
+    "fix",
 )
 _SUBJECTS = ("vigil", "watcher")
 _SHAPES = ("start_sh", "compose", "helm")
@@ -78,6 +83,13 @@ _ACTIONS = (
     "run_runbook",
     "prepare_support_bundle",
 )
+# Lane-1 rules whose restart stays in the section. The hung rule is not yet in the pack.
+_DAEMON_RULES = (
+    "pipeline.daemon-component-failed-compose",
+    "pipeline.daemon-component-hung-compose",
+)
+_LEVELS = ("L0", "L1", "L2")
+_RESULTS = ("cleared", "not_cleared", "not_back", "not_verified")
 _INELIGIBLE = ("not_lane1", "no_runbook", "runtime_untrusted")
 _HOW = ("cleared", "rule_retired", "group_retired", "closed_quietly")
 _CLASSES = ("ingest", "llm", "pipeline")
@@ -107,6 +119,7 @@ class _Kept:
     fold: _Fold
     evidence: list[Any]
     bad: bool = False
+    fix: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -261,6 +274,10 @@ def _walk(
             _opened(scan, rec)
         elif kind in ("incident_updated", "incident_resolved", "feedback"):
             _later(scan, rec, at, start, end)
+        elif kind == "fix_run":
+            _fix_run(scan, body)
+        elif kind == "fix_verified":
+            _fix_verified(scan, body)
         elif kind in ("gap", "anchor", "store_reset") and start <= at <= end:
             _coverage(scan, kind, rec, body)
     return scan
@@ -326,6 +343,50 @@ def _later(
         kept.fold.apply(rec)
     except (KeyError, TypeError, AttributeError):
         kept.bad = True
+
+
+def _fix_run(scan: _Scan, body: Any) -> None:
+    if not isinstance(body, dict):
+        raise _Bad
+    covered = body.get("covered")
+    if not isinstance(covered, list):
+        raise _Bad
+    for iid in covered:
+        if not isinstance(iid, str) or _INCIDENT.fullmatch(iid) is None:
+            raise _Bad
+    kept = [scan.folds[i] for i in covered if i in scan.folds]
+    if not kept:
+        return
+    who = body.get("who")
+    if not isinstance(who, str):
+        raise _Bad
+    if who.startswith("user:"):
+        who = "admin"  # the session id is never published
+    elif who != "medic":
+        raise _Bad
+    attempt = {
+        "action": _one(body.get("would_have"), _ACTIONS),
+        "who": who,
+        "level": _one(body.get("level"), _LEVELS),
+        "result": "",
+    }
+    for item in kept:
+        item.fix.append(dict(attempt))
+
+
+def _fix_verified(scan: _Scan, body: Any) -> None:
+    iid = _incident_id(body)
+    if iid is None:
+        raise _Bad
+    result = _one(body.get("result"), _RESULTS)
+    kept = scan.folds.get(iid)
+    if kept is None:
+        return
+    # The latest attempt with no outcome yet.
+    for attempt in reversed(kept.fix):
+        if attempt["result"] == "":
+            attempt["result"] = result
+            return
 
 
 def _note_pack(scan: _Scan, body: Any, bundled_sha: str) -> None:
@@ -424,6 +485,7 @@ def _project(kept: _Kept, packs: Mapping[tuple[str, str, str], bool]) -> dict[st
         "runbook": None if site else _runbook(body.get("runbook")),
         "would_have": _would(body.get("would_have")),
         "evidence": [_item(item, site) for item in kept.evidence],
+        "fix": kept.fix,
     }
     sensor = _sensor(body.get("rule"), body.get("group"))
     if sensor is not None:
@@ -621,6 +683,9 @@ def _prepares_bundle(body: Any) -> bool:
     if not isinstance(body, dict):
         return False
     wh = body.get("would_have")
+    rule = body.get("rule")
+    if isinstance(rule, dict) and rule.get("id") in _DAEMON_RULES:
+        return True
     if not isinstance(wh, dict):
         return False
     if wh.get("L1") == "prepare_support_bundle":

@@ -5553,6 +5553,8 @@
  "index workflow_runs_pkey": "CREATE UNIQUE INDEX workflow_runs_pkey ON public.workflow_runs USING btree (run_id)",
  "relation agent_directives": {
   "acl": [
+   "agent:INSERT",
+   "agent:SELECT",
    "app:DELETE",
    "app:INSERT",
    "app:SELECT",
@@ -5575,6 +5577,7 @@
  },
  "relation agent_directives_id_seq": {
   "acl": [
+   "agent:USAGE",
    "app:SELECT",
    "app:USAGE",
    "owner:SELECT",
@@ -5591,6 +5594,8 @@
  },
  "relation agent_events": {
   "acl": [
+   "agent:INSERT",
+   "agent:SELECT",
    "app:INSERT",
    "app:SELECT",
    "owner:DELETE",
@@ -5611,6 +5616,10 @@
  },
  "relation agent_run_leases": {
   "acl": [
+   "agent:DELETE",
+   "agent:INSERT",
+   "agent:SELECT",
+   "agent:UPDATE",
    "app:DELETE",
    "app:INSERT",
    "app:SELECT",
@@ -8071,6 +8080,7 @@
  "schema public": {
   "acl": [
    "PUBLIC:USAGE",
+   "agent:USAGE",
    "app:USAGE",
    "pg_database_owner:CREATE",
    "pg_database_owner:USAGE"
