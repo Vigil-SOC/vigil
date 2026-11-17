@@ -1734,6 +1734,16 @@
   "nullable": true,
   "type": "text"
  },
+ "column cases.indicators_stale_since": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column cases.indicators_synced_at": {
+  "default": "now()",
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column cases.mitre_techniques": {
   "default": null,
   "nullable": true,
@@ -4046,6 +4056,11 @@
   "nullable": false,
   "type": "bigint"
  },
+ "column shared_iocs.case_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
+ },
  "column shared_iocs.created_at": {
   "default": "now()",
   "nullable": false,
@@ -4058,7 +4073,7 @@
  },
  "column shared_iocs.investigation_id": {
   "default": null,
-  "nullable": false,
+  "nullable": true,
   "type": "character varying(60)"
  },
  "column shared_iocs.ioc_type": {
@@ -5171,6 +5186,7 @@
  "constraint roles.roles_pkey": "PRIMARY KEY (role_id)",
  "constraint security_keys.security_keys_pkey": "PRIMARY KEY (key_id)",
  "constraint security_keys.security_keys_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
+ "constraint shared_iocs.shared_iocs_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id) ON DELETE CASCADE",
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
  "constraint siem_searches.siem_searches_pkey": "PRIMARY KEY (id)",
@@ -5559,6 +5575,7 @@
  "index idx_mcp_credentials_user": "CREATE INDEX idx_mcp_credentials_user ON public.mcp_credentials USING btree (user_id)",
  "index idx_role_name": "CREATE INDEX idx_role_name ON public.roles USING btree (name)",
  "index idx_security_keys_principal": "CREATE INDEX idx_security_keys_principal ON public.security_keys USING btree (principal_id)",
+ "index idx_shared_ioc_case": "CREATE INDEX idx_shared_ioc_case ON public.shared_iocs USING btree (case_id) WHERE (case_id IS NOT NULL)",
  "index idx_shared_ioc_investigation": "CREATE INDEX idx_shared_ioc_investigation ON public.shared_iocs USING btree (investigation_id)",
  "index idx_shared_ioc_type": "CREATE INDEX idx_shared_ioc_type ON public.shared_iocs USING btree (ioc_type)",
  "index idx_shared_ioc_value": "CREATE INDEX idx_shared_ioc_value ON public.shared_iocs USING btree (value)",
@@ -5639,6 +5656,7 @@
  "index uq_directory_pending_external": "CREATE UNIQUE INDEX uq_directory_pending_external ON public.directory_pending USING btree (external_id)",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
+ "index uq_shared_ioc_case_key": "CREATE UNIQUE INDEX uq_shared_ioc_case_key ON public.shared_iocs USING btree (case_id, ioc_type, value) WHERE (case_id IS NOT NULL)",
  "index uq_sso_links_directory": "CREATE UNIQUE INDEX uq_sso_links_directory ON public.sso_links USING btree (issuer, directory_id) WHERE (directory_id IS NOT NULL)",
  "index uq_sso_links_subject": "CREATE UNIQUE INDEX uq_sso_links_subject ON public.sso_links USING btree (issuer, subject)",
  "index uq_teams_is_default": "CREATE UNIQUE INDEX uq_teams_is_default ON public.teams USING btree (is_default) WHERE is_default",

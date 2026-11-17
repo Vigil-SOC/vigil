@@ -36,6 +36,7 @@ from core.cases.closure import (
 from core.exceptions import NotFoundError, default_on_error
 from core.storage.case_insert import insert_case
 from core.storage.models import Case, CaseTask, CaseTemplate, User
+from core.storage.shared_ioc_repository import reconcile_case_safely
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -307,6 +308,7 @@ class CaseWorkflowService:
                         if finding in case.findings:
                             session.flush()
                         case.findings.append(finding)
+                reconcile_case_safely(session, case.case_id)
 
             note_owner(session, case_id=case.case_id, previous=None, new=assignee)
             logger.info(f"Created case {case_id} from template {template_id}")
@@ -466,7 +468,6 @@ class CaseWorkflowService:
 
         from core.cases.case_sla_service import CaseSLAService
         from core.storage.models import CaseClosureInfo
-        from core.storage.shared_ioc_repository import index_case_iocs_on_close
 
         case = session.query(Case).filter(Case.case_id == case_id).first()
         if not case:
@@ -551,7 +552,7 @@ class CaseWorkflowService:
 
         CaseSLAService().mark_resolution_complete(case_id, session)
         session.flush()
-        index_case_iocs_on_close(session, case_id)
+        reconcile_case_safely(session, case_id)
         # A merge's close is part of the merge's one entry.
         if on_trail:
             record_close(
@@ -737,6 +738,10 @@ class CaseWorkflowService:
                     closure_notes=f"Merged into {target_case_id}",
                     on_trail=False,
                 )
+
+            # Both Cases changed what they hold, whether or not the close ran.
+            reconcile_case_safely(session, source_case_id)
+            reconcile_case_safely(session, target_case_id)
 
             source.description = (source.description or "") + (
                 f"\n\n[MERGED] This case was merged into {target_case_id} "
