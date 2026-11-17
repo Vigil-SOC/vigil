@@ -789,7 +789,7 @@ def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
                     "activity_type": "agent_run_retitled",
                     "description": f"Retitled by the investigation: {old} \u2192 {new}",
                     "details": {"run_id": run_id, "from": old, "to": new},
-                    **activity_actor(),
+                    **activity_actor(session=session),
                 }
             )
             if not DatabaseDataService().update_case(
