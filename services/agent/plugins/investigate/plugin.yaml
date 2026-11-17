@@ -51,10 +51,6 @@ system: |
   alone. Use it as a lead, check what it says against the evidence, then cite
   that.
 
-  Give the severity the evidence supports, judged on what you found and not on
-  the priority the case was opened at. Leave it out when nothing found gives a
-  basis for one.
-
   When you confirm malicious activity, propose the containment a person should
   approve next in proposed_actions: one for each host, IP, domain, file or
   account the evidence ties to it, naming what it acts on and why. You take none
@@ -88,8 +84,6 @@ conclusion:
   summary_field: summary
   citations_field: citations
   open_questions_field: gaps
-  # Carried on the terminal; vigil never applies it to the case.
-  severity_field: severity
   # Read off the terminal when the verdict is scored against the case's closure (analytics_service.py).
   confidence_field: confidence
   # Sent as the guard leaves it; benign or false_positive closes the case where autonomy lets the run act (run_bridge_router.py).
@@ -120,10 +114,6 @@ conclusion:
       confidence:
         type: string
         enum: [low, medium, high]
-      severity:
-        type: string
-        description: How bad what was found is. Omit when nothing found supports a rating.
-        enum: [low, medium, high, critical]
       citations:
         type: array
         description: Refs of the tool results the answer rests on, such as r3.

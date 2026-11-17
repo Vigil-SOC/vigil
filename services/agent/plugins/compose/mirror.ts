@@ -1,4 +1,4 @@
-import type { ProposedAction, ResolutionPayload, RunOutcome, Severity, StopCause, TerminalHandoff } from "../../contracts/events.js";
+import type { ProposedAction, ResolutionPayload, RunOutcome, StopCause, TerminalHandoff } from "../../contracts/events.js";
 import { httpAnswers } from "../../core/answers.js";
 import { errorFields, logger } from "../../core/log.js";
 import { bridgeHeaders, RunRefused } from "../../core/principal.js";
@@ -39,7 +39,6 @@ export interface TerminalResult {
   finished_at?: string;
   handoffs?: TerminalHandoff[];
   proposed_actions?: ProposedAction[];
-  severity?: Severity;
   disposition?: string;
 }
 
