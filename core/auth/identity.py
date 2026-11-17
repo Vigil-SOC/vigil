@@ -36,7 +36,7 @@ def fold(value: str) -> str:
     )
 
 
-def _sql_fold(column):
+def sql_fold(column):
     return func.lower(func.normalize(column, literal_column("NFKC")))
 
 
@@ -142,8 +142,8 @@ def identifier_in_use(
         or_(
             User.username == value,
             User.email == value,
-            _sql_fold(User.username) == key,
-            _sql_fold(User.email) == key,
+            sql_fold(User.username) == key,
+            sql_fold(User.email) == key,
         )
     ]
     if except_user_id is not None:
@@ -166,7 +166,7 @@ def _invited(session: Session, key: str, except_link_id: Optional[str]) -> bool:
         AuthLink.used_at.is_(None),
         AuthLink.revoked_at.is_(None),
         AuthLink.expires_at > utcnow(),
-        _sql_fold(AuthLink.email) == key,
+        sql_fold(AuthLink.email) == key,
     ]
     if except_link_id is not None:
         pending.append(AuthLink.link_id != except_link_id)

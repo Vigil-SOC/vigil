@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -36,7 +36,15 @@ from core.auth import (
 )
 from core.auth.auth_cookies import context_path_prefix
 from core.auth.deactivation import clear_deactivation, deactivate_account
-from core.auth.identity import claim_sign_in_names, identifier_in_use
+from core.auth.identity import (
+    IN_USE,
+    RESERVED,
+    UNAVAILABLE,
+    claim_sign_in_names,
+    fold,
+    identifier_in_use,
+    sql_fold,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import (
     DirectoryGroup,
@@ -63,6 +71,8 @@ _ERROR = "urn:ietf:params:scim:api:messages:2.0:Error"
 _PATCH = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 _SP = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 _MEDIA = "application/scim+json"
+# Both mean no value is kept or named: a reservation exists or can't be read.
+_RESERVED = (RESERVED, UNAVAILABLE)
 _EQ = re.compile(
     r"^\s*(userName|externalId|active)\s+eq\s+"
     r'(?:"((?:[^"\\]|\\.)*)"|(true|false))\s*$',
@@ -262,13 +272,16 @@ def _person(session: Session, link: SsoLink) -> Optional[User]:
     return user
 
 
-def _skip(session: Session, caller: User, user: User, attribute: str) -> None:
+def _skip(
+    session: Session, caller: User, user: User, attribute: str, reason: str
+) -> None:
     trail_events.record(
         session,
         "directory.attribute_skipped",
         actor=caller.principal_id,
         principal=user.principal_id,
         attribute=attribute,
+        reason="reserved" if reason in _RESERVED else "in_use",
     )
 
 
@@ -282,17 +295,20 @@ def _apply_attributes(
 ) -> bool:
     """Apply a name and an email. A collision skips that attribute and is recorded."""
     changed = False
-    if username and username.casefold() != user.username.casefold():
+    # Exact comparison: a case-only change from the provider applies.
+    if username and username != user.username:
         claim_sign_in_names(session, username)
-        if identifier_in_use(session, username, except_user_id=user.user_id):
-            _skip(session, caller, user, "username")
+        taken = identifier_in_use(session, username, except_user_id=user.user_id)
+        if taken:
+            _skip(session, caller, user, "username", taken)
         else:
             user.username = username
             changed = True
-    if email and email.casefold() != user.email.casefold():
+    if email and email != user.email:
         claim_sign_in_names(session, email)
-        if identifier_in_use(session, email, except_user_id=user.user_id):
-            _skip(session, caller, user, "email")
+        taken = identifier_in_use(session, email, except_user_id=user.user_id)
+        if taken:
+            _skip(session, caller, user, "email", taken)
         else:
             user.email = email
             user.is_verified = True
@@ -308,23 +324,37 @@ def _apply_attributes(
 
 def _collide(
     session: Session, caller: User, external_id: str, username: str, email: str
-) -> bool:
+) -> Optional[str]:
+    """RESERVED when either name is reserved, IN_USE when an account or invite
+    holds one, else None. Both are checked, so a reserved name refuses even when
+    the other belongs to a live account. A reserved refusal records the
+    directory id and the reason only."""
     claim_sign_in_names(session, username, email)
-    hit = []
-    if identifier_in_use(session, username):
-        hit.append("username")
-    if identifier_in_use(session, email):
-        hit.append("email")
+    found = {
+        attr: identifier_in_use(session, value)
+        for attr, value in (("username", username), ("email", email))
+    }
+    if any(v in _RESERVED for v in found.values()):
+        trail_events.record(
+            session,
+            "directory.collision",
+            actor=caller.principal_id,
+            external_id=external_id,
+            reason="reserved",
+        )
+        return RESERVED
+    hit = [attr for attr, v in found.items() if v]
     if not hit:
-        return False
+        return None
     trail_events.record(
         session,
         "directory.collision",
         actor=caller.principal_id,
         external_id=external_id,
+        reason="in_use",
         attributes=hit,
     )
-    return True
+    return IN_USE
 
 
 def _would_leave_no_manager(session: Session, user: User) -> bool:
@@ -423,7 +453,7 @@ def _check_match(current: int, header: Optional[str], noun: str) -> None:
 
 def _returned_user_name(user: User) -> str:
     local, _, domain = user.email.partition("@")
-    if domain and local.casefold() == user.username.casefold():
+    if domain and fold(local) == fold(user.username):
         return user.email
     return user.username
 
@@ -513,12 +543,9 @@ def _filter(query, expression: Optional[str]):
             return query.filter(User.user_id.is_(None))
         return query
     if key == "username":
-        folded = value.casefold()
+        folded = fold(value)
         return query.filter(
-            or_(
-                func.lower(User.username) == folded,
-                func.lower(User.email) == folded,
-            )
+            or_(sql_fold(User.username) == folded, sql_fold(User.email) == folded)
         )
     return query.filter(
         or_(
@@ -601,10 +628,14 @@ def _create(
     ) or identifier_in_use(session, email, pending_invites=False)
     if not held_by_account:
         invites.cancel_pending(session, email, "directory")
-    elif _collide(session, caller, external_id, username, email):
+    elif collided := _collide(session, caller, external_id, username, email):
         # Kept for an admin to link: the failure commits, as the trail entry does.
-        _hold(session, external_id, username, email, full_name)
-        raise ScimFailure(409, "That username or email is already in use", "uniqueness")
+        # A reserved name is never stored.
+        if collided != RESERVED:
+            _hold(session, external_id, username, email, full_name)
+        raise ScimFailure(
+            409, "That username or email is in use or reserved", "uniqueness"
+        )
     user = User(
         user_id=f"user-{uuid.uuid4().hex[:12]}",
         username=username,

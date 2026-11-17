@@ -513,7 +513,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "directory.group_refused": "Refused a group push with no externalId",
     "directory.group_unknown": "Skipped a group a user push named, because that group has not been pushed",
     "directory.member_skipped": "Skipped a group member who is not an account here",
-    "directory.collision": "Held a pushed person whose username or email is in use",
+    "directory.collision": "Refused a pushed person whose username or email is in use or reserved",
     "directory.linked": "Linked a waiting pushed person to an existing account",
     "teams.placed": lambda p: (
         "Created the default team, joined "
