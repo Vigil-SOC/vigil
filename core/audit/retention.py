@@ -252,6 +252,106 @@ def apply_due(session, now: datetime) -> None:
     _apply_erasures(session, now)
 
 
+# How long an erased person's username and email stay reserved.
+RESERVATION_TTL = timedelta(days=730)
+ACTION_RESERVATIONS_DROPPED = "auth.identifier_reservations_dropped"
+
+
+def sweep_reservations(session, now: datetime) -> list[int]:
+    """Drop reservations older than two years, and those whose key can't be
+    read, with one system entry. Returns the ids of notices to email once the
+    caller commits: a lost key tells each ``users.write`` holder.
+
+    Then retires an ``identifier`` key no remaining row names; rotation never
+    does. With no reservations and no old key this reads two small queries and
+    writes nothing. The entry holds a count and a reason, never an identifier.
+    """
+    if not _table(session, "identifier_reservations"):
+        return []
+    # Naive UTC, as the column is.
+    cutoff = _aware(now).replace(tzinfo=None) - RESERVATION_TTL
+    expired = session.execute(
+        text("DELETE FROM public.identifier_reservations WHERE reserved_at < :c"),
+        {"c": cutoff},
+    ).rowcount
+    lost = 0
+    named = set(
+        session.execute(
+            text("SELECT DISTINCT key_version FROM public.identifier_reservations")
+        )
+        .scalars()
+        .all()
+    )
+    for version in sorted(named):
+        try:
+            usable = key_ring.find("identifier", version) is not None
+        except key_ring.KeyRingError:
+            usable = False
+        if not usable:
+            lost += session.execute(
+                text(
+                    "DELETE FROM public.identifier_reservations"
+                    " WHERE key_version = :v"
+                ),
+                {"v": version},
+            ).rowcount
+            named.discard(version)
+    # Only an old version: erasure and identity.reserve need the current key.
+    for version in session.execute(
+        text(
+            "SELECT version FROM public.auth_keys WHERE purpose = 'identifier'"
+            " AND state IN ('verify_only', 'decrypt_only')"
+        )
+    ).scalars():
+        if version not in named:
+            key_ring._retire(session, "identifier", version, reason="unreferenced")
+            key_ring.forget()
+    if not (expired or lost):
+        return []
+    reason = (
+        "expired_and_key_lost"
+        if expired and lost
+        else ("expired" if expired else "key_lost")
+    )
+    trail.append(
+        session,
+        {
+            trail.ACTION: ACTION_RESERVATIONS_DROPPED,
+            trail.ACTOR: trail.SYSTEM,
+            "count": expired + lost,
+            "reason": reason,
+        },
+        gated=False,
+    )
+    return _tell_key_lost(session, lost) if lost else []
+
+
+def _tell_key_lost(session, lost: int) -> list[int]:
+    # Imported here: auth_service pulls auth, and auth imports this module.
+    from core.auth.auth_service import _manager_rows
+    from core.platform.notices import notify
+
+    message = (
+        f"{lost} reserved sign-in name{'s' if lost != 1 else ''} could not be "
+        "kept, because the key that protected them is gone. Someone else may now "
+        "register a username or email an erased person used."
+    )
+    ids = []
+    for principal, _, _ in _manager_rows("", session):
+        notice = notify(
+            principal,
+            "identifier_reservations_lost",
+            "Reserved sign-in names were dropped",
+            message,
+            link="/settings?section=users",
+            priority="high",
+            session=session,
+        )
+        if notice is not None:
+            ids.append(notice)
+    return ids
+
+
 def carried(session, seqs: list[int]) -> None:
     """A poll or an export returned these rows, so their announcements have left."""
     if not seqs:
@@ -319,10 +419,11 @@ def cover_through(session, seq: int) -> None:
     )
 
 
-def reapply(session, snapshot_ids: list[str]) -> None:
+def reapply(session, snapshot_ids: list[str], *, reserve: bool = True) -> None:
     """Blank the union of ``snapshot_ids`` and the outside file, then write that union back.
 
-    Used after a restore, once the restored database is the live one. An id that
+    Used after a restore, once the restored database is live and its key ring
+    is settled, so each person's username and email are reserved. An id that
     exists only in the outside file is blanked again, because the snapshot was
     taken before that erasure.
     """
@@ -338,12 +439,20 @@ def reapply(session, snapshot_ids: list[str]) -> None:
     path = outside_path()
     if path is None:
         raise RetentionError(UNSET_MESSAGE)
+    # A backup from before the table existed is reserved by no one: its upgrade
+    # creates the table empty, and the names can't be hashed afterwards.
+    reserve = reserve and _table(session, "identifier_reservations")
+    # Before anything is blanked: an unreadable ring would roll the whole
+    # re-apply back at the first reservation, so refuse with nothing touched.
+    try:
+        if reserve:
+            key_ring.current("identifier")
+    except key_ring.KeyRingError as exc:
+        raise RetentionError(f"the identifier key can't be read: {exc}") from exc
     for pid in union:
         _blank_label(session, pid)
-        # No reservation here: the live ring may not be settled or hold the
-        # identifier key yet, and a restore must not fail on that. The restore
-        # child writes them once the ring is settled.
-        _revoke(session, pid, reserve=False)
+        # Dated now, the re-apply time. _revoke skips service and erased accounts.
+        _revoke(session, pid, reserve=reserve)
     trail._lock(session)
     for pid in union:
         _blank_beside(session, pid)

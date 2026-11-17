@@ -595,6 +595,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         else "Set the retention period"
     ),
     trail.ACTION_ERASURE: "Erased a principal's details",
+    "auth.identifier_reservations_dropped": lambda p: (
+        f"Dropped {p.get('count')} reserved sign-in names"
+        f" ({_word(p['reason']) if p.get('reason') else 'expired'})"
+    ),
     "audit.feed.failed": lambda p: (
         "The audit webhook failed"
         if p.get("destination") == "webhook"
