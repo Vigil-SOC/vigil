@@ -1152,10 +1152,13 @@ class IngestionService:
         # its bare id; never the detector's verdict or score.
         if netflow_digest is not None:
             focal, engaged = row.get("focal_ip"), row.get("engaged_ip")
-            finding["title"] = netflow_describe.title(netflow_digest, focal, engaged)
-            finding["description"] = netflow_describe.description(
-                netflow_digest, focal, engaged
-            )
+            described = {
+                "title": netflow_describe.title(netflow_digest, focal, engaged),
+                "description": netflow_describe.description(
+                    netflow_digest, focal, engaged
+                ),
+            }
+            finding.update({k: v for k, v in described.items() if v})
         return finding
 
     def _detect_parquet_schema(self, col_names: set) -> str:

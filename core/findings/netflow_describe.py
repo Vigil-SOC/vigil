@@ -80,18 +80,32 @@ def _protocol(digest: Mapping[str, Any]) -> str:
     return f"{protocols[0]} " if len(protocols) == 1 else ""
 
 
-def title(digest: Optional[Mapping[str, Any]], focal: Any, engaged: Any) -> str:
-    """'client → server:port' for one conversation, else the two hosts."""
+def title(
+    digest: Optional[Mapping[str, Any]], focal: Any, engaged: Any
+) -> Optional[str]:
+    """'client → server:port' for one conversation, else the two hosts.
+
+    None when neither the flows nor the row name both hosts.
+    """
     pair = _only_pair(digest or {})
     if pair and pair.get("src") and pair.get("dst"):
         ports = _port_text(pair)
         return f"{pair['src']} → {pair['dst']}{':' + ports if ports else ''}"
+    if not focal or not engaged:
+        return None
     return f"NetFlow: {focal} ↔ {engaged}"
 
 
-def description(digest: Optional[Mapping[str, Any]], focal: Any, engaged: Any) -> str:
-    """Who sent how many flows to what, when; then the bytes each way."""
+def description(
+    digest: Optional[Mapping[str, Any]], focal: Any, engaged: Any
+) -> Optional[str]:
+    """Who sent how many flows to what, when; then the bytes each way.
+
+    None when there are no flows and the row doesn't name both hosts.
+    """
     if not digest or not digest.get("flows"):
+        if not focal or not engaged:
+            return None
         return f"NetFlow conversation between {focal} and {engaged}."
     flows = int(digest["flows"])
     total = int(digest.get("total_flows") or flows)
