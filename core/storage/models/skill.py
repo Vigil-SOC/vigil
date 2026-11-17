@@ -61,6 +61,9 @@ class SkillScan(Base):
         nullable=False,
         server_default=text("(now() AT TIME ZONE 'utc')"),
     )
+    # ``static`` or ``llm:<model>``; the hold's rule differs by mode. Null on
+    # rows from before the column, which were all static.
+    scan_mode: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 

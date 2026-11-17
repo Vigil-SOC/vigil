@@ -10,12 +10,18 @@ States, for the folder as it is now:
 
 - ``bundled``   shipped in the library, never scanned, always allowed
 - ``unchecked`` scanning is off by setting, an explicit opt-out: allowed
-- ``pending``   no verdict for this digest yet, or the database could not be read: held
+- ``pending``   no verdict for this digest yet, a verdict reached in another scan
+                mode than the one now set, or the database could not be read: held
 - ``failed``    the scan ran and produced no verdict: held
-- ``safe``      the scan said SAFE: allowed
-- ``flagged``   CAUTION or DO_NOT_INSTALL and nobody approved it: held
+- ``safe``      the scan found nothing the mode's rule holds on: allowed
+- ``flagged``   the rule held it and nobody approved it: held
 - ``approved``  a person released this digest: allowed
 - ``refused``   the folder contains a symlink: held, never scanned, never approvable
+
+The rule depends on the scan mode. Static: anything but a SAFE recommendation is
+flagged. Model-backed: only a CRITICAL finding is flagged, because the model's
+overall recommendation also calls most ordinary skills risky, while a CRITICAL
+finding alone caught nearly every malicious skill with almost no false alarms.
 
 ``load_skills`` runs on every chat message, so ``agent_skills`` makes one query
 and digests are cached against file sizes and modification times.
@@ -35,9 +41,11 @@ from sqlalchemy import select
 from core.config import Settings, get_settings
 from core.skills.skill_library import Skill, is_bundled, load_skills, skill_roots
 from core.skills.skill_scan import (
+    MODE_STATIC,
     STATUS_FAILED,
     STATUS_SCANNED,
     STATUS_UNAVAILABLE,
+    scan_mode,
     scan_skill,
     skill_digest,
 )
@@ -81,6 +89,8 @@ class ScanState:
     approved_at: Optional[datetime] = None
     # The folder content this state is about; what an approval names.
     digest: Optional[str] = None
+    # How the verdict was reached: ``static`` or ``llm:<model>``.
+    scan_mode: Optional[str] = None
 
     @property
     def allowed(self) -> bool:
@@ -148,7 +158,19 @@ def digest_of(folder: Path) -> str:
     return digest
 
 
-def _decide(row: Optional[SkillScan]) -> ScanState:
+def _row_mode(row: SkillScan) -> str:
+    return row.scan_mode or MODE_STATIC
+
+
+def _critical(row: SkillScan) -> bool:
+    if (row.max_severity or "").upper() == "CRITICAL":
+        return True
+    return any(
+        str(f.get("severity") or "").upper() == "CRITICAL" for f in row.findings or []
+    )
+
+
+def _decide(row: Optional[SkillScan], mode: str) -> ScanState:
     if row is None:
         return ScanState(PENDING)
     common = dict(
@@ -161,14 +183,21 @@ def _decide(row: Optional[SkillScan]) -> ScanState:
         scanned_at=row.scanned_at,
         approved_by=row.approved_by,
         approved_at=row.approved_at,
+        scan_mode=_row_mode(row),
     )
     if row.approved_at is not None:
         return ScanState(APPROVED, **common)
+    if _row_mode(row) != mode:
+        # Judged by a rule that is no longer the one in force; the sweep
+        # rescans it, and until then it is held like any unscanned skill.
+        return ScanState(PENDING, scan_mode=_row_mode(row))
     if row.status != STATUS_SCANNED:
         return ScanState(FAILED, **common)
-    if row.recommendation == "SAFE":
-        return ScanState(SAFE, **common)
-    return ScanState(FLAGGED, **common)
+    if mode == MODE_STATIC:
+        held = row.recommendation != "SAFE"
+    else:
+        held = _critical(row)
+    return ScanState(FLAGGED if held else SAFE, **common)
 
 
 def scan_states(
@@ -180,6 +209,7 @@ def scan_states(
     give, is pending: unknown content is held, not passed.
     """
     on = scanning_on(settings)
+    mode = scan_mode(settings)
     states: Dict[str, ScanState] = {}
     digests: Dict[str, str] = {}
     for skill in skills:
@@ -209,7 +239,7 @@ def scan_states(
         except Exception:  # noqa: BLE001 - fail closed, the next call asks again
             logger.exception("skill scan verdicts unreadable; holding operator skills")
         for name, digest in digests.items():
-            states[name] = replace(_decide(rows.get(digest)), digest=digest)
+            states[name] = replace(_decide(rows.get(digest), mode), digest=digest)
     return states
 
 
@@ -240,6 +270,7 @@ def _row_for(name: str, result) -> Dict[str, Any]:
         ],
         scanner_version=result.scanner_version,
         error=result.error,
+        scan_mode=result.mode,
         scanned_at=utcnow(),
     )
 
@@ -251,13 +282,13 @@ def _record(digest: str, name: str, result) -> None:
         if row is None:
             session.add(SkillScan(digest=digest, **values))
             return
-        if row.status == STATUS_SCANNED:
-            return  # another replica already has a verdict for this content
         if row.approved_at is not None:
             # An approval is final for its digest: a retry that landed on a
             # different verdict would change what the approver released.
             return
-        # A failed, unapproved row is retried in place.
+        if row.status == STATUS_SCANNED and _row_mode(row) == values["scan_mode"]:
+            return  # another replica already has a verdict for this content
+        # A failed row, or one from another mode, is replaced in place.
         for key, value in values.items():
             setattr(row, key, value)
 
@@ -268,7 +299,8 @@ def sweep(
     """Scan every operator skill that has no verdict for its current digest.
 
     One at a time. Returns how many scans produced a row. A failed row is tried
-    again once ``RETRY_FAILED_AFTER`` has passed. With the scanner configured but
+    again once ``RETRY_FAILED_AFTER`` has passed; one reached in another scan mode
+    than the current setting is rescanned at once, unless it is approved. With the scanner configured but
     missing, nothing is recorded and the skills stay pending.
     """
     settings = settings or get_settings()
@@ -293,17 +325,19 @@ def sweep(
             logger.warning("skill %s could not be digested: %s", skill.name, exc)
     with unit_of_work() as session:
         known = {
-            d: (status, at, approved)
-            for d, status, at, approved in session.execute(
+            d: (status, at, approved, scan_mode)
+            for d, status, at, approved, scan_mode in session.execute(
                 select(
                     SkillScan.digest,
                     SkillScan.status,
                     SkillScan.scanned_at,
                     SkillScan.approved_at,
+                    SkillScan.scan_mode,
                 ).where(SkillScan.digest.in_(set(digests.values())))
             )
         }
     now = utcnow()
+    mode = scan_mode(settings)
     recorded = 0
     for skill in skills:
         if cancel.is_set():
@@ -313,9 +347,11 @@ def sweep(
             continue
         seen = known.get(digest)
         if seen is not None and (
-            seen[0] == STATUS_SCANNED
-            or seen[2] is not None  # approved: final, never rescanned
-            or now - seen[1] < RETRY_FAILED_AFTER
+            seen[2] is not None  # approved: final, never rescanned
+            or (
+                (seen[3] or MODE_STATIC) == mode
+                and (seen[0] == STATUS_SCANNED or now - seen[1] < RETRY_FAILED_AFTER)
+            )
         ):
             continue
         result = scan_skill(skill.path, settings)

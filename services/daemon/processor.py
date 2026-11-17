@@ -66,6 +66,15 @@ TRIAGE_KEYS = (
 # What triage may decide. benign is a false positive.
 TRIAGE_VERDICTS = ("malicious", "suspicious", "benign", "undetermined")
 
+
+def _unbracket(value: str) -> str:
+    """Drop the [ ] a model copies from the prompt's placeholders."""
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1].strip()
+    return value
+
+
 # Output ceiling for the triage reply. The reply is a few lines, but thinking
 # models (Gemini 2.5, OpenAI reasoning) spend output tokens before it; the
 # gateway's 2048 default cut REASONING off mid-sentence (#2315).
@@ -904,7 +913,7 @@ REASONING: one sentence summing up the verdict
             key = key.strip().upper()
             if key not in TRIAGE_KEYS:
                 continue
-            fields[key] = None if key in fields else value.strip()
+            fields[key] = None if key in fields else _unbracket(value)
 
         said = (fields.get("VERDICT") or "").lower()
         verdict = said if said in TRIAGE_VERDICTS else None
