@@ -2,8 +2,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
-import { MISSING_FINDING_SCORE, NO_CONFIDENCE, type Finding } from '../../data/data'
-import { formatFindingScore } from '../../data/mappers'
+import { NO_CONFIDENCE, type Finding } from '../../data/data'
 import { STATE_RANK, stateWord, type TerminalState } from '../../shared/findingState'
 
 const NDASH = '—'
@@ -73,20 +72,6 @@ export function baseFindingColumns(
       key: 'time', label: 'Time',
       render: (f) => <span className="muted">{f.time}</span>,
       sortVal: timeKey, defaultDir: 'desc',
-    },
-    {
-      key: 'score', label: 'Score',
-      render: (f) => (
-        typeof f.score === 'number' ? (
-          <span className="scorebar">
-            <span className="track"><i className={f.score >= 0.8 ? 'hot' : ''} style={{ width: `${f.score * 100}%` }} /></span>
-            <span className="num">{formatFindingScore(f.score)}</span>
-          </span>
-        ) : (
-          <span className="muted">{MISSING_FINDING_SCORE}</span>
-        )
-      ),
-      sortVal: (f) => f.score ?? Number.NEGATIVE_INFINITY, defaultDir: 'desc',
     },
     {
       key: 'status', label: 'Status',
