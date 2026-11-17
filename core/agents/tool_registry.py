@@ -238,6 +238,7 @@ def list_findings(
         "state": state,
         "cluster_id": cluster_id,
         "min_anomaly_score": min_anomaly_score,
+        "exclusions": "hide",
     }
     limit = _page_limit(limit)
     data = _data()
@@ -251,17 +252,27 @@ def list_findings(
     )
     return {
         "total": total,
+        **_excluded_note(data, filters, total),
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }
 
 
+def _excluded_note(data: Any, filters: Args, shown: int) -> Args:
+    """How many matches name an analyst-excluded IP. Those are left out of the
+    page and the counts, as the analysts' own queue leaves them out, and only
+    counted here so the agent knows they exist."""
+    hidden = data.count_findings(**{**filters, "exclusions": "include"}) - shown
+    return {"excluded_ip_findings": hidden} if hidden > 0 else {}
+
+
 # The counts cover every match, not the page, and come before it so a capped
-# result keeps them (#2312).
+# result keeps them (#2312). Findings on an excluded IP are left out of both.
 def search_findings(**args: Any) -> Args:
     filters = {key: args.get(key) for key in ("severity", "data_source", "state")}
     if (bad := _bad_state(filters["state"])) is not None:
         return bad
     filters["search_query"] = args.get("query", "")
+    filters["exclusions"] = "hide"
     limit = _page_limit(args.get("limit", 20))
     offset = args.get("offset", 0)
     data = _data()
@@ -277,6 +288,7 @@ def search_findings(**args: Any) -> Args:
     return {
         "query": filters["search_query"],
         "total": total,
+        **_excluded_note(data, filters, total),
         **counts,
         **_page(data, findings, offset=offset, limit=limit, total=total),
     }

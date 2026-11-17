@@ -77,6 +77,7 @@ import {
 } from './caseFold'
 import './cases.css'
 import { CLOSURE_CATEGORIES, type CaseClosureView, type CaseInvestigationRef, type CaseLinkedFinding, type Phase } from './useCases'
+import { caseLabel } from '../../shared/caseLabel'
 
 const TABS = ['Summary', 'Explanations', 'Evidence', 'Checked', 'Memory and blind spots', 'Record'] as const
 type Tab = (typeof TABS)[number]
@@ -1708,7 +1709,7 @@ export function CasePage({
         <div className="dh-crumb">
           <button type="button" className="back" onClick={onBack}>Cases</button>
           <span aria-hidden>›</span>
-          <span className="mono">{id.startsWith('case-') ? id : `Case ${id}`}</span>
+          <span className="mono">{caseLabel(id)}</span>
           <CopyButton text={id} label="case id" />
           <div className="dh-crumb-end">
             {c && <CaseMenu onEdit={onEdit} onMerge={onMerge} onDelete={canDelete ? onDelete : undefined} />}

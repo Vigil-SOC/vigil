@@ -877,8 +877,23 @@ host_state_dir() {
 }
 
 # Host paths and `docker compose run` flags every backup container shares.
+# The user the backup and upgrade one-shots run as: the host's uid:gid, so what
+# they write in the bind mounts is the host user's. On macOS the host uid (501)
+# cannot enter the image's /home/vigil, owned by its vigil user (1000), and
+# Docker Desktop writes bind mounts as the host user whatever the container's
+# uid, so there they run as the image's user. VIGIL_BACKUP_RUN_USER overrides both.
+backup_run_user() {
+    if [ -n "${VIGIL_BACKUP_RUN_USER:-}" ]; then
+        echo "$VIGIL_BACKUP_RUN_USER"
+    elif [ "$(uname -s)" = Darwin ]; then
+        echo "1000:1000"
+    else
+        echo "$(id -u):$(id -g)"
+    fi
+}
+
 # Exports the State Directory and investigation workdir the compose `backup`
-# service mounts and sets BACKUP_RUN_ARGS (host user, plus the repo-root .env
+# service mounts and sets BACKUP_RUN_ARGS (backup_run_user, plus the repo-root .env
 # when present, mounted $1: ro by default).
 prepare_backup_mounts() {
     local env_mode="${1:-ro}"
@@ -893,7 +908,7 @@ prepare_backup_mounts() {
     export VIGIL_BACKUP_INVESTIGATIONS_DIR="$(cd "$investigations" && pwd)"
     mkdir -p "$upgrade"
     export VIGIL_UPGRADE_HOST_DIR="$(cd "$upgrade" && pwd)"
-    BACKUP_RUN_ARGS=(--user "$(id -u):$(id -g)")
+    BACKUP_RUN_ARGS=(--user "$(backup_run_user)")
     if [ -f "$REPO_ROOT/.env" ]; then
         BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
     fi
