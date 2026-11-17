@@ -1307,15 +1307,16 @@ export function unwrittenNote(calls: readonly CallPayload[], tools: readonly Too
   );
   if (failed.length === 0) return null;
   // A run that failed every save could list dozens; the first few say what happened.
-  const lines = failed.slice(0, SHOWN_FAILURES).map((call) => `- ${call.tool} (${call.ref}): ${failureText(call)}`);
+  const lines = failed.slice(0, SHOWN_FAILURES).map((call) => `- ${call.tool} (${call.role === undefined ? "" : `${call.role} `}${call.ref}): ${failureText(call)}`);
   if (failed.length > SHOWN_FAILURES) lines.push(`- and ${failed.length - SHOWN_FAILURES} more`);
   return `**Not saved.** Vigil checked the run's calls: these writes failed and were not made good by a later call, so what they would have saved does not exist, whatever the answer above says.\n${lines.join("\n")}`;
 }
 
 // Why a call failed, as the model read it: the result already carries the kind and
 // the backend's reason, scrubbed. Only the kind when the result says nothing more.
+// Under the experimental guards the model read shown, and result stays raw.
 function failureText(call: CallPayload): string {
-  const said = call.result.replace(/<\/?vigil:tool_result[^>]*>/g, "").trim().replace(/^failed:\s*/, "").replace(/\s+/g, " ");
+  const said = (call.shown ?? call.result).replace(/<\/?vigil:tool_result[^>]*>/g, "").trim().replace(/^failed:\s*/, "").replace(/\s+/g, " ");
   const text = said === "" ? (call.failure ?? "failed, no reason given") : said;
   // By code point, so a cut never splits a surrogate pair.
   const points = Array.from(text);

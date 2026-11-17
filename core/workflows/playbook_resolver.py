@@ -433,25 +433,25 @@ def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
     return [tool["id"] for tool in tools if tool["id"] in gated]
 
 
-# Permissions that only look, or that name no change: ai_chat.use gates reads and
-# actions alike, so a tool behind it may be a read.
-_LOOKS = (".read", ".view", ".use")
-
-
-# The tools that change something when they succeed: one of Vigil's own whose
-# permission is more than a look, and an outside one stored as reversible or
-# irreversible. The agent layer reads the mark at the run's end, so an answer that
-# claims a save whose call failed is followed by Vigil's own line saying so.
-# An unclassified outside tool is not marked: it may be a read.
+# The tools that change something when they succeed: a built-in whose permission
+# is more than a read, one on Vigil's MCP server not hinted read-only, and an
+# outside one stored as reversible or irreversible. The agent layer reads the mark
+# at the run's end, so an answer that claims a save whose call failed is followed
+# by Vigil's own line saying so. An unclassified outside tool is not marked: it may
+# be a read.
 def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    from core.agents.tool_registry import required_permission
+    from core.agents.tool_registry import TOOL_PERMISSIONS
+    from core.integrations.mcp import in_process
 
     names = [tool["id"] for tool in tools]
     own = {
         name
         for name in names
-        if (permission := required_permission(name)) is not None
-        and not permission.endswith(_LOOKS)
+        if (
+            not TOOL_PERMISSIONS[name].endswith(".read")
+            if name in TOOL_PERMISSIONS
+            else in_process.changes(name) is True
+        )
     }
     outside = {
         name
