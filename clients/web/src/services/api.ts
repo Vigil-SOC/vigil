@@ -1755,19 +1755,6 @@ export const federationApi = {
   getHealth: () => api.get('/federation/health'),
 }
 
-export const reasoningApi = {
-  getSessionSummary: (sessionId: string) =>
-    api.get(`/reasoning/${encodeURIComponent(sessionId)}`).then(r => r.data),
-
-  listInteractions: (sessionId: string, params?: { limit?: number; offset?: number }) =>
-    api.get(`/reasoning/${encodeURIComponent(sessionId)}/interactions`, { params }).then(r => r.data),
-
-  getInteraction: (sessionId: string, interactionId: string) =>
-    api
-      .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
-      .then(r => r.data),
-}
-
 // returns raw axios responses (read `res.data`), matching casesApi
 export interface ConversationSummary {
   id: string

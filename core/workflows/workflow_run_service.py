@@ -243,8 +243,7 @@ class WorkflowRunService:
                 row.status = status
                 row.finished_at = now
                 # Truncate result_summary to avoid committing megabyte
-                # prompt transcripts to the DB — full transcripts live
-                # in the reasoning_traces table.
+                # prompt transcripts to the DB.
                 if result_summary is not None:
                     row.result_summary = result_summary[:50_000]
                 if error is not None:

@@ -16,11 +16,9 @@ import { useThreadHeight } from './useThreadHeight'
 import { Icon } from '../shared/icons'
 import { VigilMark } from '../shared/VigilLogo'
 import { TITLES } from '../data/data'
-import { Cost } from '../shared/cost'
 import api, {
   casesApi,
   conversationsApi,
-  reasoningApi,
   streamFetch,
   workflowApi,
   type ConversationDetail,
@@ -37,7 +35,6 @@ import {
   serverUnreachable,
   setKeymapEntry,
 } from './chatCache'
-import { Popup } from '../shared/ui'
 import { LATER_RELEASE } from '../shared/later'
 import { errorText } from '../shared/errorText'
 import { attachRefusal } from './commandBarModel'
@@ -49,45 +46,6 @@ interface ChatMsg {
   text: string
   /** What the model thought before answering, when it says. Kept for this session only. */
   reasoning?: string
-}
-
-interface SessionSummary {
-  total_interactions: number
-  total_cost_usd: number | null
-  unpriced_calls: number
-  total_input_tokens: number
-  total_output_tokens: number
-}
-
-function sessionSummaryFrom(s: Partial<SessionSummary>): SessionSummary {
-  return {
-    total_interactions: s.total_interactions ?? 0,
-    total_cost_usd: s.total_cost_usd ?? null,
-    unpriced_calls: s.unpriced_calls ?? 0,
-    total_input_tokens: s.total_input_tokens ?? 0,
-    total_output_tokens: s.total_output_tokens ?? 0,
-  }
-}
-interface TraceItem {
-  interaction_id: string
-  created_at?: string
-  has_thinking?: boolean
-  has_tools?: boolean
-  agent_id?: string
-  input_tokens?: number
-  output_tokens?: number
-  cost_usd?: number
-}
-interface TraceDetail {
-  interaction_id: string
-  model?: string
-  stop_reason?: string
-  duration_ms?: number
-  cost_usd?: number
-  thinking_content?: string
-  response_content?: string
-  tool_calls?: Array<{ name?: string; input?: unknown }>
-  tool_results?: Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>
 }
 
 // randomUUID exists only in secure contexts (HTTPS or localhost); plain HTTP at a LAN address lacks it.
@@ -201,22 +159,6 @@ function dayLabel(ts: number | null): string {
   return format(new Date(ts), 'MMM d, yyyy')
 }
 
-function traceTime(s?: string): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? '—' : format(d, 'HH:mm:ss')
-}
-/* without throwing on cycles */
-function safeJson(v: unknown): string {
-  if (v == null) return ''
-  if (typeof v === 'string') return v
-  try {
-    return JSON.stringify(v, null, 2)
-  } catch {
-    return String(v)
-  }
-}
-
 /** What a chip reads, without its kind: an alert by its title, an explanation by its statement, a row by its step and source. */
 function citeName(cite: Citation): string {
   return cite.kind === 'evidence' ? cite.label : cite.label.replace(/^(?:alert|explanation) · /, '')
@@ -274,13 +216,13 @@ function VigilMessage({
   reasoning,
   citations,
   onCite,
-  onTrace,
+  pinned,
 }: {
   text: string
   reasoning?: string
   citations?: readonly Citation[]
   onCite?: (cite: Citation) => void
-  onTrace?: () => void
+  pinned?: boolean
 }) {
   const copy = (
     <button title="Copy" onClick={() => navigator.clipboard?.writeText(text)}><Icon name="copy" size={15} /></button>
@@ -291,19 +233,16 @@ function VigilMessage({
       <AnswerText text={text} citations={citations} onCite={onCite} />
       <div className="msg-actions">
         {copy}
-        {onTrace && (
-          <button title="Reasoning trace" aria-label="Reasoning trace" onClick={onTrace}><Icon name="reason" size={15} /></button>
-        )}
       </div>
     </>
   )
-  return onTrace ? (
+  return pinned ? (
+    <div className="msg vigil">{content}</div>
+  ) : (
     <div className="msg vigil">
       <span className="msg-av"><VigilMark /></span>
       <div className="msg-main">{content}</div>
     </div>
-  ) : (
-    <div className="msg vigil">{content}</div>
   )
 }
 
@@ -386,11 +325,6 @@ export default function Chat({
   const [file, setFile] = useState<ChatFile | null>(null)
   const [dragging, setDragging] = useState(false)
   const fileSeq = useRef(0)
-  const [traceOpen, setTraceOpen] = useState(false)
-  const [traceLoading, setTraceLoading] = useState(false)
-  const [traceItems, setTraceItems] = useState<TraceItem[]>([])
-  const [traceSelected, setTraceSelected] = useState<TraceDetail | null>(null)
-  const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
 
   const sessionRef = useRef<string>(newSessionId())
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -430,7 +364,6 @@ export default function Chat({
       sessionRef.current = newSessionId()
       currentKeyRef.current = null
       persistedRef.current = false
-      setSessionSummary(null)
       setHistoryOpen(false)
       dropFile()
     }
@@ -468,18 +401,15 @@ export default function Chat({
     root.querySelector<HTMLElement>(historyOpen ? '.chist-search input' : 'textarea')?.focus()
   }, [historyOpen, open, pinned, renamingId, serverConvos, history])
 
-  // the trace dialog owns its Esc + focus handling
-  const anyPopupOpen = traceOpen
   const full = size?.full ?? false
   const onFull = size?.onFull
 
-  // never while the trace Popup is open: it handles its own Esc, and closing
-  // the dock too would dismiss both at once. Esc steps back one layer: rename
-  // field, mention list, history view, full screen, then the dock.
+  // Esc steps back one layer: rename field, mention list, history view, full
+  // screen, then the dock.
   useEffect(() => {
     if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape' || anyPopupOpen || renamingId) return
+      if (e.key !== 'Escape' || renamingId) return
       if (historyOpen) setHistoryOpen(false)
       else if (mentionHits) setMentionHits(null)
       else if (full) {
@@ -491,11 +421,10 @@ export default function Chat({
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, pinned, mentionHits, onClose, anyPopupOpen, historyOpen, renamingId, full, onFull])
+  }, [open, pinned, mentionHits, onClose, historyOpen, renamingId, full, onFull])
 
-  // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (pinned || e.key !== 'Tab' || !open || anyPopupOpen) return
+    if (pinned || e.key !== 'Tab' || !open) return
     const root = panelRef.current
     if (!root) return
     const f = Array.from(
@@ -747,13 +676,6 @@ export default function Chat({
           summary: summary || 'Analysis complete',
         })
       }
-      // refresh the reasoning-trace summary for this session (best-effort)
-      reasoningApi
-        .getSessionSummary(sessionRef.current)
-        .then((s: Partial<SessionSummary> | null) =>
-          setSessionSummary(s ? sessionSummaryFrom(s) : null),
-        )
-        .catch(() => {})
     } catch (e) {
       const err = e as { name?: string; message?: string }
       if (err?.name !== 'AbortError' && gen === turnGen.current) {
@@ -815,7 +737,6 @@ export default function Chat({
     persistedRef.current = false
     rememberCase(null)
     dropFile()
-    setSessionSummary(null)
     reloadHistory()
   }
 
@@ -838,7 +759,6 @@ export default function Chat({
       persistedRef.current = true
       rememberCase(lockedCaseId ?? detail.case_id ?? null)
       dropFile()
-      setSessionSummary(null)
       return true
     } catch (error) {
       if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
@@ -853,7 +773,6 @@ export default function Chat({
         persistedRef.current = false
         rememberCase(lockedCaseId ?? null)
         dropFile()
-        setSessionSummary(null)
         return true
       }
       return false
@@ -897,33 +816,7 @@ export default function Chat({
     rememberCase(null)
     dropFile()
     setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
-    setSessionSummary(null)
     send(prompt, { fresh: true, document })
-  }
-
-  const openReasoningTrace = () => {
-    setTraceOpen(true)
-    setTraceLoading(true)
-    setTraceSelected(null)
-    const sid = sessionRef.current
-    reasoningApi
-      .listInteractions(sid, { limit: 200 })
-      .then((r: { interactions?: TraceItem[] }) => setTraceItems(r?.interactions || []))
-      .catch(() => setTraceItems([]))
-      .finally(() => setTraceLoading(false))
-    reasoningApi
-      .getSessionSummary(sid)
-      .then((s: Partial<SessionSummary> | null) =>
-        setSessionSummary(s ? sessionSummaryFrom(s) : null),
-      )
-      .catch(() => {})
-  }
-
-  const loadTraceInteraction = (interactionId: string) => {
-    reasoningApi
-      .getInteraction(sessionRef.current, interactionId)
-      .then((d: TraceDetail) => setTraceSelected(d))
-      .catch(() => {})
   }
 
   const deleteConversation = async (id: string) => {
@@ -949,7 +842,6 @@ export default function Chat({
       sessionRef.current = newSessionId()
       currentKeyRef.current = null
       persistedRef.current = false
-      setSessionSummary(null)
       if (!lockedCaseId) rememberCase(null)
       dropFile()
     }
@@ -1137,7 +1029,7 @@ export default function Chat({
             )}
           </div>
         ) : (
-          <VigilMessage key={i} text={m.text} reasoning={m.reasoning} citations={citations} onCite={onCite} onTrace={pinned ? undefined : openReasoningTrace} />
+          <VigilMessage key={i} text={m.text} reasoning={m.reasoning} citations={citations} onCite={onCite} pinned={pinned} />
         )
       )}
       {loading && (
@@ -1504,85 +1396,6 @@ export default function Chat({
       )}
     </aside>
     )}
-
-    {/* Reasoning trace — per-interaction chain-of-thought for this session */}
-    <Popup open={traceOpen} onClose={() => setTraceOpen(false)} title="Reasoning trace" width={760}>
-      {sessionSummary && (
-        <div className="trace-sum">
-          {sessionSummary.total_interactions} call{sessionSummary.total_interactions === 1 ? '' : 's'}
-          {' · '}<Cost usd={sessionSummary.total_cost_usd} digits={4} />
-          {sessionSummary.unpriced_calls > 0 && (
-            <>{' · '}{sessionSummary.unpriced_calls.toLocaleString()} unpriced</>
-          )}
-          {' · '}{(sessionSummary.total_input_tokens + sessionSummary.total_output_tokens).toLocaleString()} tokens
-        </div>
-      )}
-      <div className="trace">
-        <div className="trace-list">
-          {traceLoading ? (
-            <div className="muted">Loading…</div>
-          ) : traceItems.length === 0 ? (
-            <div className="muted">No reasoning recorded for this conversation yet.</div>
-          ) : (
-            traceItems.map((it) => (
-              <button
-                key={it.interaction_id}
-                className={`trace-row${traceSelected?.interaction_id === it.interaction_id ? ' sel' : ''}`}
-                onClick={() => loadTraceInteraction(it.interaction_id)}
-              >
-                <span className="trace-row-top">
-                  <span>{traceTime(it.created_at)}</span>
-                  {it.has_thinking && <span className="trace-chip" title="Has thinking">💭</span>}
-                  {it.has_tools && <span className="trace-chip" title="Used tools">🔧</span>}
-                  <span className="trace-row-agent">{it.agent_id || 'chat'}</span>
-                </span>
-                <span className="trace-row-meta">
-                  {(it.input_tokens ?? 0).toLocaleString()} in · {(it.output_tokens ?? 0).toLocaleString()} out · <Cost usd={it.cost_usd} digits={4} />
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-        <div className="trace-detail">
-          {!traceSelected ? (
-            <div className="muted">{traceItems.length ? 'Select an interaction to inspect its reasoning.' : ''}</div>
-          ) : (
-            <>
-              <div className="trace-meta">
-                <span>{traceSelected.model || '—'}</span>
-                {traceSelected.stop_reason && <span>· {traceSelected.stop_reason}</span>}
-                {typeof traceSelected.duration_ms === 'number' && <span>· {(traceSelected.duration_ms / 1000).toFixed(1)}s</span>}
-                <span>· <Cost usd={traceSelected.cost_usd} digits={4} /></span>
-              </div>
-              {traceSelected.thinking_content && (
-                <div className="trace-block thinking">
-                  <div className="trace-block-h">💭 Thinking</div>
-                  <div className="trace-block-b">{traceSelected.thinking_content}</div>
-                </div>
-              )}
-              {traceSelected.response_content && (
-                <div className="trace-block">
-                  <div className="trace-block-h">Response</div>
-                  <div className="trace-block-b"><Markdown>{traceSelected.response_content}</Markdown></div>
-                </div>
-              )}
-              {traceSelected.tool_calls?.map((tc, i) => (
-                <div key={`c${i}`} className="trace-block tool">
-                  <div className="trace-block-h">🔧 {tc.name || 'tool'}</div>
-                  <div className="trace-block-b mono">{safeJson(tc.input)}</div>
-                </div>
-              ))}
-              {traceSelected.tool_results?.map((tr, i) => (
-                <div key={`r${i}`} className={`trace-block ${tr.is_error ? 'err' : 'ok'}`}>
-                  <div className="trace-block-h">{tr.is_error ? 'Tool error' : 'Tool result'}</div>
-                  <div className="trace-block-b mono">{typeof tr.content === 'string' ? tr.content : safeJson(tr.content)}</div>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-      </div>
-    </Popup>
     </>
   )
 }

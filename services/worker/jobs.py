@@ -196,7 +196,7 @@ async def on_startup(ctx: Dict[str, Any]):
     except Exception as _tel_err:
         logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
-    # Initialize the SQLAlchemy DB manager so downstream code (reasoning-trace
+    # Initialize the SQLAlchemy DB manager so downstream code (interaction-log
     # persistence, provider-key resolution) can query the DB. The backend process does this in its FastAPI startup
     # hook; the worker is a separate process and must do it itself.
     try:
@@ -210,7 +210,7 @@ async def on_startup(ctx: Dict[str, Any]):
         raise  # fail closed rather than run without database credentials
     except Exception as _db_err:
         logger.warning(
-            "LLM worker DB init failed (reasoning traces will be disabled): %s",
+            "LLM worker DB init failed (interaction logging will be disabled): %s",
             _db_err,
         )
 
