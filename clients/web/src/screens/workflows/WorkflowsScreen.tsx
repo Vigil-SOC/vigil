@@ -18,7 +18,7 @@ import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { Cost } from '../../shared/cost'
+import { Cost, fmtOver } from '../../shared/cost'
 import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
 import { StopLine } from '../../shared/StopLine'
 import { COMMANDS, LIVE_COMMANDS } from '../../shell/commandBarModel'
@@ -1063,7 +1063,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
             placeholder={(limits?.budgets?.max_cost_usd ?? 15).toFixed(2)}
             hint={costBad
               ? 'A dollar amount above 0 and no more than 100.'
-              : 'Dollars this run may spend before it stops and reports on what it has. The turn count above is the other ceiling; whichever it reaches first ends the run.'}
+              : "Checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes. The turn count above is the other ceiling; whichever it reaches first ends the run."}
           />
         )}
         {isHuntLike && (
@@ -1643,6 +1643,7 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
   const spent = typeof cost === 'number' && ceiling !== undefined && ceiling > 0
     ? Math.min(100, (cost / ceiling) * 100)
     : null
+  const over = typeof cost === 'number' ? fmtOver(cost, ceiling) : ''
   const verdict = verdictOf(d, trace?.reason ?? null)
   const cause = stopCauseOf(d.stop_cause)
   return (
@@ -1657,10 +1658,10 @@ function RunBar({ d, hunt, trace, onSteered }: { d: WfRunDetail; hunt: HuntView 
         <span className="flex-1" />
         <div className="meta">
           {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
+          <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}${fmtOver(cost, ceiling)}`}</span>
           {spent !== null && (
-            <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
-              <div className="budget-fill" style={{ width: `${spent}%` }} />
+            <div className="budget-track" title={over ? `Over the cost ceiling${over}` : `${spent.toFixed(0)}% of the cost ceiling`}>
+              <div className="budget-fill" style={{ width: `${spent}%`, ...(over && { background: 'var(--poor)' }) }} />
             </div>
           )}
         </div>

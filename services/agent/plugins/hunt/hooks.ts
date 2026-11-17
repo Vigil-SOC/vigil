@@ -151,7 +151,8 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
     // The narrator and the review are charged after that, and they are part of
     // what the run cost and when it finished.
     seal: async (ctx, summary) => {
-      const sealed = sealReport(summary, await state(ctx).read(ctx.options.run_id), new Date().toISOString());
+      const ceiling = await withBook(ctx, ports, (book) => book.hunt.budgets.max_cost_usd);
+      const sealed = sealReport(summary, await state(ctx).read(ctx.options.run_id), new Date().toISOString(), ceiling);
       return sealed ?? { summary };
     },
 

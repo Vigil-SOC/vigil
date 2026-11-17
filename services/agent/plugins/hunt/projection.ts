@@ -233,6 +233,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[], opti
             renderReport(report, view, narrativeIn(events), recalledPayloadOf(events)),
             header.cost_usd,
             header.ended ?? "still running",
+            report.budgets.max_cost_usd,
           ),
     narrative: narrativeView(narrativeIn(events)),
     handoffs: events.filter((event) => event.kind === "handoff").map((event) => event.payload as Handoff),

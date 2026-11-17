@@ -39,6 +39,15 @@ export function describeCost({ usd, source, digits = 2 }: CostInput): CostView {
   return { kind: 'amount', text: dollars(usd, digits), source: source ?? undefined }
 }
 
+/** " · $0.42 over" once spend passes its ceiling, else "". Strict on the unrounded figures; under a cent reads
+ *  "under $0.01 over". A ceiling that is 0, null or not a number is no ceiling. */
+export function fmtOver(spent: number | null | undefined, ceiling: number | null | undefined): string {
+  if (typeof spent !== 'number' || typeof ceiling !== 'number' || !Number.isFinite(spent) || !Number.isFinite(ceiling)
+    || ceiling <= 0 || !(spent > ceiling)) return ''
+  const over = spent - ceiling
+  return over < 0.01 ? ' · under $0.01 over' : ` · ${dollars(over, 2)} over`
+}
+
 /** Plain-text form for template strings and KPI values. */
 export function fmtCost(usd: CostInput['usd'], source?: CostInput['source'], digits?: number): string {
   return describeCost({ usd, source, digits }).text
