@@ -1,8 +1,10 @@
 """Recording and reading skill usage (#1560).
 
 One row in ``skill_reads`` per successful read of a skill body, written from
-``/internal/tools/invoke`` — the one place a read is known to have
-succeeded — and read back by ``GET /api/skills`` as a 7-day window. Plain
+``/internal/tools/invoke`` for a read_skill call and from
+``/internal/tools/skill-reads`` for a skill a run loaded itself — the places a
+read is known to have succeeded — and read back by ``GET /api/skills`` as a
+7-day window. Plain
 functions, not a service: the writer and the reader are both one query.
 """
 
