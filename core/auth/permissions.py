@@ -581,7 +581,13 @@ def current_case_reader() -> CaseReader:
 
     claims = current_claims()
     if claims is not None:
-        return CaseReader(claims.person_id, builtin=not claims.person_id)
+        if claims.person_id:
+            return CaseReader(claims.person_id)
+        from core.response.ceiling import execution_held
+
+        # A run no person started reads open cases only while stopped, or while
+        # the ceiling can't be read; Vigil's own non-run work keeps every case.
+        return CaseReader() if execution_held() else CaseReader(builtin=True)
     if _builtin_reader.get():
         return CaseReader(builtin=True)
     caller = current_caller()

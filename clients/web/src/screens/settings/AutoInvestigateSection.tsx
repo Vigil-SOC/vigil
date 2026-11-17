@@ -91,7 +91,7 @@ function stoppedBanner(ceil: Ceiling): string {
   const by = who ? ` by ${who}${when ? ` ${when}` : ''}` : ''
   return (
     `Stopped${by}. Unattended writes, proposals, outside actions and Vigil’s own detection rules ` +
-    'are off until someone resumes; other reads continue.'
+    'are off until someone resumes; runs no person started can’t reach restricted cases, and other reads continue.'
   )
 }
 
@@ -143,7 +143,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
     case 'stop':
       return {
         title: 'Stop autonomy?',
-        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
+        body: 'No tool acts on its own, and unattended writes, proposals, outside actions and Vigil’s own detection rules are off until you resume; runs no person started can’t reach restricted cases, and other reads continue. Automatic investigation turns off and investigations in progress are marked failed.',
       }
     case 'workflow': {
       const shown = agreementText(pending.workflow.agreement)

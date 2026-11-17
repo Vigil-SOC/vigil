@@ -143,6 +143,75 @@ def sign_in_failed(
         logger.exception("audit trail did not record a failed sign-in")
 
 
+def password_change_failed(principal: str, sign_in: Optional[str]) -> None:
+    """A wrong current password on Change password, collapsed per person.
+
+    Its own transaction: the handler raises, so the request's rolls back.
+    """
+    try:
+        with unit_of_work() as session:
+            if ready(session):
+                trail.collapse(
+                    session,
+                    json.dumps(["password_change_failed", principal]),
+                    payload(
+                        "auth.password_change_failed",
+                        actor=principal,
+                        principal=principal,
+                        sign_in=sign_in,
+                    ),
+                )
+    except Exception:  # noqa: BLE001 - still the 400
+        logger.exception("audit trail did not record a failed password change")
+
+
+def reset_refused(
+    source_ip: Optional[str],
+    reason: str,
+    token: str,
+    link_id: Optional[str] = None,
+    principal: Optional[str] = None,
+) -> None:
+    """A reset link that was not honoured, collapsed per source and link.
+
+    An unknown token is keyed by its hash: the token itself is never stored.
+    """
+    ident = link_id or hashlib.sha256(token.encode("utf-8")).hexdigest()
+    try:
+        with unit_of_work() as session:
+            if ready(session):
+                trail.collapse(
+                    session,
+                    json.dumps(["reset_refused", source_ip, ident]),
+                    payload(
+                        "reset.refused",
+                        reason=reason,
+                        link_id=link_id,
+                        principal=principal,
+                    ),
+                    source_ip=source_ip,
+                )
+    except Exception:  # noqa: BLE001 - the link is refused regardless
+        logger.exception("audit trail did not record a refused reset link")
+
+
+def locked(
+    principal: str,
+    failures: int,
+    until,
+    source_ip: Optional[str],
+) -> None:
+    """An automatic lock, after it has committed: held if the trail refuses."""
+    safety(
+        "auth.locked",
+        {"source_ip": source_ip},
+        actor=trail.SYSTEM,
+        principal=principal,
+        failures=failures,
+        until=until.isoformat() if until else None,
+    )
+
+
 def credential_expired(credential_id: str) -> None:
     """The first presentation of an expired credential, once.
 
