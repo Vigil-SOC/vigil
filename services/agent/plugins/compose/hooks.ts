@@ -1,6 +1,6 @@
 import type { SpendPayload } from "../../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload } from "../../contracts/events.js";
-import { runSubturn, type Early, type PluginContext, type PluginHooks } from "../../core/agent.js";
+import { callsIn, runSubturn, unwrittenNote, type Early, type PluginContext, type PluginHooks } from "../../core/agent.js";
 import type { Outcome } from "../../core/loop.js";
 import { scrub } from "../../core/security.js";
 import type { State } from "../../core/seams.js";
@@ -99,7 +99,12 @@ export function composeHooks(mirror: Mirror): PluginHooks {
 
     ended: async (ctx, terminal) => {
       const ledger = await readLedger(state(ctx), ctx.options.run_id);
-      await mirror.terminal(ctx.options.run_id, { outcome: terminal.outcome, reason: terminal.reason, stop_cause: terminal.stop_cause, summary: summarise(ledger.answers), cost_usd: ledger.spent });
+      // The kernel adds this line to a summary it delivers; compose writes its own,
+      // and like the kernel adds it only under an answer, never in place of one.
+      const answered = summarise(ledger.answers);
+      const note = answered === "" ? null : unwrittenNote(callsIn(await state(ctx).read(ctx.options.run_id)), ctx.options.spec.tools);
+      const summary = note === null ? answered : `${answered}\n\n${note}`;
+      await mirror.terminal(ctx.options.run_id, { outcome: terminal.outcome, reason: terminal.reason, stop_cause: terminal.stop_cause, summary, cost_usd: ledger.spent });
     },
   };
 }

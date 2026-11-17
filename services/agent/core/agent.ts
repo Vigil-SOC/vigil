@@ -1294,6 +1294,35 @@ export function summaryOf(plugin: PluginManifest, conclusion: ConclusionPayload,
   return `${summary}\n\n${guarded.field} was ${guarded.asked}; held as ${guarded.final} because ${why}.`;
 }
 
+const SHOWN_FAILURES = 5;
+
+// Vigil's own line under an answer: each write the run asked for whose call failed,
+// with no later call of the same tool that worked. Such a write changed nothing,
+// whatever the answer says, and the model is not trusted to say so itself. Which
+// tools write is the deployment's word (`writes` on a tool spec). Null when none failed.
+export function unwrittenNote(calls: readonly CallPayload[], tools: readonly ToolSpec[]): string | null {
+  const writes = new Set(tools.filter((tool) => tool["writes"] === true).map((tool) => tool.id));
+  const failed = calls.filter(
+    (call, index) => !call.ok && writes.has(call.tool) && !calls.slice(index + 1).some((later) => later.ok && later.tool === call.tool),
+  );
+  if (failed.length === 0) return null;
+  // A run that failed every save could list dozens; the first few say what happened.
+  const lines = failed.slice(0, SHOWN_FAILURES).map((call) => `- ${call.tool} (${call.role === undefined ? "" : `${call.role} `}${call.ref}): ${failureText(call)}`);
+  if (failed.length > SHOWN_FAILURES) lines.push(`- and ${failed.length - SHOWN_FAILURES} more`);
+  return `**Not saved.** Vigil checked the run's calls: these writes failed and were not made good by a later call, so what they would have saved does not exist, whatever the answer above says.\n${lines.join("\n")}`;
+}
+
+// Why a call failed, as the model read it: the result already carries the kind and
+// the backend's reason, scrubbed. Only the kind when the result says nothing more.
+// Under the experimental guards the model read shown, and result stays raw.
+function failureText(call: CallPayload): string {
+  const said = (call.shown ?? call.result).replace(/<\/?vigil:tool_result[^>]*>/g, "").trim().replace(/^failed:\s*/, "").replace(/\s+/g, " ");
+  const text = said === "" ? (call.failure ?? "failed, no reason given") : said;
+  // By code point, so a cut never splits a surrogate pair.
+  const points = Array.from(text);
+  return points.length > 240 ? `${points.slice(0, 239).join("")}…` : text;
+}
+
 // How sure the answer said it was, when its plugin asks and it is one of CONFIDENCES.
 export function confidenceOf(plugin: PluginManifest, conclusion: Pick<ConclusionPayload, "value">): Confidence | undefined {
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.confidence_field : undefined;
@@ -1468,6 +1497,11 @@ async function end(
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
   let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  // Only under an answer the run gave: a bare reason claims no save.
+  if (typeof summary === "string" && summary.trim() !== "" && typeof deliver === "string") {
+    const note = unwrittenNote(callsIn(await ctx.harness.state.read(ctx.options.run_id)), ctx.options.spec.tools);
+    if (note !== null) deliver = `${deliver}\n\n${note}`;
+  }
   // After every charge this ending still takes, so the sealed header and the row agree.
   let finished_at: string | undefined;
   if (typeof deliver === "string" && ctx.options.hooks?.seal !== undefined) {
