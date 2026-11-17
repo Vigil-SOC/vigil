@@ -510,3 +510,23 @@ class BreachedPassword(Base):
     added_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
+
+
+class IdentifierReservation(Base):
+    """An erased person's username or email, kept as a keyed hash of its folded
+    form so nobody else can take it. Never the value, its kind or the person.
+    ``key_version`` is the key-ring ``identifier`` key that made the hash.
+    ``core/auth/identity.py`` reads it and ``core/audit/retention.py`` writes it.
+    """
+
+    __tablename__ = "identifier_reservations"
+
+    hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Naive UTC, as everywhere else (core/time.py).
+    reserved_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        server_default=text("(now() AT TIME ZONE 'utc')"),
+    )

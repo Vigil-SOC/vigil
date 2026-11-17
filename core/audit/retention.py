@@ -23,7 +23,7 @@ from typing import Any, Optional
 from sqlalchemy import bindparam, event, text
 
 from core.audit import trail
-from core.auth import mcp_credential_service, principals, sign_ins
+from core.auth import identity, key_ring, mcp_credential_service, principals, sign_ins
 from core.config import get_settings
 from core.storage.connection import get_db_manager
 
@@ -199,7 +199,8 @@ def erase(
     """Blank ``principal_id``, or announce it when that principal can manage the trail.
 
     Refuses, before any blanking, when the erasure list has no directory or
-    can't be written, when ``actor`` is erasing their own principal, or when the target is the last
+    can't be written, when the key that hashes the username and email can't be
+    read, when ``actor`` is erasing their own principal, or when the target is the last
     active principal holding ``audit.manage``.
     """
     now = _aware(now)
@@ -208,6 +209,7 @@ def erase(
     if not principal_id:
         raise RetentionError("a principal is required")
     _check_writable()
+    _check_key()
     if not _exists(session, principal_id):
         raise RetentionError("unknown principal")
     # Holding the permission is the role grant on a principal that still exists.
@@ -338,7 +340,10 @@ def reapply(session, snapshot_ids: list[str]) -> None:
         raise RetentionError(UNSET_MESSAGE)
     for pid in union:
         _blank_label(session, pid)
-        _revoke(session, pid)
+        # No reservation here: the live ring may not be settled or hold the
+        # identifier key yet, and a restore must not fail on that. The restore
+        # child writes them once the ring is settled.
+        _revoke(session, pid, reserve=False)
     trail._lock(session)
     for pid in union:
         _blank_beside(session, pid)
@@ -378,8 +383,9 @@ def _apply_period(session, now: datetime) -> None:
 
 
 def _apply_erasures(session, now: datetime) -> None:
-    # An id that can't reach the list would be undone by a restore, so a due
-    # erasure stays pending until the list is writable again.
+    # An id that can't reach the list would be undone by a restore, and a
+    # username that can't be hashed is lost, so a due erasure stays pending until
+    # the list is writable and the identifier key reads.
     if _blocked() is not None:
         return
     stored = _load(session, lock=True)
@@ -522,8 +528,9 @@ def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:
             )
 
 
-def _revoke(session, principal_id: str) -> None:
-    """Deactivate the account, free its username and email, revoke MCP credentials
+def _revoke(session, principal_id: str, *, reserve: bool = True) -> None:
+    """Deactivate the account, keep its username and email as keyed hashes
+    (``reserve``), free them, revoke MCP credentials
     and blank their labels, drop its preferences, and end sign-ins, and keep the
     other rows.
 
@@ -534,9 +541,20 @@ def _revoke(session, principal_id: str) -> None:
         return
     # Pushes waiting for a link to this account carry its names: read them first.
     names = session.execute(
-        text("SELECT username, email FROM public.users WHERE principal_id = :id"),
+        text(
+            "SELECT username, email, service_account FROM public.users"
+            " WHERE principal_id = :id"
+        ),
         {"id": principal_id},
     ).first()
+    # A service account's names are made up, and an erased one is already placeholders.
+    if (
+        names
+        and reserve
+        and not names.service_account
+        and not is_erased(names.username, principal_id)
+    ):
+        identity.reserve(session, names.username, names.email)
     if names and _table(session, "directory_pending"):
         session.execute(
             text("""
@@ -624,10 +642,20 @@ def _check_writable() -> None:
         raise RetentionError(f"the erasure list is not writable: {path}") from exc
 
 
+def _check_key() -> None:
+    """Refuse before blanking when the username and email can't be hashed: the
+    originals are overwritten, so nothing could be hashed later."""
+    try:
+        key_ring.current("identifier")
+    except key_ring.KeyRingError as exc:
+        raise RetentionError(f"the identifier key can't be read: {exc}") from exc
+
+
 def _blocked() -> Optional[str]:
     """Why an erasure can't be recorded now, or None."""
     try:
         _check_writable()
+        _check_key()
     except RetentionError as exc:
         return str(exc)
     return None
