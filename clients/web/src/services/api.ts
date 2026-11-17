@@ -1203,6 +1203,8 @@ export interface ProposalEvent {
   reason: string
   at: string
   evidence: { step?: string; run_id?: string; rule_ids?: number[]; [key: string]: unknown }
+  /** Whether the step judged the proposal's current text. */
+  judges_current_text?: boolean
 }
 
 /** GET /detection-engineering/proposals/{id}: the proposal with its text, copies and events. */

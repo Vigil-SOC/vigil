@@ -170,6 +170,10 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
+    # A save proves the rule on the SIEM, then a gaps run's save lints and replays
+    # its proposal (tools.GAP_REPLAY_TIMEOUT_S): the 30s default would cut the
+    # answer off after the rule is saved.
+    "save_detection_rule": {"timeout_ms": 240_000, "max_rows": 200},
     # Each tool caps its own list at 50; this is the shape the bounds model asks for.
     **{
         name: {"timeout_ms": 60_000, "max_rows": 50}

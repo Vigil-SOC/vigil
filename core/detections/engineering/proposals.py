@@ -265,10 +265,19 @@ def _origin_shown(origin: Dict[str, Any], readable: Set[str]) -> Dict[str, Any]:
     return {**origin, "gap": {**gap, "runs": kept, "runs_withheld": withheld}}
 
 
+def _without_gap_cases(value: Any, case_ids: Iterable[str]) -> Any:
+    """A replay's ``attack_basis`` names the gap's runs: not the Cases a reader can't read."""
+    for case_id in case_ids:
+        value = _without_case(value, f"case:{case_id}")
+    return value
+
+
 def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
     events = _events(session, proposal)
     links = _links(proposal, (e.evidence for e in events))
-    readable = _readable_cases(session, _gap_case_ids([proposal.origin]))
+    gap_cases = _gap_case_ids([proposal.origin])
+    readable = _readable_cases(session, gap_cases)
+    hidden = gap_cases - readable
     latest: Dict[str, Any] = {}
     for step in (
         "draft",
@@ -281,7 +290,11 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "reject",
     ):
         event = _latest_step(events, step)
-        latest[step] = _event_view(event, proposal.sigma) if event else None
+        latest[step] = (
+            _without_gap_cases(_event_view(event, proposal.sigma), hidden)
+            if event
+            else None
+        )
     return {
         "proposal_id": proposal.proposal_id,
         "title": proposal.title,
@@ -300,7 +313,9 @@ def _view(session: Session, proposal: DetectionProposal) -> Dict[str, Any]:
         "updated_at": proposal.updated_at.isoformat(),
         "allowed": sorted(s.value for s in TRANSITIONS[proposal.state]),
         "latest": latest,
-        "events": [_event_view(e, proposal.sigma) for e in events],
+        "events": _without_gap_cases(
+            [_event_view(e, proposal.sigma) for e in events], hidden
+        ),
         "stages": (
             _stage_view(session, links["rule_ids"]) if links["rule_ids"] else []
         ),
@@ -422,6 +437,12 @@ def _gap_shown_to(
         if len(kept) != len(runs):
             gap["runs"] = kept
             gap["runs_withheld"] = gap.get("runs_withheld", 0) + len(runs) - len(kept)
+            hidden = _gap_case_ids([origin])
+            view = {
+                **view,
+                "events": _without_gap_cases(view.get("events"), hidden),
+                "latest": _without_gap_cases(view.get("latest"), hidden),
+            }
     return {**view, "origin": {**origin, "gap": gap}}
 
 
@@ -570,7 +591,8 @@ def lint(proposal_id: str, actor: str, kind: str = PERSON) -> Dict[str, Any]:
 
 
 def _replay_target(proposal_id: str) -> Dict[str, Any]:
-    """What a replay reads: the text, its Case, and the events named last time."""
+    """What a replay reads: the text, its Case (else its gap's runs), and the events
+    named last time."""
     with unit_of_work() as session:
         proposal = _readable(session, proposal_id)
         if proposal.state not in (ProposalState.LINTED, ProposalState.REPLAYED):
@@ -579,6 +601,12 @@ def _replay_target(proposal_id: str) -> Dict[str, Any]:
         return {
             "sigma": proposal.sigma,
             "case_id": proposal.case_id,
+            # A gaps-run proposal has no Case: the runs its missed gap names.
+            "runs": (
+                []
+                if proposal.case_id
+                else list(((proposal.origin or {}).get("gap") or {}).get("runs") or ())
+            ),
             "named": previous.evidence.get("named") if previous else None,
             "days": (previous.evidence.get("days") if previous else None)
             or siem_replay.WINDOW_DAYS,
@@ -627,7 +655,11 @@ async def replay(
     named = named or target["named"] or None
     days = days or target["days"]
     report = await siem_replay.run(
-        target["sigma"], case_id=target["case_id"], named=named, days=days
+        target["sigma"],
+        case_id=target["case_id"],
+        runs=target["runs"],
+        named=named,
+        days=days,
     )
     return _record_replay(
         proposal_id,
@@ -1084,6 +1116,10 @@ def replaced_copies(
     return {key: ids for key, ids in links.items() if ids}
 
 
+# The states a gaps run's save with a new Sigma text takes back to draft.
+_REVISABLE = (ProposalState.LINTED, ProposalState.REPLAYED)
+
+
 def attach_saved(
     run_id: str, actor: str, saved: Sequence[Mapping[str, Any]]
 ) -> List[str]:
@@ -1104,10 +1140,18 @@ def attach_saved(
             if not matched:
                 continue
             rule_ids = [c["rule_id"] for c in matched]
-            # Only a draft takes the saved copies and text on. One a person converted or
-            # rejected keeps the copies checked against its text: the save is recorded.
-            applied = proposal.state is ProposalState.DRAFT
-            sigma: Optional[str] = None
+            # The saved Sigma form is the draft's text, so lint and replay judge it.
+            saved_sigma = next(
+                (c["text"] for c in matched if c["language"] == "sigma"), None
+            )
+            # A draft takes the saved copies and text on, and so does one only linted
+            # or replayed when the run saved a new Sigma text (it revised its rule).
+            # One a person converted or rejected keeps the copies checked against its
+            # text: the save is recorded.
+            applied = proposal.state is ProposalState.DRAFT or (
+                proposal.state in _REVISABLE and saved_sigma is not None
+            )
+            sigma = saved_sigma if applied else None
             if applied:
                 proposal.copies = {
                     **proposal.copies,
@@ -1122,10 +1166,6 @@ def attach_saved(
                     (c["rule_id"] for c in matched if c["language"] != "sigma"),
                     rule_ids[0],
                 )
-                # The saved Sigma form is the draft's text, so lint and replay judge it.
-                sigma = next(
-                    (c["text"] for c in matched if c["language"] == "sigma"), None
-                )
             evidence = {
                 "step": "attach",
                 "run_id": run_id,
@@ -1137,14 +1177,19 @@ def attach_saved(
                 "applied": applied,
                 "rollout": AUTOMATIC_ROLLOUT,
             }
-            _note(
-                proposal,
-                actor,
-                AGENT,
-                evidence,
-                reason="saved by the run the gaps run queued",
-                sigma=sigma,
-            )
+            reason = "saved by the run the gaps run queued"
+            if applied and proposal.state is not ProposalState.DRAFT:
+                # The checks it passed judged the old text: back to draft.
+                proposal.move_to(
+                    ProposalState.DRAFT,
+                    actor=actor,
+                    actor_kind=AGENT,
+                    evidence=evidence,
+                    reason=reason,
+                    sigma=sigma,
+                )
+            else:
+                _note(proposal, actor, AGENT, evidence, reason=reason, sigma=sigma)
             attached.append(proposal.proposal_id)
         return attached
 

@@ -13,7 +13,9 @@ Per SIEM, two reads, each one search of that SIEM's budget:
 
 - **attack**: the events a person named by id, else the events of the proposal's
   Case: on its hosts, users or addresses, inside its window (its Verdict's, else
-  its Findings'), padded by ``CLAIM_PAD``; the newest ``MAX_ATTACK``;
+  its Findings'), padded by ``CLAIM_PAD``; the newest ``MAX_ATTACK``. A gaps-run
+  proposal has no Case: its gap's runs (``hunt:<id>``, ``case:<id>``) are read
+  instead, each Verdict's hosts inside that Verdict's own window;
 - **benign**: the newest ``MAX_BENIGN`` events in the window that hold a field the
   rule reads. Those any Case or hunt claims (a Verdict's hosts, users or
   addresses inside its window, unless the Verdict ruled the run out) are left
@@ -227,6 +229,9 @@ class Claim:
     users: Set[str] = field(default_factory=set)
     ips: Set[str] = field(default_factory=set)
     ruled_out: bool = False
+    # A union of several claims: the SIEM query keeps each one's entities in its
+    # own window, and only one of them holding an event makes it attack.
+    parts: List["Claim"] = field(default_factory=list)
 
     def holds(self, event: Event) -> bool:
         if event.at is None or not (self.start <= event.at <= self.end):
@@ -314,6 +319,33 @@ def case_claim(case_id: str, claims: Sequence[Claim]) -> Optional[Claim]:
         return None
     claim = claim_of(f"case:{case_id}", entities, min(times), max(times))
     return None if claim.empty() else claim
+
+
+def run_claims(refs: Iterable[str], claims: Sequence[Claim]) -> List[Claim]:
+    """The proven claims of the runs a gap names: one per Verdict, each with its
+    own entities and window. Ruled-out and entity-less Verdicts are left out."""
+    wanted = set(refs)
+    return [c for c in claims if c.ref in wanted and not c.ruled_out and not c.empty()]
+
+
+def _union(claims: Sequence[Claim]) -> Optional[Claim]:
+    """One claim spanning every claim, with each kept as a part: what a SIEM is
+    asked for. Only a single claim's ``holds`` decides which events are attack."""
+    if not claims:
+        return None
+    if len(claims) == 1:
+        return claims[0]
+    union = Claim(
+        ref=", ".join(dict.fromkeys(c.ref for c in claims)),
+        start=min(c.start for c in claims),
+        end=max(c.end for c in claims),
+        parts=list(claims),
+    )
+    for c in claims:
+        union.hosts |= c.hosts
+        union.users |= c.users
+        union.ips |= c.ips
+    return union
 
 
 # --- the rule ---------------------------------------------------------------------
@@ -499,6 +531,31 @@ class ElasticSource(Source):
 
 
 def _entity(claim: Claim) -> Dict[str, Any]:
+    if claim.parts:
+        # Each part's entities inside its own window.
+        return {
+            "bool": {
+                "should": [
+                    {
+                        "bool": {
+                            "filter": [
+                                _entity(part),
+                                {
+                                    "range": {
+                                        "@timestamp": {
+                                            "gte": part.start.isoformat(),
+                                            "lte": part.end.isoformat(),
+                                        }
+                                    }
+                                },
+                            ]
+                        }
+                    }
+                    for part in claim.parts
+                ],
+                "minimum_should_match": 1,
+            }
+        }
     return {"bool": {"should": _entity_should(claim), "minimum_should_match": 1}}
 
 
@@ -599,6 +656,14 @@ class SplunkSource(Source):
 
 
 def _claim_terms(claim: Claim) -> str:
+    if claim.parts:
+        # Each part's entities inside its own window.
+        return " OR ".join(
+            f"(({_claim_terms(p)}) earliest={p.start.timestamp():.0f}"
+            f" latest={p.end.timestamp():.0f})"
+            for p in claim.parts
+            if _claim_terms(p)
+        )
     terms = [f"host={_spl_value(h)}" for h in claim.hosts]
     terms += [f"Computer={_spl_value(h)}" for h in claim.hosts]
     terms += [f"user={_spl_value(u)}" for u in claim.users]
@@ -667,7 +732,7 @@ async def _replay_one(
     source: Source,
     matcher: Any,
     fields: Sequence[str],
-    attack_claim: Optional[Claim],
+    attack_claims: Sequence[Claim],
     named: Sequence[str],
     claims: Sequence[Claim],
     start: datetime,
@@ -681,7 +746,9 @@ async def _replay_one(
         out["deferred"] = "its search budget for this hour is spent"
         return out
     try:
-        attack_read = await source.attack(attack_claim, named, fields, start, end)
+        attack_read = await source.attack(
+            _union(attack_claims), named, fields, start, end
+        )
         benign_read = await source.benign(fields, start, end)
     except Exception as exc:  # a SIEM's own error, named on the step
         logger.warning("proposal replay: %s read failed: %s", source.siem, exc)
@@ -691,15 +758,14 @@ async def _replay_one(
     benign_read_events = [event_of(source.siem, d) for d in benign_read.docs]
     everything = list({e.id: e for e in attack + benign_read_events}.values())
     absent = [f for f in fields if not any(f in e.view for e in everything)]
-    if attack_claim is not None and not named:
-        # Entity terms are wide; keep only what the claim really holds.
-        attack = [e for e in attack if attack_claim.holds(e)]
+    own = list(attack_claims) if not named else []
+    if own:
+        # Entity terms are wide; keep only what one claim really holds.
+        attack = [e for e in attack if any(c.holds(e) for c in own)]
     attack_ids = {e.id for e in attack}
     # The Case's own events inside its padded window are never normal ones, read as
     # attack or not.
-    claimed = [c for c in claims if not c.ruled_out]
-    if attack_claim is not None and not named:
-        claimed.append(attack_claim)
+    claimed = [c for c in claims if not c.ruled_out] + own
     benign: List[Event] = []
     left_out = excepted_out = 0
     for event in benign_read_events:
@@ -852,7 +918,7 @@ async def replay(
     sigma: str,
     *,
     sources: Sequence[Source],
-    attack_claim: Optional[Claim],
+    attack_claims: Sequence[Claim] = (),
     named: Optional[Mapping[str, Sequence[str]]] = None,
     claims: Sequence[Claim] = (),
     start: datetime,
@@ -870,7 +936,11 @@ async def replay(
         "attack_basis": (
             "named by a person"
             if named
-            else (f"linked to {attack_claim.ref}" if attack_claim else "none")
+            else (
+                "linked to " + ", ".join(dict.fromkeys(c.ref for c in attack_claims))
+                if attack_claims
+                else "none"
+            )
         ),
         "skipped": list(skipped),
     }
@@ -897,7 +967,7 @@ async def replay(
             source,
             matcher,
             fields,
-            attack_claim,
+            attack_claims,
             list((named or {}).get(source.siem, ())),
             claims,
             start,
@@ -928,6 +998,7 @@ async def run(
     sigma: str,
     *,
     case_id: Optional[str] = None,
+    runs: Sequence[str] = (),
     named: Optional[Mapping[str, Sequence[str]]] = None,
     days: int = WINDOW_DAYS,
     elastic_index: Optional[str] = None,
@@ -935,19 +1006,24 @@ async def run(
     wazuh_index: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Replay ``sigma`` on the SIEMs Vigil reads, over the last ``days``."""
+    """Replay ``sigma`` on the SIEMs Vigil reads, over the last ``days``. The attack
+    is the events ``named``, else the Case's, else the proven ``runs``' (a gap's
+    ``hunt:<id>`` / ``case:<id>`` keys)."""
     end = now or datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     claims = await asyncio.to_thread(ledger_claims, days)
-    attack_claim = None
+    attack_claims: List[Claim] = []
     if case_id and not named:
-        attack_claim = await asyncio.to_thread(case_claim, case_id, claims)
+        claim = await asyncio.to_thread(case_claim, case_id, claims)
+        attack_claims = [claim] if claim else []
+    elif runs and not named:
+        attack_claims = run_claims(runs, claims)
     sources, skipped = configured_sources(elastic_index, splunk_index, wazuh_index)
     try:
         return await replay(
             sigma,
             sources=sources,
-            attack_claim=attack_claim,
+            attack_claims=attack_claims,
             named=named,
             claims=claims,
             start=start,
