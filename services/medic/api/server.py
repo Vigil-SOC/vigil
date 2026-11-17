@@ -32,6 +32,7 @@ from typing import Any
 from services.medic.api.decisions import Problem, get_decision, list_page
 from services.medic.api.feedback import post_feedback
 from services.medic.api.incidents import get_incident, list_incidents
+from services.medic.api.levels import post_level
 from services.medic.api.pack import OPS as PACK_OPS
 from services.medic.api.pack import PackBridge, post_pack
 from services.medic.api.run import post_fix
@@ -43,6 +44,7 @@ log = logging.getLogger("services.medic")
 STATUS_PATH = "/v1/status"
 SENSORS_PATH = "/v1/sensors"
 PACK_PATH = "/v1/pack"
+LEVEL_PATH = "/v1/fix-level"
 # The main loop's tick (wiring.TICK_S, semantics.md §1); keep the two equal.
 # Not imported, so the listener stays light.
 TICK_S = 15
@@ -237,6 +239,8 @@ class Handler(BaseHTTPRequestHandler):
             return "GET", self._sensors
         if self.raw_target == PACK_PATH:
             return "GET", self._pack
+        if path == LEVEL_PATH:
+            return "POST", lambda: self._level(query)
         head, _, op = path.rpartition("/")
         if head == PACK_PATH and op in PACK_OPS:
             return "POST", lambda: self._pack_write(op, query)
@@ -281,6 +285,24 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._finish(result, status=201)
 
+    def _level(self, query: str) -> None:
+        result = post_level(
+            self.fixer,
+            query,
+            content_type=self.headers.get("Content-Type"),
+            length=self.headers.get("Content-Length"),
+            admins=self.headers.get_all("X-Medic-Admin") or [],
+            read_body=self.rfile.read,
+        )
+        self._finish(result)
+
+    def _with_levels(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """The pack state, plus each fix type's level and track record, read now
+        so a set-level shows on the next read and not a cycle later."""
+        if self.fixer is None:
+            return doc
+        return {**doc, "fix_types": self.fixer.fix_types()}
+
     def _read_body(self, n: int) -> bytes:
         """A pack is up to 4 MB: the whole read gets the request deadline `do_any`
         lifted (one byte every few seconds must not hold a slot)."""
@@ -303,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             read_body=self._read_body,
             timeout=SNAPSHOT_MAX_AGE_S,
         )
-        self._finish(result)
+        self._finish(self._with_levels(result) if isinstance(result, dict) else result)
 
     def _finish(self, result: dict | Problem, status: int = 200) -> None:
         if isinstance(result, Problem):
@@ -347,7 +369,7 @@ class Handler(BaseHTTPRequestHandler):
         doc, taken_at = current
         if self.wall() - taken_at > SNAPSHOT_MAX_AGE_S:
             return self._problem(503, "busy", retry_after_s=RETRY_AFTER_S)
-        self._send(200, doc, "application/json")
+        self._finish(self._with_levels(doc))
 
     def __getattr__(self, name: str):  # every method token, e.g. "POST" or "get"
         if name.startswith("do_"):

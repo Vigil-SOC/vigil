@@ -38,6 +38,9 @@ STORE_MAX_MB_DEFAULT = 1024
 # <data dir>/traces/<id>/ (D7). Unset is off. Checked against the trace schema
 # before it becomes a path (app/trace.py).
 TRACE_VAR = "VIGIL_MEDIC_TRACE"
+# Whether Medic's data dir survives a restart. Unset means on; the Helm chart sets it.
+# A fix type is only raised to L2 when it is on: its level and counts live there.
+PERSISTENCE_VAR = "VIGIL_MEDIC_PERSISTENCE"
 
 SHAPES = ("start_sh", "compose", "helm")
 DEFAULT_SHAPE = "compose"  # PROVISIONAL (S4-2): S6/S7/S8 set it per shape
@@ -77,6 +80,12 @@ def flag_value(env: Mapping[str, str]) -> str | None:
 def is_enabled(env: Mapping[str, str]) -> bool:
     """The master switch (C8 rule 1). Anything not clearly "on" is off: fail safe."""
     return (flag_value(env) or "").strip().lower() in _TRUE
+
+
+def persistence_on(env: Mapping[str, str]) -> bool:
+    """Unset (or empty) is on; anything but a clear "on" after that is off."""
+    value = env.get(PERSISTENCE_VAR)
+    return not (value or "").strip() or value.strip().lower() in _TRUE
 
 
 def is_recognised(value: str | None) -> bool:

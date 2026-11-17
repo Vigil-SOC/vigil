@@ -40,7 +40,8 @@
         "pack_event",
         "gap",
         "fix_run",
-        "fix_verified"
+        "fix_verified",
+        "level_changed"
       ],
       "x-medic-type": "enum"
     },
@@ -213,6 +214,22 @@
         "properties": {
           "body": {
             "$ref": "#/$defs/fix_verified"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "level_changed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/level_changed"
           }
         }
       }
@@ -1340,7 +1357,7 @@
       }
     },
     "fix_run": {
-      "description": "One click of restart_service. A refused check is recorded here and runs nothing. Wall-clock at.",
+      "description": "One run of restart_service, from a click or on its own (`who` is `medic`). A refused check is recorded here and runs nothing. Wall-clock at.",
       "type": "object",
       "required": [
         "incident_id",
@@ -1381,7 +1398,11 @@
           "description": "When to verify. Absent when nothing ran.",
           "$ref": "#/$defs/ts"
         },
-        "level": {"const": "L1", "x-medic-type": "enum"},
+        "level": {
+          "description": "The level in force for this fix type when the record was written.",
+          "enum": ["L0", "L1", "L2"],
+          "x-medic-type": "enum"
+        },
         "who": {"$ref": "#/$defs/id"},
         "checks": {
           "type": "object",
@@ -1399,7 +1420,11 @@
                 "container_restarted",
                 "fix_running",
                 "not_compose",
-                "restart_failed"
+                "restart_failed",
+                "observe",
+                "not_on_its_own",
+                "not_eligible",
+                "daily_limit"
               ],
               "x-medic-type": "enum"
             },
@@ -1426,6 +1451,24 @@
             {"type": "integer", "minimum": 0, "x-medic-type": "number"},
             {"const": "unknown", "x-medic-type": "enum"}
           ]
+        }
+      }
+    },
+    "level_changed": {
+      "description": "A fix type's level changed. An admin raises one step with a reason or lowers (reason optional); Medic only lowers (`who` is `medic`, with a `cause`). Wall-clock at.",
+      "type": "object",
+      "required": ["fix_type", "from", "to", "who"],
+      "additionalProperties": false,
+      "properties": {
+        "fix_type": {"$ref": "#/$defs/rule_id"},
+        "from": {"enum": ["L0", "L1", "L2"], "x-medic-type": "enum"},
+        "to": {"enum": ["L0", "L1", "L2"], "x-medic-type": "enum"},
+        "who": {"$ref": "#/$defs/id"},
+        "reason": {"$ref": "#/$defs/excerpt"},
+        "cause": {
+          "description": "Why Medic lowered it. Absent when an admin changed it.",
+          "enum": ["two_failures", "not_back", "daily_limit", "pack_changed", "store_reset"],
+          "x-medic-type": "enum"
         }
       }
     },

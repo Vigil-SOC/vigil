@@ -5557,6 +5557,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/medic/fix-level": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Fix Level
+         * @description Raise one step (with a reason) or lower a fix type's level. The admin is the session.
+         */
+        post: operations["post_api_medic_fix_level"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/incidents": {
         parameters: {
             query?: never;
@@ -26337,6 +26357,37 @@ export interface operations {
             path: {
                 seq: number;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_medic_fix_level: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

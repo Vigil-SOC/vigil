@@ -227,6 +227,7 @@ def run(
             policy_check=policy_check,
             policy_refused_at=refused_at,
             trace_id=config.trace_id(env),
+            persistence=config.persistence_on(env),
         )
     finally:
         os.umask(old_umask)
@@ -361,6 +362,7 @@ def _run(
     policy_check: Callable[[], PolicyCheck] | None = None,
     policy_refused_at: float | None = None,
     trace_id: str | None = None,
+    persistence: bool = True,
 ) -> int:
     started_at = clock.wall()
     try:
@@ -450,8 +452,9 @@ def _run(
             log.error("cannot write to the data dir %s: %s", data_dir, exc)
             return 1
         log.info("Medic running; data dir %s, shape %s", data_dir, shape)
-        fixer = Fixer(medic)
+        fixer = Fixer(medic, persistence=persistence)
         fixer.settle()
+        fixer.reconcile()  # a pack or store change since the last run
         # Dev mode, and a start whose lifecycle failed, have none.
         admin = (
             PackAdmin(pack, shape=shape, data_dir=data_dir, clock=clock)
@@ -490,6 +493,7 @@ def _run(
                     max_cycles,
                     status.publish,
                     admin,
+                    fixer,
                 )
             )
         # Logged here, through Medic's redaction, rather than as Python's own
@@ -598,6 +602,7 @@ async def _loop(
     max_cycles: int | None,
     after_cycle: Callable[..., None] = lambda **_: None,
     admin: PackAdmin | None = None,
+    fixer: Fixer | None = None,
 ) -> int:
     """Run 15 s cycles until stopped; return the last completed cycle number."""
     stop = asyncio.Event()
@@ -608,7 +613,9 @@ async def _loop(
     cycle = 0
     while not stop.is_set() and (max_cycles is None or cycle < max_cycles):
         # One cycle: sensors → K2 choke → engine tick → router → store.
-        await medic.cycle()
+        stored = await medic.cycle()
+        if fixer is not None:
+            fixer.on_stored(stored)
         cycle += 1
         try:
             save_engine_state(data_dir, medic.state())
@@ -628,6 +635,8 @@ async def _loop(
             log.error("cannot write the heartbeat: %s", exc)
         if admin is not None:  # the cycle boundary: the one place the pack swaps
             admin.apply_pending(medic)
+        if fixer is not None:  # after a swap, so GET /v1/pack shows a pack change
+            fixer.reconcile()
         try:
             after_cycle(cycle=cycle)
         finally:
