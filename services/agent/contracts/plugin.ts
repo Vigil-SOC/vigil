@@ -58,6 +58,12 @@ export interface GuardSpec {
   fallback: string;
   // What the reviewer is told it is for. The reviewer never holds tools.
   reviewer_prompt: string;
+  // A guarded answer is refused once at conclude while the record holds fewer
+  // hypotheses than this, so the run puts its alternatives down before it answers.
+  min_hypotheses?: number;
+  // Put before each proposed action's reason when the guard holds the answer, so a
+  // person sees the containment was asked for on a verdict that did not stand.
+  proposals_note?: string;
 }
 
 export interface PluginManifest {
@@ -74,6 +80,9 @@ export interface PluginManifest {
   skills: SkillSpec[];
   conclusion: ConclusionSpec;
   guard?: GuardSpec;
+  // A second look at the other end: an answer that escalates (a malicious verdict
+  // and the containment it proposes) reviewed by its own prompt, held to its own fallback.
+  escalation_guard?: GuardSpec;
   // Experimental (core/guards.ts), honoured only with VIGIL_GUARDS=on: the reader's
   // prompt, and what the deciding agent is told, in this plugin's words. Not `guard`,
   // which is the kernel reviewer's second look at a conclusion.

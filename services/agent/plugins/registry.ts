@@ -72,6 +72,12 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
 
   const conclusion = conclusionOf(raw["conclusion"], where);
   const guard = raw["guard"] === undefined ? undefined : guardOf(raw["guard"], conclusion, where);
+  const escalation_guard = raw["escalation_guard"] === undefined ? undefined : guardOf(raw["escalation_guard"], conclusion, `${where}: escalation_guard`);
+  // One answer, one reviewer: a value both guards claim would be read by whichever came first.
+  if (guard !== undefined && escalation_guard !== undefined && guard.field === escalation_guard.field) {
+    const both = escalation_guard.guarded.filter((one) => guard.guarded.includes(one));
+    if (both.length > 0) throw new SpecError(`${where}: ${both.join(", ")} is guarded by both guard and escalation_guard`);
+  }
   // A dismissal closes the case without the ceiling, so a verdict that can dismiss
   // must pass the reviewer's second look first.
   if (isStructured(conclusion) && conclusion.disposition_field !== undefined) {
@@ -113,6 +119,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     skills,
     conclusion,
     ...(guard === undefined ? {} : { guard }),
+    ...(escalation_guard === undefined ? {} : { escalation_guard }),
     ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
     ...(record === undefined ? {} : { record }),
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
@@ -215,7 +222,19 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
     throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which closes the case`);
   }
   if (guarded.includes(fallback)) throw new SpecError(`${where}: guard.fallback ${fallback} is itself guarded`);
-  return { field, guarded, fallback, reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`) };
+  const min_hypotheses = raw["min_hypotheses"];
+  if (min_hypotheses !== undefined && (typeof min_hypotheses !== "number" || !Number.isInteger(min_hypotheses) || min_hypotheses < 1)) {
+    throw new SpecError(`${where}: guard.min_hypotheses must be a positive integer`);
+  }
+  const proposals_note = raw["proposals_note"] === undefined ? undefined : text_(raw, "proposals_note", `${where}: guard`);
+  return {
+    field,
+    guarded,
+    fallback,
+    reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`),
+    ...(min_hypotheses === undefined ? {} : { min_hypotheses: min_hypotheses as number }),
+    ...(proposals_note === undefined ? {} : { proposals_note }),
+  };
 }
 
 // SKILL.md: a front matter block naming the skill and saying what it is for, then
