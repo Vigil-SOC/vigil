@@ -10,6 +10,8 @@
   "homepage": "https://vigilsoc.org",
   "repository": "https://github.com/Vigil-SOC/vigil",
   "license": "Apache-2.0",
+  "privacyPolicyUrl": "https://vigilsoc.org/privacy/",
+  "termsOfServiceUrl": "https://vigilsoc.org/terms/",
   "keywords": [
     "security",
     "soc",

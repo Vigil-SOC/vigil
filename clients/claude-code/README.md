@@ -69,3 +69,5 @@ Claude Code then asks for two values: your Vigil's address (for example `http://
 Tool results enter the Claude Code session, and so reach whichever model provider that session uses. For many setups that is a provider outside your environment. If you route Claude Code to a model inside your own boundary, the data stays inside it end to end. Nothing calls DeepTempo and nothing is hosted: the plugin talks only to the Vigil address you enter.
 
 The surface is off until an operator opens it, and an operator can close it or revoke a credential at any time.
+
+The full statement is the project's [privacy policy](https://vigilsoc.org/privacy/), kept in this folder as [PRIVACY.md](PRIVACY.md); use of the plugin is under the [terms of use](https://vigilsoc.org/terms/), kept as [TERMS.md](TERMS.md).
