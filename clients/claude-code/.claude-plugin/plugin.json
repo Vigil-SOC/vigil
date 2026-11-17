@@ -13,6 +13,7 @@
   "privacyPolicyUrl": "https://vigilsoc.org/privacy/",
   "termsOfServiceUrl": "https://vigilsoc.org/terms/",
   "documentationUrl": "https://vigilsoc.org/docs/",
+  "supportUrl": "https://github.com/Vigil-SOC/vigil/issues/new",
   "keywords": [
     "security",
     "soc",
