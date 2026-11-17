@@ -4,14 +4,15 @@
 ``JWT_SECRET_KEY``, which stays outside the database. A purpose has one
 ``current`` key and, after a rotation, older ones: signing keys stay
 ``verify_only`` until their overlap ends (then ``retired``, material deleted),
-the MFA and pepper keys stay ``decrypt_only``, except that an emergency
-pepper retires every earlier one (the hashes under them need a reset).
+the MFA, pepper and identifier keys stay ``decrypt_only`` (the identifier key
+even in an emergency: its hashes are never recomputed), except that an
+emergency pepper retires every earlier one (the hashes under them need a reset).
 
 Version 1 of each purpose is the value derived from the secret before the ring
 existed, so tokens issued then keep verifying. Adoption writes version 1 and a
 random version 2 at the first app start, under an advisory lock so one replica
-does it. A purpose added later gets one random current key at the next start
-(``_add_missing``). Only the API's startup adopts: a process holding the wrong
+does it. A purpose added later, or left with no current key, gets one random current
+key at the next start (``_add_missing``). Only the API's startup adopts: a process holding the wrong
 secret must not wrap a ring nobody else can read.
 
 ``python -m core.auth.key_ring`` runs on the host: ``rotate <purpose>``,
@@ -69,10 +70,14 @@ class Purpose:
     # Version 1: what the secret gave before the ring. None: nothing did, so the
     # purpose starts at one random key, as a purpose added later does.
     derive: Optional[Callable[[str], bytes]]
+    # Keys only match what an earlier version made (a stored hash), so an old
+    # key must stay readable until nothing names it: rotation keeps it
+    # decrypt_only, even with no overlap, and never retires or re-encrypts.
+    matches: bool = False
 
     @property
     def encrypts(self) -> bool:
-        return self.overlap is None
+        return self.overlap is None and not self.matches
 
 
 def _hmac(tag: str) -> Callable[[str], bytes]:
@@ -98,6 +103,8 @@ PURPOSES: dict[str, Purpose] = {
     "webauthn": Purpose(timedelta(minutes=10), _hmac("vigil-webauthn-challenge")),
     # Single sign-on's browser binding (#4284): state, nonce and verifier, 5 minutes.
     "sso": Purpose(timedelta(minutes=5), _hmac("vigil-sso-state")),
+    # An erased person's username and email, kept as a keyed hash (identity.py).
+    "identifier": Purpose(None, None, matches=True),
 }
 
 
@@ -476,8 +483,10 @@ def _wrap_hashes(session, secret: str) -> int:
 def _add_missing(session, secret: str) -> list[str]:
     """A current key for each purpose the adopted ring lacks, as a fresh random
     version 1: nothing derived from the secret existed for it before."""
-    held = set(
-        session.execute(text("SELECT DISTINCT purpose FROM public.auth_keys"))
+    current = set(
+        session.execute(
+            text("SELECT DISTINCT purpose FROM public.auth_keys WHERE state = 'current'")
+        )
         .scalars()
         .all()
     )
@@ -490,11 +499,19 @@ def _add_missing(session, secret: str) -> list[str]:
         {"known": sorted(PURPOSES)},
     ).all():
         _retire(session, purpose, version, reason="purpose_retired")
-    missing = sorted(set(PURPOSES) - held)
+    missing = sorted(set(PURPOSES) - current)
     if missing:
         _read(session, secret)  # a wrong secret must not add a row nobody can open
         for purpose in missing:
-            _insert(session, secret, purpose, 1, "current", _new_material())
+            # Above every version ever written: a retired row keeps its number.
+            version = session.execute(
+                text(
+                    "SELECT coalesce(max(version), 0) + 1 FROM public.auth_keys "
+                    "WHERE purpose = :p"
+                ),
+                {"p": purpose},
+            ).scalar_one()
+            _insert(session, secret, purpose, version, "current", _new_material())
         _trail(
             session,
             "auth.keys_adopted",
@@ -609,7 +626,7 @@ def rotate(
             {"p": purpose},
         ).scalar_one()
         new_material = _new_material()
-        if spec.encrypts and not exposed:
+        if (spec.encrypts and not exposed) or spec.matches:
             session.execute(
                 text(
                     "UPDATE public.auth_keys SET state = 'decrypt_only' "
@@ -662,7 +679,9 @@ def rotate(
             version=version,
             previous=old,
             **moved,
-            overlap_seconds=None if spec.encrypts else int(overlap.total_seconds()),
+            overlap_seconds=(
+                None if spec.encrypts or spec.matches else int(overlap.total_seconds())
+            ),
             **({"earlier_retired": True} if exposed else {}),
         )
     forget()

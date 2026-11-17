@@ -3061,6 +3061,21 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column identifier_reservations.hash": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column identifier_reservations.key_version": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column identifier_reservations.reserved_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
  "column intake_triggers.case_id": {
   "default": null,
   "nullable": true,
@@ -5042,6 +5057,7 @@
  "constraint finding_mitre_predictions.finding_mitre_predictions_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint finding_mitre_predictions.finding_mitre_predictions_pkey": "PRIMARY KEY (finding_id, technique_id)",
  "constraint findings.findings_pkey": "PRIMARY KEY (finding_id)",
+ "constraint identifier_reservations.identifier_reservations_pkey": "PRIMARY KEY (hash)",
  "constraint intake_triggers.intake_triggers_pkey": "PRIMARY KEY (id)",
  "constraint integration_configs.integration_configs_pkey": "PRIMARY KEY (integration_id)",
  "constraint investigation_logs.investigation_logs_investigation_id_fkey": "FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id)",
@@ -5321,6 +5337,7 @@
  "index federation_sources_pkey": "CREATE UNIQUE INDEX federation_sources_pkey ON public.federation_sources USING btree (source_id)",
  "index finding_mitre_predictions_pkey": "CREATE UNIQUE INDEX finding_mitre_predictions_pkey ON public.finding_mitre_predictions USING btree (finding_id, technique_id)",
  "index findings_pkey": "CREATE UNIQUE INDEX findings_pkey ON public.findings USING btree (finding_id)",
+ "index identifier_reservations_pkey": "CREATE UNIQUE INDEX identifier_reservations_pkey ON public.identifier_reservations USING btree (hash)",
  "index idx_agent_directives_run": "CREATE INDEX idx_agent_directives_run ON public.agent_directives USING btree (run_id, id)",
  "index idx_agent_events_terminal": "CREATE INDEX idx_agent_events_terminal ON public.agent_events USING btree (run_id) WHERE (kind = 'terminal'::text)",
  "index idx_agent_run_leases_due": "CREATE INDEX idx_agent_run_leases_due ON public.agent_run_leases USING btree (claim_until)",
@@ -7208,6 +7225,28 @@
   "sequence": null
  },
  "relation findings": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation identifier_reservations": {
   "acl": [
    "app:DELETE",
    "app:INSERT",

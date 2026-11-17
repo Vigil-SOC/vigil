@@ -71,6 +71,7 @@ _KEY_PURPOSES = {
     "pepper": "password-hash",
     "webauthn": "security-key-challenge",
     "sso": "single sign-on state",
+    "identifier": "erased-identifier hash",
 }
 
 

@@ -19,6 +19,7 @@ from core.storage.models.ai import (
 from core.storage.models.auth import (
     AuthLink,
     BreachedPassword,
+    IdentifierReservation,
     McpCredential,
     Principal,
     Role,
@@ -173,6 +174,7 @@ __all__ = [
     "LLMInteractionLog",
     "LLMProviderConfig",
     "BreachedPassword",
+    "IdentifierReservation",
     "McpCredential",
     "Principal",
     "SiemSearch",
