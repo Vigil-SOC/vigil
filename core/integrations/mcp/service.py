@@ -12,7 +12,6 @@ from typing import Dict, List, Mapping, Optional
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
-from core.integrations.mcp.child_env import ca_bundle_env
 from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
@@ -81,8 +80,8 @@ class MCPServer:
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
-        # The env names mcp-config.json declares; ``env`` holds just these,
-        # substituted. The stdio child's full env is built at connect time.
+        # The env names mcp-config.json declares; ``env`` also carries the
+        # backend's own environment, which only a stdio child inherits.
         self.declared_env: List[str] = list(declared_env or [])
 
 
@@ -326,29 +325,21 @@ class MCPService:
                     for k, v in (server_config.get("env") or {}).items()
                     if not k.startswith("_")
                 }
-                # ${VAR} in declared env and args resolves against the backend's
-                # own environment, but only the declared entries are kept on the
-                # server: what a stdio child gets is built at connect time by
-                # child_env.stdio_env, so the backend's whole environment never
-                # reaches it. Required-credential detection scans the raw config
-                # above, not this env.
-                env = os.environ.copy()  # noqa: ENV001 - ${VAR} substitution source
+                # Substitution reads this process's environment; the server
+                # keeps only its declared keys. The rest of the child's env is
+                # built at connect time (child_env.stdio_env).
+                source = dict(os.environ)  # noqa: ENV001 - substitution source
                 # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
                 # would substitute to "" and root child paths at "/".
-                env.setdefault("VIGIL_DIR", str(vigil_path()))
-                # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
-                # not enough.
-                env.update(ca_bundle_env())
-                declared = {
-                    k: self._substitute_env_vars(v, env)
+                source.setdefault("VIGIL_DIR", str(vigil_path()))
+                env = {
+                    k: self._substitute_env_vars(v, source)
                     for k, v in raw_env_strs.items()
                 }
-                env.update(declared)
-                env["PYTHONPATH"] = project_path_str
 
                 # Get args and perform environment variable substitution
                 raw_args = list(server_config.get("args") or [])
-                args = [self._substitute_env_vars(arg, env) for arg in raw_args]
+                args = [self._substitute_env_vars(arg, source) for arg in raw_args]
 
                 # Capture declared credential placeholders *before*
                 # substitution collapses missing vars to empty strings
@@ -366,7 +357,7 @@ class MCPService:
                         "command": command,
                         "args": args,
                         "cwd": cwd,
-                        "env": declared,
+                        "env": env,
                         "required_env_vars": required_env_vars,
                         "declared_env": list(raw_env_strs),
                     }

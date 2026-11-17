@@ -77,7 +77,9 @@ logger = logging.getLogger(__name__)
 # Bumped when the mapping below changes what it writes. Separate from the hunt
 # Distil's version: re-deriving is delete-then-insert scoped to one
 # investigation, and a change to how a Case maps must not re-offer every hunt.
-CASE_DISTIL_MAPPING_VERSION = 2  # 2: IOC type aliases folded (#4160)
+# 2: IOC type aliases folded (#4160).
+# 3: POSIX process paths and URL paths keep their case (#4542).
+CASE_DISTIL_MAPPING_VERSION = 3
 
 # Cases whose episodic rows disagree with their current state, in both
 # directions: closed ones whose Verdict is missing, stale, or derived at another

@@ -3,7 +3,8 @@
 With ``MCP_RUNNER_URL`` set, every catalog server runs in the runner
 (``services/mcp_runner``): ``PUT /servers/{name}`` starts it with the env this
 process resolved, MCP streamable HTTP at ``/servers/{name}/mcp`` reaches it, and
-``DELETE`` stops it. Unset, each server is a stdio child (start.sh, tests).
+``DELETE`` stops it. Unset, each server is a stdio child (start.sh, tests)
+spawned with the same ``runner_env``, but as this process's own user.
 """
 
 from __future__ import annotations

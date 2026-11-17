@@ -14,9 +14,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.audit import retention
-from core.auth.permissions import require_permission, require_person_permission
+from core.auth.permissions import (
+    deny_unless,
+    require_permission,
+    require_person_permission,
+)
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
+from services.api.routers.users import (
+    _refuse_lockout,
+    _require_privileges_cover_target,
+)
 
 router = APIRouter()
 
@@ -85,8 +93,19 @@ def erase_principal(
 ):
     """Blank one principal's label and trail details, deactivate their account, and end their sign-in and credentials.
 
-    An audit manager waits seven days and needs a reason.
+    An audit manager waits seven days and needs a reason. Erasing an account
+    deactivates it, so it takes what deactivating does: users.write (and
+    "Confirm it's you"), a role covering the target's, and a role manager left.
     """
+    principal_id = body.principal_id.strip()
+    target = principal_id and (
+        session.query(User).filter(User.principal_id == principal_id).first()
+    )
+    # Erasing yourself is retention's refusal.
+    if target and principal_id != user.principal_id:
+        deny_unless(user.user_id, "users.write", session)
+        _require_privileges_cover_target(user, target, session, action="erase")
+        _refuse_lockout(user, session, users={target.user_id: (target.role_id, False)})
     return _retention(
         lambda: retention.erase(
             session,

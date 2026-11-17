@@ -386,6 +386,9 @@ class MCPClient:
                     self.persistent_sessions[server_name] = PersistentServerSession(
                         server_name, server_params, runner
                     )
+                elif runner is None:
+                    # A reconnect spawns with the env as resolved now.
+                    self.persistent_sessions[server_name].server_params = server_params
 
                 # Connect. The session logs and swallows the spawn error;
                 # keep it on last_errors so a probe can report it.

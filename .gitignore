@@ -304,6 +304,9 @@ index.scip.stamp
 # Repo-local uv install, created by scripts/lib.sh when the host has no uv.
 /.uv/
 
+# Pinned MCP connectors start.sh installs from infra/docker/mcp-packages.
+/.mcp/
+
 # Timestamped .env copies left by setup and migration scripts.
 .env.*
 
