@@ -900,6 +900,14 @@ export function endedRun(fold: RunFold | null): EndedRun | null {
   }
 }
 
+/** What the latest concluded run reported, as the server wrote it ('' when it has not concluded or said nothing).
+ *  Unlike endedRun it does not depend on the case's state, so a closed case still has its report. */
+export function runReport(fold: RunFold | null): string {
+  if (!fold || ENDED.includes(fold.run.status)) return ''
+  if (fold.run.status !== 'completed' && fold.run.huntStatus !== 'terminal') return ''
+  return fold.reason.trim()
+}
+
 /** Model or worker text as one plain line: list markers, headings and emphasis dropped, so no raw markdown shows. */
 export function plainLine(text: string): string {
   return text

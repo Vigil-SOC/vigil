@@ -44,6 +44,7 @@ import {
   closureFlag,
   chainOldestFirst,
   endedRun,
+  runReport,
   EVIDENCE_PAGE,
   EXPLANATION_TONE,
   explanationWord,
@@ -880,7 +881,7 @@ function AnsweredCard({ answer, watch }: { answer: 'approve' | 'reject' | null; 
   )
 }
 
-/** A run that has ended: its verdicts in one statement, the run's own words behind the ⓘ, and the open
+/** A run that has ended: its verdicts in one statement and the open
  *  question it could not conclude past put to you as a decision rather than buried in prose. */
 function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNode; onAsk: (text: string) => void }) {
   return (
@@ -889,7 +890,6 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
         <div className="stopped-line">
           <b>Ended</b>
           <span className="clamp2" title={ended.line}>{ended.line}</span>
-          {ended.raw && <InfoTip label="What the run reported" text={ended.raw} align="start" />}
           {watch}
         </div>
         {ended.cause && (
@@ -920,6 +920,23 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
         </section>
       )}
     </>
+  )
+}
+
+/** What the latest concluded run reported, in full: collapsed to a few lines when long. */
+function ReportCard({ report }: { report: string }) {
+  const [open, setOpen] = useState(false)
+  const long = report.length > 400 || report.split('\n').length > 6
+  return (
+    <section className="case-card" aria-label="Report">
+      <h3>Report</h3>
+      <div className={`case-report${long && !open ? ' case-report-clamped' : ''}`}>{report}</div>
+      {long && (
+        <button type="button" className="btn neutral case-report-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </section>
   )
 }
 
@@ -1642,6 +1659,7 @@ export function CasePage({
   // Needs you wins; otherwise a run that is paused or stopped says so over the server's combined state.
   const stopped = closed || needsShown > 0 || answeredHere ? null : stoppedRun(fold)
   const ended = closed || needsShown > 0 ? null : endedRun(fold)
+  const report = runReport(fold)
   const pillState = closed ? 'closed' : answeredHere ? (answer === 'reject' ? 'stopped' : 'executing') : stopped?.state ?? pill
   // Full page only: the drawer has its own Escape handler. Escape leaves the page unless something
   // else took the key (a menu or dialog is showing, or a text field has focus). A closed dialog that
@@ -1842,6 +1860,7 @@ export function CasePage({
                     </div>
                   )}
                 </section>
+                {report && <ReportCard key={runId} report={report} />}
                 {startedCard}
                 {disagree}
                 {doors}
@@ -1855,6 +1874,7 @@ export function CasePage({
                 {answeredHere && needsShown === 0 && <AnsweredCard answer={answer} watch={watch} />}
                 {stopped && <StoppedCard stopped={stopped} runId={runId} watch={watch} />}
                 {ended && <OutcomeCard ended={ended} watch={watch} onAsk={(text) => setAskSeed({ id, seed: { text } })} />}
+                {report && <ReportCard key={runId} report={report} />}
                 {rootCauseNotStarted && (
                   <section className="case-stopped" aria-label="Root cause">
                     <div className="stopped-line">
