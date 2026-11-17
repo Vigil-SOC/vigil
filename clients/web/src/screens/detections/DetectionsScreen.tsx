@@ -738,7 +738,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
       </section>
 
       <p className="de-note">{report.limits}</p>
-      <FindingPopup id={finding} onClose={() => setFinding(null)} onConfigureAi={() => goSettings('ai-config')} />
+      <FindingPopup id={finding} onClose={() => setFinding(null)} />
       <ProofCardExport open={exporting} onClose={() => setExporting(false)} viewName={exportName} viewCount={matched} viewIds={viewIds} />
     </>
   )

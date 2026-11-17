@@ -160,6 +160,11 @@ class Settings(BaseSettings):
     # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
     # uses its bundled list of known-bad packages and sends nothing out.
     vigil_skill_scanner_osv: bool = False
+    # A Bifrost model id (e.g. vertex/gemini-2.5-pro) to run the scanner's
+    # model-backed analyzers with, sending each skill's full content to it.
+    # Empty, the default, keeps the scan static with no model calls. The hold's
+    # rule depends on the mode, so every process must agree on it.
+    vigil_skill_scanner_model: str = ""
     # python -m core.upgrade: run history directory (unset = none kept), and
     # the version-bound acknowledgement that stands in for a restore point.
     vigil_upgrade_dir: Optional[str] = None

@@ -25,7 +25,7 @@ export interface StructuredConclusion {
   // declared gaps. Required of a plugin whose record is required.
   open_questions_field?: string;
   // Which field rates what the run found, in SEVERITIES. Carried onto the
-  // terminal, where it raises the priority of the case the run was started from.
+  // terminal; vigil never applies it to the case the run was started from.
   severity_field?: string;
   // Which field states how sure the run is, in CONFIDENCES. Carried onto the
   // terminal, where the backend scores the verdict against the case's closure.

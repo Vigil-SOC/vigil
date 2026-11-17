@@ -70,6 +70,9 @@ x-intent-env: &intent-env
   # .env to turn scanning off everywhere. llm-worker repeats this line below
   # because it does not take this anchor.
   VIGIL_SKILL_SCANNER: ${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
+  # Empty = static scans. A Bifrost model id adds model-backed scanning and
+  # changes the hold's rule, so all three processes must agree on it too.
+  VIGIL_SKILL_SCANNER_MODEL: ${VIGIL_SKILL_SCANNER_MODEL:-}
 
 # One build for the API and the backup services. A second image tag would
 # compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
@@ -565,6 +568,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is empty - start the stack with ./start.sh, which mints it}
       # Same value as the backend and daemon (see x-intent-env).
       - VIGIL_SKILL_SCANNER=${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
+      - VIGIL_SKILL_SCANNER_MODEL=${VIGIL_SKILL_SCANNER_MODEL:-}
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}

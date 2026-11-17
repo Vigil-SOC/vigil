@@ -337,7 +337,6 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
         id={detailId}
         onClose={() => setDetailId(null)}
         onChanged={() => { reload(); reloadKpis(); setExclusionsKey((k) => k + 1) }}
-        onConfigureAi={() => goSettings('ai-config')}
       />
     </>
   )

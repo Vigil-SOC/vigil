@@ -43,7 +43,7 @@ skills: [investigate-case]          # core/skills/library/<name>/SKILL.md, loade
 conclusion:                         # or `conclusion: prose`
   summary_field: summary
   citations_field: citations        # optional; numbers results so the answer can cite them
-  severity_field: severity          # optional; an enum of low|medium|high|critical, raises the case's priority
+  severity_field: severity          # optional; an enum of low|medium|high|critical, carried on the terminal (not applied to the case)
   confidence_field: confidence      # optional; an enum of low|medium|high, scored against the case's closure
   disposition_field: disposition    # optional; an enum drawn from malicious|suspicious|benign|false_positive|inconclusive|needs_review; benign|false_positive closes the case
   schema: { ... }                   # JSON schema the final answer must match
