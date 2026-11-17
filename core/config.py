@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     # skills. Unset (None) is the State Directory's skills/ folder; empty turns
     # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
+    # Hosts skills may be installed from as a git repo (core.skills.skill_sources),
+    # over https only. Empty turns installing from a repo off.
+    vigil_skill_source_hosts: Annotated[List[str], NoDecode] = ["github.com"]
     # The SkillSpector program that scans a skill folder (core.skills.skill_scan).
     # Empty, the default, turns scanning off; the backend image sets it to the
     # copy it installs. A path that does not exist reads as "scanner
@@ -407,6 +410,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "extension_connector_allowlist",
+        "vigil_skill_source_hosts",
         "daemon_investigate_severities",
         "kafka_topics",
         mode="before",

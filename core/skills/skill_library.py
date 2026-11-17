@@ -179,12 +179,13 @@ def _check_optional(frontmatter: Dict[str, Any]) -> None:
         raise SkillError("`metadata` must be a map of string to string")
 
 
-def parse_skill(skill_dir: Path) -> Skill:
+def parse_skill(skill_dir: Path, *, match_dir: bool = True) -> Skill:
     """Validate ``skill_dir/SKILL.md`` against the spec and return the skill.
 
     Raises :class:`SkillError` for anything the spec forbids. Keys the spec does
     not name are left alone: rejecting them would make the loader stricter than
-    the format it claims to read.
+    the format it claims to read. ``match_dir`` off skips the folder-name rule,
+    for a SKILL.md at a repo's root, which is installed under its own name.
     """
     skill_file = skill_dir / SKILL_FILE
     if not skill_file.is_file():
@@ -202,7 +203,7 @@ def parse_skill(skill_dir: Path) -> Skill:
             f"`name` {name!r} must be lowercase letters, digits and single "
             "hyphens, not starting or ending with one"
         )
-    if name != skill_dir.name:
+    if match_dir and name != skill_dir.name:
         raise SkillError(f"`name` {name!r} does not match directory {skill_dir.name!r}")
     description = _require_str(frontmatter, "description", _DESCRIPTION_MAX)
     _check_optional(frontmatter)
@@ -679,6 +680,12 @@ def _require_operator_root(settings: Optional[Settings]) -> Path:
     return root.resolve()
 
 
+# Public names for core.skills.skill_sources, which installs from a git repo.
+writable_operator_root = _require_operator_root
+repo_skill_dirs = _source_skill_dirs
+inside = _inside
+
+
 def _require_room(root: Path, adding: int = 1) -> None:
     """Refuse ``adding`` new skills that would take ``root`` past ``OPERATOR_SKILLS_MAX``.
 
@@ -1002,6 +1009,34 @@ def _unpack(
     return skills, skipped
 
 
+def folder_files(folder: Path) -> Dict[str, bytes]:
+    """A skill folder on disk as ``{path within it: bytes}``, for install.
+
+    The same files an upload keeps: dotfiles and dot-folders are left out, and
+    so is anything that is not a regular file, a symlink above all, so nothing
+    outside the folder is read. Bounded as an upload is.
+    """
+    files: Dict[str, bytes] = {}
+    budget = _UNPACKED_MAX
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if name.startswith("."):
+                continue
+            path = Path(dirpath) / name
+            if not stat.S_ISREG(path.lstat().st_mode):
+                continue
+            if len(files) >= _FILES_MAX:
+                raise SkillError(f"it holds more than {_FILES_MAX} files")
+            with path.open("rb") as handle:
+                data = handle.read(budget + 1)
+            budget -= len(data)
+            if budget < 0:
+                raise SkillError(f"it is larger than {_UNPACKED_MAX // 1024} KB")
+            files[path.relative_to(folder).as_posix()] = data
+    return files
+
+
 def _declared_name(skill_md: bytes) -> str:
     """The frontmatter ``name`` when it can name a folder, else a placeholder.
 
@@ -1052,7 +1087,7 @@ def _refusal(failures: List[tuple[str, SkillError]], total: int) -> SkillError:
         detail += f"; and {len(failures) - 5} more"
     conflict = all(isinstance(exc, SkillConflict) for _, exc in failures)
     return (SkillConflict if conflict else SkillError)(
-        f"Nothing was installed: {len(failures)} of the {total} skills in the zip "
+        f"Nothing was installed: {len(failures)} of the {total} skills "
         f"failed. {detail}"
     )
 
@@ -1099,7 +1134,20 @@ def install_uploaded_skills(
     for name in names:
         if names.count(name) > 1:
             raise SkillError(f"the zip holds more than one skill folder named {name!r}")
-    _require_room(root, len(named))  # an upload never overwrites, so all are new
+    return install_skill_files(root, named), skipped
+
+
+def install_skill_files(
+    root: Path, named: List[tuple[str, Dict[str, bytes]]]
+) -> List[Skill]:
+    """Install skills given as ``(folder name, {path within it: bytes})``.
+
+    Nothing is overwritten: a name the library or the operator root already
+    holds raises :class:`SkillConflict`. All or nothing: every skill is built
+    and checked in a scratch directory under the root before any moves into
+    place, and a skill already moved is taken out again if a later move fails.
+    """
+    _require_room(root, len(named))  # nothing is overwritten, so all are new
     try:
         scratch = Path(tempfile.mkdtemp(prefix=".copy-", dir=root))
     except OSError as exc:
@@ -1137,7 +1185,7 @@ def install_uploaded_skills(
             for final in moved:
                 shutil.rmtree(final, ignore_errors=True)
         shutil.rmtree(scratch, ignore_errors=True)
-    return [parse_skill(final) for final in moved], skipped
+    return [parse_skill(final) for final in moved]
 
 
 def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:

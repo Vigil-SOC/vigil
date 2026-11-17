@@ -75,3 +75,34 @@ class SkillScan(Base):
         ),
         Index("idx_skill_scans_name", "skill_name"),
     )
+
+
+class SkillInstall(Base):
+    """Where an operator skill installed from a git repo came from.
+
+    One row per skill, keyed by its name: the repo and commit it was installed
+    from and the digest of its content as installed, so a later edit in Vigil
+    and a newer commit upstream can both be told. Written and read by
+    ``core/skills/skill_sources.py``; the columns are explained in the
+    migration that creates it.
+    """
+
+    __tablename__ = "skill_installs"
+
+    skill_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    ref: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    folder: Mapped[str] = mapped_column(Text, nullable=False)
+    commit_sha: Mapped[str] = mapped_column(Text, nullable=False)
+    digest: Mapped[str] = mapped_column(Text, nullable=False)
+    installed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Naive UTC, as everywhere else (core/time.py).
+    installed_at: Mapped[datetime] = mapped_column(
+        DateTime(),
+        nullable=False,
+        server_default=text("(now() AT TIME ZONE 'utc')"),
+    )
+
+    __table_args__ = (Index("idx_skill_installs_repo", "repo_url", "ref", "path"),)

@@ -6554,6 +6554,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/repo/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Repo
+         * @description Install the picked skills from a git repo at the commit the preview read.
+         *
+         *     As an upload: all or nothing, nothing overwritten, each scanned and held.
+         *     409 when the repo has moved since the preview, or a name is taken.
+         */
+        post: operations["post_api_skills_repo_install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/repo/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Repo
+         * @description Fetch a git repo and list the skills it holds, installing nothing.
+         *
+         *     The host must be in ``VIGIL_SKILL_SOURCE_HOSTS``. Each skill that cannot be
+         *     installed says why: it does not parse, or its name is taken.
+         */
+        post: operations["post_api_skills_repo_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/upload": {
         parameters: {
             query?: never;
@@ -15147,6 +15193,44 @@ export interface components {
             agent_id?: string | null;
             /** Name */
             name: string;
+        };
+        /** SkillRepoFound */
+        SkillRepoFound: {
+            /** Description */
+            description: string;
+            /** Folder */
+            folder: string;
+            /** Name */
+            name: string;
+            /** Problem */
+            problem?: string | null;
+        };
+        /** SkillRepoInstallRequest */
+        SkillRepoInstallRequest: {
+            /** Commit */
+            commit: string;
+            /** Names */
+            names: string[];
+            /** Source */
+            source: string;
+        };
+        /** SkillRepoPreview */
+        SkillRepoPreview: {
+            /** Commit */
+            commit: string;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /** Ref */
+            ref?: string | null;
+            /** Skills */
+            skills: components["schemas"]["SkillRepoFound"][];
+        };
+        /** SkillRepoRequest */
+        SkillRepoRequest: {
+            /** Source */
+            source: string;
         };
         /** SkillResponse */
         SkillResponse: {
@@ -28114,6 +28198,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillGenerateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_repo_install: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRepoInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_repo_preview: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRepoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRepoPreview"];
                 };
             };
             /** @description Validation Error */

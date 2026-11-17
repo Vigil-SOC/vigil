@@ -14,6 +14,7 @@ import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
+import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -4097,6 +4098,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
   const [importing, setImporting] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   // One line under the bar: the import's error, or which skills a zip of several installed
   // and how many it skipped.
   const [importNotice, setImportNotice] = useState<{ text: string; error: boolean } | null>(null)
@@ -4138,7 +4140,7 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
         {canWrite && (
           <>
             <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
-            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => fileInput.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import SKILL.md or zip'}</button>
+            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => setImportOpen(true)}><Icon name="upload" /> {importing ? 'Importing…' : 'Import'}</button>
             <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
           </>
         )}
@@ -4183,6 +4185,17 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
           existingNames={rows.map((r) => r.name)}
           onClose={() => { setEditName(null); setBuilding(false) }}
           onSaved={() => { setEditName(null); setBuilding(false); reload() }}
+        />
+      )}
+      {importOpen && (
+        <SkillImportDialog
+          onClose={() => setImportOpen(false)}
+          onChooseFile={() => { setImportOpen(false); fileInput.current?.click() }}
+          onInstalled={({ skills }, label) => {
+            setImportOpen(false)
+            reload()
+            setImportNotice({ text: `Installed ${skills.length} skill${skills.length === 1 ? '' : 's'} from ${label}: ${skills.map((s) => s.name).join(', ')}`, error: false })
+          }}
         />
       )}
       {deleteSkill && (
