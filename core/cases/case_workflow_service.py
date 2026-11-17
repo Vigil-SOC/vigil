@@ -644,10 +644,12 @@ class CaseWorkflowService:
 
             target_finding_ids = {f.finding_id for f in target.findings}
             moved_findings = 0
+            moved_finding_ids: List[str] = []
             for finding in list(source.findings):
                 if finding.finding_id not in target_finding_ids:
                     target.findings.append(finding)
                     moved_findings += 1
+                    moved_finding_ids.append(finding.finding_id)
                 source.findings.remove(finding)
 
             target.timeline = (target.timeline or []) + (source.timeline or [])
@@ -669,7 +671,9 @@ class CaseWorkflowService:
                     "details": {
                         "source_case_id": source_case_id,
                         "source_title": source.title,
+                        "target_case_id": target_case_id,
                         "findings_moved": moved_findings,
+                        "finding_ids": moved_finding_ids,
                         "merged_by": merged_by,
                     },
                     **activity_actor(merged_by, session),
