@@ -355,6 +355,20 @@ def _drawn_on_agent_channel(person_channels: Sequence[str]):
     )
 
 
+def first_finding_id(session, case_id: str) -> Optional[str]:
+    """The finding the case was opened from: the earliest one linked to it.
+
+    A merge or the case matcher links later ones, so the earliest ``added_at``
+    is the opener; the id breaks a tie.
+    """
+    return session.execute(
+        select(case_findings.c.finding_id)
+        .where(case_findings.c.case_id == case_id)
+        .order_by(case_findings.c.added_at, case_findings.c.finding_id)
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _alerts_in_span_exists(span: AlertSpan):
     """Cases holding an alert created in ``span`` (``None`` bounds are open).
 

@@ -454,6 +454,7 @@
 .side-kv dt { color: var(--tx2); }
 .side-kv dd { margin: 0; overflow-wrap: anywhere; }
 .side-kv .case-sla { white-space: nowrap; }
+.side-kv .side-opened { text-align: left; overflow-wrap: anywhere; }
 
 /* Entities: one per line; a long value loses its middle to an ellipsis, the whole of it stays in the DOM to copy.
    Inline, not flex: a flex item copies as its own line, which would split a hash in two. */
