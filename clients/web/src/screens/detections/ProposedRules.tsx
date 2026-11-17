@@ -15,6 +15,7 @@ import {
 import { Empty, Failure } from '../shared/x1'
 import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
 import { caseLabel } from '../../shared/caseLabel'
+import HuntRef from './HuntRef'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
@@ -414,7 +415,9 @@ function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy 
                 {i > 0 && ', '}
                 {what === 'case'
                   ? <Link className="de-link" to={`/cases?case=${encodeURIComponent(ref)}`}>{caseLabel(ref)}</Link>
-                  : <>{what === 'hunt' ? 'Hunt' : what} <span className="mono">{ref}</span></>}
+                  : what === 'hunt'
+                    ? <HuntRef id={ref} run={proposal.hunts?.[ref]} />
+                    : <>{what} <span className="mono">{ref}</span></>}
               </span>
             )
           })}

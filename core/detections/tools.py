@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional
 from core.agents.projections import read_projection
 from core.detections.exceptions import edit_exception
 from core.detections.gaps import (
-    FINDINGS_LIMIT,
     gap_report,
     missed_runs_report,
     read_alert_labels,
     read_ledger,
+    read_window_findings,
     technique_check,
 )
 from core.detections.inventory import catalog, metrics
@@ -264,14 +264,11 @@ class SecurityDetectionsTools:
                 and report["answer"] == "unknown"
             ):
                 report["answer"] = "no_gaps_found"
-        data = DatabaseDataService()
         report["runs_rules_missed"] = missed_runs_report(
             context,
             alerts.scope.startswith("case "),
             read_ledger(since_days),
-            lambda start, end: data.get_findings(
-                limit=FINDINGS_LIMIT, timestamp_start=start, timestamp_end=end
-            ),
+            read_window_findings,
             rules_by_technique,
             since_days,
             since,

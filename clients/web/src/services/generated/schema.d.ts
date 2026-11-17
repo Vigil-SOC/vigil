@@ -3833,6 +3833,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-engineering/hunts/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hunt Detections
+         * @description What a hunt run led to for detection: its proposals and their rules, and why
+         *     each proven hypothesis without one got none. Not found on a Case it can't read.
+         */
+        get: operations["get_api_detection-engineering_hunts_run_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-engineering/proposals": {
         parameters: {
             query?: never;
@@ -3998,6 +4019,26 @@ export interface paths {
         put?: never;
         /** Tune Proposal */
         post: operations["post_api_detection-engineering_proposals_proposal_id_tune"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-engineering/rules/{rule_id}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rule Proposals
+         * @description The gaps-run proposals a rule copy answers, each with the hunts behind it.
+         */
+        get: operations["get_api_detection-engineering_rules_rule_id_proposals"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -23566,6 +23607,39 @@ export interface operations {
             };
         };
     };
+    "get_api_detection-engineering_hunts_run_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_detection-engineering_proposals": {
         parameters: {
             query?: {
@@ -23934,6 +24008,39 @@ export interface operations {
                 "application/json": components["schemas"]["TuneRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_detection-engineering_rules_rule_id_proposals": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

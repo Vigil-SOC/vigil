@@ -146,7 +146,7 @@ export const NEW_VERSION = 'new version'
 
 /** How long Vigil's own move back to shadow stays amber on the rule's line. */
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000
-const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
+export const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
 export const who = (actor: string) => (actor === 'system' ? 'Vigil' : actor)
 export const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
