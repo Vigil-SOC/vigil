@@ -18,8 +18,11 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,7 +59,13 @@ _SHORTHAND_RE = re.compile(rf"^({_SEGMENT})/({_SEGMENT})((?:/{_SEGMENT})*)/?$")
 _SEGMENT_RE = re.compile(rf"^{_SEGMENT}$")
 # A branch or tag: never an option to git, never a path climb.
 _REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
-_CLONE_TIMEOUT = 120  # seconds; bounds how much a huge repo can download
+_CLONE_TIMEOUT = 120  # seconds
+# A skills repo is a few MB on disk (anthropics/skills: 17 MB with its .git);
+# a clone that grows past this is stopped before it can fill the disk.
+_CLONE_MAX_BYTES = 200 * 1024 * 1024
+_CLONE_POLL_SECONDS = 0.2
+# Clones at once in this process; each can use up to _CLONE_MAX_BYTES.
+_CLONES = threading.BoundedSemaphore(2)
 _SOURCE_MAX = 500
 
 
@@ -178,34 +187,74 @@ def _git_env() -> dict:
     return env
 
 
-def _git(args: List[str], cwd: Optional[Path] = None) -> str:
+def _size(folder: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass  # git renames its temp files as it goes
+    return total
+
+
+def _kill_group(proc: "subprocess.Popen[bytes]") -> None:
     try:
-        result = subprocess.run(
-            [
-                "git",
-                # A symlink in the repo is checked out as a plain file, so nothing
-                # read from the clone can point outside it.
-                "-c",
-                "core.symlinks=false",
-                # A redirect could lead to a host the allowed list does not hold.
-                "-c",
-                "http.followRedirects=false",
-                *args,
-            ],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=_CLONE_TIMEOUT,
-            env=_git_env(),
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise SkillError(
-            f"the repo took longer than {_CLONE_TIMEOUT}s to fetch"
-        ) from exc
-    except OSError as exc:
-        raise SkillError(f"git could not run: {exc.strerror}") from exc
-    if result.returncode != 0:
-        err = result.stderr
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _git(args: List[str], scratch: Path, cwd: Optional[Path] = None) -> str:
+    """Run git; stop it past the time limit or once ``scratch`` outgrows the cap.
+
+    ``scratch`` holds the clone and git's output files, so its size is what
+    the clone has written.
+    """
+    out_path, err_path = scratch / ".git-out", scratch / ".git-err"
+    with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
+        try:
+            proc = subprocess.Popen(
+                [
+                    "git",
+                    # A symlink in the repo is checked out as a plain file, so
+                    # nothing read from the clone can point outside it.
+                    "-c",
+                    "core.symlinks=false",
+                    # A redirect could lead to a host the allowed list does not hold.
+                    "-c",
+                    "http.followRedirects=false",
+                    *args,
+                ],
+                cwd=cwd,
+                env=_git_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=out_f,
+                stderr=err_f,
+                # Its own process group, so a stop takes git's helpers with it.
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise SkillError(f"git could not run: {exc.strerror}") from exc
+        deadline = time.monotonic() + _CLONE_TIMEOUT
+        problem: Optional[str] = None
+        while proc.poll() is None:
+            if time.monotonic() >= deadline:
+                problem = f"the repo took longer than {_CLONE_TIMEOUT}s to fetch"
+            elif _size(scratch) > _CLONE_MAX_BYTES:
+                problem = (
+                    f"the repo is larger than {_CLONE_MAX_BYTES // (1024 * 1024)} MB"
+                )
+            if problem:
+                break
+            time.sleep(_CLONE_POLL_SECONDS)
+        # Also on a normal exit: no helper may outlive the call.
+        _kill_group(proc)
+        proc.wait()
+    if problem:
+        raise SkillError(problem)
+    if proc.returncode != 0:
+        err = err_path.read_text(errors="replace")
         if "could not read Username" in err or "Repository not found" in err:
             raise SkillError("No public repo by that name; private repos are not read")
         if "Remote branch" in err and "not found" in err:
@@ -214,12 +263,14 @@ def _git(args: List[str], cwd: Optional[Path] = None) -> str:
         raise SkillError(
             f"could not fetch the repo: {lines[-1] if lines else 'git failed'}"
         )
-    return result.stdout.strip()
+    return out_path.read_text(errors="replace").strip()
 
 
 @contextmanager
 def cloned(source: RepoSource) -> Iterator[tuple[Path, str]]:
     """A shallow clone of ``source`` in a temporary folder, and its commit."""
+    if not _CLONES.acquire(blocking=False):
+        raise SkillError("Vigil is already reading other repos; try again shortly")
     scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
     try:
         repo = scratch / "repo"
@@ -234,11 +285,13 @@ def cloned(source: RepoSource) -> Iterator[tuple[Path, str]]:
                 "--no-tags",
                 *branch,
             ]
-            + ["--", source.url, str(repo)]
+            + ["--", source.url, str(repo)],
+            scratch,
         )
-        yield repo, _git(["rev-parse", "HEAD"], cwd=repo)
+        yield repo, _git(["rev-parse", "HEAD"], scratch, cwd=repo)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+        _CLONES.release()
 
 
 def discover(repo: Path, source: RepoSource) -> List[Found]:
