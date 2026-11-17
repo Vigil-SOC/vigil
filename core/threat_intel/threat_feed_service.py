@@ -463,17 +463,15 @@ def lookup_indicators(
 
     Matches on the normalised form, but keys the answer by each value exactly as
     the caller passed it. Expired rows (``valid_until`` in the past) are
-    omitted. A NULL expiry is live.
+    omitted. A NULL expiry is live. Raises when storage is unavailable: a
+    lookup that could not run is not an answer that nothing matched (#4612).
     """
     if not values:
         return {}
-    try:
-        from core.storage.connection import get_db_manager
-        from core.storage.models import ThreatIndicator
-        from core.storage.schemas import ThreatIndicatorSchema
-    except Exception as e:  # noqa: BLE001
-        logger.debug("ThreatIndicator lookup unavailable: %s", e)
-        return {}
+    from core.storage.connection import get_db_manager
+    from core.storage.models import ThreatIndicator
+    from core.storage.schemas import ThreatIndicatorSchema
+
     asked: Dict[str, List[str]] = {}
     for value in values:
         asked.setdefault(normalize_indicator_value(indicator_type, value), []).append(
