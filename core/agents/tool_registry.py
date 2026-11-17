@@ -16,7 +16,7 @@ from core.agents.attribution import current_claims
 from core.agents.mcp_tools import MCPFailure
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.auth.permissions import APPROVE_PERMISSION, permission_refusal
-from core.cases.agent_closure import actor, service_session
+from core.cases.agent_closure import actor, service_session, title_edited_activities
 from core.cases.assignee import OwnerNotReader, require_owner_reads
 from core.cases.case_handoff import (
     OwnerCannotWrite,
@@ -611,6 +611,8 @@ def update_case(
     updates: Args = {}
     if title:
         updates["title"] = title
+        if edited := title_edited_activities(case, title):
+            updates["activities"] = edited
     if description:
         updates["description"] = description
     if status is not None:
