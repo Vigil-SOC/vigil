@@ -955,8 +955,8 @@ REASONING: one sentence summing up the verdict
 
         # What we know, why we believe it, where the evidence came from.
         for key in ("KNOWN", "BELIEVE", "EVIDENCE"):
-            if value := fields.get(key):
-                triage_result[key.lower()] = value
+            if stated := fields.get(key):
+                triage_result[key.lower()] = stated
 
         reasoning = fields.get("REASONING")
         if reasoning:
