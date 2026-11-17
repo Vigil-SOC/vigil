@@ -20,14 +20,18 @@ def upgrade() -> None:
     bind = op.get_bind()
     listed = retention.read_ids(retention.outside_path())
     # Erased state is the one is_erased tests: username = 'erased-' || principal_id.
-    user_ids = bind.execute(
-        text("""
+    user_ids = (
+        bind.execute(
+            text("""
             SELECT user_id FROM public.users
             WHERE username = :prefix || principal_id
                OR principal_id = ANY(:listed)
             """),
-        {"prefix": retention.ERASED_PREFIX, "listed": listed},
-    ).scalars().all()
+            {"prefix": retention.ERASED_PREFIX, "listed": listed},
+        )
+        .scalars()
+        .all()
+    )
     for user_id in user_ids:
         retention.drop_personal_rows(bind, user_id)
     stash_report(revision, {"erased_accounts_cleaned": len(user_ids)})

@@ -129,7 +129,9 @@ def drop_personal_rows(session, user_id: str) -> None:
         )
     if _table(session, "mcp_credentials"):
         session.execute(
-            text("UPDATE public.mcp_credentials SET label = :label WHERE user_id = :user_id"),
+            text(
+                "UPDATE public.mcp_credentials SET label = :label WHERE user_id = :user_id"
+            ),
             params,
         )
 
