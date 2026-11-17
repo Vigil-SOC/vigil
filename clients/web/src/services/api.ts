@@ -374,6 +374,9 @@ export const casesApi = {
   addIOC: (id: string, data: Schema<'IOCAdd'>) =>
     api.post<Schema<'CaseIOCSchema'>>(`/cases/${id}/iocs`, data),
 
+  markIOCFalsePositive: (id: string, data: Schema<'IOCMark'>) =>
+    api.put<Schema<'CaseIOCListResponse'>>(`/cases/${id}/iocs/false-positive`, data),
+
   getTasks: (id: string) =>
     api.get<Schema<'CaseTasksResponse'>>(`/cases/${id}/tasks`),
   addTask: (id: string, data: Schema<'TaskAdd'>) =>

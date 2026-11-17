@@ -25,6 +25,11 @@ from typing import Iterable, List, Tuple
 from core.memory.recall_contract import ENTITY_KEY_TYPES, KEY_CASE_SENSITIVE_TYPES
 from core.memory.tlds import TLDS
 from core.storage.defang import defang, trim_edges
+from core.storage.entity_context import (
+    CONTEXT_LISTS,
+    CONTEXT_SCALARS,
+    context_candidates,
+)
 
 
 def _fold(kind: str, text: str) -> str:
@@ -175,35 +180,11 @@ def text_entity_keys(raw: str) -> List[str]:
     return _deduped(minted)
 
 
-# How a finding's entity context is spelled, in memory's vocabulary. One map, so
-# a new ingest field reaches cross-investigation correlation and memory recall at
-# once. Alternatives within a tuple are aliases: the first one present wins,
-# because sources disagree about `dest` and `dst` and mean the same thing.
-#
-# `host`, not `hostname`: this is memory's spelling. The shared-IOC minter aliases
-# it back on the way in, so the keys that subsystem writes are unchanged.
-_CONTEXT_LISTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    ("ip", ("src_ips",)),
-    ("ip", ("dest_ips", "dst_ips")),
-    ("host", ("hostnames",)),
-    ("user", ("usernames", "users")),
-    ("hash", ("file_hashes",)),
-    ("domain", ("domains",)),
-    ("process", ("processes",)),
-    ("url", ("urls",)),
-    ("email", ("emails",)),
-)
-
-_CONTEXT_SCALARS: Tuple[Tuple[str, str], ...] = (
-    ("ip", "src_ip"),
-    ("ip", "dst_ip"),
-    ("host", "hostname"),
-    ("user", "user"),
-)
-
-
-_CONTEXT_TYPES = {kind for kind, _ in _CONTEXT_LISTS} | {
-    kind for kind, _ in _CONTEXT_SCALARS
+# How a finding's entity context is spelled is `core.storage.entity_context`'s one
+# map, shared with cross-investigation correlation: a new ingest field reaches
+# it and memory recall at once.
+_CONTEXT_TYPES = {kind for kind, _, _ in CONTEXT_LISTS} | {
+    kind for kind, _, _ in CONTEXT_SCALARS
 }
 _OFF_VOCABULARY = _CONTEXT_TYPES - set(ENTITY_KEY_TYPES)
 if _OFF_VOCABULARY:
@@ -220,23 +201,7 @@ def entity_context_candidates(finding: object) -> List[Tuple[str, str]]:
     in, and there are two. Empty for a finding carrying no entity context, which
     is what keeps "nothing was asked" apart from "nothing is known".
     """
-    context = finding.get("entity_context") if isinstance(finding, dict) else None
-    if not isinstance(context, dict):
-        return []
-
-    candidates: List[Tuple[str, str]] = []
-    for kind, names in _CONTEXT_LISTS:
-        values = next((context[n] for n in names if context.get(n)), None) or []
-        if not isinstance(values, (list, tuple)):
-            continue
-        candidates.extend((kind, str(value)) for value in values)
-
-    for kind, name in _CONTEXT_SCALARS:
-        value = context.get(name)
-        if value:
-            candidates.append((kind, str(value)))
-
-    return candidates
+    return [(kind, value) for kind, value, _ in context_candidates(finding)]
 
 
 def finding_entity_keys(findings: object) -> List[str]:

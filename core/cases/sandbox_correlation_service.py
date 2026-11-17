@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.cases.case_ioc_service import is_marked
 from core.integrations.cape_sandbox.report import extract_iocs
 from core.storage.models import CaseEvidence, CaseIOC, case_findings
 from core.storage.unit_of_work import unit_of_work
@@ -178,7 +179,7 @@ class SandboxCorrelationService:
             reputation_score=float(score) if score is not None else None,
             tags=["sandbox", source],
             is_active=True,
-            is_false_positive=False,
+            is_false_positive=is_marked(session, case_id, ioc_type, value),
         )
         session.add(ioc)
         return True

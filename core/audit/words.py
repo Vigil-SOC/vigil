@@ -476,6 +476,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         if isinstance(p.get("count"), int)
         else "Added indicators to the case"
     ),
+    "case.ioc.false_positive": lambda p: "Marked an indicator on the case a false positive"
+    + (f" ({_word(p['ioc_type'])})" if p.get("ioc_type") else ""),
+    "case.ioc.false_positive.clear": lambda p: "Cleared the false-positive mark on an indicator"
+    + (f" ({_word(p['ioc_type'])})" if p.get("ioc_type") else ""),
     "case.watcher.add": "Added a watcher to the case",
     "case.watcher.remove": "Removed a watcher from the case",
     "case.escalate": "Escalated the case",

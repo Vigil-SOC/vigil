@@ -7,8 +7,8 @@ to a Case is ``SharedIOCRepository.matching_cases``.
 import logging
 from typing import Any, Callable, Dict, Iterable, Optional, Set
 
-from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
+from core.storage.entity_context import context_candidates
 from core.storage.shared_ioc_repository import SharedIOCRepository, make_key
 
 logger = logging.getLogger(__name__)
@@ -17,15 +17,17 @@ logger = logging.getLogger(__name__)
 def _keys_from_finding(finding: Dict[str, Any]) -> Set[str]:
     """This finding's entities as shared-IOC keys.
 
-    The spelling map is memory's (``entity_context_candidates``); the keys are
-    this table's. ``make_key`` aliases ``host`` back to ``hostname`` on the way
-    in, so what lands in ``shared_iocs`` is what always landed there -- and a key
-    minted in the wrong vocabulary joins against nothing.
+    The field map is shared with memory (``core.storage.entity_context``); the
+    keys are this table's. An IP is keyed by its role (``src_ip``/``dst_ip``), and
+    ``make_key`` aliases ``host`` back to ``hostname``, so the other keys are what
+    always landed in ``shared_iocs`` -- a key minted in the wrong vocabulary joins
+    against nothing.
     """
     return {
         key
         for key in (
-            make_key(kind, value) for kind, value in entity_context_candidates(finding)
+            make_key(indexed, value)
+            for _, value, indexed in context_candidates(finding)
         )
         if key
     }
