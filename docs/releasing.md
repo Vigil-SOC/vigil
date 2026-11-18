@@ -22,7 +22,7 @@ For a major, run the **release-please** workflow from `main` with `major` (**Act
 
 ## Fix releases
 
-A fix release carries no database migration and no schema change. Every fix merges to `main` first; how it then reaches the release branch is a separate step (backport). Nothing merges from `main` into the release branch, or back.
+A fix release carries no database migration and no schema change. Every fix merges to `main` first. Nothing merges from `main` into the release branch, or back.
 
 A commit landing on `release/X.Y.x` makes release-please open a release PR on that branch for `X.Y.(Z+1)`. Merging it tags `vX.Y.(Z+1)` and `release.yml` builds it. The release PR bumps only the patch: the workflow adds a `Release-As: X.Y.(Z+1)` commit to the branch, which pins the version whatever `main`'s versioning setting says.
 
@@ -30,9 +30,29 @@ The release branch carries its own `.github/.release-please-manifest.json`, whic
 
 CI (the CI/CD Pipeline, and the Helm chart check for chart changes) runs on pushes to and pull requests into `release/**`, as it does for `main`.
 
+### Backporting a fix
+
+Add the `backport` label to a PR that merged into `main`, or label it before it merges: the copy starts when the PR is merged and labeled, whichever happens last. [`backport.yml`](../.github/workflows/backport.yml) then:
+
+- cherry-picks the PR's squash commit onto `release/X.Y.x` with `git cherry-pick -x` (the copy names the original commit, and keeps its title for the release changelog), and opens `Backport #N: <title>` into that branch with the release-please App token, so CI runs on it;
+- opens it as a **draft with the conflict markers committed** if the commit does not apply cleanly, and does nothing more. It fails CI by design until someone resolves the conflicts and marks it ready;
+- comments on the PR and stops if no release branch exists yet, and stops if a `backport/N-*` branch already exists (the label was added twice).
+
+Only that one commit is copied. A fix that depends on earlier commits that are not on the release branch conflicts; resolve it by hand or leave it on `main`.
+
+[`release-guard.yml`](../.github/workflows/release-guard.yml) runs on every PR into `release/**`, backports or not, and fails when the PR:
+
+- changes anything under `core/upgrade/versions/` or `core/upgrade/head_schema.json` (no migration or schema change in a fix release), or
+- changes more than 300 lines, added plus deleted (too big to be a fix).
+
+Release PRs go through the same check; they only touch the manifest and changelog.
+
 ## Repository settings
 
 Not code, so an admin sets them:
 
 - The release-please GitHub App (`RELEASE_PLEASE_APP_ID`, `RELEASE_PLEASE_PRIVATE_KEY`) writes the `Release-As` commit straight to the branch and creates and deletes `release/*` branches. It must be a bypass actor on the rulesets below.
 - Add a `release/**` ruleset mirroring the "main branch protection" ruleset: pull requests and CI required for everyone else, the App (installation id as in main's `bypass_actors`) as bypass. Without it the flow still works, but the release branch is unprotected.
+- A `backport` label: `gh label create backport -d "Copy this merged fix onto the current release branch"`.
+- Label nothing `backport` until the factory's default-branch-only review setting ([vigil-factory#24](https://github.com/Vigil-SOC/vigil-factory/issues/24)) is on. Without it the factory treats the copy PRs as outside PRs, and can close them as already on `main` or merge `main` into them.
+- Require the `Release guard` check on the `release/**` ruleset, next to CI.

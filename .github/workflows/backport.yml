@@ -1,0 +1,90 @@
+# .github/workflows/backport.yml
+#
+# A merged PR labeled `backport` has its squash commit cherry-picked (-x) onto
+# the current release/X.Y.x branch and a PR opened there (docs/releasing.md,
+# "Fix releases"). A conflict opens the PR as a draft with the first conflict
+# committed; it fails CI until someone resolves it. release-guard.yml checks
+# what lands on the release branch.
+#
+# pull_request_target so it also works for PRs from forks. It never checks out
+# the PR head: the checkout is main, and the action picks the merge commit that
+# is already on it.
+
+name: Backport
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: backport-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  backport:
+    # Canonical repo only: forks lack the release-please App vars/secrets.
+    # Merged and labeled `backport`; on `labeled`, only that label counts.
+    if: >-
+      github.repository == 'Vigil-SOC/vigil'
+      && github.event.pull_request.merged == true
+      && contains(github.event.pull_request.labels.*.name, 'backport')
+      && (github.event.action == 'closed' || github.event.label.name == 'backport')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The App token (not GITHUB_TOKEN): PRs and pushes made with GITHUB_TOKEN
+      # don't trigger CI, and the copy PR needs CI.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      # No ref: on pull_request_target this is main, never the PR's head.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      # Exactly one release/* branch exists (release-branch.yml); take the
+      # highest if that ever stops being true. Stop if this PR already has a
+      # backport branch (the label was added twice).
+      - name: Find the release branch
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          branch=$(git ls-remote --heads origin 'release/*' | sed 's|.*refs/heads/||' | sort -V | tail -n1)
+          if [ -z "$branch" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+              --body "No \`release/*\` branch exists yet, so there is nothing to copy this fix onto. A release branch is cut at each minor release (docs/releasing.md); label the PR again once one exists."
+            echo "No release branch; commented and stopping."
+          elif [ -n "$(git ls-remote --heads origin "backport/$PR-*")" ]; then
+            echo "A backport branch for #$PR already exists; stopping."
+          else
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cherry-pick onto the release branch
+        if: steps.target.outputs.branch != ''
+        uses: korthout/backport-action@ad272ff24e4a8593bf18a951a154ae6af93b26b8 # v5.0.0
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          target_branches: ${{ steps.target.outputs.branch }}
+          # The squash commit (the only merge method), copied with `cherry-pick -x`.
+          cherry_picking: auto
+          experimental: '{"conflict_resolution":"draft_commit_conflicts"}'
+          branch_name: backport/${pull_number}-to-${target_branch}
+          pull_title: "Backport #${pull_number}: ${pull_title}"
+          pull_description: |-
+            Copy of #${pull_number} onto `${target_branch}`, picked with `git cherry-pick -x`.
+
+            Opened by the `backport` label. A draft means the pick conflicted: the first conflict is committed as is, so CI fails until it is resolved. See [Fix releases](https://github.com/Vigil-SOC/vigil/blob/main/docs/releasing.md#fix-releases).

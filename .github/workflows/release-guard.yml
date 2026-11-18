@@ -1,0 +1,50 @@
+# .github/workflows/release-guard.yml
+#
+# A fix release carries no database migration and no schema change (docs/releasing.md,
+# "Fix releases"), and a fix is small. Fail any PR into release/** that touches
+# core/upgrade/versions/ or core/upgrade/head_schema.json, or changes more than
+# 300 lines (added plus deleted).
+#
+# Release PRs are not exempt: they change only the manifest and changelog, which
+# pass, and a title-based skip would let any PR opt out of the guard.
+
+name: Release guard
+
+on:
+  pull_request:
+    branches: ['release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    # Canonical repo only, like the rest of CI.
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The PR's merge commit; the diff below is what the PR adds to its base.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse schema changes and oversized fixes
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # --no-renames: a move out of versions/ still counts. -z: paths come unquoted.
+          bad=0
+          schema=$(git diff -z --name-only --no-renames "$BASE...HEAD" |
+            grep -zE '^(core/upgrade/versions/|core/upgrade/head_schema\.json$)' | tr '\0' '\n' || true)
+          if [ -n "$schema" ]; then
+            echo "::error::Fix releases carry no database change, but this PR changes: ${schema//$'\n'/, }"; bad=1
+          fi
+          # Binary files show "-" for both counts.
+          lines=$(git diff --numstat --no-renames "$BASE...HEAD" | awk '$1 != "-" { n += $1 + $2 } END { print n + 0 }')
+          if [ "$lines" -gt 300 ]; then
+            echo "::error::A fix is at most 300 changed lines (added plus deleted); this PR changes $lines."; bad=1
+          fi
+          exit "$bad"
