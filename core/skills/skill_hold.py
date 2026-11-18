@@ -169,12 +169,25 @@ def _row_mode(row: SkillScan) -> str:
     return row.scan_mode or MODE_STATIC
 
 
-def _critical(row: SkillScan) -> bool:
-    if (row.max_severity or "").upper() == "CRITICAL":
+def _critical(max_severity: Optional[str], findings: Iterable[Dict[str, Any]]) -> bool:
+    if (max_severity or "").upper() == "CRITICAL":
         return True
-    return any(
-        str(f.get("severity") or "").upper() == "CRITICAL" for f in row.findings or []
-    )
+    return any(str(f.get("severity") or "").upper() == "CRITICAL" for f in findings)
+
+
+def holds(
+    recommendation: Optional[str],
+    max_severity: Optional[str],
+    findings: Iterable[Dict[str, Any]],
+    mode: str,
+) -> bool:
+    """The hold rule for a verdict reached in ``mode``: whether it is flagged.
+
+    Static: anything but SAFE. Model-backed: only a CRITICAL finding.
+    """
+    if mode == MODE_STATIC:
+        return recommendation != "SAFE"
+    return _critical(max_severity, findings)
 
 
 def _decide(row: Optional[SkillScan], mode: str) -> ScanState:
@@ -200,10 +213,7 @@ def _decide(row: Optional[SkillScan], mode: str) -> ScanState:
         return ScanState(PENDING, scan_mode=_row_mode(row))
     if row.status != STATUS_SCANNED:
         return ScanState(FAILED, **common)
-    if mode == MODE_STATIC:
-        held = row.recommendation != "SAFE"
-    else:
-        held = _critical(row)
+    held = holds(row.recommendation, row.max_severity, row.findings or [], mode)
     return ScanState(FLAGGED if held else SAFE, **common)
 
 
@@ -268,6 +278,19 @@ def agent_skills(
     return [s for s in skills if states[s.name].allowed]
 
 
+def reasons(result) -> List[Dict[str, Any]]:
+    """A scan result's findings as stored and shown: rule, severity, message, file."""
+    return [
+        {
+            "rule_id": f.rule_id,
+            "severity": f.severity,
+            "message": f.message,
+            "file": f.file,
+        }
+        for f in result.findings
+    ]
+
+
 def _row_for(name: str, result) -> Dict[str, Any]:
     return dict(
         skill_name=name,
@@ -275,15 +298,7 @@ def _row_for(name: str, result) -> Dict[str, Any]:
         recommendation=result.recommendation,
         score=result.score,
         max_severity=result.max_severity,
-        findings=[
-            {
-                "rule_id": f.rule_id,
-                "severity": f.severity,
-                "message": f.message,
-                "file": f.file,
-            }
-            for f in result.findings
-        ],
+        findings=reasons(result),
         scanner_version=result.scanner_version,
         error=result.error,
         scan_mode=result.mode,

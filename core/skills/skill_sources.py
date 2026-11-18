@@ -5,7 +5,11 @@ An operator names a repo: ``owner/repo`` on GitHub (optionally with a folder,
 https git URL, with ``@<ref>`` for a branch or tag. Vigil clones it shallowly
 into a temporary folder, finds skills where ``npx skills`` looks, and installs
 the ones picked as an upload installs them: under the operator root, all or
-nothing, nothing overwritten, each scanned and held like any operator skill.
+nothing, nothing overwritten, each scanned and held like any operator skill. Or it
+scans the picked ones in the clone without installing anything, and files each
+the hold rule holds as a Finding.
+
+A github.com clone carries the stored GitHub token, so private repos read.
 
 Only hosts in ``vigil_skill_source_hosts`` are fetched from, over https only.
 Each installed skill keeps a ``skill_installs`` row: the repo, the commit, and
@@ -14,6 +18,8 @@ the digest of its content as installed.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import os
 import re
@@ -24,8 +30,9 @@ import tempfile
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Collection, Dict, Iterator, List, Optional
 from urllib.parse import urlsplit
@@ -33,6 +40,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import delete, select
 
 from core.config import Settings, get_settings
+from core.skills.skill_hold import holds, reasons
 from core.skills.skill_library import (
     OPERATOR_SKILLS_MAX,
     SKILL_FILE,
@@ -50,7 +58,13 @@ from core.skills.skill_library import (
     skill_roots,
     writable_operator_root,
 )
-from core.skills.skill_scan import files_digest, skill_digest
+from core.skills.skill_scan import (
+    STATUS_SCANNED,
+    files_digest,
+    scan_mode,
+    scan_skill,
+    skill_digest,
+)
 from core.storage.models import SkillInstall
 from core.storage.unit_of_work import unit_of_work
 
@@ -91,6 +105,12 @@ class Found:
     name: str
     description: str
     problem: Optional[str] = None
+    # The only problem is that a skill by this name is loaded: it can still be
+    # scanned without installing, which leaves the library alone.
+    installed: bool = False
+
+
+TAKEN = "a skill with this name is already installed"
 
 
 def _segments(path: str) -> List[str]:
@@ -180,13 +200,13 @@ def parse_source(text: str, settings: Optional[Settings] = None) -> RepoSource:
         )
     if guess:
         # Only now that the host is allowed: the one network call.
-        ref, sub = _split_tree(url, guess)
+        ref, sub = _split_tree(url, host, guess)
     if ref is not None and (not _REF_RE.match(ref) or ".." in ref):
         raise SkillError(f"{ref!r} is not a branch or tag name Vigil accepts")
     return RepoSource(url=url, label=label, host=host, ref=ref, path="/".join(sub))
 
 
-def _split_tree(url: str, segments: List[str]) -> tuple[str, List[str]]:
+def _split_tree(url: str, host: str, segments: List[str]) -> tuple[str, List[str]]:
     """Split ``<branch>/<folder>`` at the longest prefix that is a ref on the remote.
 
     A link cannot say where a branch name holding "/" ends, so, as git does,
@@ -199,7 +219,7 @@ def _split_tree(url: str, segments: List[str]) -> tuple[str, List[str]]:
     patterns = [f"refs/{kind}/{p}" for p in prefixes for kind in ("heads", "tags")]
     scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
     try:
-        out = _git(["ls-remote", url, *patterns], scratch)
+        out = _git(["ls-remote", url, *patterns], scratch, host=host)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     found = set()
@@ -214,7 +234,18 @@ def _split_tree(url: str, segments: List[str]) -> tuple[str, List[str]]:
     raise SkillError("The repo has no branch or tag matching that link")
 
 
-def _git_env() -> dict:
+def _github_token() -> Optional[str]:
+    # Imported here: the secrets backend is only needed when github.com is read.
+    from core.secrets import get_secret
+
+    try:
+        return (get_secret("GITHUB_TOKEN") or "").strip() or None
+    except Exception:  # noqa: BLE001 - no token readable: the clone is anonymous
+        logger.warning("GitHub token could not be read; cloning anonymously")
+        return None
+
+
+def _git_env(host: Optional[str] = None) -> dict:
     env = dict(os.environ)  # noqa: ENV001 - child process env; keeps any proxy
     env.update(
         {
@@ -228,6 +259,18 @@ def _git_env() -> dict:
             "GIT_LFS_SKIP_SMUDGE": "1",
         }
     )
+    token = _github_token() if host == GITHUB else None
+    if token:
+        # The stored GitHub token, so private org repos read. Through the
+        # environment only, scoped to github.com: never argv, the URL or a message.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env.update(
+            {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": f"http.https://{GITHUB}/.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+            }
+        )
     return env
 
 
@@ -249,12 +292,61 @@ def _kill_group(proc: "subprocess.Popen[bytes]") -> None:
         pass
 
 
-def _git(args: List[str], scratch: Path, cwd: Optional[Path] = None) -> str:
+# What git prints when the host would not let it read the repo.
+_REFUSED = (
+    "could not read Username",
+    "Repository not found",
+    "Authentication failed",
+    "Invalid username or token",
+)
+
+
+def _git(
+    args: List[str],
+    scratch: Path,
+    cwd: Optional[Path] = None,
+    host: Optional[str] = None,
+) -> str:
     """Run git; stop it past the time limit or once ``scratch`` outgrows the cap.
 
     ``scratch`` holds the clone and git's output files, so its size is what
-    the clone has written.
+    the clone has written. A github.com call carries the stored token; if
+    GitHub refuses it (expired, or a placeholder), the call is tried once
+    without, so a bad token does not stop public repos from reading.
     """
+    env = _git_env(host)
+    tokened = "GIT_CONFIG_COUNT" in env
+    code, err = _run_git(args, scratch, cwd, env)
+    refused = code != 0 and any(r in err for r in _REFUSED)
+    if refused and tokened:
+        code, err = _run_git(args, scratch, cwd, _git_env())
+        refused = code != 0 and any(r in err for r in _REFUSED)
+        if code == 0:
+            logger.warning(
+                "github.com refused the stored GitHub token; read anonymously"
+            )
+    if code != 0:
+        if refused:
+            raise SkillError(
+                "No repo by that name that Vigil can read: the GitHub token set "
+                "(Settings → Integrations → GitHub) was refused or cannot read it"
+                if tokened
+                else "No repo by that name that Vigil can read. For a private "
+                "github.com repo, set a GitHub token (Settings → Integrations → GitHub)"
+            )
+        if "Remote branch" in err and "not found" in err:
+            raise SkillError("The repo has no branch or tag by that name")
+        lines = [line for line in err.strip().splitlines() if line.strip()]
+        raise SkillError(
+            f"could not fetch the repo: {lines[-1] if lines else 'git failed'}"
+        )
+    return (scratch / ".git-out").read_text(errors="replace").strip()
+
+
+def _run_git(
+    args: List[str], scratch: Path, cwd: Optional[Path], env: dict
+) -> tuple[int, str]:
+    """One git run: its exit code and stderr; raises past the time or size cap."""
     out_path, err_path = scratch / ".git-out", scratch / ".git-err"
     with open(out_path, "wb") as out_f, open(err_path, "wb") as err_f:
         try:
@@ -271,7 +363,7 @@ def _git(args: List[str], scratch: Path, cwd: Optional[Path] = None) -> str:
                     *args,
                 ],
                 cwd=cwd,
-                env=_git_env(),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=out_f,
                 stderr=err_f,
@@ -297,17 +389,7 @@ def _git(args: List[str], scratch: Path, cwd: Optional[Path] = None) -> str:
         proc.wait()
     if problem:
         raise SkillError(problem)
-    if proc.returncode != 0:
-        err = err_path.read_text(errors="replace")
-        if "could not read Username" in err or "Repository not found" in err:
-            raise SkillError("No public repo by that name; private repos are not read")
-        if "Remote branch" in err and "not found" in err:
-            raise SkillError("The repo has no branch or tag by that name")
-        lines = [line for line in err.strip().splitlines() if line.strip()]
-        raise SkillError(
-            f"could not fetch the repo: {lines[-1] if lines else 'git failed'}"
-        )
-    return out_path.read_text(errors="replace").strip()
+    return proc.returncode, err_path.read_text(errors="replace")
 
 
 @contextmanager
@@ -331,6 +413,7 @@ def cloned(source: RepoSource) -> Iterator[tuple[Path, str]]:
             ]
             + ["--", source.url, str(repo)],
             scratch,
+            host=source.host,
         )
         yield repo, _git(["rev-parse", "HEAD"], scratch, cwd=repo)
     finally:
@@ -365,23 +448,34 @@ def discover(repo: Path, source: RepoSource, own: Collection[str] = ()) -> List[
         problem = None
         if skill.name in names:
             problem = "another folder in the repo has this name"
-        elif skill.name in taken:
-            problem = "a skill with this name is already installed"
         else:
             try:
                 folder_files(folder)  # over the size or file limit: say so up front
             except SkillError as exc:
                 problem = str(exc)
+        installed = problem is None and skill.name in taken
         names.add(skill.name)
-        found.append(Found(rel, skill.name, skill.description, problem))
+        found.append(
+            Found(
+                rel,
+                skill.name,
+                skill.description,
+                TAKEN if installed else problem,
+                installed,
+            )
+        )
     return found
 
 
 def _by_name(found: List[Found]) -> Dict[str, Found]:
     # Two folders can carry one name; the one discover passed is the one shown.
+    # An installed-only clash still scans, so it ranks above a refused duplicate.
+    def rank(f: Found) -> int:
+        return 0 if not f.problem else 1 if f.installed else 2
+
     named: Dict[str, Found] = {}
     for f in found:
-        if f.name not in named or named[f.name].problem:
+        if f.name not in named or rank(f) < rank(named[f.name]):
             named[f.name] = f
     return named
 
@@ -434,6 +528,176 @@ def install_from_repo(
     except Exception:  # noqa: BLE001 - installed; only where it came from is lost
         logger.exception("skills from %s installed but not recorded", source.label)
     return skills
+
+
+# ---- Scanning a repo's skills without installing them ----
+
+SCAN_SOURCE = "skill-scan"  # the data_source of the Findings a scan raises
+# Scans at once in one request; each is its own scanner process.
+_SCAN_WORKERS = 4
+_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
+NOT_SCANNED = "not_scanned"
+
+
+@dataclass(frozen=True)
+class Scanned:
+    """One picked skill's scan: its verdict and reasons, or why there is none."""
+
+    name: str
+    folder: str
+    # scanned | failed | unavailable | disabled | not_scanned
+    status: str
+    held: Optional[bool] = None  # whether the hold rule holds it; None: no verdict
+    recommendation: Optional[str] = None
+    score: Optional[int] = None
+    max_severity: Optional[str] = None
+    reasons: List[dict] = field(default_factory=list)
+    error: Optional[str] = None
+    finding_id: Optional[str] = None
+    finding_new: bool = False  # False with an id: a rescan found it already raised
+
+
+def _severity(max_severity: Optional[str], recommendation: Optional[str]) -> str:
+    """The scan's max severity in the Finding vocabulary."""
+    sev = (max_severity or "").upper()
+    if sev in _SEVERITIES:
+        return sev.lower()
+    return "high" if recommendation == "DO_NOT_INSTALL" else "medium"
+
+
+def _raise_finding(
+    service, source: RepoSource, commit: str, scanned: Scanned, digest: str, mode: str
+) -> Scanned:
+    """File the held skill as a Finding; a rescan of the same content finds the old one."""
+    from core.ingestion.ingestion_service import _content_finding_id
+    from core.time import utcnow
+
+    external_id = hashlib.sha256(
+        f"{source.url}\n{scanned.name}\n{digest}".encode()
+    ).hexdigest()
+    lines = [
+        f"The skill scan ({mode}) holds skill {scanned.name!r} in {source.label}.",
+        f"Repository: {source.url}",
+        f"Commit: {commit}",
+        f"Folder: {scanned.folder or '(repo root)'}",
+        f"Recommendation: {scanned.recommendation or 'none'}"
+        + (f" (score {scanned.score})" if scanned.score is not None else ""),
+        "",
+        "Reasons:",
+        *(
+            f"- [{r['severity']}] {r['rule_id']}"
+            + (f" in {r['file']}" if r.get("file") else "")
+            + f": {r['message']}"
+            for r in scanned.reasons
+        ),
+    ]
+    if not scanned.reasons:
+        lines.append("- none listed; the recommendation alone holds it")
+    if service.db_service is None:
+        return replace(scanned, error="the Finding could not be saved")
+    before = service.stats["findings_imported"]
+    service.ingest_finding(
+        {
+            "finding_id": _content_finding_id(f"{SCAN_SOURCE}:{external_id}"),
+            "external_id": external_id,
+            "data_source": SCAN_SOURCE,
+            "timestamp": utcnow().isoformat(),
+            "severity": _severity(scanned.max_severity, scanned.recommendation),
+            "title": f"Skill {scanned.name} in {source.label} held by the skill scan",
+            "description": "\n".join(lines),
+            "entity_context": {"urls": [source.url]},
+        }
+    )
+    try:
+        row = service.db_service.get_finding_by_external_id(SCAN_SOURCE, external_id)
+    except Exception:  # noqa: BLE001 - reported per skill below
+        logger.exception("could not read back the Finding for %s", scanned.name)
+        row = None
+    if row is None:
+        return replace(scanned, error="the Finding could not be saved")
+    return replace(
+        scanned,
+        finding_id=row.finding_id,
+        finding_new=service.stats["findings_imported"] > before,
+    )
+
+
+def scan_repo(
+    text: str,
+    commit: str,
+    names: List[str],
+    settings: Optional[Settings] = None,
+) -> tuple[RepoSource, str, List[Scanned]]:
+    """Scan the skills ``names`` in the repo ``text`` at ``commit``, installing nothing.
+
+    Each is scanned in the clone, before it is deleted. Nothing is written under
+    the operator root or to ``skill_scans``: those are the installed library's.
+    A skill the hold rule holds becomes a Finding; a scan with no verdict is
+    reported and is not one. A name already installed can still be scanned.
+    """
+    if not names:
+        raise SkillError("Pick at least one skill to scan")
+    if len(set(names)) != len(names) or len(names) > OPERATOR_SKILLS_MAX:
+        raise SkillError("Each skill can be picked once")
+    settings = settings or get_settings()
+    mode = scan_mode(settings)
+    source = parse_source(text, settings)
+    out: Dict[str, Scanned] = {}
+    digests: Dict[str, str] = {}
+    with cloned(source) as (repo, got):
+        if got != commit:
+            raise SkillConflict(
+                f"{source.label} has changed since it was read (now {got[:7]}). "
+                "Read it again before scanning."
+            )
+        found = _by_name(discover(repo, source))
+        for name in names:
+            if name not in found:
+                raise SkillError(f"{name!r} is not a skill in {source.label}")
+        todo = []
+        for name in names:
+            f = found[name]
+            if f.problem and not f.installed:
+                out[name] = Scanned(name, f.folder, NOT_SCANNED, error=f.problem)
+            else:
+                todo.append(name)
+
+        def one(name: str) -> Scanned:
+            folder = repo / found[name].folder
+            try:
+                digests[name] = skill_digest(folder)
+            except OSError as exc:  # one unreadable skill must not sink the rest
+                return Scanned(name, found[name].folder, NOT_SCANNED, error=str(exc))
+            result = scan_skill(folder, settings)
+            if result.status != STATUS_SCANNED:
+                return Scanned(
+                    name, found[name].folder, result.status, error=result.error
+                )
+            why = reasons(result)
+            return Scanned(
+                name,
+                found[name].folder,
+                result.status,
+                held=holds(result.recommendation, result.max_severity, why, mode),
+                recommendation=result.recommendation,
+                score=result.score,
+                max_severity=result.max_severity,
+                reasons=why,
+            )
+
+        if todo:
+            with ThreadPoolExecutor(max_workers=min(_SCAN_WORKERS, len(todo))) as pool:
+                out.update(zip(todo, pool.map(one, todo)))
+    held = [n for n in names if out[n].held]
+    if held:
+        from core.ingestion.ingestion_service import IngestionService
+
+        service = IngestionService()
+        for name in held:
+            out[name] = _raise_finding(
+                service, source, commit, out[name], digests[name], mode
+            )
+    return source, commit, [out[n] for n in names]
 
 
 def _record(
@@ -559,7 +823,9 @@ def latest_commit(name: str, settings: Optional[Settings] = None) -> Optional[st
     source = _row_source(row, settings)
     scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
     try:
-        out = _git(["ls-remote", source.url, source.ref or "HEAD"], scratch)
+        out = _git(
+            ["ls-remote", source.url, source.ref or "HEAD"], scratch, host=source.host
+        )
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     refs = {}

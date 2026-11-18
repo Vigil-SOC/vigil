@@ -86,7 +86,33 @@ export interface ApiSkillRepoPreview {
   ref?: string | null
   path: string
   commit: string
-  skills: { folder: string; name: string; description: string; problem?: string | null }[]
+  /** `installed`: the only problem is that the name is taken; the skill can still be scanned. */
+  skills: { folder: string; name: string; description: string; problem?: string | null; installed?: boolean }[]
+}
+
+/** POST /api/skills/repo/scan: each picked skill's verdict, and the Finding each held one became. */
+export interface ApiSkillRepoScanned {
+  name: string
+  folder: string
+  /** scanned | failed | unavailable | disabled | not_scanned; only scanned carries a verdict. */
+  status: string
+  held?: boolean | null
+  recommendation?: string | null
+  score?: number | null
+  max_severity?: string | null
+  reasons: { rule_id: string; severity: string; message: string; file?: string | null }[]
+  error?: string | null
+  finding_id?: string | null
+  /** False with a finding_id: an earlier scan of the same content raised it. */
+  finding_new: boolean
+}
+
+export interface ApiSkillRepoScan {
+  label: string
+  commit: string
+  /** "static" or "llm:<model>" */
+  scan_mode: string
+  skills: ApiSkillRepoScanned[]
 }
 
 /** The server clones the repo for each call; a large one takes a while. */
@@ -156,6 +182,9 @@ export const skillsApi = {
   /** Installs the picked skills from the repo at the commit the preview read; refused (409) if the repo has moved or a name is taken. */
   installRepo: (source: string, commit: string, names: string[]) =>
     api.post<ApiSkillUpload>('/skills/repo/install', { source, commit, names }, { timeout: REPO_TIMEOUT }).then((r) => r.data),
+  /** Scans the picked skills at the commit the preview read, installing nothing; held ones become Findings. 409 if the repo has moved. */
+  scanRepo: (source: string, commit: string, names: string[]) =>
+    api.post<ApiSkillRepoScan>('/skills/repo/scan', { source, commit, names }, { timeout: REPO_TIMEOUT }).then((r) => r.data),
   /** The commit the skill's repo is at now (no clone); null when its branch or tag is gone. */
   latest: (name: string) =>
     api.get<{ commit: string | null }>(`/skills/${encodeURIComponent(name)}/library/latest`).then((r) => r.data.commit),

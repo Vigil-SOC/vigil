@@ -46,6 +46,7 @@ from core.skills.skill_library import (
     skipped_note,
     write_operator_skill,
 )
+from core.skills.skill_scan import scan_mode
 from core.skills.skill_usage import skill_usage
 from core.storage.unit_of_work import unit_of_work
 from services.api import skill_sweep
@@ -191,6 +192,8 @@ class SkillRepoFound(BaseModel):
     description: str
     # Why it cannot be installed; None when it can.
     problem: Optional[str] = None
+    # The only problem is that the name is already installed: it can be scanned.
+    installed: bool = False
 
 
 class SkillRepoPreview(BaseModel):
@@ -205,6 +208,31 @@ class SkillRepoPreview(BaseModel):
 class SkillRepoInstallRequest(SkillRepoRequest):
     commit: str = Field(..., pattern=r"^[0-9a-f]{40,64}$")
     names: list[str] = Field(..., min_length=1, max_length=100)
+
+
+class SkillRepoScanned(BaseModel):
+    name: str
+    folder: str
+    # scanned | failed | unavailable | disabled | not_scanned. Only scanned has a verdict.
+    status: str
+    # The hold rule's call on the verdict; a held skill is a Finding.
+    held: Optional[bool] = None
+    recommendation: Optional[str] = None  # SAFE | CAUTION | DO_NOT_INSTALL
+    score: Optional[int] = None
+    max_severity: Optional[str] = None
+    reasons: list[SkillScanFinding] = []
+    error: Optional[str] = None
+    finding_id: Optional[str] = None
+    # False with a finding_id: this content was already raised by an earlier scan.
+    finding_new: bool = False
+
+
+class SkillRepoScan(BaseModel):
+    label: str
+    commit: str
+    # How the verdicts were reached: "static" or "llm:<model>".
+    scan_mode: str
+    skills: list[SkillRepoScanned]
 
 
 class SkillLatest(BaseModel):
@@ -510,6 +538,29 @@ async def install_repo(
     states = await asyncio.to_thread(scan_states, installed)
     skills = [_response(s, states[s.name]) for s in installed]
     return SkillUploadResponse(**skills[0].model_dump(), skills=skills, skipped=0)
+
+
+@router.post("/repo/scan", response_model=SkillRepoScan, dependencies=_SKILLS_WRITE)
+async def scan_repo(req: SkillRepoInstallRequest):
+    """Scan the picked skills of a git repo at the commit the preview read, installing nothing.
+
+    Each skill the hold rule holds is filed as a Finding (data_source
+    ``skill-scan``); a rescan of the same content files no second one. The scan
+    runs to the end, Findings included, even if the client stops waiting. 409
+    when the repo has moved since the preview.
+    """
+    try:
+        source, commit, scanned = await asyncio.to_thread(
+            skill_sources.scan_repo, req.source, req.commit, req.names
+        )
+    except SkillError as exc:
+        raise _http(exc) from exc
+    return SkillRepoScan(
+        label=source.label,
+        commit=commit,
+        scan_mode=scan_mode(),
+        skills=[SkillRepoScanned(**vars(s)) for s in scanned],
+    )
 
 
 @router.post(
