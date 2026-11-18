@@ -15580,6 +15580,8 @@ export interface components {
             ended_at?: string | null;
             /** Last Action At */
             last_action_at: string;
+            /** Mfa Met */
+            mfa_met?: string | null;
             /** Sign In Id */
             sign_in_id: string;
             /** Started At */
