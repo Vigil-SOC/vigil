@@ -4092,6 +4092,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/gaps-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Gaps Run
+         * @description Start the detection gaps run now rather than on the daemon's daily tick, as
+         *     this user. 200 when it queued, or found nothing to queue; 409 with the reason
+         *     when refused (another gaps run unfinished, or the workflow turned off).
+         */
+        post: operations["post_api_detection-rules_gaps-run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/health-inbox": {
         parameters: {
             query?: never;
@@ -24175,6 +24197,37 @@ export interface operations {
                 "multipart/form-data": components["schemas"]["Body_import_detection_skill_api_detection_rules_detection_skill_import_post"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_gaps-run": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
