@@ -1,0 +1,42 @@
+[
+  {
+    "name": "no generative-AI telemetry is a gap, not no agents",
+    "input": "Telemetry search over the last 7 days: zero documents with any gen_ai.* or mcp.* field in any index. Process and network logs are present. Which AI agents act in this estate?",
+    "expect": [
+      "gap",
+      "unobserved"
+    ]
+  },
+  {
+    "name": "an identity on an MCP server with no spans is unobserved",
+    "input": "MCP server auth logs show svc-reporting authenticating to https://mcp.corp.example/mcp 340 times this week. No generative-AI spans name svc-reporting or come from its client address. Summarise what svc-reporting's agent did.",
+    "expect": [
+      "unobserved",
+      "gap"
+    ]
+  },
+  {
+    "name": "a token spike is measured in tokens, no spend",
+    "input": "Agent invoice-bot: gen_ai.usage.input_tokens summed per day over 30 days averages 41,000 (std dev 6,000). Yesterday it was 1,920,000, across the same tools. Assess this and say what it costs.",
+    "expect": [
+      "baseline",
+      "spend"
+    ]
+  },
+  {
+    "name": "identity and MCP server become user: and url: entities",
+    "input": "execute_tool spans from agent invoice-bot (gen_ai.agent.id ag-77) call tools on server.address mcp.corp.example port 443; the IdP shows those sessions signed in as svc-invoice. Give the entities you would record and where the agent's name goes.",
+    "expect": [
+      "user:svc-invoice",
+      "url:",
+      "summary"
+    ]
+  },
+  {
+    "name": "content attributes are not queried",
+    "input": "To check whether agent helpdesk-bot is misbehaving, write the query you would run against Elastic over its spans. Should it return gen_ai.input.messages and gen_ai.tool.call.arguments?",
+    "expect": [
+      "metadata"
+    ]
+  }
+]

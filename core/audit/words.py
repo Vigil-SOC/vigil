@@ -452,6 +452,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
     "detections.rule_staged": _staged,
+    "detections.proposal_rejected": lambda p: "Dismissed detection proposal"
+    + (f" {p['proposal_id']}" if p.get("proposal_id") else "")
+    + (f" for {p['technique']}" if p.get("technique") else ""),
     "detections.rule_saved": _saved,
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"

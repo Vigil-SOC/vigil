@@ -1718,6 +1718,185 @@ def list_audit_entries(
         return jdump({"error": str(e)})
 
 
+# --- Detection engineering (#4737) --------------------------------------------
+# Thin over what /api/detection-rules and /api/detection-engineering call. Only
+# narrowing acts: dismissing a proposal and switching a shadow rule off.
+
+_HEALTH = Literal[
+    "attention",
+    "fails_to_run",
+    "data_silent",
+    "missing_field",
+    "never_fired",
+    "fires",
+    "disabled",
+    "no_fire_data",
+]
+_FLAG = Literal["noisy", "quiet", "accurate", "silent", "drift", "caught"]
+
+
+def _shown(views: list) -> list:
+    """Proposals as the caller may see them, as the proposals router shows them.
+    A run no person started holds no role and reads all, as ``requires`` passes it."""
+    from core.detections.engineering import proposals
+
+    reads_findings = permission_refusal("findings.read") is None
+    reads_cases = permission_refusal("cases.read") is None
+    return [
+        proposals.shown_to(v, reads_findings=reads_findings, reads_cases=reads_cases)
+        for v in views
+    ]
+
+
+def _proposal_answer(step) -> str:
+    """A proposal step's view, or the route's refusal text."""
+    from core.detections.engineering import proposals
+    from core.detections.overlay import Refused
+    from core.storage.models.detection_proposal import InvalidProposalMove
+
+    try:
+        return jdump(_shown([step()])[0])
+    except (proposals.NotFound, InvalidProposalMove) as exc:
+        return jdump({"error": str(exc)})
+    except Refused as exc:
+        return jdump({"error": str(exc), **exc.detail})
+
+
+@tool("List detection rules", reads=True)
+@requires("detections.read")
+def list_detection_rules(
+    health: Optional[_HEALTH] = None,
+    tool: Optional[Literal["elastic", "splunk", "wazuh"]] = None,
+    q: Annotated[Optional[str], Field(max_length=200)] = None,
+    offset: Annotated[int, Field(ge=0)] = 0,
+    sort: Literal["worst", "most_fires", "fewest_fires", "name"] = "worst",
+    flag: Optional[_FLAG] = None,
+    rule_ids: Annotated[Optional[list[int]], Field(max_length=1000)] = None,
+    has_exceptions: bool = False,
+    stage: Optional[Literal["shadow", "live", "off"]] = None,
+) -> str:
+    """Every listed rule copy's health, stage and data source, as GET
+    /api/detection-rules/rules returns it: a page from ``offset``, narrowed by
+    ``health`` ("attention" is every state to act on), ``tool``, ``stage``,
+    ``flag`` (a failing Noisy, Quiet, Accurate, Silent or drift check, or a
+    passing Caught), the search ``q`` and ``rule_ids``, in ``sort`` order; with
+    ``has_exceptions``, every copy with an active exception."""
+    from core.detections.inventory import catalog
+
+    return jdump(
+        catalog.health_listing(
+            health,
+            tool=tool,
+            q=q,
+            offset=offset,
+            sort=sort,
+            flag=flag,
+            rule_ids=rule_ids,
+            has_exceptions=has_exceptions,
+            stage=stage,
+        )
+    )
+
+
+@tool("Get detection rule", reads=True)
+@requires("detections.read")
+def get_detection_rule(rule_id: int) -> str:
+    """One rule copy: its latest version's query and checks (lint, replay, runs,
+    shadow and the rest); ``stage_history``, its stage rows newest first with
+    whether a person's hold keeps it in shadow; and ``proposals``, the gaps-run
+    proposals it answers with the hunts behind them."""
+    from core.detections.engineering import proposals
+    from core.detections.inventory import catalog, stages
+
+    rule = catalog.rule_detail(rule_id)
+    if rule is None:
+        return jdump({"error": f"No detection rule {rule_id}"})
+    return jdump(
+        {
+            **rule,
+            "stage_history": stages.history(rule_id),
+            "proposals": _shown(proposals.for_rule(rule_id)),
+        }
+    )
+
+
+@tool("Detection coverage", reads=True)
+@requires("detections.read")
+def get_detection_coverage() -> str:
+    """ATT&CK coverage by technique and SIEM: each technique an active rule
+    declares or an alert shows, proven (an active SIEM copy passes Runs and
+    Sees), unproven or with no rule."""
+    from core.detections.inventory import coverage
+
+    return jdump(coverage.coverage())
+
+
+@tool("List detection proposals", reads=True)
+@requires("detections.read")
+def list_detection_proposals(
+    state: Optional[
+        Literal[
+            "draft", "linted", "replayed", "converted", "shadow", "live", "rejected"
+        ]
+    ] = None,
+) -> str:
+    """Detection proposals newest first, each with its latest replay's counts;
+    ``state`` narrows them. A proposal from a Case the caller can't read is
+    absent, and its logs, findings and Case are withheld from a caller without
+    findings.read or cases.read."""
+    from core.detections.engineering import proposals
+
+    return jdump({"proposals": _shown(proposals.listing(state))})
+
+
+@tool("Get detection proposal", reads=True)
+@requires("detections.read")
+def get_detection_proposal(proposal_id: str) -> str:
+    """One detection proposal with its Sigma, copies and every step on its record."""
+    from core.detections.engineering import proposals
+
+    return _proposal_answer(lambda: proposals.get(proposal_id))
+
+
+@tool("Dismiss detection proposal", destructive=True)
+@requires("detections.write")
+def dismiss_detection_proposal(
+    proposal_id: str, reason: Annotated[str, Field(max_length=2000)]
+) -> str:
+    """Rejects a proposal, with why: it stays on the record and on the audit
+    trail. A gaps-run draft whose run is still working is refused."""
+    from core.auth.tool_principal import current_claims
+    from core.detections.engineering import proposals
+
+    kind = proposals.AGENT if current_claims() is not None else proposals.PERSON
+    return _proposal_answer(
+        lambda: proposals.reject(proposal_id, actor(), reason, kind)
+    )
+
+
+@tool("Switch a shadow rule off", destructive=True)
+@requires("detections.write")
+def switch_off_detection_rule(
+    rule_id: int, reason: Annotated[str, Field(min_length=1, max_length=2000)]
+) -> str:
+    """Switches a shadow rule off and holds it there; a promotion still waiting
+    is declined. A later version waits in shadow until a person releases the
+    hold. A rule not in shadow is refused."""
+    from core.detections.inventory import stages
+
+    if not reason.strip():
+        return jdump({"error": "reason must not be blank"})
+    username = actor()
+    try:
+        return jdump(
+            stages.switch_off(
+                rule_id, (username, acting_principal() or username), reason.strip()
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
 # --- Run lifecycle, for a caller outside Vigil (#4248) ------------------------
 
 # A run's own agent keeps its handoff path; starting and steering are for a

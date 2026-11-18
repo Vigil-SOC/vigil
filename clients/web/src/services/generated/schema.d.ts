@@ -4526,9 +4526,10 @@ export interface paths {
         put?: never;
         /**
          * Switch Off Rule
-         * @description Switches a shadow rule off and holds it there: a signed-in person's own
-         *     decision, refused to an API token, a service account and an agent's
-         *     credential. A rule that is not in shadow is refused with 409.
+         * @description Switches a shadow rule off and holds it there. It only narrows, so an API
+         *     token or a service account with detections.write may do it too; a later
+         *     version still waits in shadow until a person releases the hold. A rule that
+         *     is not in shadow is refused with 409.
          */
         post: operations["post_api_detection-rules_rules_rule_id_switch-off"];
         delete?: never;
