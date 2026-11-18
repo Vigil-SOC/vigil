@@ -10,7 +10,9 @@ x-agent-env: &agent-env
   - POSTGRES_DB=deeptempo_soc
   # vigil_agent, not vigil_app: the agent tables and nothing else (0081_agent_role).
   - POSTGRES_USER=vigil_agent
-  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:?POSTGRES_AGENT_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+  # Empty, not `:?`: an unset value renders, and the upgrade one-shot
+  # (initdb/00_apply.sh) refuses it before anything logs in as vigil_agent.
+  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-}
   - REDIS_URL=redis://redis:6379/0
   # The agent reads REDIS_PASSWORD only beside REDIS_HOST, and the password is
   # never put in a URL, so the parts are named as the Helm chart names them.
@@ -135,7 +137,8 @@ services:
       POSTGRES_USER: deeptempo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
-      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:?POSTGRES_AGENT_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+      # Empty is refused by 00_apply.sh ("run ./start.sh once").
+      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-}
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
