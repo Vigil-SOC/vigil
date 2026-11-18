@@ -131,7 +131,7 @@ Security keys (WebAuthn) are tied to the hostname the console is reached at: set
 - **The SOC daemon** (alert polling, auto-triage) runs only with `./start.sh -d`; the foreground start says so. Setup's system checks show whether the daemon and the agent layer are running.
 - **Authentication is on by default.** No account or default password ships; the first visit creates the admin, using the setup code the API prints at startup while no account exists. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
 
-> **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image. Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
+> **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image. Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest); how they are cut is in [releasing](docs/releasing.md).
 >
 > | Image tag | Points to | Who it's for |
 > |---|---|---|

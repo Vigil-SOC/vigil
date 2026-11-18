@@ -2,14 +2,14 @@ name: release-please
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   workflow_dispatch:
     inputs:
       bump:
         description: Version bump for the next release
         type: choice
-        options: [patch, minor, major]
-        default: patch
+        options: [minor, major]
+        default: minor
 
 permissions:
   contents: write
@@ -39,33 +39,43 @@ jobs:
           app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
 
-      # Every release is a patch by default (config: always-bump-patch). This
-      # step adds an empty `Release-As:` commit to main so release-please opens
-      # or updates the release PR even when merged PR titles carry no
-      # conventional prefix. The Run workflow button picks minor/major.
-      # Needs the release-please App as a bypass actor on the "main branch
-      # protection" ruleset.
+      # main's release PR is always the next minor (config: always-bump-minor)
+      # and a maintainer merges it by hand; release/X.Y.x gets patch releases
+      # only. This step adds an empty `Release-As:` commit to the pushed branch
+      # so release-please opens or updates that branch's release PR even when
+      # merged PR titles carry no conventional prefix. The commit pins the
+      # version, so release/** needs no config of its own. The Run workflow
+      # button picks minor/major on main; on a release branch it is always a
+      # patch. Needs the release-please App as a bypass actor on the rulesets
+      # for main and release/**.
       - name: Add Release-As commit
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           BUMP: ${{ inputs.bump }}
+          BRANCH: ${{ github.ref_name }}
           HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
+          case "$BRANCH" in
+            main) if [ "$EVENT" = push ]; then BUMP=minor; fi ;;
+            release/*) BUMP=patch ;;
+            *) echo "::error::Run this workflow from main or a release/** branch, not $BRANCH."; exit 1 ;;
+          esac
           if [ "$EVENT" = push ]; then
-            BUMP=patch
             # Merging a release PR (or a hand-written `chore: release`) must not start the next one.
-            if [[ "${HEAD_MSG%%$'\n'*}" =~ ^chore(\(main\))?:\ release\  ]]; then
+            # On a release branch the release commit reads `chore(release/1.2.x): release 1.2.1`.
+            if [[ "${HEAD_MSG%%$'\n'*}" =~ ^chore(\([^\)]*\))?:\ release\  ]]; then
               echo "Head commit is a release commit; skipping."; exit 0
             fi
-            if [ -n "$(gh pr list --repo "$REPO" --label 'autorelease: pending' --state open --json number --jq '.[].number')" ]; then
-              echo "A release PR is already open; skipping."; exit 0
+            # Only this branch's release PR counts: main's always-open one must not suppress the release branch's.
+            if [ -n "$(gh pr list --repo "$REPO" --base "$BRANCH" --label 'autorelease: pending' --state open --json number --jq '.[].number')" ]; then
+              echo "A release PR is already open on $BRANCH; skipping."; exit 0
             fi
           fi
           for attempt in 1 2 3 4; do
-            head=$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)
+            head=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq .object.sha)
             tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha)
             cur=$(gh api "repos/$REPO/contents/.github/.release-please-manifest.json?ref=$head" \
               -H 'Accept: application/vnd.github.raw' | jq -r '.["."]')
@@ -78,19 +88,20 @@ jobs:
             esac
             msg=$(printf 'chore: release %s\n\n[skip ci]\n\nRelease-As: %s' "$next" "$next")
             new=$(gh api "repos/$REPO/git/commits" -f message="$msg" -f tree="$tree" -f "parents[]=$head" --jq .sha)
-            if out=$(gh api -X PATCH "repos/$REPO/git/refs/heads/main" -f sha="$new" -F force=false 2>&1); then
+            if out=$(gh api -X PATCH "repos/$REPO/git/refs/heads/$BRANCH" -f sha="$new" -F force=false 2>&1); then
               echo "Added Release-As: $next ($BUMP) on $new"; exit 0
             fi
             case "$out" in
-              *"not a fast forward"*) echo "main moved (attempt $attempt); retrying" ;;
-              *) echo "::error::Could not commit to main: $out. The \"main branch protection\" ruleset must list the release-please GitHub App as a bypass actor."; exit 1 ;;
+              *"not a fast forward"*) echo "$BRANCH moved (attempt $attempt); retrying" ;;
+              *) echo "::error::Could not commit to $BRANCH: $out. The ruleset covering $BRANCH must list the release-please GitHub App as a bypass actor."; exit 1 ;;
             esac
           done
-          echo "::error::main kept moving; gave up after 4 attempts."; exit 1
+          echo "::error::$BRANCH kept moving; gave up after 4 attempts."; exit 1
 
       - name: Run release-please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v4
         with:
           token: ${{ steps.app-token.outputs.token }}
+          target-branch: ${{ github.ref_name }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
