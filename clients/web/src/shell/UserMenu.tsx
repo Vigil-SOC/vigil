@@ -7,6 +7,7 @@ import { Icon } from '../shared/icons'
 import { HOME_SETUP_HREF } from '../screens/home/setupHidden'
 import { useColorScheme } from '../contexts/ColorSchemeContext'
 import { useToast } from './toast'
+import { returningFromProvider } from './providerProof'
 import TwoStepDialog from './TwoStepDialog'
 import ChangePasswordDialog from './ChangePasswordDialog'
 import SignInsDialog from './SignInsDialog'
@@ -54,7 +55,8 @@ export default function UserMenu({
   const [searchParams, setSearchParams] = useSearchParams()
   const { scheme, setScheme } = useColorScheme()
   const [open, setOpen] = useState(false)
-  const [twoStepOpen, setTwoStepOpen] = useState(false)
+  // back from confirming a method change at the provider: the dialog reopens where it was
+  const [twoStepOpen, setTwoStepOpen] = useState(returningFromProvider)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [signInsOpen, setSignInsOpen] = useState(false)
   const avatarRef = useRef<HTMLButtonElement>(null)

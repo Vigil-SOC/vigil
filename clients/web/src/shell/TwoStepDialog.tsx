@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { useAuth } from '../contexts/AuthContext'
-import { keysApi, mfaApi, type Factor } from '../services/api'
+import { keysApi, mfaApi, type Answer, type Factor } from '../services/api'
 import { cancelPrompt, confirmWithKey, createCredential, keysSupported, KeyProblem } from '../services/webauthn'
 import { Icon } from '../shared/icons'
 import MfaMethodsList, { type MfaMethod } from '../shared/MfaMethodsList'
 import { Field, PasswordInput, Popup, TextInput } from '../shared/ui'
+import { confirmAtProvider, dropProviderReturn, proofLive, proofRefused, providerReturn } from './providerProof'
 import { KEY_AFTER_CONTINUE, KeysUnavailable } from './SecurityKeyParts'
 
 type View = 'main' | 'enrol' | 'codes' | 'regenerate' | 'disable' | 'addKey' | 'removeKey'
@@ -93,6 +95,15 @@ export default function TwoStepDialog({
   // The first method saved while Require MFA holds the person here. Unset for a
   // voluntary setup and for someone who already has a method.
   const [justAdded, setJustAdded] = useState<'app' | 'key' | null>(null)
+  // Signs in only through SSO: confirming at the provider stands in for the password (#4756).
+  const viaSso = !!user?.sso_only
+  const provider = user?.sso_provider || 'your SSO provider'
+  const [proof, setProof] = useState<string | null>(null)
+  const confirmed = viaSso && proofLive(proof)
+  const answer: Answer = viaSso ? { sso_proof: proof ?? undefined } : { password }
+  const answered = viaSso ? confirmed : !!password
+  const location = useLocation()
+  const navigate = useNavigate()
 
   // Keys are offered only when this install can use them (the server's reason is shown otherwise).
   const keys = user?.security_keys
@@ -113,7 +124,8 @@ export default function TwoStepDialog({
         : null
 
   useEffect(() => {
-    if (open && enabled && view === 'main') {
+    // every view: a step reopened on the way back from the provider needs the methods too
+    if (open && enabled) {
       mfaApi
         .methods()
         .then((res) => setMethods(res.data))
@@ -134,9 +146,41 @@ export default function TwoStepDialog({
       setTarget(null)
       setViaKey(false)
       setJustAdded(null)
+      setProof(null)
+      dropProviderReturn()
       cancelPrompt()
     }
   }, [open])
+
+  // Back from confirming at the provider: reopen the step that asked, holding the proof.
+  // Idempotent, so a remount while the page loads lands in the same place.
+  useEffect(() => {
+    if (!open) return
+    const back = providerReturn((search) =>
+      navigate({ pathname: location.pathname, search, hash: location.hash }, { replace: true }),
+    )
+    if (!back) return
+    if (!back.proof) {
+      setError(`Vigil couldn't confirm it's you at ${provider}. Try again, signing in as yourself.`)
+      return
+    }
+    setProof(back.proof)
+    const step = back.step
+    setJustAdded(step?.justAdded ?? null)
+    // enrol reopens on the first screen, where Set up now starts it: the new secret is made once
+    if (step && ['regenerate', 'disable', 'addKey', 'removeKey'].includes(step.view)) {
+      setView(step.view as View)
+      setKeyName(step.keyName ?? '')
+      setTarget(step.target ?? null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  // Off to the provider; the dialog comes back at this step.
+  const leave = (step: View) => {
+    setBusy(true)
+    confirmAtProvider({ view: step, keyName, target, justAdded })
+  }
 
   const go = (next: View) => {
     setView(next)
@@ -153,7 +197,10 @@ export default function TwoStepDialog({
     try {
       return await call()
     } catch (e) {
-      setError(errText(e, fallback))
+      const text = errText(e, fallback)
+      // a proof the server no longer takes: offer the provider again
+      if (viaSso && proofRefused(text)) setProof(null)
+      setError(text)
       return undefined
     } finally {
       setBusy(false)
@@ -174,7 +221,7 @@ export default function TwoStepDialog({
     e.preventDefault()
     const besideKey = justAdded === 'key'
     const res = await run(
-      async () => mfaApi.verify(code.trim(), password, besideKey ? await factor() : {}),
+      async () => mfaApi.verify(code.trim(), answer, besideKey ? await factor() : {}),
       'Invalid MFA code',
     )
     if (!res) return
@@ -206,7 +253,7 @@ export default function TwoStepDialog({
 
   const regenerate = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(async () => mfaApi.regenerateRecoveryCodes(password, await factor()), 'Invalid MFA code')
+    const res = await run(async () => mfaApi.regenerateRecoveryCodes(answer, await factor()), 'Invalid MFA code')
     if (!res) return
     setCodes(res.data.recovery_codes)
     go('codes')
@@ -214,7 +261,7 @@ export default function TwoStepDialog({
 
   const disable = async (e: FormEvent) => {
     e.preventDefault()
-    const res = await run(async () => mfaApi.disable(password, await factor()), 'Invalid MFA code')
+    const res = await run(async () => mfaApi.disable(answer, await factor()), 'Invalid MFA code')
     if (!res) return
     await refreshUser()
     go('main')
@@ -227,7 +274,7 @@ export default function TwoStepDialog({
       const check = methodOn ? await factor() : {}
       const { data: reg } = await keysApi.registrationOptions()
       const credential = await createCredential(reg.options)
-      return keysApi.add({ name: keyName.trim(), credential, registration_challenge: reg.challenge, password, ...check })
+      return keysApi.add({ name: keyName.trim(), credential, registration_challenge: reg.challenge, ...answer, ...check })
     }, 'Could not add the key.')
     if (!res) return
     const issued = res.data.recovery_codes ?? []
@@ -250,14 +297,15 @@ export default function TwoStepDialog({
     e.preventDefault()
     if (!target?.key_id) return
     const id = target.key_id
-    const res = await run(async () => keysApi.remove(id, password, await factor()), 'Could not remove the key.')
+    const res = await run(async () => keysApi.remove(id, answer, await factor()), 'Could not remove the key.')
     if (!res) return
     // the last key of a key-only person turns two-step sign-in off
     await refreshUser()
     go('main')
   }
 
-  const passwordField = (
+  // The first half of the check: the password, or for an SSO-only person the provider.
+  const passwordField = !viaSso ? (
     <Field label="Password">
       <PasswordInput
         autoComplete="current-password"
@@ -266,7 +314,23 @@ export default function TwoStepDialog({
         onChange={(e) => setPassword(e.target.value)}
       />
     </Field>
+  ) : confirmed ? (
+    <div className="settings-banner ok">
+      <Icon name="check" size={14} /> Confirmed at {provider}. Finish within 5 minutes.
+    </div>
+  ) : (
+    <div className="flex flex-col gap-2">
+      <p className="m-0 text-sm text-tx-2 leading-relaxed">
+        You sign in through SSO, so you confirm at {provider} in place of a password. You'll come back here.
+      </p>
+      {/* wraps: a provider's host can be long */}
+      <button type="button" className="btn ghost self-start max-w-full break-all" disabled={busy} onClick={() => leave(view)}>
+        Confirm at {provider}
+      </button>
+    </div>
   )
+  // What every method change asks, in the help text.
+  const asks = viaSso ? `you to confirm at ${provider}` : 'for your password'
 
   // The factor half of a strong check: a code, or the key prompt that follows Continue.
   const factorField = keyNow ? (
@@ -293,7 +357,7 @@ export default function TwoStepDialog({
       )}
     </div>
   )
-  const strongReady = !!password && (keyNow || !!code.trim())
+  const strongReady = answered && (keyNow || !!code.trim())
   const strongBack = (
     <button type="button" className="btn ghost" onClick={() => go('main')} disabled={busy}>
       Back
@@ -336,10 +400,14 @@ export default function TwoStepDialog({
                 ? 'Two-step sign-in is required for your account. '
                 : 'Add a second step to signing in: '}
               {keysOn
-                ? 'A 6-digit code from an authenticator app, or a security key or passkey, in addition to your password.'
-                : 'A 6-digit code from an authenticator app, in addition to your password.'}
+                ? 'A 6-digit code from an authenticator app, or a security key or passkey, '
+                : 'A 6-digit code from an authenticator app, '}
+              {viaSso
+                ? `in addition to signing in at ${provider}. You confirm there first.`
+                : 'in addition to your password.'}
             </p>
             {keys && !keysOn && keys.available === false && <KeysUnavailable reason={keys.reason} />}
+            {confirmed && passwordField}
             <div className="flex flex-wrap justify-end gap-2.5">
               {required && (
                 <button className="btn ghost" onClick={() => void logout()}>
@@ -351,7 +419,11 @@ export default function TwoStepDialog({
                   <Icon name="key" size={14} /> Add a security key
                 </button>
               )}
-              <button className="btn primary" onClick={startSetup} disabled={busy}>
+              <button
+                className="btn primary"
+                onClick={viaSso && !confirmed ? () => leave('enrol') : startSetup}
+                disabled={busy}
+              >
                 {busy ? 'Working…' : 'Set up'}
               </button>
             </div>
@@ -435,7 +507,7 @@ export default function TwoStepDialog({
               >
                 {justAdded ? 'Back' : required ? 'Sign out' : 'Cancel'}
               </button>
-              <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6 || !password}>
+              <button type="submit" className="btn primary" disabled={busy || code.trim().length < 6 || !answered}>
                 {busy ? 'Verifying…' : 'Turn on'}
               </button>
             </div>
@@ -489,7 +561,7 @@ export default function TwoStepDialog({
         {(view === 'regenerate' || view === 'disable') && (
           <form className="flex flex-col gap-3.5" onSubmit={view === 'regenerate' ? regenerate : disable}>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
-              Changes to your sign-in methods always ask for your password and a second step.
+              Changes to your sign-in methods always ask {asks} and a second step.
               {view === 'regenerate'
                 ? ' Your current recovery codes will stop working; new codes are shown once.'
                 : ''}{' '}
@@ -514,8 +586,8 @@ export default function TwoStepDialog({
           <form className="flex flex-col gap-3.5" onSubmit={addKey}>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
               {methodOn
-                ? 'Changes to your sign-in methods always ask for your password and a second step. Adding a key ends no sign-in.'
-                : 'Your password is all that is needed to add your first method. Your browser then asks for the key.'}
+                ? `Changes to your sign-in methods always ask ${asks} and a second step. Adding a key ends no sign-in.`
+                : `${viaSso ? `Confirming at ${provider}` : 'Your password'} is all that is needed to add your first method. Your browser then asks for the key.`}
             </p>
             <Field label="Key name" hint="Your admin can see this name.">
               <TextInput
@@ -536,7 +608,7 @@ export default function TwoStepDialog({
               ) : (
                 strongBack
               )}
-              <button type="submit" className="btn primary" disabled={busy || !(methodOn ? strongReady : !!password)}>
+              <button type="submit" className="btn primary" disabled={busy || !(methodOn ? strongReady : answered)}>
                 {busy ? 'Working…' : 'Continue'}
               </button>
             </div>
@@ -552,7 +624,7 @@ export default function TwoStepDialog({
                 : 'Removing it signs you out of your other sign-ins. This sign-in stays open.'}
             </div>
             <p className="m-0 text-sm text-tx-2 leading-relaxed">
-              Changes to your sign-in methods always ask for your password and a second step.
+              Changes to your sign-in methods always ask {asks} and a second step.
             </p>
             {passwordField}
             {factorField}

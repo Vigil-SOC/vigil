@@ -36,6 +36,10 @@ interface User {
   mfa_setup_required?: boolean;
   /** Whether this install offers security keys, and why not when it doesn't. */
   security_keys?: { available: boolean; reason?: string | null };
+  /** Signs in only through SSO: a method change asks to confirm at the provider, not for a password. */
+  sso_only?: boolean;
+  /** The provider's host, for "Confirm at …". */
+  sso_provider?: string | null;
   last_login: string | null;
   login_count: number;
   permissions?: Record<string, boolean>;

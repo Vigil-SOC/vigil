@@ -2310,27 +2310,29 @@ export const breachedListApi = {
 
 /** The factor of a method change: a current code, or a security key's assertion and the challenge it signed. */
 export type Factor = { code?: string; assertion?: Record<string, unknown>; challenge?: string }
+// The first half of a method-change check: the password, or for a person who signs in only
+// through SSO the proof from confirming at the provider.
+export type Answer = { password?: string; sso_proof?: string }
 
 // Self-service two-step sign-in (TOTP + recovery codes + security keys) for the signed-in user.
 export const mfaApi = {
   setup: () => api.post<Schema<'MFASetupResponse'>>('/auth/mfa/setup'),
-  // the first method needs the password; a change to one that exists, the password and a code
-  // the first method sends the password; adding the app beside a key also sends that key
-  verify: (code: string, password: string, factor: Factor = {}) =>
+  // the first method sends the answer alone; adding the app beside a key also sends that key
+  verify: (code: string, answer: Answer, factor: Factor = {}) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/verify', {
       code,
-      password,
+      ...answer,
       ...factor,
     } satisfies Schema<'MFAVerifyRequest'>),
-  regenerateRecoveryCodes: (password: string, factor: Factor) =>
+  regenerateRecoveryCodes: (answer: Answer, factor: Factor) =>
     api.post<Schema<'RecoveryCodesResponse'>>('/auth/mfa/recovery-codes', {
-      password,
+      ...answer,
       ...factor,
     } satisfies Schema<'MFAVerifyRequest'>),
   // axios sends a DELETE body only through `data`
-  disable: (password: string, factor: Factor) =>
+  disable: (answer: Answer, factor: Factor) =>
     api.delete<{ message: string }>('/auth/mfa', {
-      data: { password, ...factor } satisfies Schema<'MFAVerifyRequest'>,
+      data: { ...answer, ...factor } satisfies Schema<'MFAVerifyRequest'>,
     }),
   methods: () => api.get<Schema<'MfaMethod'>[]>('/auth/mfa-methods'),
   // Another person's, read-only, for managers (users.write over the account).
@@ -2341,11 +2343,11 @@ export const mfaApi = {
 export const keysApi = {
   registrationOptions: () => api.post<Schema<'WebAuthnOptions'>>('/auth/mfa/keys/options'),
   assertionOptions: () => api.post<Schema<'WebAuthnOptions'>>('/auth/mfa/keys/assertion-options'),
-  // a person with no MFA yet sends the password alone; the first key then returns recovery codes
+  // a person with no MFA yet sends the answer alone; the first key then returns recovery codes
   add: (body: Schema<'RegisterKeyRequest'>) => api.post<Schema<'SecurityKeyAdded'>>('/auth/mfa/keys', body),
-  remove: (keyId: string, password: string, factor: Factor) =>
+  remove: (keyId: string, answer: Answer, factor: Factor) =>
     api.delete<{ message: string }>(`/auth/mfa/keys/${encodeURIComponent(keyId)}`, {
-      data: { password, ...factor } satisfies Schema<'MFAVerifyRequest'>,
+      data: { ...answer, ...factor } satisfies Schema<'MFAVerifyRequest'>,
     }),
 }
 
