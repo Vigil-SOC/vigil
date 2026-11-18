@@ -154,9 +154,10 @@ def has_disallowed_control_chars(text: str) -> bool:
 _TOOL_RESULT_OPEN = '<vigil:tool_result source="{source}" tool="{tool}">'
 _TOOL_RESULT_CLOSE = "</vigil:tool_result>"
 
-# Prompts wrap alert-sourced text in this element and tell the model the
-# block is data. Whitespace and case don't make a different tag.
-_ALERT_DATA_TAG = re.compile(r"<\s*/?\s*alert_data\s*>", re.IGNORECASE)
+# Prompts wrap alert-sourced text in this element, and identity facts about the
+# alert's entities in <entity_facts>, and tell the model each block is data.
+# Whitespace and case don't make a different tag.
+_ALERT_DATA_TAG = re.compile(r"<\s*/?\s*(?:alert_data|entity_facts)\s*>", re.IGNORECASE)
 
 
 def alert_text(value: object) -> str:

@@ -360,17 +360,24 @@ class TaskScheduler:
         if reads:
             logger.info("Cleanup removed %d episodic read log rows", reads)
 
+        # Entity facts past their time to live, or whose Case closed (#4741).
+        from core.integrations import entity_facts
+
+        facts = await asyncio.to_thread(entity_facts.sweep)
+
         logger.info(
             "Cleanup complete: expired %d unanswered approvals, removed %d "
-            "episodic read log rows",
+            "episodic read log rows, removed %d entity facts",
             expired,
             reads,
+            sum(facts.values()),
         )
 
         return {
             "cutoff_date": cutoff.isoformat(),
             "approvals_expired": expired,
             "read_log_removed": reads,
+            "entity_facts_removed": facts,
         }
 
     async def _run_mfa_coverage(self):

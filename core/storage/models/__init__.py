@@ -78,6 +78,7 @@ from core.storage.models.directory import (
     DirectoryGroupMember,
     DirectoryPending,
 )
+from core.storage.models.entity_fact import EntityFact
 from core.storage.models.episodic import (
     EpisodicDistilFailure,
     EpisodicDistilMarker,
@@ -151,6 +152,7 @@ __all__ = [
     "DetectionRuleCheckChange",
     "DetectionRuleStage",
     "DetectionRuleVersion",
+    "EntityFact",
     "EpisodicDistilFailure",
     "EpisodicDistilMarker",
     "EpisodicGap",

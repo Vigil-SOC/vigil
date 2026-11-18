@@ -2531,6 +2531,46 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column entity_facts.case_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
+ },
+ "column entity_facts.entity_key": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(512)"
+ },
+ "column entity_facts.expires_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column entity_facts.facts": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column entity_facts.fetched_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column entity_facts.hit_count": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column entity_facts.id": {
+  "default": "nextval('entity_facts_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column entity_facts.source": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(64)"
+ },
  "column episodic_distil_failures.attempts": {
   "default": null,
   "nullable": false,
@@ -5103,6 +5143,8 @@
  "constraint directory_group_members.directory_group_members_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint directory_groups.directory_groups_pkey": "PRIMARY KEY (group_id)",
  "constraint directory_pending.directory_pending_pkey": "PRIMARY KEY (pending_id)",
+ "constraint entity_facts.entity_facts_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
+ "constraint entity_facts.entity_facts_pkey": "PRIMARY KEY (id)",
  "constraint episodic_distil_failures.episodic_distil_failures_attempts_check": "CHECK ((attempts > 0))",
  "constraint episodic_distil_failures.episodic_distil_failures_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_pkey": "PRIMARY KEY (investigation_kind, failure_key)",
@@ -5412,6 +5454,7 @@
  "index directory_group_members_pkey": "CREATE UNIQUE INDEX directory_group_members_pkey ON public.directory_group_members USING btree (group_id, principal_id)",
  "index directory_groups_pkey": "CREATE UNIQUE INDEX directory_groups_pkey ON public.directory_groups USING btree (group_id)",
  "index directory_pending_pkey": "CREATE UNIQUE INDEX directory_pending_pkey ON public.directory_pending USING btree (pending_id)",
+ "index entity_facts_pkey": "CREATE UNIQUE INDEX entity_facts_pkey ON public.entity_facts USING btree (id)",
  "index episodic_distil_failures_pkey": "CREATE UNIQUE INDEX episodic_distil_failures_pkey ON public.episodic_distil_failures USING btree (investigation_kind, failure_key)",
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
@@ -5528,6 +5571,9 @@
  "index idx_detection_rules_origin_rule_id": "CREATE INDEX idx_detection_rules_origin_rule_id ON public.detection_rules USING btree (origin_rule_id)",
  "index idx_detection_rules_techniques": "CREATE INDEX idx_detection_rules_techniques ON public.detection_rules USING gin (techniques)",
  "index idx_directory_group_members_principal": "CREATE INDEX idx_directory_group_members_principal ON public.directory_group_members USING btree (principal_id)",
+ "index idx_entity_facts_case": "CREATE INDEX idx_entity_facts_case ON public.entity_facts USING btree (case_id) WHERE (case_id IS NOT NULL)",
+ "index idx_entity_facts_expires": "CREATE INDEX idx_entity_facts_expires ON public.entity_facts USING btree (expires_at)",
+ "index idx_entity_facts_fetched": "CREATE INDEX idx_entity_facts_fetched ON public.entity_facts USING btree (fetched_at)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
@@ -5657,6 +5703,7 @@
  "index uq_chat_messages_conv_seq": "CREATE UNIQUE INDEX uq_chat_messages_conv_seq ON public.chat_messages USING btree (conversation_id, seq)",
  "index uq_directory_groups_external": "CREATE UNIQUE INDEX uq_directory_groups_external ON public.directory_groups USING btree (external_id)",
  "index uq_directory_pending_external": "CREATE UNIQUE INDEX uq_directory_pending_external ON public.directory_pending USING btree (external_id)",
+ "index uq_entity_facts_key_source_case": "CREATE UNIQUE INDEX uq_entity_facts_key_source_case ON public.entity_facts USING btree (entity_key, source, COALESCE(case_id, ''::character varying))",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
  "index uq_shared_ioc_case_key": "CREATE UNIQUE INDEX uq_shared_ioc_case_key ON public.shared_iocs USING btree (case_id, ioc_type, value) WHERE (case_id IS NOT NULL)",
@@ -7027,6 +7074,44 @@
    false
   ],
   "sequence": null
+ },
+ "relation entity_facts": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation entity_facts_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation episodic_distil_failures": {
   "acl": [
