@@ -2,6 +2,7 @@
 // the hunt workflow, the checkpoint mirror, and Python's two permitted reads.
 
 import type { BudgetLimits, SpendPayload } from "./budget.js";
+import type { FactsPayload } from "./facts.js";
 import type { RecallPayload } from "./memory.js";
 
 // Adding a kind is never a migration: kind is text in the table and validated here
@@ -27,6 +28,8 @@ export const RUN_EVENT_KINDS = [
   "run",
   "spend",
   "recall",
+  // The entity facts an investigation opened on (#4742), beside its recall.
+  "facts",
   "dispatch",
   "checkpoint",
   "resolution",
@@ -322,6 +325,9 @@ export interface FramePayload {
   task: string;
   // The rendered recall block, which the recall event's rows render to.
   recall: string;
+  // The rendered entity-facts block, which the facts event renders to. Absent when
+  // the run's prefix carried none, as every frame before #4742 did.
+  facts?: string;
   tools: { id: string; hash: string }[];
   // Every skill the plugin offers, by the hash of the body load_skill would return.
   skills: { name: string; hash: string }[];
@@ -393,6 +399,9 @@ export interface RunEventPayloads {
   // the prefix carries the rows but nothing else records them, and a rebuild that
   // re-reads memory reads a neighbourhood that has moved since (ADR 0015).
   recall: RecallPayload;
+  // The entity-facts read an investigation opened on, verbatim, for the same reason:
+  // the prefix carries the rows and a replay renders them from here, not the table.
+  facts: FactsPayload;
   dispatch: DispatchPayload;
   checkpoint: CheckpointPayload;
   resolution: ResolutionPayload;

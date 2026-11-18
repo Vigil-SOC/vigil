@@ -11,7 +11,10 @@ credentials, auth factors and HR data cannot be.
 Facts inform and nothing branches on them: they go into the triage prompt and
 its stored result, never into a gate, ceiling or verdict.
 
-Rows written here carry no Case (``case_id`` NULL); the sweep in
+Triage's rows carry no Case (``case_id`` NULL). A run on a Case reads through
+``read_keys`` (#4742): it serves that Case's own rows, copies a fresh caseless
+row onto the Case before asking a source, and stores what it fetched on the
+Case; only a principal that may read the Case reads or writes its rows. The sweep in
 ``services/daemon/scheduler.py`` calls ``sweep`` to delete expired rows and rows
 whose Case closed. One trail entry per read and one per sweep, never per row.
 """
@@ -314,6 +317,25 @@ class FactRead:
                 out[field_name(fact.label, fact.value, name)] = f"{fact.value}: {shown}"
         return out
 
+    def journaled(self) -> Dict[str, Any]:
+        """The read as a run journals it (#4742): rows as read, no ages, so a
+        replay renders the same bytes. ``fetched_at`` is UTC."""
+        return {
+            "keys": list(self.keys),
+            "facts": [
+                {
+                    "entity": f.key,
+                    "value": f.value,
+                    "source": f.label,
+                    "fetched_at": f.fetched_at.isoformat() + "Z",
+                    "fields": f.facts,
+                }
+                for f in self.facts
+            ],
+            "sources_unavailable": dict(self.unavailable),
+            "dropped_keys": self.dropped,
+        }
+
     def stored(self, now: datetime) -> Dict[str, Any]:
         """What triage was shown, kept on its result."""
         return {
@@ -355,10 +377,14 @@ def candidates(finding: Dict[str, Any]) -> List[Tuple[str, str]]:
     return out
 
 
+Row = Tuple[Dict, datetime, datetime]  # facts, fetched_at, expires_at
+
+
 def _load(
-    pairs: List[Tuple[str, str]], now: datetime
-) -> Dict[Tuple[str, str], Tuple[Dict, datetime]]:
-    """Unexpired triage rows for (key, source), counting each served row's hit."""
+    pairs: List[Tuple[str, str]], now: datetime, case_id: Optional[str] = None
+) -> Dict[Tuple[str, str], Row]:
+    """Unexpired rows of ``case_id`` (None: triage's) for (key, source), counting
+    each served row's hit."""
     if not pairs:
         return {}
     from core.storage.unit_of_work import unit_of_work
@@ -368,27 +394,33 @@ def _load(
         rows = session.execute(
             text("""
                 UPDATE public.entity_facts SET hit_count = hit_count + 1
-                WHERE case_id IS NULL AND expires_at > :now
+                WHERE COALESCE(case_id, '') = :case AND expires_at > :now
                   AND entity_key = ANY(:keys)
-                RETURNING entity_key, source, facts, fetched_at
+                RETURNING entity_key, source, facts, fetched_at, expires_at
             """),
-            {"now": now, "keys": keys},
+            {"now": now, "keys": keys, "case": case_id or ""},
         ).all()
     wanted = set(pairs)
-    return {(k, s): (f, at) for k, s, f, at in rows if (k, s) in wanted}
+    return {(k, s): (f, at, ex) for k, s, f, at, ex in rows if (k, s) in wanted}
 
 
-def _store(rows: List[Tuple[str, str, Dict, datetime]], limits: FactLimits) -> int:
-    """Upsert the fetched rows, then evict the oldest past the cap. Evicted count."""
+StoredRow = Tuple[str, str, Dict, datetime, Optional[datetime]]
+
+
+def _store(
+    rows: List[StoredRow], limits: FactLimits, case_id: Optional[str] = None
+) -> int:
+    """Upsert the rows on ``case_id`` (None: triage's), then evict the oldest past
+    the cap. A row with no expiry expires a TTL after it was fetched. Evicted count."""
     from core.storage.unit_of_work import unit_of_work
 
     with unit_of_work() as session:
-        for key, source, facts, at in rows:
+        for key, source, facts, at, expires in rows:
             session.execute(
                 text("""
                     INSERT INTO public.entity_facts
                         (entity_key, source, case_id, facts, fetched_at, expires_at)
-                    VALUES (:key, :source, NULL, CAST(:facts AS jsonb), :at, :expires)
+                    VALUES (:key, :source, :case, CAST(:facts AS jsonb), :at, :expires)
                     ON CONFLICT (entity_key, source, COALESCE(case_id, ''))
                     DO UPDATE SET facts = EXCLUDED.facts, fetched_at = EXCLUDED.fetched_at,
                         expires_at = EXCLUDED.expires_at, hit_count = 0
@@ -396,9 +428,10 @@ def _store(rows: List[Tuple[str, str, Dict, datetime]], limits: FactLimits) -> i
                 {
                     "key": key,
                     "source": source,
+                    "case": case_id,
                     "facts": json.dumps(facts, default=str),
                     "at": at,
-                    "expires": at + timedelta(hours=limits.ttl_hours),
+                    "expires": expires or at + timedelta(hours=limits.ttl_hours),
                 },
             )
     # Its own transaction: an eviction that fails must not undo the upserts.
@@ -602,18 +635,91 @@ async def _fetch(
 async def read(finding: Dict[str, Any]) -> FactRead:
     """The facts for a finding's users and hosts. Never raises and never waits past
     the budget: whatever a source has not answered by then is unavailable."""
+    return await _guarded(
+        lambda: candidates(finding), {"finding_id": finding.get("finding_id")}, None
+    )
+
+
+def key_pairs(keys: List[str]) -> List[Tuple[str, str]]:
+    """(Entity Key, value) for the keys of a kind some source answers, in order.
+    The value is the part after ``type:``, as the key spells it."""
+    out, seen = [], set()
+    for key in keys:
+        kind, _, value = str(key).partition(":")
+        if kind in KINDS and value.strip() and key not in seen:
+            seen.add(key)
+            out.append((key, value.strip()))
+    return out
+
+
+class CaseUnreadable(Exception):
+    """The caller may not read the Case the read names, or there is no such Case."""
+
+
+def _case_refusal(case_id: str) -> Optional[str]:
+    """Why the bound caller may not read ``case_id``'s rows, or None. A run's
+    person reads as that person; a run with none as the case loaders read it."""
+    from core.auth.tool_principal import current_claims
+    from core.storage import case_read_hook
+    from core.storage.models import Case
+    from core.storage.unit_of_work import unit_of_work
+
+    claims = current_claims()
+    with unit_of_work() as session:
+        case = session.get(Case, case_id)
+        if case is None:
+            return f"case {case_id} not found"
+        allowed = (
+            case_read_hook.may_read_as(case, claims.person_id)
+            if claims is not None and claims.person_id
+            else case_read_hook.may_read(case)
+        )
+    return None if allowed else f"this run may not read case {case_id}"
+
+
+async def read_keys(keys: List[str], case_id: Optional[str] = None) -> FactRead:
+    """The facts for a run's trigger Entity Keys, on ``case_id``'s rows when it
+    names one. Raises CaseUnreadable when the caller may not read that Case,
+    and never falls back to triage's rows; otherwise as ``read``."""
+    if case_id and (why := await asyncio.to_thread(_case_refusal, case_id)):
+        raise CaseUnreadable(why)
+    return await _guarded(lambda: key_pairs(keys), {"case_id": case_id}, case_id)
+
+
+async def _guarded(
+    asked: Callable[[], List[Tuple[str, str]]],
+    entry: Dict[str, Any],
+    case_id: Optional[str],
+) -> FactRead:
     result = FactRead()
     try:
-        await _read(finding, result)
-    except Exception as exc:  # noqa: BLE001 - triage answers with what was read
+        await _read(asked(), result, entry, case_id)
+    except Exception as exc:  # noqa: BLE001 - the reader answers with what was read
         logger.exception("entity facts not read")
         result.unavailable["entity facts"] = f"{type(exc).__name__}: {exc}"
     return result
 
 
-async def _read(finding: Dict[str, Any], result: FactRead) -> None:
+def _load_for(
+    pairs: List[Tuple[str, str]], now: datetime, case_id: Optional[str]
+) -> Tuple[Dict[Tuple[str, str], Row], List[StoredRow]]:
+    """The rows served, and the caseless rows copied onto ``case_id`` with their
+    facts, fetched_at and expiry, so a source is asked only for what neither has."""
+    served = _load(pairs, now, case_id)
+    if not case_id:
+        return served, []
+    copied = _load([p for p in pairs if p not in served], now)
+    served.update(copied)
+    return served, [(k, s, f, at, ex) for (k, s), (f, at, ex) in copied.items()]
+
+
+async def _read(
+    asked: List[Tuple[str, str]],
+    result: FactRead,
+    entry: Dict[str, Any],
+    case_id: Optional[str],
+) -> None:
     started = time.monotonic()
-    asked = candidates(finding)
     if not asked:
         return
     result.keys = [k for k, _ in asked]  # until the limits say how many
@@ -633,10 +739,11 @@ async def _read(finding: Dict[str, Any], result: FactRead) -> None:
         for s in SOURCES
         if k.split(":", 1)[0] in s.kinds
     ]
-    served: Dict[Tuple[str, str], Tuple[Dict, datetime]] = {}
+    served: Dict[Tuple[str, str], Row] = {}
+    copied: List[StoredRow] = []
     try:
-        served = await asyncio.wait_for(
-            asyncio.to_thread(_load, pairs, utcnow()), _left(deadline)
+        served, copied = await asyncio.wait_for(
+            asyncio.to_thread(_load_for, pairs, utcnow(), case_id), _left(deadline)
         )
     except Exception as exc:  # noqa: BLE001 - every pair is then a miss
         logger.warning("entity facts not loaded: %s", type(exc).__name__)
@@ -678,7 +785,7 @@ async def _read(finding: Dict[str, Any], result: FactRead) -> None:
             server, {"served": 0, "fetched": 0, "unavailable": 0}
         )
         if (key, server) in served:
-            facts, at = served[(key, server)]
+            facts, at, _ = served[(key, server)]
             counts["served"] += 1
         elif (key, server) in fetched:
             facts, at = fetched[(key, server)], fetched_at
@@ -701,9 +808,12 @@ async def _read(finding: Dict[str, Any], result: FactRead) -> None:
             )
 
     # Stored and recorded after triage has its answer, so neither adds to the wait.
-    rows = sorted((k, s, f, fetched_at) for (k, s), f in fetched.items())
+    rows: List[StoredRow] = copied + sorted(
+        (k, s, f, fetched_at, None) for (k, s), f in fetched.items()
+    )
     entry = {
-        "finding_id": finding.get("finding_id"),
+        **entry,
+        "rows_copied": len(copied),
         "keys_asked": len(result.keys),
         "keys_dropped": result.dropped,
         "sources": {
@@ -719,18 +829,20 @@ async def _read(finding: Dict[str, Any], result: FactRead) -> None:
             for server, counts in result.counts.items()
         },
     }
-    _spawn(asyncio.to_thread(_finish, rows, limits, entry, list(result.keys)))
+    _spawn(asyncio.to_thread(_finish, rows, limits, entry, list(result.keys), case_id))
 
 
 def _finish(
-    rows: List[Tuple[str, str, Dict, datetime]],
+    rows: List[StoredRow],
     limits: FactLimits,
     entry: Dict[str, Any],
     keys: List[str],
+    case_id: Optional[str] = None,
 ) -> None:
-    """Store what was fetched, evict past the cap, then the read's one trail entry."""
+    """Store what was fetched or copied, evict past the cap, then the read's one
+    trail entry."""
     try:
-        entry["rows_evicted"] = _store(rows, limits) if rows else 0
+        entry["rows_evicted"] = _store(rows, limits, case_id) if rows else 0
     except Exception:  # noqa: BLE001 - the facts were shown; the next read refetches
         logger.exception("entity facts not stored")
         entry["store_failed"] = True

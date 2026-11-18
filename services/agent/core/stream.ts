@@ -6,6 +6,7 @@ import { GatewayExhausted } from "./limiter.js";
 import { ModelSilent, OutputCapReached } from "./wire.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
+import { factsPayloadOf, type FactsPayload } from "../contracts/facts.js";
 import { hasRecall, isRecalled, recalledNotesOf, recalledNotes, type RecallPayload } from "../contracts/memory.js";
 import { ToolBoundsViolation, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import {
@@ -19,7 +20,7 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, stopCauseOf, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, canonical, DEFAULT_FOLD, prefixOf, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
+import { assemble, canonical, DEFAULT_FOLD, prefixOf, renderFacts, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
 import { createHash } from "node:crypto";
 import { redactCredentials, scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
@@ -59,6 +60,7 @@ export interface FrameSeen {
   system: string;
   task: string;
   recall: string;
+  facts: string;
   tools: readonly ToolSchema[];
   // The caller's history: how many messages, and the messages themselves.
   history: readonly Message[];
@@ -159,6 +161,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       this.cfg.system,
       submit ? [...offered, { id: SUBMIT_TOOL, description: "Give your final answer, in the shape its parameters describe. Call it alone, once you can answer.", parameters: schema }] : offered,
       await this.recalled(),
+      await this.facts(),
     );
 
     const reserved = submit ? this.cfg.answer_within_cap === true : schema === null && this.cfg.max_turns > 0;
@@ -203,6 +206,43 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // from a read that never ran.
     await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "recall", payload });
     return isRecalled(payload) ? recalledNotes(payload) : [];
+  }
+
+  // The entity facts an investigation opens on (#4742), read by the harness as
+  // Recall is: once per run, journaled whether it found something, nothing, or could
+  // not happen, and re-rendered from that event on later turns, on resume and in a
+  // replay. Facts inform and settle nothing, so a read that failed costs the run an
+  // aid and the run goes on.
+  private async facts(): Promise<string> {
+    const ask = this.cfg.facts;
+    if (ask === undefined) return "";
+    const log = await this.harness.state.read(this.cfg.run_id);
+    const held = factsPayloadOf(log);
+    if (held !== null) return renderFacts(held);
+    // A run that already showed a model its prefix without facts -- one started
+    // before this read existed -- keeps that prefix rather than growing it mid-run.
+    if (log.some((one) => one.kind === "frame")) return "";
+    const payload = await this.readFacts(ask.keys, ask.case_id);
+    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "facts", payload });
+    return renderFacts(payload);
+  }
+
+  private async readFacts(keys: readonly string[], caseId: string | null): Promise<FactsPayload> {
+    // Known-to-be-none without asking: a run whose findings named no entity.
+    if (keys.length === 0) return { keys: [], case_id: caseId, facts: [], sources_unavailable: {}, dropped_keys: 0 };
+    try {
+      if (this.harness.memory.facts === undefined) throw new Error("no entity-facts read is wired behind this seam");
+      return await this.harness.memory.facts({
+        keys,
+        caseId,
+        asOf: new Date().toISOString(),
+        runId: this.cfg.run_id,
+        ...(this.cfg.signal === undefined ? {} : { signal: this.cfg.signal }),
+      });
+    } catch (error) {
+      if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+      return { keys, case_id: caseId, unavailable: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   // A read that cannot be served is journaled as itself and the run goes on.
@@ -612,6 +652,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       system: this.prefix.system,
       task: this.cfg.task,
       recall: this.prefix.recall,
+      facts: this.prefix.facts ?? "",
       tools: request.tools,
       history: this.cfg.history ?? [],
       results: this.results,
@@ -823,6 +864,7 @@ export interface InputParts {
   system: string;
   tools: readonly ToolSchema[];
   recall: string;
+  facts?: string;
   task: string;
   transcript: readonly Message[];
   tail: string | null;
@@ -832,7 +874,7 @@ export interface InputParts {
 }
 
 export function rebuiltInput(parts: InputParts): { messages: Message[]; input: string; folded: number } {
-  const prefix: Prefix = { system: parts.system, tools: parts.tools, recall: parts.recall };
+  const prefix: Prefix = { system: parts.system, tools: parts.tools, recall: parts.recall, ...(parts.facts ? { facts: parts.facts } : {}) };
   const { messages, folded } = assemble(
     prefix,
     parts.task,
