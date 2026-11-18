@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from sqlalchemy import func, select
 
+from core.agents.enablement import disabled_agent_ids
 from core.detections import gap_run
 from core.detections.engineering import proposals
 from core.detections.tools import get_security_detection_tools
@@ -34,7 +35,9 @@ QUEUED, NOTHING_TO_RAISE, BLIND_SPOTS_ONLY, REFUSED, NOT_QUEUED = (
     "not_queued",
 )
 
-# In the console's words: Workflows → Agents, the agent's "on" toggle.
+# The gaps workflow is one agent alone, switched with the agent (the workflows
+# route refuses agent-run- ids); the console's words for that toggle.
+_GAPS_AGENT = DETECTION_GAPS_WORKFLOW.removeprefix("agent-run-")
 WORKFLOW_OFF = (
     f"The detection gaps run is turned off: its workflow {DETECTION_GAPS_WORKFLOW} "
     "is off. Turn it on in Workflows → Agents with the 'MITRE ATT&CK analyst on' "
@@ -108,7 +111,7 @@ async def start_gaps_run(person: Optional[Dict[str, str]] = None) -> GapsRunOutc
     orchestrator's ``_person``); with one the row is ``trigger_type`` "manual", so
     the daily clock doesn't count it. None is the daily tick.
     """
-    if not is_enabled(DETECTION_GAPS_WORKFLOW):
+    if not is_enabled(DETECTION_GAPS_WORKFLOW) or _GAPS_AGENT in disabled_agent_ids():
         return GapsRunOutcome(REFUSED, WORKFLOW_OFF)
     with _try_lock() as got:
         if not got:
