@@ -40,7 +40,7 @@
     "credential": {
       "type": "string",
       "title": "Vigil MCP credential",
-      "description": "A token minted in Settings or with python -m core.auth.mcp_token <username>.",
+      "description": "A personal API token minted in Settings or with python -m core.auth.mcp_token <username>. To sign in with OAuth instead, add Vigil with claude mcp add (see the plugin README).",
       "required": true,
       "sensitive": true
     }

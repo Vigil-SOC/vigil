@@ -263,6 +263,10 @@ run Vigil anywhere real:
   Kubernetes deployments.
 - **[Deployment guide](https://vigilsoc.org/docs/deployment/)** — network exposure,
   TLS termination, and reverse-proxy placement.
+- **[OAuth on the MCP surface](docs/mcp-oauth.md)** — off by default. Turning it
+  on needs the MCP surface open, an https (or loopback) `VIGIL_FRONTEND_URL`, and
+  `mcp.oauth_enabled`, plus the host-root proxy routes and a redirect allowlist
+  that names only the hosted clients you use.
 
 Non-negotiables: set `DEV_MODE=false`, generate a real `JWT_SECRET_KEY`, keep
 per-install database passwords (Compose: `./start.sh` generates all three; Helm:
