@@ -5584,6 +5584,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/surface/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Surface Oauth
+         * @description Turn OAuth on the surface on or off. On is refused, with the reason,
+         *     unless the surface is open and the public base URL is https or loopback.
+         */
+        put: operations["put_api_mcp_surface_oauth"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/decisions": {
         parameters: {
             query?: never;
@@ -26998,6 +27019,41 @@ export interface operations {
         };
     };
     put_api_mcp_surface: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SurfaceToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_mcp_surface_oauth: {
         parameters: {
             query?: never;
             header?: {

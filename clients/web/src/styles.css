@@ -4289,6 +4289,25 @@
       color: var(--tx2);
    }
 
+   .mcp-urls {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 4px 12px;
+      margin: 0;
+      padding: 0 12px;
+      font-size: 12px;
+      line-height: 1.45;
+   }
+
+   .mcp-urls dt { color: var(--tx2); }
+
+   .mcp-urls dd {
+      margin: 0;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: var(--tx0);
+   }
+
    .mcp-onoff-text b {
       font-size: 13px;
       font-weight: 650;

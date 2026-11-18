@@ -403,7 +403,12 @@ class SurfaceToggle(BaseModel):
 @router.get("/surface")
 async def get_surface(current_user: User = Depends(get_current_active_user)):
     """Whether Vigil's own tools are reachable, and whether any token can open them."""
-    from core.integrations.mcp.surface import is_enabled
+    from core.integrations.mcp.surface import (
+        is_enabled,
+        oauth_refusal,
+        oauth_requested,
+        oauth_urls,
+    )
     from core.storage.models import McpCredential
     from core.storage.unit_of_work import unit_of_work
     from core.time import utcnow
@@ -425,6 +430,17 @@ async def get_surface(current_user: User = Depends(get_current_active_user)):
         "enabled": is_enabled(),
         "path": surface_address(),
         "has_token": usable is not None,
+        "oauth": _oauth_state(oauth_requested(), oauth_refusal(), oauth_urls()),
+    }
+
+
+def _oauth_state(requested: bool, refusal: Optional[str], urls: dict) -> dict:
+    # ``enabled`` is the effective answer; ``requested`` is the switch itself.
+    return {
+        "enabled": requested and refusal is None,
+        "requested": requested,
+        "refusal": refusal,
+        **urls,
     }
 
 
@@ -447,3 +463,32 @@ async def set_surface(
         current_user.username,
     )
     return {"enabled": body.enabled}
+
+
+@router.put("/surface/oauth")
+async def set_surface_oauth(
+    body: SurfaceToggle,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Turn OAuth on the surface on or off. On is refused, with the reason,
+    unless the surface is open and the public base URL is https or loopback."""
+    require_integrations_admin(current_user)
+
+    from core.integrations.mcp.surface import (
+        oauth_refusal,
+        oauth_urls,
+        set_oauth_enabled,
+    )
+
+    refusal = oauth_refusal()
+    if body.enabled and refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+    if not set_oauth_enabled(body.enabled, updated_by=str(current_user.user_id)):
+        raise HTTPException(status_code=500, detail="Could not save the setting")
+
+    logger.warning(
+        "MCP OAuth %s by %s",
+        "enabled" if body.enabled else "disabled",
+        current_user.username,
+    )
+    return _oauth_state(body.enabled, refusal, oauth_urls())

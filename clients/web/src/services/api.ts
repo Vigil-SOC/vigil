@@ -523,6 +523,8 @@ export const mcpApi = {
   getSurface: () => api.get('/mcp/surface'),
 
   setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+
+  setSurfaceOAuthEnabled: (enabled: boolean) => api.put('/mcp/surface/oauth', { enabled }),
 }
 
 export interface ApiTokenHolder {
