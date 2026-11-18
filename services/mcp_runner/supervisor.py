@@ -9,8 +9,11 @@ manager up; they never enter it.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import stat
+import subprocess
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +26,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 
+from core.integrations.mcp.child_env import SECURITY_LAKE_SERVER, aws_pointer_env
 from core.integrations.mcp.client import PersistentServerSession
 from services.mcp_runner.catalog import TMP_DIR, Catalog
 
@@ -32,6 +36,40 @@ STDERR_TAIL_LINES = 40
 EXIT_POLL_SECONDS = 0.5
 # By path: a bare name would be looked up on the child env's PATH, as root.
 SETPRIV = "/usr/bin/setpriv"
+
+# The Security Lake server's AWS file pointers. What they name (an IRSA or Pod
+# Identity token projected root-owned 0600, a config mounted root-owned 0600) is
+# readable by this root process but not by the server's uid, and the runner can
+# neither chown nor chmod it. So the server gets a private copy in its own 0700
+# HOME, written as its uid, and the pointer names the copy.
+AWS_FILE_VARS = (
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+)
+AWS_COPY_DIR = ".aws-vigil"
+AWS_COPY_MAX_BYTES = 1 << 20
+# Well inside kubelet's rotation margin (it rotates at 80% of a token's life,
+# and a projected token lives at least 10 minutes).
+AWS_COPY_REFRESH_SECONDS = 60
+# Run as the server's uid: umask 077, then an atomic replace so botocore never
+# reads a half-written token.
+_WRITE_COPY = 'umask 077 && mkdir -p "${1%/*}" && cat > "$1.tmp" && mv -f "$1.tmp" "$1"'
+
+
+def _read_regular(path: str) -> bytes:
+    """A regular file's bytes, refusing a FIFO or device (it could block or never
+    end) and anything over AWS_COPY_MAX_BYTES."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > AWS_COPY_MAX_BYTES:
+            raise ValueError("not a regular file under 1 MiB")
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            return f.read(AWS_COPY_MAX_BYTES + 1)[:AWS_COPY_MAX_BYTES]
+    finally:
+        os.close(fd)
 
 
 class ShuttingDown(Exception):
@@ -111,6 +149,8 @@ class Child:
     exit_code: Optional[int] = None
     error: Optional[str] = None
     manager: Optional[StreamableHTTPSessionManager] = None
+    # AWS_FILE_VARS name -> [source path, copy path, digest last written]
+    copies: Dict[str, list] = field(default_factory=dict)
 
     def status(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"state": self.state, "pid": self.pid, "uid": self.uid}
@@ -228,6 +268,16 @@ class Supervisor:
             (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
         launch = self.catalog.launch(child.name, child.env, str(home))
         command, args = launch.command, launch.args
+        if self.switch_uid and child.name == SECURITY_LAKE_SERVER:
+            # Only paths from this runner's own env: root must never read a
+            # path the request env names (it may override a pointer, and then
+            # the child reads that path as its own uid).
+            own = aws_pointer_env(child.name)
+            for var in AWS_FILE_VARS:
+                if (src := own.get(var)) and launch.env.get(var) == src:
+                    dst = str(home / AWS_COPY_DIR / var.lower())
+                    child.copies[var] = [src, dst, None]
+                    launch.env[var] = dst
         if self.switch_uid:
             args = [
                 f"--reuid={child.uid}",
@@ -242,6 +292,55 @@ class Supervisor:
         return StdioServerParameters(
             command=command, args=args, cwd=launch.cwd, env=launch.env
         )
+
+    def _sync_copies(self, child: Child) -> None:
+        """Rewrite each copy whose source changed (a rotated token, an edited config)."""
+        for entry in child.copies.values():
+            src, dst, last = entry
+            try:
+                data = _read_regular(src)
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "MCP server %s: cannot read %s (%s)", child.name, src, exc
+                )
+                continue
+            digest = hashlib.sha256(data).digest()
+            if digest == last:
+                continue
+            try:
+                done = subprocess.run(
+                    [
+                        SETPRIV,
+                        f"--reuid={child.uid}",
+                        f"--regid={child.uid}",
+                        "--clear-groups",
+                        "--inh-caps=-all",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        _WRITE_COPY,
+                        "sh",
+                        dst,
+                    ],
+                    input=data,
+                    env={"PATH": "/usr/bin:/bin"},
+                    capture_output=True,
+                    timeout=10,
+                )
+                error = done.stderr.decode("utf-8", "replace").strip()
+            except (OSError, subprocess.SubprocessError) as exc:
+                done, error = None, type(exc).__name__
+            if done is not None and done.returncode == 0:
+                entry[2] = digest
+            else:
+                logger.warning(
+                    "MCP server %s: copying %s failed: %s", child.name, src, error
+                )
+
+    async def _refresh_copies(self, child: Child) -> None:
+        while True:
+            await anyio.sleep(AWS_COPY_REFRESH_SECONDS)
+            await anyio.to_thread.run_sync(self._sync_copies, child)
 
     async def _drain(self, fd: int, child: Child, drained: anyio.Event) -> None:
         """Forward the child's stderr to the log and keep its tail."""
@@ -275,8 +374,13 @@ class Supervisor:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(self._drain, read_fd, child, drained)
                 try:
+                    params = self._params(child)
+                    if child.copies:
+                        # Off the loop: a slow mount must not stall other servers.
+                        await anyio.to_thread.run_sync(self._sync_copies, child)
+                        tg.start_soon(self._refresh_copies, child)
                     session = _ChildSession(
-                        child.name, self._params(child), write_fd, self.start_timeout
+                        child.name, params, write_fd, self.start_timeout
                     )
                     write_fd = -1  # connect owns it now
                     await self._run_child(child, session)
