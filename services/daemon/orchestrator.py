@@ -980,6 +980,7 @@ class Orchestrator:
             "_supervision_loop": self._supervision_loop,
             "_distil_loop": self._distil_loop,
             "_run_retry_loop": self._run_retry_loop,
+            "_indicator_catchup_loop": self._indicator_catchup_loop,
         }
         tasks = []
         for name, loop in loops.items():
@@ -2315,6 +2316,32 @@ class Orchestrator:
                 break
             except Exception as e:
                 logger.error(f"Run retry loop error: {e}", exc_info=True)
+
+            await self._sleep(shutdown_event, self.config.loop_interval)
+
+    async def _indicator_catchup_loop(self, shutdown_event: asyncio.Event):
+        """Reconcile existing, hand-opened and drifted Cases into the shared IOC index (#4734).
+
+        Runs whether AutoOps is on or off: intake joins alerts through the index.
+        """
+        from core.storage.indicator_catchup import catch_up_once
+
+        while not shutdown_event.is_set():
+            try:
+                started = time.monotonic()
+                done = await asyncio.to_thread(catch_up_once)
+                if done.reconciled or done.failed:
+                    logger.info(
+                        "Indicator catch-up: %s reconciled, %s failed, %s skipped in %.2fs",
+                        done.reconciled,
+                        done.failed,
+                        done.skipped,
+                        time.monotonic() - started,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Indicator catch-up loop error: {e}", exc_info=True)
 
             await self._sleep(shutdown_event, self.config.loop_interval)
 
