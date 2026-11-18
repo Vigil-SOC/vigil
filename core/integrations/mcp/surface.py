@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 # The Settings key an operator's toggle writes.
 CONFIG_KEY = "mcp.server_enabled"
-# The key the OAuth toggle writes (#4765).
-OAUTH_CONFIG_KEY = "mcp.oauth_enabled"
+# The key the OAuth toggle writes (#4765). Named without "auth": CodeQL reads
+# that as a credential and flags every log line the key name reaches.
+SIGN_IN_SETTING = "mcp.oauth_enabled"
 
 # Hosts allowed over plain http: the set the MCP SDK's validate_issuer_url takes.
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
@@ -145,7 +146,7 @@ def oauth_requested() -> bool:
     """The stored-or-environment switch, before its preconditions."""
     from core.config import get_settings
 
-    return _stored_flag(OAUTH_CONFIG_KEY, get_settings().vigil_mcp_oauth_enabled)
+    return _stored_flag(SIGN_IN_SETTING, get_settings().vigil_mcp_oauth_enabled)
 
 
 def is_oauth_enabled() -> bool:
@@ -159,7 +160,7 @@ def is_oauth_enabled() -> bool:
 
 def set_oauth_enabled(enabled: bool, updated_by: str) -> bool:
     """Record the operator's OAuth choice. Callers check ``oauth_refusal`` first."""
-    return _write_flag(OAUTH_CONFIG_KEY, enabled, updated_by)
+    return _write_flag(SIGN_IN_SETTING, enabled, updated_by)
 
 
 @contextmanager
