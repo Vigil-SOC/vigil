@@ -9682,6 +9682,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/insider-leads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Insider Leads
+         * @description Which findings are insider leads and who reads the cases they open:
+         *     ``{sources, rule_names, readers, teams}``. With no source or rule name,
+         *     automatic start is off.
+         */
+        get: operations["get_api_workflows_threat-hunt_insider-leads"];
+        /**
+         * Set Insider Leads
+         * @description Replace the lead list. Adding anything is a person's own act, not a token's;
+         *     a list left on needs a reader or team, each checked as for a restricted case.
+         */
+        put: operations["put_api_workflows_threat-hunt_insider-leads"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/threat-hunt/lead-proposal": {
         parameters: {
             query?: never;
@@ -13287,6 +13314,17 @@ export interface components {
             message: string;
             /** Success */
             success: boolean;
+        };
+        /** InsiderLeadsBody */
+        InsiderLeadsBody: {
+            /** Readers */
+            readers?: string[];
+            /** Rule Names */
+            rule_names?: string[];
+            /** Sources */
+            sources?: string[];
+            /** Teams */
+            teams?: string[];
         };
         /** IntakeLaunchResponse */
         IntakeLaunchResponse: {
@@ -34280,6 +34318,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_workflows_threat-hunt_insider-leads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_workflows_threat-hunt_insider-leads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsiderLeadsBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

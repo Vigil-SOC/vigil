@@ -1491,11 +1491,17 @@ interface HuntDocument {
   condensed: boolean
 }
 
+export type InsiderLeads = Required<Schema<'InsiderLeadsBody'>>
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
   /** Who runs it, its model, what it may do, where it stops and pauses; a hunt kind adds capabilities and pricing. */
   preflight: (id: string) => api.get(`/workflows/${id}/preflight`),
+  /** The insider lead list: which findings count as leads, and who reads the cases they open (#4778). */
+  insiderLeads: () => api.get<InsiderLeads>('/workflows/threat-hunt/insider-leads'),
+  /** Replaces the list. Adding anything needs a person's own session; a refusal carries its reason. */
+  setInsiderLeads: (body: InsiderLeads) => api.put<InsiderLeads>('/workflows/threat-hunt/insider-leads', body),
   /** Turns a workflow on or off. A 409 carries the reason it cannot be turned off. */
   setEnabled: (id: string, enabled: boolean) => api.put(`/workflows/${id}/enabled`, { enabled }),
   execute: (id: string, params: {

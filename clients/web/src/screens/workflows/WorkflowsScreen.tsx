@@ -9,7 +9,7 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, AgentRowsProvider, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, type InsiderLeads, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
 import { HuntDetections } from './HuntDetections'
 import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
@@ -18,6 +18,7 @@ import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
+import { ReaderPicker, useReaderNames } from '../cases/RestrictCase'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost, fmtOver } from '../../shared/cost'
 import { STOP_CAUSES, stopCauseOf } from '../../shared/stopCause'
@@ -355,7 +356,9 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
                 onEdit={() => setModal({ kind: 'edit', wf: shown })}
                 onDelete={() => setModal({ kind: 'delete', wf: shown })}
                 onToggled={reload}
-              />
+              >
+                {shown.id === 'threat-hunt' && <InsiderLeadsPanel />}
+              </WorkflowReaderPane>
             </div>
           )}
         </div>
@@ -370,6 +373,75 @@ function WorkflowCatalog({ feed, onCreate, goSettings }: { feed: Feed<Workflow>;
         </div>
       )}
     </>
+  )
+}
+
+const lines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean)
+const EMPTY_LEADS: InsiderLeads = { sources: [], rule_names: [], readers: [], teams: [] }
+
+/** The threat-hunt workflow's insider lead list (#4778): which findings are leads and who reads the
+ *  cases they open. Anyone who can read workflows sees it; automation.write edits it. */
+function InsiderLeadsPanel() {
+  const canWrite = useAuth().hasPermission('automation.write')
+  const { names } = useReaderNames()
+  const [saved, setSaved] = useState<InsiderLeads | null>(null)
+  const [draft, setDraft] = useState<{ sources: string; rule_names: string; readers: string[]; teams: string[] }>({ sources: '', rule_names: '', readers: [], teams: [] })
+  const [loadErr, setLoadErr] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const take = (l: InsiderLeads) => {
+    setSaved(l)
+    setDraft({ sources: l.sources.join('\n'), rule_names: l.rule_names.join('\n'), readers: l.readers, teams: l.teams })
+  }
+  const load = () => {
+    setLoadErr(null)
+    workflowApi.insiderLeads().then((r) => take(r.data), (e) => setLoadErr(errMsg(e)))
+  }
+  useEffect(load, [])
+  const body: InsiderLeads = { sources: lines(draft.sources), rule_names: lines(draft.rule_names), readers: draft.readers, teams: draft.teams }
+  const on = body.sources.length + body.rule_names.length > 0
+  const save = () => {
+    setBusy(true)
+    setErr(null)
+    workflowApi.setInsiderLeads(body).then((r) => take(r.data), (e) => setErr(errMsg(e))).finally(() => setBusy(false))
+  }
+  const view = saved ?? EMPTY_LEADS
+  const text = (list: string[]) => (list.length ? list.join(', ') : 'None')
+  return (
+    <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-bg-1 px-[18px] py-4" aria-label="Insider leads">
+      <div className="flex flex-col gap-1">
+        <h3 className="m-0 text-[13px] leading-[1.35] text-tx" style={{ fontWeight: 650 }}>Insider leads</h3>
+        <p className="m-0 text-[12px] leading-[1.45] text-tx-3">
+          Which findings count as insider leads, and who reads the restricted cases they open. With no sources or rule names, automatic start is off.
+          A restricted hunt started by hand opens its case to you and these readers. Hunt memory on a restricted case stays with the case’s readers.
+        </p>
+      </div>
+      {loadErr && <p role="alert" className="m-0 text-[12px] text-[var(--poor)]">Couldn’t load the lead list: {loadErr} <button className="btn ghost" onClick={load}>Retry</button></p>}
+      {!loadErr && !saved && <p className="m-0 text-[12px] text-tx-3">Loading…</p>}
+      {saved && !canWrite && (
+        <dl className="m-0 grid gap-x-4 gap-y-2 text-[12.5px] [grid-template-columns:max-content_minmax(0,1fr)]">
+          <dt className="text-tx-3">Sources</dt><dd className="m-0 min-w-0 break-words text-tx">{text(view.sources)}</dd>
+          <dt className="text-tx-3">Rule names</dt><dd className="m-0 min-w-0 break-words text-tx">{text(view.rule_names)}</dd>
+          <dt className="text-tx-3">Readers and teams</dt><dd className="m-0 min-w-0 break-words text-tx">{text(names(view.readers, view.teams))}</dd>
+          <dd className="m-0 text-tx-3 [grid-column:1/-1]">Changing this needs automation.write.</dd>
+        </dl>
+      )}
+      {saved && canWrite && (
+        <>
+          <Field label="Sources" textarea mono rows={3} value={draft.sources} onChange={(v) => setDraft((d) => ({ ...d, sources: v }))} placeholder="One per line" hint="A finding whose data source is exactly one of these is a lead." />
+          <Field label="Rule names" textarea rows={3} value={draft.rule_names} onChange={(v) => setDraft((d) => ({ ...d, rule_names: v }))} placeholder="One per line" hint="A finding titled one of these, in any letter case, is a lead." />
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Who reads the cases</span>
+            <ReaderPicker readers={draft.readers} readerTeams={draft.teams} onReaders={(readers) => setDraft((d) => ({ ...d, readers }))} onTeams={(teams) => setDraft((d) => ({ ...d, teams }))} />
+            <span className="text-[11px] text-tx-3">{on ? 'Needs at least one person or team.' : 'Kept for when a source or rule name is added.'}</span>
+          </div>
+          {err && <p role="alert" className="m-0 text-[12px] text-[var(--poor)]">{err}</p>}
+          <div className="flex justify-end">
+            <button className="btn primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save lead list'}</button>
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 
