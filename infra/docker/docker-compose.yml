@@ -1065,6 +1065,24 @@ services:
       https_proxy:
       all_proxy:
       no_proxy:
+      # AWS credential pointers (AWS_POINTER_VARS), forwarded to the Security
+      # Lake server only. Pass-through; empty means unset. Never the raw keys
+      # (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN). A file
+      # they name is copied, as root, into that server's own HOME: mount it
+      # root-owned 0600 (0640 root:1000 to share it with the backend), read-only.
+      #   volumes:
+      #     - /etc/vigil/aws:/etc/vigil/aws:ro
+      # with AWS_CONFIG_FILE=/etc/vigil/aws/config. See docs/security-lake-aws.md.
+      AWS_SHARED_CREDENTIALS_FILE:
+      AWS_CONFIG_FILE:
+      AWS_PROFILE:
+      AWS_ROLE_ARN:
+      AWS_WEB_IDENTITY_TOKEN_FILE:
+      AWS_CONTAINER_CREDENTIALS_FULL_URI:
+      AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:
+      AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE:
+      AWS_REGION:
+      AWS_DEFAULT_REGION:
     # Root with only what setpriv and the supervisor need: SETUID/SETGID to drop
     # each child to its uid, KILL to stop a child running under another uid
     # (stdio_client kills the process group). No CHOWN: the per-server HOME dirs

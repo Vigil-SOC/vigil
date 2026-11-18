@@ -322,10 +322,28 @@ async def _security_hub() -> Outcome:
     return True, f"Read AWS Security Hub findings in {region}{source}"
 
 
+def _env_keys() -> bool:
+    import boto3
+
+    # Only the chain's first link (method "env"): walking on would probe IMDS
+    # twice, here and again in discovery.
+    resolver = boto3.Session()._session.get_component("credential_provider")
+    return resolver.get_provider("env").load() is not None
+
+
 async def _security_lake() -> Outcome:
     from core.integrations.amazon_security_lake import lake
 
     config = resolve(AMAZON_SECURITY_LAKE)
+    # Static keys in this backend's environment win its chain and are never
+    # forwarded to the server: whatever they can read, the server cannot.
+    # Checked on the base chain, not the session a role_arn wraps as "assume-role".
+    if await asyncio.to_thread(_env_keys):
+        return False, (
+            "This backend signs in to AWS with static keys (AWS_ACCESS_KEY_ID), "
+            "which the Security Lake server never receives: give it a role "
+            "(instance role, IRSA, Pod Identity) or a mounted shared config"
+        )
     # The server's own discovery, every region at once, inside CHECK_TIMEOUT. It
     # runs on this backend's AWS chain, which must match the runner's.
     found = await asyncio.to_thread(
