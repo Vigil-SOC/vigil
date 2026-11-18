@@ -1,7 +1,7 @@
 """Catch the shared IOC index up on its own (#4734, epic #4580).
 
-A Case that exists at the upgrade is never reconciled until something touches it,
-and a write that failed stays unindexed. The daemon calls :func:`catch_up_once` on
+A write that failed stays unindexed, and a Case's findings can change without a
+write (retention, a missed hook). The daemon calls :func:`catch_up_once` on
 each tick: it reconciles a batch of Cases, one short transaction each, so replicas
 split the work. Deterministic repair of a derived copy, not a retry ladder.
 """
@@ -25,10 +25,9 @@ logger = logging.getLogger(__name__)
 LAG_LIMIT = timedelta(minutes=15)
 
 BATCH = 300
-# Stale Cases that fail every tick must not fill the batch and starve the backfill,
-# so each group has a share: stale at most STALE_QUOTA, the drift sweep (the Cases
-# reconciled longest ago, which repairs retention-deleted findings and missed writes)
-# a few, and never-synced Cases the rest.
+# Stale Cases that fail every tick must not fill the batch, so each group has a
+# share: stale at most STALE_QUOTA, and the drift sweep (the Cases reconciled
+# longest ago, which repairs retention-deleted findings and missed writes) a few.
 STALE_QUOTA = 100
 DRIFT_QUOTA = 25
 
@@ -49,7 +48,7 @@ def _pick(session, *where, order, limit: int) -> List[str]:
 
 
 def _batch(size: int) -> List[Tuple[str, str]]:
-    """``(case_id, group)``: stale oldest first, then never synced, then the oldest synced."""
+    """``(case_id, group)``: stale oldest first, then the oldest synced."""
     with unit_of_work() as session:
         stale = _pick(
             session,
@@ -57,22 +56,17 @@ def _batch(size: int) -> List[Tuple[str, str]]:
             order=(Case.indicators_stale_since, Case.case_id),
             limit=min(STALE_QUOTA, size),
         )
-        fresh = _pick(
-            session,
-            Case.indicators_synced_at.is_(None),
-            order=(Case.case_id,),
-            limit=max(0, size - DRIFT_QUOTA - len(stale)),
-        )
         drift = _pick(
             session,
+            # Always true now, but it lets idx_case_indicators_synced (partial) serve.
             Case.indicators_synced_at.is_not(None),
             order=(Case.indicators_synced_at, Case.case_id),
             limit=DRIFT_QUOTA,
         )
-    # A Case can be in two groups (stale and never synced); once is enough.
+    # A Case can be in both groups (stale and the oldest synced); once is enough.
     seen = set()
     out = []
-    for group, ids in (("stale", stale), ("unsynced", fresh), ("drift", drift)):
+    for group, ids in (("stale", stale), ("drift", drift)):
         for case_id in ids:
             if case_id not in seen:
                 seen.add(case_id)
@@ -88,7 +82,6 @@ def _reconcile(case_id: str, group: str, started) -> bool:
         # condition is read again so a Case it just finished is not done twice.
         need = {
             "stale": Case.indicators_stale_since.is_not(None),
-            "unsynced": Case.indicators_synced_at.is_(None),
             "drift": Case.indicators_synced_at < started,
         }[group]
         claimed = session.scalar(

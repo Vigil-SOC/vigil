@@ -1,4 +1,4 @@
-"""Live bell lines for the shared IOC index's catch-up (#4734, epic #4580).
+"""Live bell line for the shared IOC index's catch-up (#4734, epic #4580).
 
 Computed on each request, stored nowhere, and gone when the count reaches zero.
 Shown to the same admins as the insecure-cookie line (``platform.write``).
@@ -28,7 +28,7 @@ def _plural(n: int) -> str:
 
 
 def waiting_too_long(user) -> list[dict[str, str]]:
-    """Cases whose indicators have waited past the limit; a never-synced Case is not one."""
+    """Cases whose indicators have waited past the limit."""
     if missing_permission(user.user_id, "platform.write") is not None:
         return []
     n = _count(Case.indicators_stale_since < utcnow() - LAG_LIMIT)
@@ -44,21 +44,5 @@ def waiting_too_long(user) -> list[dict[str, str]]:
     ]
 
 
-def bringing_in(user) -> list[dict[str, str]]:
-    """Cases not yet brought into the index; this is catch-up, not lag."""
-    if missing_permission(user.user_id, "platform.write") is not None:
-        return []
-    n = _count(Case.indicators_synced_at.is_(None))
-    if not n:
-        return []
-    return [
-        {
-            "message": f"Bringing existing Cases in: {n} not yet linked for intake. "
-            "They are being brought in in the background.",
-            "link": LINK,
-        }
-    ]
-
-
 def register() -> None:
-    notices.CONDITIONS.extend([waiting_too_long, bringing_in])
+    notices.CONDITIONS.extend([waiting_too_long])
