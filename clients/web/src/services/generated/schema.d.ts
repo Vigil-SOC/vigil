@@ -9623,6 +9623,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/lead-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Propose Lead Hunt
+         * @description An execute body hunting the data movement of each account a finding
+         *     names, on a restricted case. Read-only; 404 for an unknown finding, 400 for
+         *     one that names no account.
+         */
+        get: operations["get_api_workflows_threat-hunt_lead-proposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}": {
         parameters: {
             query?: never;
@@ -16841,6 +16863,8 @@ export interface components {
             iterations?: number | null;
             /** Max Cost Usd */
             max_cost_usd?: number | null;
+            /** Restricted */
+            restricted?: boolean | null;
         };
         /** WorkflowGenerateRequest */
         WorkflowGenerateRequest: {
@@ -33982,6 +34006,39 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_workflows_threat-hunt_lead-proposal": {
+        parameters: {
+            query: {
+                finding_id: string;
             };
             header?: {
                 authorization?: string | null;

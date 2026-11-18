@@ -875,6 +875,9 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
   const [hypothesis, setHypothesis] = useState('')
   const [subjects, setSubjects] = useState<Record<string, string>>({})
   const [approve, setApprove] = useState(false)
+  const [restricted, setRestricted] = useState(false)
+  const [leadNote, setLeadNote] = useState<string | null>(null) // why the finding gave no proposal
+  const [leading, setLeading] = useState(false)
   const [iterations, setIterations] = useState('')
   const [maxCost, setMaxCost] = useState('')
   const [starting, setStarting] = useState(false)
@@ -930,6 +933,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
     ...(isHuntLike && !turnsBad && iterations.trim() && { iterations: turns }),
     ...(isHuntLike && !costBad && maxCost.trim() && { max_cost_usd: cost }),
     ...(isHuntLike && approve && { approve_hypotheses: true }),
+    ...(isHuntLike && restricted && { restricted: true }),
   }
   // Checked on Run, not per keystroke: a button dead through a sentence reads as an argument.
   const needsHypothesis = isHuntLike && hypothesis.trim() === ''
@@ -941,6 +945,28 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
     setHypothesis(p.hypothesis)
     setSubjects(Object.fromEntries(Object.entries(p.hypothesis_subjects).map(([line, keys]) => [line, keys.join(', ')])))
     setApprove(p.approve_hypotheses === true)
+  }
+
+  // The chosen finding's accounts as hypotheses, on a restricted case. A finding that
+  // names no account gets the server's reason beside the button.
+  const takeLead = async () => {
+    const fid = pickId(findingId, findingOpts)
+    setLeadNote(null)
+    if (!fid) {
+      setLeadNote(fid === null ? `“${findingId.trim()}” is not one alert. Pick it from the list, or paste its ID.` : 'Pick a finding first.')
+      return
+    }
+    setLeading(true)
+    try {
+      const { proposal } = (await workflowApi.leadProposal(fid)).data
+      setFindingId(fid)
+      takeProposal(proposal)
+      setRestricted(proposal.restricted === true)
+    } catch (e) {
+      setLeadNote(errMsg(e))
+    } finally {
+      setLeading(false)
+    }
   }
 
   const run = async () => {
@@ -1018,7 +1044,17 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
           <Blindness unbound={limits?.capabilities?.unbound ?? []} investigation={isInvestigate} />
         )}
         {isHuntLike && <Absent absent={limits?.capabilities?.absent ?? []} />}
-        <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
+        <ComboField label="Finding ID" value={findingId} onChange={(v) => { setFindingId(v); setLeadNote(null) }} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
+        {isHuntLike && (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button className="btn ghost" disabled={leading || !findingId.trim()} onClick={takeLead}>
+              {leading ? 'Reading…' : "From finding's account"}
+            </button>
+            <span className="text-[12px] leading-[1.5]" style={{ color: leadNote ? 'var(--high)' : 'var(--tx-3)' }} data-testid="lead-note">
+              {leadNote ?? 'Fills Hypothesis with the data movement of each account the finding names, and restricts the case.'}
+            </span>
+          </div>
+        )}
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
         {isHuntLike && (
@@ -1060,6 +1096,16 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
               ? 'A dollar amount above 0 and no more than 100.'
               : "Checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes. The turn count above is the other ceiling; whichever it reaches first ends the run."}
           />
+        )}
+        {isHuntLike && (
+          <label className="flex items-start gap-2 text-[12.5px] leading-[1.5] text-tx-2 cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={restricted} onChange={(e) => setRestricted(e.target.checked)} />
+            <span>
+              Restricted case. Runs on a new case only you can read, or on the restricted
+              case you name — never on the open case that already holds the alert. What the
+              hunt remembers stays with the case's readers.
+            </span>
+          </label>
         )}
         {isHuntLike && (
           <label className="flex items-start gap-2 text-[12.5px] leading-[1.5] text-tx-2 cursor-pointer">
