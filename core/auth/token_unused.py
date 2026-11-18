@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import NamedTuple, Optional
 
 from pydantic import ValidationError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from core.auth import (
@@ -28,8 +29,9 @@ from core.auth import (
     token_policy,
     trail_events,
 )
+from core.platform import notices
 from core.platform.notices import send_notices
-from core.storage.models import McpCredential, User
+from core.storage.models import McpCredential, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -38,6 +40,18 @@ logger = logging.getLogger(__name__)
 # The reminder comes this long before the period ends, and a revocation follows it
 # by at least this long.
 WARN = timedelta(days=dormancy.WARN_DAYS)
+
+# When the last whole pass finished: one row, shaped like dormancy.GRACE_KEY.
+PASS_KEY = "auth.token_pass_completed_at"
+# The bell speaks once the pass has been late this long.
+LATE = timedelta(hours=3)
+# Without a stamp, lateness counts from here, so an upgrade does not raise it at once.
+_STARTED = utcnow()
+LATE_MESSAGE = (
+    "The unused-token pass has not completed in over 3 hours, so API tokens left "
+    "unused are not being reminded or revoked. The API service has to be running "
+    "for it: its logs show why the pass fails, and a restart runs it again."
+)
 
 
 class State(NamedTuple):
@@ -202,3 +216,62 @@ def remind(credential_id: str, now: Optional[datetime] = None) -> Optional[datet
             return None
         credential.reminded_at = now
         return max(period_end(credential, state.days), now + WARN)
+
+
+def first_reminder(
+    credential: McpCredential, state: State, now: Optional[datetime] = None
+) -> datetime:
+    """When the token's reminder goes out, or went out: the counting one's date; else
+    7 days before the period ends, or now if that has passed (the next pass sends it).
+    A restore only voids earlier reminders, so it never pushes this past now."""
+    if counts(credential, state):
+        return credential.reminded_at
+    return max(period_end(credential, state.days) - WARN, now or utcnow())
+
+
+def stamp_pass() -> datetime:
+    """Record that a whole pass just finished."""
+    now = utcnow()
+    value = {"completed_at": now.isoformat()}
+    with unit_of_work() as session:
+        session.execute(
+            insert(SystemConfig)
+            .values(
+                key=PASS_KEY,
+                value=value,
+                description="When the last unused-token pass completed",
+                config_type="auth",
+                updated_by="token_sweep",
+            )
+            .on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        )
+    return now
+
+
+def pass_health(session: Session) -> tuple[Optional[datetime], bool]:
+    """When the last pass completed (None if never), and whether it is late."""
+    value = (
+        session.query(SystemConfig.value).filter(SystemConfig.key == PASS_KEY).scalar()
+    )
+    try:
+        stamp = datetime.fromisoformat(value["completed_at"]) if value else None
+    except (KeyError, TypeError, ValueError):
+        stamp = None  # unreadable reads as never
+    return stamp, utcnow() - (stamp or _STARTED) > LATE
+
+
+def late(user: User) -> list[dict[str, str]]:
+    """The bell's condition, for a holder of ``sessions.manage``: the pass is late.
+    No setting turns it off; the next completed pass clears it."""
+    from core.auth.permissions import missing_permission
+
+    if missing_permission(user.user_id, "sessions.manage") is not None:
+        return []
+    with unit_of_work() as session:
+        if pass_health(session)[1]:
+            return [{"message": LATE_MESSAGE, "link": "/settings?section=sessions"}]
+    return []
+
+
+def register() -> None:
+    notices.CONDITIONS.append(late)

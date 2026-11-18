@@ -1402,10 +1402,17 @@ def _end_restored_sessions(
     """
     from core.workflows.run_cancel import force_terminal
 
-    runs = sign_in_runs.in_flight_runs()
-    with unit_of_work() as session:
-        ended = sign_ins.end_every_open(session, sign_ins.RESTORE)
-        dormancy.start_grace(session)
+    try:
+        runs = sign_in_runs.in_flight_runs()
+        with unit_of_work() as session:
+            ended = sign_ins.end_every_open(session, sign_ins.RESTORE)
+            dormancy.start_grace(session)
+    except Exception as exc:
+        # The marker is what voids a reminder sent before the restore.
+        raise RuntimeError(
+            f"{exc}; API token reminders were not paused after the restore, so "
+            "they may count a reminder sent before it"
+        ) from exc
     stopped = sign_in_runs._stop(runs)
     for run_id in stopped:
         force_terminal(run_id, sign_in_runs.STOP_REASON)
@@ -1447,6 +1454,10 @@ def _tell_session_holders(
             " must reset the password, because the key that protected it is gone; "
             "their recovery codes are removed until they make new ones."
         )
+    message += (
+        " API token reminders resume now, and no token is revoked for disuse sooner "
+        "than 7 days after a fresh reminder."
+    )
     holders = permissions.holders("sessions.manage")
     for principal in holders:
         try:

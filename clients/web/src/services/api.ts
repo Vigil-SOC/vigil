@@ -2232,6 +2232,8 @@ export type DirectorySync = {
   directory_id_claim: string
   last_push: string | null
   token_expires_at: string | null
+  /** while sync is off: when its token's first unused-token reminder would come */
+  first_reminder_at?: string | null
   failed_authentications: number
   last_manager_refusals: string[]
   skipped_joins: number

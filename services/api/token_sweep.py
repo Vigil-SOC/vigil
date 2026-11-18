@@ -5,13 +5,16 @@ grace. The rule is core/auth/token_unused.py. One replica sweeps at a time (a
 transaction advisory lock held for the pass), and each token is re-checked under its
 row lock, so two replicas, or a restart, neither remind nor revoke twice. A recipient
 gets one reminder notice per pass listing its tokens. A policy that can't be read
-does nothing.
+does nothing. Each completed pass stamps its time (``token_unused.stamp_pass``), which
+the Sessions section shows and the bell watches; a pass that found the lock held, or
+raised, stamps nothing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 
 from sqlalchemy import text
 
@@ -47,37 +50,43 @@ def sweep() -> None:
         if not lock.execute(
             text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": LOCK}
         ).scalar():
+            return  # another replica is on it: not a completed pass here
+        _pass(now)
+        # Also when the rule is off or the policy unreadable; a pass that raised never gets here.
+        token_unused.stamp_pass()
+
+
+def _pass(now: datetime) -> None:
+    with unit_of_work() as session:
+        state = token_unused.read_state(session)
+        if state is None:
             return
-        with unit_of_work() as session:
-            state = token_unused.read_state(session)
-            if state is None:
-                return
-            due = [
-                (
-                    credential.credential_id,
-                    token_unused.decide(credential, holder, state, now),
-                )
-                for credential, holder in session.query(McpCredential, User)
-                .join(User, User.user_id == McpCredential.user_id)
-                .filter(
-                    McpCredential.revoked_at.is_(None),
-                    McpCredential.successor_id.is_(None),
-                )
-                .all()
-            ]
-        reminded = {}
-        for credential_id, action in due:
-            try:
-                if action == "revoke":
-                    token_unused.revoke_unused(credential_id, now)
-                elif action == "remind":
-                    ends = token_unused.remind(credential_id, now)
-                    if ends:
-                        reminded[credential_id] = ends
-            except Exception:  # noqa: BLE001 - one bad row must not stop the rest
-                logger.exception("token sweep could not handle a token")
-        if reminded:
-            _tell(reminded)
+        due = [
+            (
+                credential.credential_id,
+                token_unused.decide(credential, holder, state, now),
+            )
+            for credential, holder in session.query(McpCredential, User)
+            .join(User, User.user_id == McpCredential.user_id)
+            .filter(
+                McpCredential.revoked_at.is_(None),
+                McpCredential.successor_id.is_(None),
+            )
+            .all()
+        ]
+    reminded = {}
+    for credential_id, action in due:
+        try:
+            if action == "revoke":
+                token_unused.revoke_unused(credential_id, now)
+            elif action == "remind":
+                ends = token_unused.remind(credential_id, now)
+                if ends:
+                    reminded[credential_id] = ends
+        except Exception:  # noqa: BLE001 - one bad row must not stop the rest
+            logger.exception("token sweep could not handle a token")
+    if reminded:
+        _tell(reminded)
 
 
 def _tell(reminded: dict) -> None:
