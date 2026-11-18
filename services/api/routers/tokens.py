@@ -296,6 +296,13 @@ def rotate(
             status_code=403,
             detail="Directory sync's token is minted from Single sign-on",
         )
+    if credential.oauth_client_id and holder.user_id == current_user.user_id:
+        # Its tokens rotate through the app's refresh; a vgl_api_ successor
+        # would hand the app a token for the whole API.
+        raise HTTPException(
+            status_code=409,
+            detail="An app's connection isn't rotated; revoke it and connect again",
+        )
     if not _may_mint_for(current_user, holder):
         if holder.user_id != current_user.user_id and not _manages(current_user):
             raise HTTPException(status_code=404, detail="Token not found")

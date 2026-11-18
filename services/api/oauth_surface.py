@@ -1,4 +1,4 @@
-"""The OAuth authorization server's endpoints, at the host root (#4787).
+"""The OAuth authorization server's endpoints, at the host root (#4787, #4788).
 
 The issuer is the bare origin (``oauth_urls``), so discovery, ``/authorize``,
 ``/token``, ``/register`` and ``/revoke`` sit at the root even when the console
@@ -187,14 +187,5 @@ class OAuthSurface:
         bound = request_address.set(address)
         try:
             await self._routes()(scope, receive, send)
-        except NotImplementedError:
-            # Codes and tokens arrive with #4769.
-            await _json(
-                501,
-                {
-                    "error": "temporarily_unavailable",
-                    "error_description": "Token issuance is not implemented yet.",
-                },
-            )(scope, receive, send)
         finally:
             request_address.reset(bound)

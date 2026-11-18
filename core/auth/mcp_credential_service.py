@@ -12,8 +12,10 @@ SHA-256 of it. Nothing can recover it, so an operator who loses one mints
 another and revokes the first -- which is the behaviour we want anyway, and the
 reason revocation is cheap.
 
-Two prefixes share the table. ``vgl_api_`` is what is minted now and reaches the
+Four prefixes share the table. ``vgl_api_`` is what is minted now and reaches the
 HTTP API as well as MCP; ``vgl_mcp_`` is an earlier token and stays MCP-only.
+An OAuth grant (``core.auth.oauth_server``) is a row too: its ``vgl_oat_`` access
+token reaches MCP only, and its ``vgl_ort_`` refresh token is never a bearer.
 """
 
 from __future__ import annotations
@@ -41,6 +43,10 @@ logger = logging.getLogger(__name__)
 # reach the HTTP API is a property of its prefix.
 TOKEN_PREFIX = "vgl_api_"
 MCP_TOKEN_PREFIX = "vgl_mcp_"
+OAUTH_ACCESS_PREFIX = "vgl_oat_"
+OAUTH_REFRESH_PREFIX = "vgl_ort_"
+# Refused by name on the HTTP API: a working credential in the wrong place.
+_MCP_ONLY = (MCP_TOKEN_PREFIX, OAUTH_ACCESS_PREFIX, OAUTH_REFRESH_PREFIX)
 
 # A person's token lasts this long unless they ask for less, and never longer than
 # the maximum the session policy sets (token_policy). There is no "never".
@@ -71,16 +77,18 @@ class AuthenticatedCredential(NamedTuple):
 
     user: User
     credential_id: str
+    # An OAuth grant's resource; None on a personal token.
+    resource: Optional[str] = None
 
 
 def looks_like_mcp_token(value: str) -> bool:
-    """Whether ``value`` is presented as an MCP-only token.
+    """Whether ``value`` is presented as an MCP-only token (an OAuth one included).
 
     Used to refuse it somewhere it does not belong, which is a different
     answer from "this is not valid" and should read differently to whoever
     sent it.
     """
-    return bool(value) and value.startswith(MCP_TOKEN_PREFIX)
+    return bool(value) and value.startswith(_MCP_ONLY)
 
 
 def looks_like_api_token(value: str) -> bool:
@@ -89,7 +97,10 @@ def looks_like_api_token(value: str) -> bool:
 
 
 def looks_like_token(value: str) -> bool:
-    return looks_like_api_token(value) or looks_like_mcp_token(value)
+    """A bearer this table may answer for. A refresh token never is one."""
+    return (
+        looks_like_api_token(value) or looks_like_mcp_token(value)
+    ) and not value.startswith(OAUTH_REFRESH_PREFIX)
 
 
 class NotRotatable(Exception):
@@ -201,6 +212,12 @@ def authenticate(
             )
             if record is None or record.revoked_at is not None:
                 return None
+            # An OAuth access token lasts an hour inside its grant. Its end is
+            # routine (the client refreshes), so it is not an expiry event.
+            if token.startswith(OAUTH_ACCESS_PREFIX) and not (
+                record.access_expires_at and record.access_expires_at > utcnow()
+            ):
+                return None
             if not record.is_usable():
                 refusal = partial(trail_events.credential_expired, record.credential_id)
                 return None
@@ -225,7 +242,7 @@ def authenticate(
             # later. The Ledger records what was done; this only records that
             # something was.
             record.last_used_at = utcnow()
-            return AuthenticatedCredential(user, record.credential_id)
+            return AuthenticatedCredential(user, record.credential_id, record.resource)
     except Exception:  # noqa: BLE001 - a database that cannot answer is not a yes
         # A store this cannot read has not authenticated anybody. Saying so is
         # a refusal, not an error: the caller is told it is not authenticated,

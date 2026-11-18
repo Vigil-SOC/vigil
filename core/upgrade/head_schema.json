@@ -3856,6 +3856,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column mcp_credentials.resource": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
  "column mcp_credentials.revoked_at": {
   "default": null,
   "nullable": true,
@@ -4060,6 +4065,11 @@
   "default": null,
   "nullable": false,
   "type": "text"
+ },
+ "column oauth_pending.sign_in_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
  },
  "column oauth_pending.state": {
   "default": null,

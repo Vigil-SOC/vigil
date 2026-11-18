@@ -487,6 +487,8 @@ class McpCredential(Base):
     previous_refresh_hash: Mapped[Optional[str]] = mapped_column(
         String(64), nullable=True
     )
+    # The resource (RFC 8707) a grant's tokens are for (#4788, revision 0099).
+    resource: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("idx_mcp_credentials_user", "user_id"),)
 
@@ -574,6 +576,8 @@ class OAuthPending(Base):
     code_hash: Mapped[Optional[str]] = mapped_column(
         String(64), unique=True, nullable=True
     )
+    # The sign-in that approved it (#4788): the code is good only while it is open.
+    sign_in_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
