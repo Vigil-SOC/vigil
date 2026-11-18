@@ -224,6 +224,9 @@ class Settings(BaseSettings):
     # nobody asked for should not be listening. This is the floor an operator
     # sets before boot; the Settings toggle overrides it at runtime.
     vigil_mcp_enabled: bool = False
+    # OAuth on that surface (#4763), the floor for the Settings toggle. Only takes
+    # effect with the surface open and an https or loopback VIGIL_FRONTEND_URL.
+    vigil_mcp_oauth_enabled: bool = False
     # Medic's master switch (C8), read by Medic and by the backend so Off never
     # shows as Down. A string, parsed by core/platform/medic_status.py exactly as
     # Medic parses it: a bool here would accept spellings Medic reads as off and
