@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { requestErrorMessage } from '../screens/login/requestErrorMessage'
 import { confirmApi, mfaApi } from '../services/api'
 import { cancelPrompt, confirmWithKey, KeyProblem, keysSupported, NoKeyUsed } from '../services/webauthn'
-import { CONFIRMATION_REQUIRED, registerStepUp, type StepUpDetail } from '../services/stepUp'
+import { CONFIRMATION_REQUIRED, registerStepUp, STEP_UP_MFA_SETUP, type StepUpDetail } from '../services/stepUp'
 import { Icon } from '../shared/icons'
 import { Field, PasswordInput, Popup } from '../shared/ui'
 import TwoStepDialog from './TwoStepDialog'
@@ -55,10 +55,13 @@ export default function ConfirmItHost() {
   const ssoOutcome = params.get(SSO_OUTCOME)
   // once per arrival, though a dev render runs the effect twice
   const told = useRef<string | null>(null)
+  // the provider confirmed who, but not a second factor: set up Vigil's own (#4757)
+  const [factorFirst, setFactorFirst] = useState(false)
   useEffect(() => {
     if (!ssoOutcome || told.current === location.key) return
     told.current = location.key
-    if (ssoOutcome === 'ok') notify('ok', "Confirmed. Make your change again; Vigil won't ask for a while.")
+    if (ssoOutcome === STEP_UP_MFA_SETUP) setFactorFirst(true)
+    else if (ssoOutcome === 'ok') notify('ok', "Confirmed. Make your change again; Vigil won't ask for a while.")
     else notify('err', "Vigil couldn't confirm it's you at your SSO provider. Try again, signing in as yourself.")
     params.delete(SSO_OUTCOME)
     const rest = params.toString()
@@ -66,6 +69,14 @@ export default function ConfirmItHost() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ssoOutcome])
 
+  if (factorFirst)
+    return (
+      <TwoStepDialog
+        open
+        note="Set up two-step sign-in before changes like this. Your SSO provider didn't confirm a second factor, and privileged actions usually need a Vigil one."
+        onClose={() => setFactorFirst(false)}
+      />
+    )
   if (!pending) return null
   if (pending.detail.variant === 'sso') return <ConfirmAtProvider detail={pending.detail} onCancel={() => finish(false)} />
   return pending.detail.code === CONFIRMATION_REQUIRED ? (

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useAuth, type LoginResult, type MfaOffer } from '../../contexts/AuthContext'
+import { useAuth, type KeyAnswer, type LoginResult, type MfaOffer } from '../../contexts/AuthContext'
 import { basePath } from '../../config/basePath'
 import { authApi, bootstrapApi } from '../../services/api'
 import { assertWith, cancelPrompt, KeyProblem, NoKeyUsed, SECURITY_KEYS_DOCS } from '../../services/webauthn'
@@ -21,14 +21,17 @@ const SSO_ERRORS: Record<string, string> = {
   break_glass_email:
     "This address belongs to a break-glass account. Ask an account manager to change that account's email to a mailbox your identity provider doesn't use.",
   break_glass_linked: 'This identity is linked to a break-glass account; ask the operator to move the mark.',
+  expired: 'Your SSO sign-in waited too long for its second step. Sign in with SSO again.',
 }
+// The callback lands on /login?sso_step=1 when the provider's token didn't confirm MFA (#4757).
+const SSO_STEP_NOTE = "Your identity provider didn't confirm a second factor for this sign-in, so Vigil asks for its own."
 // A plain navigation: the server answers with the provider's redirect.
 const SSO_START = `${basePath}/api/auth/sso/start`
 
 export default function LoginScreen() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { login } = useAuth()
+  const { login, finishSso } = useAuth()
   // the address a signed-out person was on; sign-in returns there
   const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
   const goBack = () => navigate(from && from.pathname !== '/login' ? { pathname: from.pathname, search: from.search, hash: from.hash } : '/')
@@ -52,6 +55,8 @@ export default function LoginScreen() {
   const [setupOpen, setSetupOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const ssoError = new URLSearchParams(location.search).get('sso_error')
+  // a sign-in through the provider waiting on the person's own factor
+  const [ssoStep, setSsoStep] = useState(() => new URLSearchParams(location.search).get('sso_step') === '1')
   const [error, setError] = useState(ssoError ? SSO_ERRORS[ssoError] ?? SSO_ERRORS.failed : '')
   const [ssoEnabled, setSsoEnabled] = useState(false)
   // Require single sign-on: the page offers "Sign in with SSO", and a password form
@@ -68,7 +73,8 @@ export default function LoginScreen() {
 
   // drop the handoff from history so a reload doesn't replay it
   useEffect(() => {
-    if (navState?.notice || navState?.forgot || ssoError) navigate('.', { replace: true, state: from ? { from } : null })
+    if (navState?.notice || navState?.forgot || ssoError || ssoStep)
+      navigate('.', { replace: true, state: from ? { from } : null })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [resetSent, setResetSent] = useState(false)
@@ -117,6 +123,10 @@ export default function LoginScreen() {
     }
   }
 
+  // One answer to the second step: after the password, or after the SSO provider.
+  const attempt = (code?: string, key?: KeyAnswer, why?: string) =>
+    ssoStep ? finishSso(code, key) : login(usernameOrEmail, password, code, key, why)
+
   const finish = ({ recoveryCodes, mfaRemoved }: LoginResult) => {
     if (mfaRemoved) setSetupOpen(true)
     else if (recoveryCodes?.length) setNewCodes(recoveryCodes)
@@ -134,15 +144,7 @@ export default function LoginScreen() {
       const assertion = await assertWith(o.securityKey.options)
       if (id !== prompting.current) return
       setLoading(true)
-      finish(
-        await login(
-          usernameOrEmail,
-          password,
-          undefined,
-          { assertion, challenge: o.securityKey.challenge },
-          o.breakGlass ? reason : undefined,
-        ),
-      )
+      finish(await attempt(undefined, { assertion, challenge: o.securityKey.challenge }, o.breakGlass ? reason : undefined))
     } catch (err: any) {
       if (id !== prompting.current) return
       if (err instanceof KeyProblem && !(err instanceof NoKeyUsed)) setError(err.message)
@@ -169,7 +171,7 @@ export default function LoginScreen() {
     setUseKey(true)
     setLoading(true)
     try {
-      finish(await login(usernameOrEmail, password))
+      finish(await attempt())
     } catch (err: any) {
       // left the key view while this was in flight: no prompt
       if (id !== prompting.current) return
@@ -187,31 +189,12 @@ export default function LoginScreen() {
     setError('')
     setLoading(true)
     try {
-      finish(
-        await login(
-          usernameOrEmail,
-          password,
-          showMfa ? mfaCode : undefined,
-          undefined,
-          showMfa && offer?.breakGlass ? reason : undefined,
-        ),
-      )
+      finish(await attempt(showMfa ? mfaCode : undefined, undefined, showMfa && offer?.breakGlass ? reason : undefined))
     } catch (err: any) {
       if (forcedChange(err)) return
-      if (err?.message === 'MFA_REQUIRED') {
-        const o: MfaOffer = err.offer
-        // break-glass: the reason comes first, so a key waits until it is asked for
-        const key = !!o.securityKey && !o.breakGlass
-        const app = o.methods.includes('authenticator_app')
-        setOffer(o)
-        setShowMfa(true)
-        setMfaCode('')
-        setReason('')
-        setUseKey(key)
-        setRecovery(o.breakGlass && !app)
-        if (key) void askKey(o)
-        else if (!o.breakGlass) setError(!app && o.detail ? o.detail : 'Enter your 2FA code to continue.')
-      } else if (err?.response?.data?.detail?.code === 'password_reset_required') {
+      if (err?.message === 'MFA_REQUIRED') offered(err.offer)
+      else if (ssoRefused(err)) return
+      else if (err?.response?.data?.detail?.code === 'password_reset_required') {
         // the key that protected the stored password is gone: nothing was counted, a reset is the way in
         const d = err.response.data.detail
         if (d.by_mail) openForgot()
@@ -231,6 +214,47 @@ export default function LoginScreen() {
     }
   }
 
+  // The second step's offer: the code field, or straight to the key prompt.
+  const offered = (o: MfaOffer) => {
+    // break-glass: the reason comes first, so a key waits until it is asked for
+    const key = !!o.securityKey && !o.breakGlass
+    const app = o.methods.includes('authenticator_app')
+    setOffer(o)
+    setShowMfa(true)
+    setMfaCode('')
+    setReason('')
+    setUseKey(key)
+    setRecovery(o.breakGlass && !app)
+    if (key) void askKey(o)
+    else if (!o.breakGlass) setError(!app && o.detail ? o.detail : 'Enter your 2FA code to continue.')
+  }
+
+  // The waiting SSO sign-in can't finish (expired, account changed): its message, and back to the start.
+  const ssoRefused = (err: any) => {
+    const d = err?.response?.data?.detail
+    if (!ssoStep || d?.code !== 'sso_refused') return false
+    backToCredentials()
+    setError(SSO_ERRORS[d.sso_error] ?? SSO_ERRORS.failed)
+    return true
+  }
+
+  // Arriving from the provider: the first call answers with what the person can give.
+  useEffect(() => {
+    if (!ssoStep) return
+    setLoading(true)
+    finishSso()
+      .then(finish)
+      .catch((err: any) => {
+        if (err?.message === 'MFA_REQUIRED') offered(err.offer)
+        else if (!ssoRefused(err)) {
+          backToCredentials()
+          setError(requestErrorMessage(err, SSO_ERRORS.failed))
+        }
+      })
+      .finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // no app and no usable key (keys are off for this install): nothing to answer with, the server says why
   const app = !!offer?.methods.includes('authenticator_app')
   // a break-glass account always has its codes to give
@@ -246,6 +270,7 @@ export default function LoginScreen() {
   }
 
   const backToCredentials = () => {
+    setSsoStep(false)
     leaveKey()
     setShowMfa(false)
     setRecovery(false)
@@ -320,7 +345,9 @@ export default function LoginScreen() {
           ? 'This is a break-glass account. Every account manager is told who signed in, why, and from where.'
           : recovery
             ? 'This removes your sign-in methods and signs you out everywhere else.'
-            : 'Confirm your identity to finish signing in.'
+            : ssoStep
+              ? SSO_STEP_NOTE
+              : 'Confirm your identity to finish signing in.'
         : requireSso
           ? 'For break-glass accounts only. Everyone else signs in with SSO.'
           : ssoEnabled

@@ -276,6 +276,25 @@ export default function SsoCard({ notify }: SectionProps) {
           </div>
         )}
 
+        <hr className="sso-rule" />
+        <div className="sso-sub">
+          <h4>Two-step sign-in</h4>
+          <p>
+            Require MFA and Require phishing-resistant MFA apply to SSO sign-ins too. Vigil reads the provider's signed ID
+            token: <code>amr</code> containing <code>mfa</code> meets Require MFA, and <code>acr</code> of <code>phr</code> or{' '}
+            <code>phrh</code> meets both. Each counts only with an <code>auth_time</code> inside the sign-in length. Otherwise
+            Vigil asks for its own factor, or has the person set one up.
+          </p>
+          <p>
+            Vigil asks for <code>amr</code>, <code>acr</code> and <code>auth_time</code> at every sign-in. If your provider
+            doesn't send them, add them to this client's ID token there. A provider's own labels don't count.
+          </p>
+          <p>
+            The claims mean what your provider's configuration makes them mean. Providers document "remember this device",
+            but not what the claims carry on such a sign-in, so Vigil can't tell when the provider skipped its second factor.
+          </p>
+        </div>
+
         {reached && (
           <>
             <hr className="sso-rule" />

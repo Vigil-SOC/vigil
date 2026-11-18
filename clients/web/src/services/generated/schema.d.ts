@@ -1485,6 +1485,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sso/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sso Finish
+         * @description The second step of a sign-in through the provider whose token didn't meet
+         *     MFA (#4757): the person's Vigil factor, checked exactly as ``login`` checks
+         *     it. Without one, the 401 ``X-MFA-Required`` offer, as login's first call.
+         *     Only once it holds is the account found, updated and signed in.
+         */
+        post: operations["post_api_auth_sso_finish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sso/mapping": {
         parameters: {
             query?: never;
@@ -15998,6 +16021,21 @@ export interface components {
             version: 1;
         };
         /**
+         * SsoFinishRequest
+         * @description The Vigil factor after the provider: a code, or a key's assertion and the
+         *     challenge the first call's 401 carried.
+         */
+        SsoFinishRequest: {
+            /** Mfa Code */
+            mfa_code?: string | null;
+            /** Webauthn */
+            webauthn?: {
+                [key: string]: unknown;
+            } | null;
+            /** Webauthn Challenge */
+            webauthn_challenge?: string | null;
+        };
+        /**
          * SsoSettingsIn
          * @description What a save sends. ``issuer`` comes from the check.
          */
@@ -19526,6 +19564,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_sso_finish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
                 };
             };
             /** @description Validation Error */

@@ -79,23 +79,29 @@ def setup_needed(
     user: User,
     held: list[str],
     current: session_policy.SessionPolicy,
-    via_sso: bool = False,
+    row: Optional[SignIn] = None,
 ) -> Optional[str]:
     """Why the requirement holds this account at setup, or None: it is covered and
     has no MFA, or it is covered by require_phishing_resistant, holds no key and
     keys are available (unavailable, the app still counts: a step-down). The one
-    check behind the gate and the console's setup screen. A sign-in through single
-    sign-on, or a break-glass one (``via_sso`` covers both), is never held: the
-    provider or the code carried the MFA."""
-    if via_sso:
+    check behind the gate and the console's setup screen. ``row`` is the sign-in
+    asking: an SSO one whose provider met MFA counts as MFA, one that met it with
+    ``phr`` as a key, and a break-glass one is never held (the code carried it)."""
+    if row is not None and row.auth_method in sign_ins.NOT_HELD:
         return None
+    met = row.mfa_met if row is not None else None
     machine = user.service_account is True
-    if not user.mfa_enabled and session_policy.mfa_covered(
-        held, machine, current.require_mfa
+    if (
+        not user.mfa_enabled
+        and met not in sign_ins.MET
+        and session_policy.mfa_covered(held, machine, current.require_mfa)
     ):
         return NEEDS_MFA
     if (
-        session_policy.mfa_covered(held, machine, current.require_phishing_resistant)
+        met != sign_ins.PROVIDER_PHR
+        and session_policy.mfa_covered(
+            held, machine, current.require_phishing_resistant
+        )
         and not security_keys.has_keys(db, user.principal_id)
         and security_keys.availability().available
     ):
@@ -222,7 +228,7 @@ def _check_sign_in(
         limit = session_policy.limits(held, machine, current)
         now = utcnow()
         over = None
-        if row.started_at + limit.absolute <= now:
+        if sign_ins.end_of(row, limit.absolute) <= now:
             over = sign_ins.LENGTH_LIMIT
         elif limit.idle and row.last_action_at + limit.idle <= now:
             over = sign_ins.IDLE
@@ -230,13 +236,7 @@ def _check_sign_in(
             sign_ins.end(sid, over, db)
             return None, (status.HTTP_401_UNAUTHORIZED, _SIGN_IN_ENDED, over)
 
-        needed = (
-            None
-            if setup_route
-            else setup_needed(
-                db, user, held, current, via_sso=row.auth_method in sign_ins.NOT_HELD
-            )
-        )
+        needed = None if setup_route else setup_needed(db, user, held, current, row)
         if needed:
             return None, (
                 status.HTTP_403_FORBIDDEN,

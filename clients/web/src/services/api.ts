@@ -75,6 +75,7 @@ api.interceptors.response.use(
 
     const isAuthEndpoint =
       originalRequest?.url?.startsWith('/auth/login') ||
+      originalRequest?.url?.startsWith('/auth/sso/finish') ||
       originalRequest?.url?.startsWith('/auth/refresh')
 
     if (isAuthEndpoint) {

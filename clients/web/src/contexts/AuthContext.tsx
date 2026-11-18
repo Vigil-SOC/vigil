@@ -79,6 +79,8 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   /** Resolves to fresh recovery codes when the sign-in replaced an old set (show them once), and whether a recovery code removed the person's methods (setup comes next). */
   login: (usernameOrEmail: string, password: string, mfaCode?: string, key?: KeyAnswer, reason?: string) => Promise<LoginResult>;
+  /** The second step after the SSO provider (#4757): no answer yet throws MFA_REQUIRED with the offer, as login's first call does. */
+  finishSso: (mfaCode?: string, key?: KeyAnswer) => Promise<LoginResult>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
 }
@@ -186,16 +188,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return {};
     }
 
+    return signIn('/auth/login', {
+      username_or_email: usernameOrEmail,
+      password,
+      mfa_code: mfaCode,
+      webauthn: key?.assertion,
+      webauthn_challenge: key?.challenge,
+      reason,
+    });
+  };
+
+  const finishSso = (mfaCode?: string, key?: KeyAnswer) =>
+    signIn('/auth/sso/finish', { mfa_code: mfaCode, webauthn: key?.assertion, webauthn_challenge: key?.challenge });
+
+  const signIn = async (url: string, body: Record<string, unknown>): Promise<LoginResult> => {
     // the backend sets the HttpOnly cookies; only the user comes back in the body
     try {
-      const response = await api.post('/auth/login', {
-        username_or_email: usernameOrEmail,
-        password,
-        mfa_code: mfaCode,
-        webauthn: key?.assertion,
-        webauthn_challenge: key?.challenge,
-        reason,
-      });
+      const response = await api.post(url, body);
 
       if (response.data.user?.user_id) retainChatCache(response.data.user.user_id);
       setSignedOut(null);
@@ -268,6 +277,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     retryLoadUser,
     refreshUser,
     login,
+    finishSso,
     logout,
     hasPermission,
   };
