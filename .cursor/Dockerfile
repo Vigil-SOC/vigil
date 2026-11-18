@@ -394,11 +394,8 @@ RUN echo "ubuntu:ubuntu" | chpasswd
 
 USER ubuntu
 
-# Vigil keeps no unit or integration tests. POSTGRES_PASSWORD is set so a bare
-# shell that imports the backend without .env (tests/conftest.py turns .env
-# loading off) doesn't hit MissingPostgresPasswordError. It is the published
-# compose default, the same value `start` and .env already use.
-ENV POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+# No POSTGRES_PASSWORD here: `start` mints the database passwords into .env
+# (scripts/lib.sh ensure_postgres_passwords), and a published one is refused.
 
 # TESTING=true makes the API skip its startup connections (Bifrost, the model
 # catalog, MCP servers) when the app lifespan runs outside the real stack. None

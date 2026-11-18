@@ -34,8 +34,12 @@ export POSTGRES_USER="${POSTGRES_USER:-vigil_agent}"
 # vigil_agent's password: the agent tables and nothing else. POSTGRES_PASSWORD in
 # .env is the owner password and POSTGRES_APP_PASSWORD vigil_app's; this process
 # takes neither.
-_agent_pw="$(env_file_value POSTGRES_AGENT_PASSWORD)"
-export POSTGRES_PASSWORD="${POSTGRES_AGENT_PASSWORD:-${_agent_pw:-vigil_agent_password_change_me}}"
+_agent_pw="${POSTGRES_AGENT_PASSWORD:-$(env_file_value POSTGRES_AGENT_PASSWORD)}"
+if [ -z "$_agent_pw" ]; then
+    echo "POSTGRES_AGENT_PASSWORD is unset in .env; run ./start.sh once, which sets it" >&2
+    exit 1
+fi
+export POSTGRES_PASSWORD="$_agent_pw"
 unset POSTGRES_APP_PASSWORD
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 # Redis requires a password (a REDIS_PASSWORD in .env wins, as for the backend).

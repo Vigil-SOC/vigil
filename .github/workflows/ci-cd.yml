@@ -464,6 +464,29 @@ jobs:
       - name: Smoke-test the result
         run: ./venv/bin/python -c 'import sqlalchemy, fastapi, uvicorn, arq, redis, anthropic; print("imports ok")'
 
+      # start.sh's environment steps on a clean checkout must leave .env with
+      # three distinct database passwords, none of them a published one.
+      - name: Assert a fresh .env holds no published database password
+        run: |
+          set -euo pipefail
+          rm -f .env
+          source scripts/lib.sh
+          load_env
+          ensure_agent_token
+          ensure_bifrost_admin_password
+          ensure_postgres_passwords --replace-published
+          published=$(./venv/bin/python -c 'import ast,pathlib; t=ast.parse(pathlib.Path("core/storage/connection.py").read_text()); print("\n".join(e.value for n in ast.walk(t) if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_SHIPPED_DEFAULT_PASSWORDS" for e in n.value.args[0].elts))')
+          [ -n "$published" ] || { echo "::error::_SHIPPED_DEFAULT_PASSWORDS not found"; exit 1; }
+          o=$(env_file_value POSTGRES_PASSWORD); a=$(env_file_value POSTGRES_APP_PASSWORD); g=$(env_file_value POSTGRES_AGENT_PASSWORD)
+          for v in "$o" "$a" "$g"; do
+            [ -n "$v" ] || { echo "::error::a database password in .env is empty"; exit 1; }
+            ! printf '%s\n' "$published" | grep -qxF "$v" || { echo "::error::.env holds a published database password"; exit 1; }
+          done
+          [ "$o" != "$a" ] && [ "$o" != "$g" ] && [ "$a" != "$g" ] || { echo "::error::database passwords are not distinct"; exit 1; }
+          if printf '%s\n' "$published" | grep -qFf - env.example; then
+            echo "::error::env.example holds a published database password"; exit 1
+          fi
+
   # The agent layer is a second Node package with its own manifest. Node 22
   # rather than NODE_VERSION: the eval's estate (eval/estate.ts) runs SQL on
   # node:sqlite.
