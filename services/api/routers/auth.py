@@ -2018,6 +2018,8 @@ def sso_finish(
         how, provider_time = sign_ins.NONE, None
     match = tuple(held["match"]) if held.get("match") else None
     notes: dict = {"groups": held["groups"]} if held.get("groups") else {}
+    if factor.step_down:  # on the trail as login puts it
+        notes["step_down"] = factor.step_down
     try:
         found = _sso_account(session, s, claims, notes)
         if found is None or found.principal_id != pid:
@@ -3011,10 +3013,17 @@ def _recovery_window(request: Request, session: Session) -> bool:
     row = session.get(SignIn, _session_sid(request) or "")
     if row and row.ended_at is None and row.auth_method == sign_ins.BREAK_GLASS:
         return True
+    if row and row.auth_method == sign_ins.SSO and row.mfa_met == sign_ins.STEP_DOWN:
+        # After the provider, a key-only person's recovery code is the one Vigil
+        # step-down (the app's needs an app); the provider's has a stored end.
+        user = session.query(User).filter(User.principal_id == row.principal_id).first()
+        keyed = user is not None and security_keys.has_keys(session, user.principal_id)
+        if row.ends_at is not None or not keyed or mfa_methods.has_app(user, keyed):
+            return False
+    elif not (row and row.auth_method == sign_ins.RECOVERY_STEP_DOWN):
+        return False
     return bool(
-        row
-        and row.auth_method == sign_ins.RECOVERY_STEP_DOWN
-        and step_up.window_end(row.confirmed_at)
+        step_up.window_end(row.confirmed_at)
         # Once keys are back a key is asked for again.
         and not security_keys.availability().available
     )

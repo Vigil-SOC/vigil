@@ -28,30 +28,36 @@ def upgrade() -> None:
     # settings reads below are skipped on a fresh install.
     if conn.execute(text("SELECT 1 FROM public.sso_links LIMIT 1")).first():
         from core.auth import session_policy, sso, sso_settings
-        from core.storage.models import Role, User
 
-        stored = conn.execute(
-            text("SELECT value FROM public.system_config WHERE key = :k"),
-            {"k": session_policy.KEY},
-        ).scalar()
-        level = (stored if isinstance(stored, dict) else {}).get(
+        def stored(key: str) -> dict:
+            value = conn.execute(
+                text("SELECT value FROM public.system_config WHERE key = :k"),
+                {"k": key},
+            ).scalar()
+            return value if isinstance(value, dict) else {}
+
+        level = stored(session_policy.KEY).get(
             "require_mfa", session_policy.SessionPolicy().require_mfa
         )
-        session = Session(bind=conn)
-        # On this connection: the app's own sessions aren't set up in an upgrade.
-        settings = sso_settings.read_row(session)[0].settings
-        rows = (
-            session.query(User, Role.permissions)
-            .outerjoin(Role, Role.role_id == User.role_id)
-            .filter(User.is_active.is_(True))
-            .all()
+        # Only Require single sign-on is read, so a hand-edited row can't fail this.
+        settings = sso_settings.SsoSettings(
+            require_sso=stored(sso_settings.KEY).get("require_sso") is True
         )
-        for user, perms in rows:
-            held = [name for name, on in (perms or {}).items() if on]
+        # Plain SQL for the accounts: a later revision's columns don't exist yet.
+        rows = conn.execute(text("""
+            SELECT u.principal_id, u.password_hash, u.break_glass_at,
+                   u.service_account, u.mfa_enabled, r.permissions
+            FROM public.users AS u
+            LEFT JOIN public.roles AS r ON r.role_id = u.role_id
+            WHERE u.is_active
+            """)).all()
+        session = Session(bind=conn)
+        for row in rows:
+            held = [name for name, on in (row.permissions or {}).items() if on]
             if session_policy.mfa_covered(
-                held, user.service_account is True, level
-            ) and sso.sso_only(session, user, settings):
-                key = "with" if user.mfa_enabled else "without"
+                held, row.service_account is True, level
+            ) and sso.sso_only(session, row, settings):
+                key = "with" if row.mfa_enabled else "without"
                 report[f"sso_only_{key}_factor"] += 1
         session.close()
     stash_report(revision, report)

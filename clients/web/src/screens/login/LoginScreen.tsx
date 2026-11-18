@@ -317,11 +317,13 @@ export default function LoginScreen() {
     setError('')
   }
 
+  // Require single sign-on's landing: not on the password route, and not mid-way through the SSO second step
+  const ssoLanding = requireSso && !passwordRoute && !ssoStep
   const title = newCodes
     ? 'New recovery codes'
     : needsBootstrap
     ? 'Create your account'
-    : requireSso && !passwordRoute
+    : ssoLanding
     ? 'Sign in'
     : forgot
       ? 'Reset your password'
@@ -336,7 +338,7 @@ export default function LoginScreen() {
     ? 'Your old recovery codes no longer work. Keep these instead.'
     : needsBootstrap
     ? 'No account exists yet. Set up the first administrator.'
-    : requireSso && !passwordRoute
+    : ssoLanding
     ? 'Your organization signs in with SSO.'
     : forgot
       ? 'Enter the email on your account to request a reset link.'
@@ -356,7 +358,7 @@ export default function LoginScreen() {
 
   return (
     <AuthLayout
-      screenLabel={forgot && !(requireSso && !passwordRoute) ? 'Forgot password' : 'Sign in'}
+      screenLabel={forgot && !ssoLanding ? 'Forgot password' : 'Sign in'}
       overlay={
         setupOpen && (
           <TwoStepDialog
@@ -482,7 +484,7 @@ export default function LoginScreen() {
             )}
           </button>
         </form>
-      ) : requireSso && !passwordRoute ? (
+      ) : ssoLanding ? (
         <>
           <a className="btn-signin" href={SSO_START}>
             <Icon name="key" size={17} />
