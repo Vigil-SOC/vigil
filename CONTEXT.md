@@ -227,6 +227,22 @@ _Avoid_: failed recall, empty recall, **Declared Gap** (that is a question an
 investigation left open, not a read that did not happen), **Visibility Gap** (that
 is a tool that could not answer about the estate)
 
+**Facts Event**:
+The **Ledger** record of the entity facts an investigation opened on (#4742): what
+Entra, Okta and Falcon said about the users and hosts its trigger findings name,
+read by the harness at run start beside **Recall** and on the same terms -- not a
+granted tool, once per run, on the trigger findings' **Entity Keys**. A read that
+was served carries each row with its source and `fetched_at`, and each source that
+could not answer with its reason; a read that could not happen at all -- the
+endpoint failed or refused, or the run may not read its Case -- carries the keys
+and the reason and none of the rest, and the run carries it for its life as it
+would an **Unavailable Read**. A run on a Case reads that Case's own rows, copying
+a fresh caseless row onto the Case before asking a source. The prefix block and a
+replay render from this event, never from the table. Facts inform and settle
+nothing; a hunt reads none.
+_Avoid_: enrichment, entity context, Recall (facts are what a source says now, not
+what past work concluded)
+
 **Sighting**:
 What one investigation observed about one entity from one source. One row per
 entity, investigation and source, so growth tracks hunts and not telemetry

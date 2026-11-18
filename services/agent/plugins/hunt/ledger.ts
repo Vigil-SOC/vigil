@@ -172,6 +172,8 @@ export function fold(events: readonly HuntEvent[]): Projection {
       // a fold that read episodic rows would make this projection depend on what
       // other runs concluded, and the fold is one run's own account of itself.
       case "recall":
+      // Entity facts likewise inform and settle nothing; a hunt never reads them.
+      case "facts":
         // None is state: the narrative is an account of the fold, so it cannot also be
         // an input to it.
         break;

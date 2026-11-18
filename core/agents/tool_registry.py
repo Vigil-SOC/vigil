@@ -66,6 +66,9 @@ MANIFEST: Dict[str, Dict[str, Any]] = {
 
 Args = Dict[str, Any]
 
+# The run-start fact read (#4742): a backend tool in no catalogue, see _entity_facts.
+FACTS_TOOL = "read_entity_facts"
+
 # Every chat tool names the permission execute_backend_tool checks, except
 # call_integration_tool: it is checked as the tool it names. A run no
 # person started is bound by its run claims and holds no role: the autonomy
@@ -107,6 +110,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "lookup_indicators": "findings.read",
     "propose_feed_hunts": "findings.read",
     RECALL_TOOL: "automation.read",
+    FACTS_TOOL: "automation.read",
     "check_hunt_coverage": "automation.read",
     "list_learning_episodes": "automation.read",
     "export_learning_episodes": "automation.read",
@@ -1140,6 +1144,23 @@ def _recall(args: Args) -> Any:
     return recall_entity(args)
 
 
+# The run-start fact read on a run's trigger Entity Keys (#4742). The harness
+# calls it the way it calls Recall; it is in no catalogue, so no agent is offered
+# it. One mapping, for the same reason as _recall.
+async def _entity_facts(args: Args) -> Any:
+    from core.integrations import entity_facts
+
+    keys = args.get("entity_keys")
+    if not isinstance(keys, list):
+        raise MCPFailure("invalid_args", "entity_keys must be a list of Entity Keys")
+    case_id = args.get("case_id") or None
+    try:
+        held = await entity_facts.read_keys([str(k) for k in keys], case_id)
+    except entity_facts.CaseUnreadable as exc:
+        raise MCPFailure("denied", str(exc)) from None
+    return held.journaled()
+
+
 # Report in, one of three answers out (#903). Reads only; never starts a hunt.
 def _check_hunt_coverage(args: Args) -> Any:
     from core.memory.hunt_coverage import check_coverage
@@ -1170,6 +1191,7 @@ def _export_learning_episodes(args: Args) -> Any:
 
 _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     RECALL_TOOL: _recall,
+    FACTS_TOOL: _entity_facts,
     "check_hunt_coverage": _check_hunt_coverage,
     "list_learning_episodes": _list_learning_episodes,
     "export_learning_episodes": _export_learning_episodes,

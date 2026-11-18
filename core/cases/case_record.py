@@ -428,6 +428,10 @@ def _event_text(kind: str, payload: Any, known: RecordContext) -> Optional[str]:
         return _join(body.get("kind"), body.get("text")) or kind
     if kind == "recall":
         return "Opening recall"
+    if kind == "facts":
+        if isinstance(body.get("unavailable"), str):
+            return _join("Entity facts unavailable", body["unavailable"])
+        return "Opening entity facts"
     if kind == "run":
         return "Run started"
     if kind == "resumed":

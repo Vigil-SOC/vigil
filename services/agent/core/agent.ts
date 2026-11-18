@@ -690,6 +690,7 @@ function turnFor(
     result_cap: spec.runtime.result_cap,
     recall_limit: spec.runtime.recall_limit,
     recall_keys: options.recall_keys ?? openingKeys(spec),
+    ...(factsAsk(options) ?? {}),
     // Only a conversation sizes its fold to the model's window (#2125): it only lowers
     // Ask's ceiling, and every other kind keeps the flat one.
     ...(options.conversation === undefined || spec.context_window === undefined ? {} : { context_window: spec.context_window }),
@@ -780,6 +781,15 @@ export function briefOf(spec: RunSpec): string {
     spec.narrative,
   ];
   return parts.filter((part) => part).join("\n\n");
+}
+
+// An investigation opened on findings reads its trigger entities' facts (#4742): the
+// keys the orchestrator minted from those findings, and the case it was started on.
+// Gated on the kind, never on keys being present: a hunt carries keys too, and reads none.
+function factsAsk(options: Pick<AgentOptions, "spec" | "run_kind" | "conversation">): { facts: { keys: readonly string[]; case_id: string | null } } | null {
+  if (options.run_kind !== "investigate" || options.conversation !== undefined) return null;
+  const refs = options.spec.sections["refs"] as { case_id?: unknown } | undefined;
+  return { facts: { keys: openingKeys(options.spec), case_id: typeof refs?.case_id === "string" && refs.case_id !== "" ? refs.case_id : null } };
 }
 
 // Sorted and de-duplicated, as every workflow opens its read: one subject asks in one order.

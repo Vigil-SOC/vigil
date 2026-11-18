@@ -75,6 +75,7 @@ export class Framer {
       system: hash(seen.system),
       task: hash(seen.task),
       recall: hash(seen.recall),
+      ...(seen.facts === "" ? {} : { facts: hash(seen.facts) }),
       tools: seen.tools.map((tool) => ({ id: tool.id, hash: hash(stable(tool)) })),
       // A skill whose text the run does not carry is named by its digest alone: its
       // text is not in the ledger to point at.

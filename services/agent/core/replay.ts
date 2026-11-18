@@ -7,8 +7,9 @@ import type {
   ReviewPayload,
   TerminalPayload,
 } from "../contracts/events.js";
+import { factsPayloadOf } from "../contracts/facts.js";
 import { hasRecall, recalledNotesOf } from "../contracts/memory.js";
-import { renderRecall, type FoldPolicy } from "./context.js";
+import { renderFacts, renderRecall, type FoldPolicy } from "./context.js";
 import { historyFrom } from "./frames.js";
 import type { Message, ToolSchema } from "./provider.js";
 import { classOf } from "./record.js";
@@ -42,6 +43,9 @@ export interface FrameReplay {
   // Whether the recall the run's keyed read journaled renders to the block its
   // frames carried. Null when the run made no keyed read.
   recall_matches: boolean | null;
+  // The same for the entity facts an investigation opened on (#4742). Null when
+  // the run journaled no facts read.
+  facts_matches: boolean | null;
 }
 
 function contentOf(events: readonly Envelope[]): Map<string, string> {
@@ -103,6 +107,7 @@ export function inputOf(frame: FramePayload, content: ReadonlyMap<string, string
     system: text(frame.system),
     tools: frame.tools.map((tool) => JSON.parse(text(tool.hash)) as ToolSchema),
     recall: text(frame.recall),
+    ...(frame.facts === undefined ? {} : { facts: text(frame.facts) }),
     task: text(frame.task),
     transcript: [...history, ...transcriptOf(listed)],
     tail: frame.tail === null ? null : text(frame.tail),
@@ -144,7 +149,20 @@ export function replayFrames(events: readonly Envelope[]): FrameReplay {
     reproduced: frames.filter((frame) => frame.mismatch === null).length,
     missing: [...missing],
     recall_matches: recallMatches(events, content),
+    facts_matches: factsMatch(events, content),
   };
+}
+
+// The facts block re-rendered from the journaled read alone, against the one each
+// agent frame carried. An empty block is carried as no facts at all.
+function factsMatch(events: readonly Envelope[], content: ReadonlyMap<string, string>): boolean | null {
+  const held = factsPayloadOf(events as never);
+  if (held === null) return null;
+  const rendered = renderFacts(held);
+  const hash = rendered === "" ? undefined : contentHash(rendered);
+  const agent = events.filter((event) => event.kind === "frame" && (event.payload as FramePayload).role === "agent");
+  if (agent.length === 0) return null;
+  return agent.every((event) => (event.payload as FramePayload).facts === hash && (hash === undefined || content.has(hash)));
 }
 
 // A keyed read journals its rows, and the agent's frames carry the block they render to,

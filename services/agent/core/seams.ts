@@ -1,4 +1,5 @@
 import type { AgentEvent, NewEvent, TerminalPayload } from "../contracts/events.js";
+import type { EntityFacts } from "../contracts/facts.js";
 import type { RecallResult } from "../contracts/memory.js";
 import type { RegisteredTool, ToolResult } from "../contracts/tool.js";
 
@@ -33,6 +34,10 @@ export interface Memory {
   // answer that hides. An implementation with no memory behind it throws, so the
   // caller journals the read as one that did not happen.
   entities(read: KeyedRead): Promise<RecallResult>;
+  // The entity facts for a run's trigger keys, on its case's rows when it has one
+  // (#4742). Optional: absent, the run journals the read as unavailable. Throws on
+  // a read that did not happen, as entities does.
+  facts?(read: KeyedRead & { caseId: string | null }): Promise<EntityFacts>;
   remember(note: string): Promise<void>;
 }
 
