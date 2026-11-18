@@ -51,7 +51,8 @@ def extract_required_env_vars(
     for value in list((raw_env or {}).values()) + list(raw_args or []):
         if not isinstance(value, str):
             continue
-        for m in _ENV_PLACEHOLDER_RE.finditer(value):
+        # "$${VAR}" is a literal for the child to expand, not a placeholder.
+        for m in _ENV_PLACEHOLDER_RE.finditer(value.replace("$$", "")):
             name = m.group(1)
             if name in _PLACEHOLDER_BLACKLIST:
                 continue
@@ -230,6 +231,9 @@ class MCPService:
     ) -> str:
         """Expand ``${VAR}`` and ``${VAR:-default}`` in a config string.
 
+        ``$$`` is a literal ``$``, so ``$${VAR}`` reaches the child as
+        ``${VAR}`` for it to expand from its own env (keeps secrets off argv).
+
         Resolves against ``env`` — the environment the child is actually spawned
         with — so anything the spawn site pinned there is seen rather than
         collapsed to an empty string.
@@ -239,7 +243,8 @@ class MCPService:
         connector URL, say) cannot name another variable or secret to read.
         """
         source: Mapping[str, str] = os.environ if env is None else env  # noqa: ENV001
-        pattern = r"\$\{([^}:]+)(?::-((?:\$\{[^}]+\}|[^{}])*))?\}"
+        # A default may nest ${VAR} or an escaped $${VAR} (by then "\x00{VAR}").
+        pattern = r"\$\{([^}:]+)(?::-((?:[$\x00]\{[^}]+\}|[^{}])*))?\}"
 
         def replace_var(match):
             var_name = match.group(1)
@@ -257,6 +262,7 @@ class MCPService:
 
         # Repeat only to unwind nested defaults; resolved values carry no "$"
         # until the end, so they are never matched again.
+        value = value.replace("$$", _LITERAL_DOLLAR)
         prev = None
         while prev != value:
             prev = value

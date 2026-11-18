@@ -29,10 +29,12 @@
 
     "loglm": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.6", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
+      "args": ["-y", "mcp-remote@0.16.6", "${LOGLM_MCP_URL}", "--header", "Authorization:$${LOGLM_AUTH_HEADER}"],
       "env": {
         "_security_note": "mcp-remote pinned to exactly 0.16.6. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
-        "LOGLM_MCP_URL": "${LOGLM_MCP_URL}"
+        "_header_note": "$$ is a literal $: mcp-remote expands ${LOGLM_AUTH_HEADER} from its own env, keeping the token off the command line, which other server uids in the runner can read.",
+        "LOGLM_MCP_URL": "${LOGLM_MCP_URL}",
+        "LOGLM_AUTH_HEADER": "Bearer ${LOGLM_MCP_TOKEN}"
       }
     },
 
