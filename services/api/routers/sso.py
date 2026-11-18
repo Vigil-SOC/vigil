@@ -359,6 +359,8 @@ class SyncOut(BaseModel):
     directory_id_claim: str
     last_push: Optional[str] = None
     token_expires_at: Optional[str] = None
+    # While sync is off: when its token's first unused-token reminder would come.
+    first_reminder_at: Optional[str] = None
     failed_authentications: int
     last_manager_refusals: list[str]
     skipped_joins: int = 0
@@ -401,6 +403,11 @@ def _sync_out(session, token: Optional[str] = None) -> SyncOut:
         directory_id_claim=settings.directory_id_claim,
         last_push=_stamp(directory_sync.latest_push(session)),
         token_expires_at=_stamp(directory_sync.token_expiry(session)),
+        first_reminder_at=(
+            None
+            if settings.sync_enabled
+            else _stamp(directory_sync.first_reminder(session))
+        ),
         failed_authentications=directory_sync.failed_authentications(session),
         last_manager_refusals=refusals,
         skipped_joins=group_mapping.skipped_joins(session),

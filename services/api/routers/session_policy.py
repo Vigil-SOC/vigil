@@ -31,6 +31,7 @@ from core.auth import (
     session_policy,
     token_notices,
     token_policy,
+    token_unused,
     trail_events,
 )
 from core.auth.permissions import require_permission
@@ -110,6 +111,9 @@ class PolicyOut(session_policy.SessionPolicy):
     # Set only on the save that lowered a token maximum, and had tokens to shorten.
     shortened: Optional[TokenShortening] = None
     notice: Optional[str] = None
+    # When the unused-token pass last completed (None: not yet), and whether it is over 3 hours late.
+    token_pass_at: OptDateTime = None
+    token_pass_late: bool = False
 
 
 def _no_key_text(count: int) -> str:
@@ -138,6 +142,7 @@ class StaleOut(BaseModel):
 
 def _out(stored: session_policy.Stored, session) -> PolicyOut:
     editor = stored.updated_by and session.get(User, stored.updated_by)
+    token_pass_at, token_pass_late = token_unused.pass_health(session)
     return PolicyOut(
         **stored.policy.model_dump(),
         ranges=_ranges(),
@@ -146,6 +151,8 @@ def _out(stored: session_policy.Stored, session) -> PolicyOut:
         updated_by_name=(editor.full_name or editor.username) if editor else None,
         updated_at=stored.updated_at,
         unreadable=stored.unreadable,
+        token_pass_at=token_pass_at,
+        token_pass_late=token_pass_late,
     )
 
 

@@ -7,7 +7,8 @@ again, run inside the backend's environment by an operator with host access::
 
 It asks for a reason and refuses an empty one. It sets ``sync_enabled`` false
 in the ``auth.sso`` settings and bumps their version. The directory sync token
-is left in place. The change is on the audit trail as ``directory.sync_off``
+is left in place, and the output says where it now stands under the unused-token
+rule and when its first reminder would come. The change is on the audit trail as ``directory.sync_off``
 by ``system``, with the reason, once the trail exists on this database. It is
 not an API route: nothing reachable over the network can run it.
 
@@ -22,7 +23,7 @@ from typing import Optional, TextIO
 
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from core.auth.directory_sync import SyncRefused, turn_off
+from core.auth.directory_sync import SyncRefused, turn_off, unused_rule_text
 from core.auth.service_account import (
     EX_OK,
     EX_REFUSED,
@@ -67,9 +68,16 @@ def main(
     except SQLAlchemyError as exc:
         print(f"database error: {type(exc).__name__}", file=stderr)
         return EX_SOFTWARE
+    # After the switch-off has committed: the rule reads sync as off.
+    try:
+        with unit_of_work() as session:
+            rule = unused_rule_text(session)
+    except SQLAlchemyError:
+        rule = "The unused-token rule could not be read, so no first reminder date is given."
     print(
         f"Directory sync is off (settings v{version}). "
-        "Sign-in can create accounts again. The directory sync token was left in place.",
+        "Sign-in can create accounts again. The directory sync token was left in place. "
+        + rule,
         file=stdout,
     )
     return EX_OK

@@ -161,6 +161,13 @@ function failure(e: unknown, fallback: string) {
   return errorText(e, fallback)
 }
 
+// The unused-token pass reminds and revokes unused tokens; it is late after 3 hours.
+const passText = (p: SessionPolicy) => {
+  const at = utcDayClock(p.token_pass_at)
+  if (!at) return p.token_pass_late ? 'The unused-token pass has not run since the API service started over 3 hours ago, so unused tokens are not being reminded or revoked.' : 'The unused-token pass has not run yet.'
+  return p.token_pass_late ? `The unused-token pass last completed ${at} UTC, over 3 hours ago, so unused tokens are not being reminded or revoked.` : `The unused-token pass last completed ${at} UTC.`
+}
+
 const who = (p: SessionPolicy) => {
   const when = utcDayClock(p.updated_at)
   return p.version === 0 ? 'Never saved: these are the defaults.' : `Version ${p.version}, changed by ${p.updated_by_name ?? 'a removed account'}${when ? ` on ${when} UTC` : ''}.`
@@ -402,7 +409,12 @@ export default function SessionsSection({ notify }: SectionProps) {
         if (key === 'require_phishing_resistant') return keysRow
         if (key === 'lockout_timed') return timedRow
         if (key === 'password_character_rules') return rulesRow
-        if (key === 'api_tokens') return <h4 key={key} className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mt-5 mb-1">API tokens</h4>
+        if (key === 'api_tokens') return (
+          <div key={key} className="mt-5 mb-1">
+            <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">API tokens</h4>
+            <p className={`text-xs mt-1 ${saved.token_pass_late ? 'text-high' : 'text-tx-3'}`}>{passText(saved)}</p>
+          </div>
+        )
         // The length applies only to timed locks.
         if (key === 'lockout_minutes' && !form.lockout_timed) return null
         return numberRow(FIELDS.find((f) => f.key === key)!)

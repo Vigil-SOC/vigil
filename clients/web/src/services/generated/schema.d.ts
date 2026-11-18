@@ -14481,6 +14481,13 @@ export interface components {
             shortened?: components["schemas"]["TokenShortening"] | null;
             /** Sign In Limit */
             sign_in_limit?: number | null;
+            /** Token Pass At */
+            token_pass_at?: string | null;
+            /**
+             * Token Pass Late
+             * @default false
+             */
+            token_pass_late: boolean;
             /**
              * Token Unused Days
              * @default 45
@@ -15978,6 +15985,8 @@ export interface components {
             directory_id_claim: string;
             /** Failed Authentications */
             failed_authentications: number;
+            /** First Reminder At */
+            first_reminder_at?: string | null;
             /** Last Manager Refusals */
             last_manager_refusals: string[];
             /** Last Push */

@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from pydantic import ValidationError
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -19,14 +20,23 @@ from core.audit import trail
 from core.auth import (
     mcp_credential_service,
     principals,
+    session_policy,
     sso,
     sso_settings,
     token_policy,
+    token_unused,
     trail_events,
 )
 from core.auth.deactivation import clear_deactivation
 from core.auth.identity import claim_sign_in_names, identifier_in_use
-from core.storage.models import Principal, Role, SsoLink, SystemConfig, User
+from core.storage.models import (
+    McpCredential,
+    Principal,
+    Role,
+    SsoLink,
+    SystemConfig,
+    User,
+)
 from core.time import utcnow
 
 ROLE_ID = "role-directory-sync"
@@ -289,6 +299,8 @@ def turn_on(session: Session, actor: User, claim: str) -> str:
         version=version,
         directory_id_claim=claim,
         accountable=actor.principal_id,
+        # While sync is on its token is outside the unused-token rule.
+        unused_token_exempt=True,
     )
     return token
 
@@ -395,7 +407,8 @@ def last_manager_ids(session: Session) -> list[str]:
     return seen
 
 
-def token_expiry(session: Session) -> Optional[datetime]:
+def sync_token(session: Session) -> Optional[McpCredential]:
+    """The directory sync account's usable token, if it has one."""
     account = session.query(User).filter(User.username == USERNAME).one_or_none()
     if account is None:
         return None
@@ -403,5 +416,44 @@ def token_expiry(session: Session) -> Optional[datetime]:
         account.user_id, session=session
     ):
         if credential.label == TOKEN_LABEL and credential.is_usable():
-            return credential.expires_at
+            return credential
     return None
+
+
+def token_expiry(session: Session) -> Optional[datetime]:
+    credential = sync_token(session)
+    return credential.expires_at if credential else None
+
+
+def first_reminder(session: Session) -> Optional[datetime]:
+    """When the sync token's first unused-token reminder would come, as if sync were
+    off. None with no usable token, no rule, or a rule that can't be read."""
+    credential = sync_token(session)
+    state = token_unused.read_state(session)
+    if credential is None or state is None:
+        return None
+    return token_unused.first_reminder(credential, state)
+
+
+def unused_rule_text(session: Session) -> str:
+    """One sentence for where the sync token stands under the unused-token rule while
+    sync is off, for the host command."""
+    if sync_token(session) is None:
+        return "There is no usable directory sync token."
+    when = first_reminder(session)
+    if when is not None:
+        return (
+            "The token is now under the unused-token rule: if it is not used, its first "
+            f"reminder comes on {when:%Y-%m-%d} UTC."
+        )
+    try:
+        off = session_policy.read_row(session)[0].policy.token_unused_days is None
+    except (ValidationError, TypeError, ValueError):
+        off = False
+    if off:
+        return (
+            "The unused-token period is off, so the token is not subject to the rule."
+        )
+    return (
+        "The unused-token rule could not be read, so no first reminder date is given."
+    )

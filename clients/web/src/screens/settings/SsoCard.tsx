@@ -8,6 +8,7 @@ import api, {
   type SsoSettingsBody,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
+import { utcDay } from '../../shared/utc'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, Field, PasswordInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import DirectoryMapping from './DirectoryMapping'
@@ -437,6 +438,12 @@ export default function SsoCard({ notify }: SectionProps) {
             onChange={(e) => setClaim(e.target.value)}
           />
         </Field>
+        {!syncOn && sync?.first_reminder_at && (
+          <p className="text-xs text-tx-3">
+            Sync is off, so its token is under the unused-token rule: if it is not used, its first reminder comes on{' '}
+            {utcDay(sync.first_reminder_at)} UTC.
+          </p>
+        )}
         {syncOn && sync && (
           <dl className="sso-status">
             <div>
@@ -486,6 +493,12 @@ export default function SsoCard({ notify }: SectionProps) {
               <dd className="font-mono">{sync.scim_path}</dd>
             </div>
           </dl>
+        )}
+        {syncOn && sync && (
+          <p className="text-xs text-tx-3">
+            While sync is on, its token is exempt from the unused-token rule. Its maximum lifetime still applies: it
+            expires on the date above.
+          </p>
         )}
         {syncOn && sync?.mapping_note && (
           <div className="settings-banner warn" role="status">
@@ -604,6 +617,10 @@ export default function SsoCard({ notify }: SectionProps) {
             <p className="mt-2">
               Microsoft Entra's sign-in subject is per application, so that install sets the claim to oid and sends
               the same value as externalId.
+            </p>
+            <p className="mt-2">
+              While sync is on, its token is exempt from the unused-token rule, so an unused token is not reminded or
+              revoked. The token's maximum lifetime still applies.
             </p>
           </>
         }
