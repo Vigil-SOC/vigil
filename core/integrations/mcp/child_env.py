@@ -120,6 +120,34 @@ _CLOUD_FILE_VARS = (
     "AWS_PROFILE",
 )
 
+# Credential pointers for the Security Lake server: where its default AWS chain
+# finds credentials (files, profile, web identity, container endpoint), never a key.
+SECURITY_LAKE_SERVER = "amazon-security-lake"
+AWS_POINTER_VARS = (
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_PROFILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+)
+
+
+def aws_pointer_env(server_name: str) -> Dict[str, str]:
+    """The AWS credential pointers set here, for the Security Lake server only."""
+    if server_name != SECURITY_LAKE_SERVER:
+        return {}
+    return {
+        name: value
+        for name in AWS_POINTER_VARS
+        if (value := os.environ.get(name))  # noqa: ENV001 - MCP child process env
+    }
+
+
 _IN_REPO_ARG = re.compile(r"core/integrations/[^/]+/tool\.py")
 
 
@@ -130,8 +158,8 @@ def stdio_env(server, project_root: str) -> Dict[str, str]:
     ``PYTHONPATH``, as ``Catalog.launch`` adds them, plus what only a runner-less
     child needs: ``VIGIL_DIR`` (it shares the backend's state directory), the
     package launchers' settings, for in-repo servers the database and
-    secret-store variables, and for ``gcp-*`` / ``aws-security`` the credential
-    file locations. Each extra is passed only when set in the backend. Anything
+    secret-store variables, for ``gcp-*`` / ``aws-security`` the credential
+    file locations, and for ``amazon-security-lake`` its AWS credential pointers. Each extra is passed only when set in the backend. Anything
     else in the backend's environment, raw cloud keys included, stays there.
     """
     from core.config import vigil_path
@@ -163,4 +191,6 @@ def stdio_env(server, project_root: str) -> Dict[str, str]:
     for name in extra:
         if value := os.environ.get(name):  # noqa: ENV001 - MCP child process env
             env.setdefault(name, value)
+    for name, value in aws_pointer_env(server.name).items():
+        env.setdefault(name, value)
     return env

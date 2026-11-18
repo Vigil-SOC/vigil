@@ -23,7 +23,12 @@ from types import SimpleNamespace
 from typing import Dict, List
 
 import core.integrations.mcp.service as _service
-from core.integrations.mcp.child_env import PROXY_ENV_NAMES, ca_bundle_env, proxy_env
+from core.integrations.mcp.child_env import (
+    PROXY_ENV_NAMES,
+    aws_pointer_env,
+    ca_bundle_env,
+    proxy_env,
+)
 from core.integrations.mcp.packaged import installed_launch
 from core.integrations.mcp.service import MCPService
 
@@ -109,6 +114,9 @@ class Catalog:
         # sets drops both forwarded spellings, so NO_PROXY and no_proxy agree.
         overridden = {k.upper() for k in own if k in PROXY_ENV_NAMES}
         env = {k: v for k, v in proxy_env().items() if k.upper() not in overridden}
+        # The Security Lake server signs in with the runner's own AWS chain (instance
+        # role, IRSA, Pod Identity, a mounted config): pointers only, never keys.
+        env.update(aws_pointer_env(name))
         env.update(own)
         env.update(ca_bundle_env())
         env.update(HOME=home, PYTHONPATH=root, TMPDIR=str(Path(home) / TMP_DIR))

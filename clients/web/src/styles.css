@@ -3931,7 +3931,8 @@
    .int-probe {
       display: flex;
       align-items: flex-start;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 4px 12px;
       padding: 10px 12px;
       background: var(--bg2);
       border-radius: 10px;
@@ -3940,7 +3941,8 @@
    }
    .int-probe-name { flex-shrink: 0; font-family: var(--font-mono); color: var(--tx0); }
    .int-probe-ic { flex-shrink: 0; display: inline-flex; padding-top: 1px; }
-   .int-probe-detail { margin-left: auto; text-align: right; color: var(--poor); min-width: 0; overflow-wrap: anywhere; }
+   /* Drops below the name when the row has no room for a readable column. */
+   .int-probe-detail { flex: 1 1 18ch; margin-left: auto; text-align: right; color: var(--poor); min-width: 0; overflow-wrap: anywhere; }
    .int-probe.pass .int-probe-ic { color: var(--good); }
    .int-probe.fail .int-probe-ic { color: var(--poor); }
    .int-sec {
