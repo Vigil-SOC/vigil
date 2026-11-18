@@ -178,6 +178,203 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.1.3 (2026-11-18)
+
+## What's Changed
+* Replay recent person-determined cases on a candidate model by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4391
+* Show the investigation replay on the model row by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4394
+* Let a false-positive close and a noise mark store a cause by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4399
+* Cite the judged-false alerts an agent exception matches by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4400
+* Show a rule's judged-false split and let the agent read those alerts by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4401
+* Write Medic's section, opt-in, beside the support bundle by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4405
+* Add a public-safe Medic section of prepare_support_bundle incidents by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4406
+* Report soc-daemon work-loop passes and hang on a flat counter by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4415
+* Restart a dead soc-daemon on Compose from a click by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4426
+* Tell medic.admin when a fix Medic can run is waiting, refused, or done by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4444
+* Offer the soc-daemon restart on the Medic incident pane by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4442
+* Medic gateway: send a token from a file, and the sensor reads the new states by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4438
+* Mint Medic's gateway a token from the host; end its password on first use by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4443
+* Mint Medic's gateway token from enable-compose.sh; start the gateway with either credential file missing by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4458
+* Directory sync creates, takes over, and deactivates users by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4469
+* List unheld new permissions and complete the permission-split report by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4467
+* Land Dependabot bumps (#4470–#4480) with regenerated requirements.lock by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4483
+* Helm: mount Medic's gateway token Secret; NOTES prints the command that fills it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4466
+* Clear a hung soc-daemon on Compose through the existing restart by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4482
+* Medic tells medic.admin holders while its account still reads with a password by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4488
+* Hold outside actions across a stop until a person releases them by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4468
+* Ask everyone to confirm before creating or rotating an API token by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4481
+* Pushed groups set team membership and roles for managed accounts by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4485
+* Record intent and outcome for the Jira push and Elastic alert sync by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4506
+* Show entries waiting to be recorded late on the audit trail's health by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4505
+* Record narrowing safety acts when the audit trail can't take writes by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4516
+* Require a typed reason and end sign-ins when unlocking or issuing a reset link by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4517
+* Let the host recovery script bring an account back and record who ran it by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4518
+* Let an admin link a colliding directory push, reactivate a window of sync deactivations, and remove a sync account nobody used by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4511
+* Show each person's MFA methods on the Team & access list by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4519
+* Tell the inviter when a new account cancels their invite by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4520
+* Confirm a changed email before trusting it, and name who to contact by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4521
+* Refuse a new Medic account while its current one is deactivated by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4522
+* Require a verified email to link SSO by email, and keep self-service reset off SSO-only accounts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4524
+* Name the Claude Code client vigil-soc by @epowell101 in https://github.com/Vigil-SOC/vigil/pull/4523
+* Limit failed sign-ins before a lock to 3–10 by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4531
+* Let an operator set a shorter key-rotation period by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4525
+* Name recovery and MFA-reset sign-in endings, and ask before turning a detection off by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4538
+* Search a skills folder where npx skills searches a repo by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4502
+* Record each detection gap the gaps run raises as a proposal, and attach the rules its run saves by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4515
+* Return a rule's query, description and stored checks from one read by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4513
+* Let a person switch off a rule that is in shadow by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4514
+* Hold a gap back only while a rule for it is proposed or in shadow by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4527
+* Run the daily gaps run with no Case by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4528
+* Record which earlier gap draft a redrafted rule replaces by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4529
+* Add a Proposed tab to Detections: the rules Vigil drafted after a gap by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4530
+* Refuse SSO settings saves from a service account or API token by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4536
+* Install every skill in an uploaded zip, found as npx skills finds them by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4503
+* Add the SkillSpector runtime and a skill scan wrapper by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4508
+* Let a person dismiss a gap proposal whose run ended with no rule by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4553
+* State the owner refusals and cross-team merge right in the upgrade notes by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4546
+* Let the Cases list narrow to one team by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4547
+* Hold operator skills from agents until a scan clears them by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4509
+* Template creates check the owner, a move can name yourself, only live memberships count (#4453) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4554
+* Let a skills.approve holder release a held skill by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4510
+* Show a skill's scan and let an approver release a held skill by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4556
+* Give --medic and its minimum version in Medic's defect notice by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4549
+* Match threat-feed indicators regardless of letter case or defanging by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4550
+* Join the threat-indicator and skill-approval revisions into one head by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4561
+* Erasure drops the preferences row and blanks API token labels (#4455) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4558
+* Record locks, failed password changes, refused reset links and failed notice emails; alert on trail and feed failure by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4567
+* Let Assigned to me and an owner link list that owner's cases on every team by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4557
+* Discard queued agent runs on restore and record the reason (#4539) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4564
+* Hold runs no person started to open cases while autonomy is stopped by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4563
+* Give the agent layer its own database role, scoped to the agent tables by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4551
+* Record who gave a person Admin from the host and how they were verified by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4574
+* Keep a lane-1 daemon fix in the Medic support section with its outcome by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4573
+* The Claude Code client: its MCP server entry, the name vigil-soc, and a description of what it adds (#4251) by @epowell101 in https://github.com/Vigil-SOC/vigil/pull/4393
+* Give the Claude Code client a support URL: the new-issue form by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/4579
+* Join the three dangling schema revisions into one head by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/4581
+* Annotate every /mcp tool with a title and its read-only and destructive hints by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/4582
+* Break-glass accounts: a host-set mark, and a password, code and reason sign-in under Require SSO by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4552
+* Fence Compose handoffs in a scrubbed <vigil:handoff> block by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4559
+* Erasing an account asks what deactivating it does (GHSA-mwv5-h697-fj2w) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4562
+* Keep case in POSIX process paths and URL paths in Entity Keys (#4542) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4565
+* Apply the restricted-case read rule to detection gap analysis by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4588
+* Spawn stdio MCP children with only their declared env, not the backend's by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4589
+* Install the runner's pinned MCP connectors on host-native installs by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4591
+* Keep Require single sign-on in force when SSO can't be used (GHSA-3pc2-h2fq-xw3g) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4592
+* Require disposition_field to be an enum of the six disposition words by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4593
+* Break-glass accounts: SSO and directory sync never sign in, take over or link a marked account by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4594
+* Remove the unreachable integrations.write row for call_integration_tool by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4595
+* Break-glass accounts keep the safe's codes, get no tokens, and show in the bell (#4533) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4597
+* Require a bearer on agent-shell's TCP listener by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4596
+* Hide runs on unreadable restricted cases from hunt tools and chat recall by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4598
+* Leave tasks on unreadable restricted cases out of the deactivation notice by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4599
+* Scan skills with a model when one is configured, and hold on CRITICAL by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4512
+* Read AI triage answers the model wraps in brackets by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4601
+* Keep the detector's severity when AI triages or investigates by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4603
+* Give AI triage a grounded verdict and keep the detector's opinion out by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4607
+* Hold AI triage's facts to the alert fields they cite by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4609
+* Remove the on-demand AI analysis of a finding by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4605
+* Close a dismissed case only where autonomy lets the run act by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4611
+* Leave excluded-IP findings out of the agents' finding search by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4614
+* Show a case id alone wherever it already reads case-… by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4618
+* Run the Overview reads off the event loop by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4624
+* Run the backup and upgrade one-shots as the image's user on macOS by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4626
+* Link a finding's case from the Findings table and popup by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4631
+* Count findings merged in from another case as alerts since the last run by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4632
+* Drop the Score column and the popup's empty score/confidence box by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4635
+* Label a NetFlow finding's IPs as client or server in the popup by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4637
+* Copy buttons beside the finding id and the case id by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4639
+* Show the investigation's report as a card on the case page by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4643
+* Review a malicious investigation verdict before it stands by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4616
+* Title and describe a NetFlow finding from its flows by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4628
+* Run a case's investigation again when it failed for a reason that passes by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4620
+* Show which alert opened a case in its side panel by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4641
+* Retitle a case when its investigation concludes; a person's title wins by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4622
+* Keep a triage's citation errors when the retry answers without a VERDICT line by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4649
+* Don't record 'Left open for a person' on a case that is already closed by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4651
+* Say in the agent plugin docs that a dismissal closes a case only where autonomy allows by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4653
+* Don't keep a malicious or suspicious triage out of intake on a dismiss line by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4655
+* Leave excluded-IP findings out of the agents' finding stats too by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4657
+* Don't cut open a triage line that starts and ends with separate brackets by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4659
+* Hold a triage fact's address to a whole match in the field it cites by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4661
+* Read a defanged address in a triage fact as the address, not a citation by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4663
+* Put the backup mounts header comment back on prepare_backup_mounts by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4665
+* Drop the unused EndedRun.raw from the case page fold by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4667
+* API v1 README: the findings enrich route is gone by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4669
+* Keep a triage dismissal only when the threat-intel check answered; show unknown confidence by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4644
+* Store no duration when a run or phase outlasts int4 (0065 upgrade abort) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4671
+* Hold operator skills quietly while the database is not connected yet by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4672
+* Prune skill scan verdicts for content no skill has any more by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4673
+* Count the skills a workflow run loads toward their usage by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4675
+* Stop asking the agent's model for a run severity nothing reads by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4677
+* Offer every workflow run the skills an operator added by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4674
+* Eval stack imports the source medic-core pack, so P-3.a and the Compose hang cell run against the lane-1 rules by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4576
+* Give a stdio MCP server only its runner inputs, not the backend's whole environment by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4587
+* Remove Chat's Reasoning trace and the /api/reasoning routes behind it by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4590
+* chore(medic): bundle medic-core 0.5.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4416
+* Keep an erased person's username and email as a keyed hash, and check it in identifier_in_use by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4680
+* Medic stores a per-fix-type level and restarts soc-daemon on its own (#4459) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4577
+* Refuse a reserved identifier in SSO and directory sync, and store none of it by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4683
+* Drop reservations after 2 years or lost key; reserve again on restore by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4685
+* Say "reserved" to managers and "in use or reserved" to everyone else on console and host routes (#4585) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4684
+* Fix notice opening reads the level: observe and on-its-own (#4461) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4688
+* Pack screen: each fix type's level and track record, with raise and lower by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4689
+* Install skills from a git repo, picking which ones by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4690
+* Say under a run's answer when a write it claims failed by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4692
+* Update or delete the skills installed from a repo as a library by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4702
+* chore(medic): bundle medic-core 0.6.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4432
+* chore(medic): bundle medic-core 0.7.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4487
+* End a running agent run whose start job is no longer queued, so a lost job does not leave it live forever by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4703
+* Medic clears a hung soc-daemon on Helm by deleting its pod by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4695
+* Tell a Case's people when an alert joins it, and never re-join a finding a person removed by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4704
+* Install skills from a branch or tag whose name contains a slash by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4709
+* Offer root cause runs the skills an operator added by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4710
+* Runs fetch an added skill's text when they load it by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4714
+* Refuse a held skill to a run that is already going by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4715
+* Let a person mark any indicator on a Case as a false positive, and make matching honour it by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4706
+* Intake attaches an alert to an open Case only on a same-role IP; a target-only match becomes a link by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4705
+* State how far a run can go over its dollar ceiling, and show by how much when it does by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4730
+* Fail CI when the hunt harness and memory build different Entity Keys by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4729
+* Every connected server answers a capability, not only the first one found by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4711
+* Replay a gaps-run proposal against the attack its hunts and Cases proved by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4723
+* Hunts show the proposals and rule versions they led to, or why none; proposals and rules link back to their hunts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4728
+* Token maximum lifetimes: set on the session policy, enforced at mint, shortening existing tokens by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4746
+* Marks cover every role of an IP: dst_ip X also stops src_ip X and ip X by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4747
+* chore(medic): bundle medic-core 0.8.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4707
+* Remind, then revoke, API tokens left unused past a period set on the session policy by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4749
+* Hunts can read detection coverage for their techniques: stage, Caught, LogLM flags and earlier hunts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4727
+* Amazon Security Lake MCP server: Athena SQL over OCSF sources, one region per call (#4701) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4748
+* Tell the team when an alert joins a Case that has no assignee and no watchers by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4750
+* A Case is the subject of the shared IOC index (#4733) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4753
+* Say the unused-token rule where operators look: pass health, sync, restore by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4752
+* Catch up the shared IOC index on its own, and tell admins when indicators wait too long (#4734) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4761
+* Hunt memory follows the restricted Case its run was on (#4717) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4759
+* Redact a Caught reason that names a Case or hunt the reader cannot read (#4718) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4760
+* Hunts and triage read AI agent activity from OpenTelemetry GenAI spans (#4739) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4783
+* Detection engineering over /mcp: rules, coverage, proposals, dismiss, switch-off; tokens may switch off (#4737) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4785
+* Start the detection gaps run on demand, over the API and /mcp, one at a time by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4786
+* Hunts can cite insider data-movement techniques, load insider-threat, and read an account from the identity provider (#4744) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4791
+* Scan a repository's skills without installing them; a held skill becomes a Finding (#4740) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4792
+* Triage sees the owner, groups and account state of a finding's entities, from Entra, Okta and Falcon, kept 24h (#4741) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4793
+* Start a hunt on a restricted case, with a proposed hypothesis about the account a finding names (#4745) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4796
+* An investigation opens on the entity facts of its trigger findings, journaled in its Ledger (#4742) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4797
+* The operator sees what entity facts Vigil holds, their age and hit rate, in Settings, over /api/v1 and over /mcp (#4743) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4798
+* A hunt's call-level visibility gap keeps what the failing call said (#4755) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4799
+* People who sign in only through the provider set up and manage two-step sign-in by confirming there (#4756) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4801
+* The MCP runner gives the Security Lake server a working AWS credential chain on Compose and on Helm (#4754) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4802
+* Compose installs get their own database passwords; published ones are refused outside DEV_MODE by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4803
+* A public base URL for OAuth on the MCP surface, and the switch that turns it on (#4765) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4804
+* SSO sign-ins meet Require MFA only on the provider's signed claim; otherwise Vigil asks for its own factor (#4757) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4805
+* MFA counts include people who sign in only through the provider; sign-in lists show how SSO met MFA (#4758) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4806
+* The LogLM token reaches mcp-remote through its env, not its command line (#4780) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4807
+* /mcp send_directive refuses a run on a Case the caller can't read (#4781) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4808
+* lint_detections lints a rule_yaml string only; the source_path directory walk is gone (#4782) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4809
+* The OAuth authorization server: discovery, client registration and authorize, at the host root (#4787) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4810
+* Show on a Case which indicators join alerts, link, aren't linked yet or aren't used (#4735) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4762
+* Operators set which findings count as insider leads, and name who reads the cases those leads open (#4778) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4800
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.2...v1.1.3
+
 ## 1.1.2 (2026-11-14)
 
 ## What's Changed
