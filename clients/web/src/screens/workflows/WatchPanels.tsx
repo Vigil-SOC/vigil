@@ -13,7 +13,7 @@ export function Heading({ children }: { children: ReactNode }) {
   return <span className="text-[12px] font-semibold leading-[1.3] text-[var(--tx2)]">{children}</span>
 }
 const CARD = 'rounded-[12px] bg-[var(--bg1)] border border-[var(--ln0)]'
-function NoData({ children }: { children: ReactNode }) {
+export function NoData({ children }: { children: ReactNode }) {
   return <span className={`text-[12px] leading-[1.45] text-[var(--tx2)] px-3 py-2.5 ${CARD}`}>{children}</span>
 }
 
@@ -32,9 +32,9 @@ function Bar({ pct, color, size }: { pct: number; color: string; size: number })
   )
 }
 
-interface LimitRow { label: string; value: ReactNode; pct?: number; color?: string; note?: string }
+export interface LimitRow { label: string; value: ReactNode; pct?: number; color?: string; note?: string }
 
-function Limit({ label, value, pct, color, note }: LimitRow) {
+export function Limit({ label, value, pct, color, note }: LimitRow) {
   return (
     <div className={`flex flex-col gap-[5px] px-3 py-2.5 ${CARD}`}>
       <span className="flex justify-between gap-3 text-[12px]">
@@ -75,7 +75,7 @@ const untracked = (label: string): LimitRow => ({ label, value: NOT_TRACKED })
 
 /** A list of blind spots: the first few, then a count, so one noisy run cannot decide the column's height. */
 const SPOTS_SHOWN = 5
-function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[]; empty: string; note?: string }) {
+export function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[]; empty: string; note?: string }) {
   return (
     <>
       {lines.length === 0 ? <NoData>{empty}</NoData> : (
@@ -96,12 +96,12 @@ function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[
 
 // ── hunts ────────────────────────────────────────────────────────────────
 
-type Recorded = ReplayDigest | 'failed'
+export type Recorded = ReplayDigest | 'failed'
 
 /** What the lead was shown before one decision, off the run's own record. A past decision's
  *  digest never changes, so each is asked for once and kept; the newest step reads the live
  *  projection instead and asks for nothing. */
-function useRecorded(runId: string, decisionId: string | null): Recorded | undefined {
+export function useRecorded(runId: string, decisionId: string | null): Recorded | undefined {
   const [held, setHeld] = useState<Record<string, Recorded>>({})
   const asked = useRef(new Set<string>())
   const mounted = useRef(true)
@@ -137,7 +137,7 @@ function asOf(iteration: number, at: string | null, last: boolean) {
   }
 }
 
-function HuntExplanations({ hunt, iteration, at, last, recorded }: { hunt: HuntView; iteration: number; at: string | null; last: boolean; recorded: Recorded | undefined }) {
+export function HuntExplanations({ hunt, iteration, at, last, recorded }: { hunt: HuntView; iteration: number; at: string | null; last: boolean; recorded: Recorded | undefined }) {
   const evidence = hunt.evidence ?? []
   const byId = new Map(hunt.hypotheses.map((h) => [h.hypothesis_id, h]))
   let standings: Standing[]
@@ -188,7 +188,7 @@ function HuntExplanations({ hunt, iteration, at, last, recorded }: { hunt: HuntV
   )
 }
 
-function scopeText(scope?: Record<string, unknown>): string | null {
+export function scopeText(scope?: Record<string, unknown>): string | null {
   const tenant = typeof scope?.tenant === 'string' && scope.tenant ? `tenant ${scope.tenant}` : null
   const one = scope?.entity as { type?: unknown; value?: unknown } | undefined
   const entity = typeof one?.value === 'string' && one.value ? (typeof one.type === 'string' ? `${one.type} ${one.value}` : one.value) : null
@@ -201,7 +201,7 @@ type ScopeState = 'within scope' | 'at limit' | 'extended'
 
 /** No scope_extension checkpoint is within scope, a raised one is at its limit, an approved one extended it.
  *  The record says whether one was answered, not when, so an answer counts from the step after it was raised. */
-function scopeState(hunt: HuntView, iteration: number, last: boolean): ScopeState {
+export function scopeState(hunt: HuntView, iteration: number, last: boolean): ScopeState {
   const raised = (hunt.report?.checkpoints ?? []).filter((c) => c.class === 'scope_extension' && (c.raised_iteration ?? 0) <= iteration)
   if (raised.some((c) => c.resolution?.answer === 'approve' && (last || (c.raised_iteration ?? 0) < iteration))) return 'extended'
   if (raised.length > 0 || (last && hunt.open_checkpoint?.checkpoint_class === 'scope_extension')) return 'at limit'
@@ -220,7 +220,7 @@ function wallText(used: number, limit: number): string {
   return `${n(used)} of ${n(limit)} ${unit === 60_000 ? 'min' : 'h'}`
 }
 
-function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Recorded | undefined): LimitRow[] {
+export function huntRows(hunt: HuntView, iteration: number, last: boolean, recorded: Recorded | undefined): LimitRow[] {
   const grant = hunt.budgets
   const digest = recorded === undefined || recorded === 'failed' ? null : recorded.budget_remaining
   // the newest step reads what the run has spent; an earlier one, what the lead was shown it had left
@@ -304,7 +304,7 @@ function Reviewer({ hunt, iteration }: { hunt: HuntView; iteration: number }) {
   )
 }
 
-function huntSpots(hunt: HuntView, iteration: number, at: string | null, last: boolean) {
+export function huntSpots(hunt: HuntView, iteration: number, at: string | null, last: boolean) {
   const found: HuntEvidence[] = hunt.evidence ?? []
   const detail = new Map(found.map((e) => [e.evidence_id, e.gap_detail]))
   const captured = new Map(found.map((e) => [e.evidence_id, e.captured_at]))
@@ -375,15 +375,16 @@ export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: num
   )
 }
 
-/** A playbook run's answer, as its agent wrote it. No replay exists for this kind, so this is the whole of what it found. */
-export function PlaybookReport({ d }: { d: WfRunDetail }) {
+/** A playbook run's answer, as its agent wrote it; `plain` draws it as text. No replay exists for this kind, so this is the whole of what it found. */
+export function PlaybookReport({ d, plain = false }: { d: WfRunDetail; plain?: boolean }) {
   const details = (d.phases ?? []).flatMap((p) => (p.output?.details && Object.keys(p.output.details).length > 0 ? [{ id: p.phase_id, details: p.output.details }] : []))
   if (!d.result_summary && details.length === 0) return null
   return (
     <div className="flex flex-col gap-2 min-w-0">
       <Heading>Report · model text</Heading>
       <div className={`flex flex-col gap-2.5 text-[12.5px] leading-[1.55] text-[var(--tx1)] px-3 py-2.5 ${CARD}`}>
-        {d.result_summary && <Markdown>{d.result_summary}</Markdown>}
+        {/* `plain`: the dock shows the run's words as text, never as markup */}
+        {d.result_summary && (plain ? <Prose text={d.result_summary} /> : <Markdown>{d.result_summary}</Markdown>)}
         {details.map((phase) => (
           <pre key={phase.id} className="m-0 font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap break-words text-[var(--tx2)]">{JSON.stringify(phase.details, null, 2)}</pre>
         ))}

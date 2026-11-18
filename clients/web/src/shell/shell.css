@@ -3178,3 +3178,20 @@ select.vg-side-input {
   text-transform: uppercase;
   color: var(--tx2);
 }
+
+/* The run on the dock's case (ChatRun.tsx): Watch run's parts, one column. */
+.chat .chat-run-steer .modal-section {
+  margin-top: 0;
+}
+/* Steer's heading reads as the block's other headings */
+.chat .chat-run-steer .modal-section > h4 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tx2);
+  margin: 0 0 6px;
+}
+.chat .chat-hint.is-command {
+  color: var(--tx1);
+}

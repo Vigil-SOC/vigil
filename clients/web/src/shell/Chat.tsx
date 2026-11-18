@@ -37,7 +37,13 @@ import {
 } from './chatCache'
 import { LATER_RELEASE } from '../shared/later'
 import { errorText } from '../shared/errorText'
-import { attachRefusal } from './commandBarModel'
+import {
+  attachRefusal, bindLine, parseLine, proposalFrom, startedText,
+  type HuntAttachment, type HuntProposal, type LiveCommand,
+} from './commandBarModel'
+import { CaseRunBlock } from './ChatRun'
+import { useToast } from './toast'
+import { useNavigate } from 'react-router-dom'
 import type { ChatSeed, SeedDocument } from '../shared/types'
 import { caseLabel } from '../shared/caseLabel'
 
@@ -123,7 +129,25 @@ async function refusalOf(res: Response): Promise<string | null> {
 type ChatFile =
   | { status: 'reading'; name: string }
   | { status: 'refused'; name: string; reason: string }
-  | { status: 'ready'; name: string; text: string; pages: number; condensed: boolean; named: boolean }
+  | {
+      status: 'ready'; name: string; text: string; pages: number; condensed: boolean; named: boolean
+      /** The original, which a run started here keeps on its case; absent for a file handed over already read. */
+      file?: File
+      pasted?: boolean
+      /** The hypothesis the coverage check proposed for /hunt; null until asked. */
+      proposal: HuntProposal | null
+    }
+
+/** The dock's file as the command bar's attachment, so a run started here takes the bar's path. */
+function attachmentOf(file: ChatFile | null): HuntAttachment | null {
+  if (file?.status !== 'ready') return file
+  if (!file.file) return { status: 'refused', name: file.name, reason: `${file.name} came here without its original, which a run keeps on its case. Drop it on the dock to start a run with it.` }
+  return { status: 'ready', name: file.name, file: file.file, pasted: Boolean(file.pasted), pages: file.pages, condensed: file.condensed, text: file.text, proposal: file.proposal }
+}
+
+/** The commands the dock runs itself; anything else typed with a slash is asked as written. */
+const DOCK_COMMANDS = ['hunt', 'investigate']
+const NO_JIRA = { gap: null, projectKey: '' }
 
 interface CaseHit {
   id: string
@@ -326,6 +350,11 @@ export default function Chat({
   const [file, setFile] = useState<ChatFile | null>(null)
   const [dragging, setDragging] = useState(false)
   const fileSeq = useRef(0)
+  // a run starting from the composer, and a nudge for the run block to re-read the case
+  const [starting, setStarting] = useState(false)
+  const [runSeq, setRunSeq] = useState(0)
+  const { notify } = useToast()
+  const navigate = useNavigate()
 
   const sessionRef = useRef<string>(newSessionId())
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -514,7 +543,7 @@ export default function Chat({
     setFile({ status: 'reading', name: picked.name })
     try {
       const { data } = await workflowApi.readHuntDocument(picked)
-      if (fileSeq.current === seq) setFile({ status: 'ready', name: picked.name, text: data.text, pages: data.pages, condensed: data.condensed, named: false })
+      if (fileSeq.current === seq) setFile({ status: 'ready', name: picked.name, text: data.text, pages: data.pages, condensed: data.condensed, named: false, file: picked, proposal: null })
     } catch (error) {
       if (fileSeq.current === seq) setFile({ status: 'refused', name: picked.name, reason: errorText(error, `${picked.name} could not be read`) })
     }
@@ -542,8 +571,86 @@ export default function Chat({
     setMentionHits(null)
   }
 
+  // /hunt and /investigate run as the command bar runs them, with the dock's file as the attachment
+  const typed = pinned ? null : parseLine(draft)
+  const command = typed?.kind === 'command' && DOCK_COMMANDS.includes(typed.command.id) ? typed : null
+  const attachment = attachmentOf(file)
+  const binding = command ? bindLine(command, null, { openCaseId: caseId || null, jira: NO_JIRA, attachment }) : null
+
+  // With no hypothesis typed, the coverage check proposes one from the file, as in the command bar.
+  const needsProposal = command?.command.id === 'hunt' && !command.word && file?.status === 'ready' && !!file.file && file.proposal === null
+  useEffect(() => {
+    if (!needsProposal || file?.status !== 'ready') return
+    const seq = fileSeq.current
+    const settle = (proposal: HuntProposal) => {
+      if (fileSeq.current === seq) setFile((now) => (now?.status === 'ready' ? { ...now, proposal } : now))
+    }
+    settle({ status: 'checking' })
+    workflowApi
+      .checkCoverage({ report: file.text })
+      .then((res) => settle(proposalFrom(res.data)))
+      .catch((error: unknown) => {
+        const status = (error as { response?: { status?: number } })?.response?.status
+        settle({
+          status: 'none',
+          reason: status === 400
+            ? 'Nothing in this document to propose a hypothesis from. Type one to hunt with it.'
+            : `A hypothesis could not be proposed: ${errorText(error, 'the coverage check failed')}`,
+        })
+      })
+    // the file is read once, when the proposal is first asked for
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsProposal])
+
+  const runCommand = async () => {
+    if (!command || binding?.state !== 'bound' || starting || loading) return
+    setStarting(true)
+    const sentSeq = fileSeq.current
+    const sentDraft = draft
+    // the conversation on screen at Enter; switching away while the run starts leaves the new one alone
+    const session = sessionRef.current
+    let started: string | null = null
+    try {
+      await (command.command as LiveCommand).run(binding.target, {
+        openCaseId: caseId || null,
+        jira: NO_JIRA,
+        attachment,
+        notify,
+        // the conversation follows the run's case once it has started; the drawer stays as it is
+        onOpenCase: (id) => { started = id },
+        onGo: (screen, options) => navigate(`/${screen}${options?.search ?? ''}`),
+        ask: () => false,
+        dropSent: () => { if (fileSeq.current === sentSeq) dropFile() },
+      })
+      setDraft((now) => (now === sentDraft ? '' : now))
+      if (started && sessionRef.current === session) {
+        applyCase(started)
+        setRunSeq((n) => n + 1)
+        // an ordinary turn on the case writes the conversation row, so a reload finds it and its run
+        void send(startedText(command.command as LiveCommand), { bare: true })
+      }
+    } catch (error) {
+      notify('err', errorText(error, 'Command failed'))
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  /** A run started from the command bar: the dock follows its case, on a conversation of its own. */
+  const followCase = (id: string, text: string) => {
+    setRunSeq((n) => n + 1)
+    if (caseIdRef.current === id && messagesRef.current.length > 0) return
+    archiveCurrent()
+    sessionRef.current = newSessionId()
+    currentKeyRef.current = null
+    persistedRef.current = false
+    rememberCase(id)
+    dropFile()
+    void send(text, { fresh: true })
+  }
+
   // `document` is a file the command bar already read: it rides on this turn, whatever the dock holds
-  const send = async (override?: string, opts?: { fresh?: boolean; document?: SeedDocument }) => {
+  const send = async (override?: string, opts?: { fresh?: boolean; bare?: boolean; document?: SeedDocument }) => {
     const text = (override ?? draft).trim()
     if (!text) return
     // Hold the turn until the locked thread is the one on screen.
@@ -553,7 +660,7 @@ export default function Chat({
       return
     }
     // a fresh seed leaves the file behind, so a file still being read does not hold it
-    if (loading || (file?.status === 'reading' && !opts?.fresh && !opts?.document)) return
+    if (loading || (starting && !opts?.bare) || (file?.status === 'reading' && !opts?.fresh && !opts?.document)) return
     setHistoryOpen(false)
     const gen = turnGen.current
     localTurn.current = true
@@ -565,8 +672,9 @@ export default function Chat({
     // `fresh` keeps a new investigation's seed off an unrelated conversation
     const base = opts?.fresh ? [] : messagesRef.current
     // the turn a file first rides on names it, so the question reads right in history
-    const handed = opts?.document ? { status: 'ready' as const, ...opts.document, named: false } : null
-    const sentFile = handed ?? (file?.status === 'ready' && !opts?.fresh ? file : null)
+    const handed = opts?.document ? { status: 'ready' as const, ...opts.document, named: false, proposal: null } : null
+    // `bare`: a turn that follows a run started here, whose file the run already took
+    const sentFile = handed ?? (file?.status === 'ready' && !opts?.fresh && !opts?.bare ? file : null)
     const asked = sentFile && !sentFile.named ? `${text}\n\nAttached: ${sentFile.name}` : text
     if (handed) {
       // the handed file replaces the dock's; the case composer shows no chip, so it keeps none
@@ -946,11 +1054,13 @@ export default function Chat({
     if (!open || seed === seedRef.current) return
     if (loading && (!lockedCaseId || caseReady.current)) return
     seedRef.current = seed
-    if (!seed.text) {
+    if (seed.caseId && !pinned) {
+      followCase(seed.caseId, seed.text)
+    } else if (!seed.text) {
       // a file with no question waits on the dock's chip for one
       if (seed.document && !pinned) {
         fileSeq.current += 1
-        setFile({ status: 'ready', ...seed.document, named: false })
+        setFile({ status: 'ready', ...seed.document, named: false, proposal: null })
       }
     } else if (lockedCaseId) {
       // append on this session; do not open a keymap investigation or clear the case
@@ -989,7 +1099,8 @@ export default function Chat({
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      send()
+      if (command) void runCommand()
+      else send()
     }
   }
 
@@ -1033,6 +1144,8 @@ export default function Chat({
           <VigilMessage key={i} text={m.text} reasoning={m.reasoning} citations={citations} onCite={onCite} pinned={pinned} />
         )
       )}
+      {/* read only while the dock is open: it polls the case */}
+      {!pinned && !lockedCaseId && open && caseId && <CaseRunBlock caseId={caseId} refresh={runSeq} />}
       {loading && (
         <div className="msg vigil">
           {!pinned && <span className="msg-av"><VigilMark /></span>}
@@ -1151,11 +1264,21 @@ export default function Chat({
               {pinned ? <Icon name="x2" size={15} /> : <span className="ci-stop" />}
             </button>
           ) : (
-            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim() || file?.status === 'reading'}><Icon name="send" /></button>
+            <button
+              className="ci-send" title={command ? 'Run' : 'Send'}
+              onClick={() => (command ? void runCommand() : send())}
+              disabled={starting || (command ? binding?.state !== 'bound' : !draft.trim() || file?.status === 'reading')}
+            ><Icon name="send" /></button>
           )}
         </div>
       </div>
-      {!pinned && <div className="chat-hint">Saved privately to your history · @ attaches · drop a file · Enter sends</div>}
+      {!pinned && (binding ? (
+        <div className={`chat-hint${binding.state === 'bound' ? ' is-command' : ''}`} role="status">
+          {starting ? 'Starting…' : binding.state === 'bound' ? `${binding.line}${binding.note ? ` · ${binding.note}` : ''} · Enter runs` : binding.reason}
+        </div>
+      ) : (
+        <div className="chat-hint">Saved privately to your history · @ attaches · drop a file · /hunt or /investigate starts a run · Enter sends</div>
+      ))}
     </div>
   )
 

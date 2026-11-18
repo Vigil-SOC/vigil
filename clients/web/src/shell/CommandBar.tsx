@@ -20,6 +20,7 @@ import {
   PASTED_NAME,
   proposalFrom,
   runningHunt,
+  startedText,
   type RunningHunt,
   readRecents,
   removeRecent,
@@ -45,6 +46,7 @@ export default function CommandBar({
   boards,
   onOpenChat,
   onOpenCase,
+  onRunStarted,
   onGo,
   openCaseId = null,
   fill,
@@ -53,6 +55,8 @@ export default function CommandBar({
   boards: BoardLink[]
   onOpenChat: (prompt?: string, document?: SeedDocument) => void
   onOpenCase: (caseId: string) => void
+  /** A command that started a run on a case: the dock follows it there, with the turn that says so. */
+  onRunStarted?: (caseId: string, text: string) => void
   onGo: (screen: string, options?: ConsoleScreenGoOptions) => void
   /** The open case: asking goes to its composer instead of the dock, and a case command defaults to it. */
   openCaseId?: string | null
@@ -280,7 +284,7 @@ export default function CommandBar({
       return false
     }
     const ready = attachment?.status === 'ready' ? attachment : null
-    onOpenChat(text, ready ? { name: ready.name, text: ready.text, pages: ready.pages, condensed: ready.condensed } : undefined)
+    onOpenChat(text, ready ? { name: ready.name, text: ready.text, pages: ready.pages, condensed: ready.condensed, file: ready.file, pasted: ready.pasted } : undefined)
     if (ready) removeAttachment()
     return true
   }, [attachment, notify, onOpenChat, removeAttachment])
@@ -347,10 +351,14 @@ export default function CommandBar({
     // A file attached while the run starts is not the one it sent, so it stays.
     const sentSeq = attachSeq.current
     try {
-      await commandLine.command.run(binding.target, {
+      const { command } = commandLine
+      await command.run(binding.target, {
         ...env,
         notify,
-        onOpenCase,
+        // the Case page opens as before; a run started on it also opens the dock on the case
+        onOpenCase: command.workflowId
+          ? (caseId) => { onOpenCase(caseId); onRunStarted?.(caseId, startedText(command)) }
+          : onOpenCase,
         onGo,
         ask,
         dropSent: () => {
