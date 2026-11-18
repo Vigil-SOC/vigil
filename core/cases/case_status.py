@@ -32,8 +32,11 @@ def record_status_change(
     change: StatusChange,
     *,
     closed_by: str,
+    by_model: bool = False,
 ) -> None:
-    """Record a status edit's close with no category stated, or its reopen."""
+    """Record a status edit's close with no category stated, or its reopen.
+
+    ``by_model`` is a close that passed the autonomy check (#4819)."""
     from core.cases.case_workflow_service import CaseWorkflowService
 
     workflow = CaseWorkflowService()
@@ -43,6 +46,7 @@ def record_status_change(
             case_id,
             closure_category=ClosureCategory.UNSPECIFIED,
             closed_by=closed_by,
+            by_model=by_model,
         )
     else:
         workflow.reopen_case(session, case_id)

@@ -408,6 +408,7 @@ class CaseWorkflowService:
         evidence_opened: Optional[bool] = None,
         false_positive_cause: object = _CAUSE_OMITTED,
         on_trail: bool = True,
+        by_model: bool = False,
     ):
         """Mark a case closed and record its closure metadata.
 
@@ -560,6 +561,8 @@ class CaseWorkflowService:
                 principal_id=principal,
                 case_id=case_id,
                 actor_text=actor_text,
+                category=category.value,
+                by_model=by_model,
                 credential_id=current_credential_id(),
                 sampled=closure.sampled_at is not None,
                 evidence_opened=closure.evidence_opened,

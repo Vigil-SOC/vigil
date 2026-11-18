@@ -211,3 +211,13 @@ Teams (1.1.2, epic #4306) keep the case API's routes and tools and add two refus
 The tools answer `{"error", "code"}` with the same codes instead of an HTTP status. `create_case` judges the default team, and its `OWNER_OFF_TEAM` message holds the literal `{case_id}`, as the case does not exist yet; the route to use is `POST /api/v1/cases/{id}/move` with the real id. Saving the stored owner again, and clearing it, are not checked. `OWNER_CANNOT_WRITE` applies from the upgrade, while everyone is on the default team. `OWNER_OFF_TEAM` applies only once an admin splits teams.
 
 **A cross-team merge needs the source team or `cases.move`.** `POST /api/v1/cases/{id}/merge` (`{id}` is the target; the body's `source_case_id` is the source) is checked only when the two cases are on different teams: the caller must be a member of the source case's team or hold `cases.move`, or the answer is 403 with `Permission denied: cases.move required`. A merge between two cases on one team is unchanged. There is no frozen MCP merge tool. This applies only once teams are split.
+
+## Model closes follow the autonomy setting
+
+From this release every close a model chooses passes the autonomy setting (#4819), the same check an investigation's close already made. That covers chat, `/mcp` clients (a person's or a service account's), agent tools and runs: `update_case` with `status: "closed"`, `create_case` with `status: "closed"`, and the MCP `close_case`. A close passes only where the run's workflow may act on its own, or, with no workflow (chat, `/mcp`), where the fleet's Act on reversible actions is on.
+
+That switch is off by default, so after the upgrade these closes are left open for a person. The tool answers its usual `{"error": ...}` with the reason, writes nothing to the case but a "Left open for a person" activity, and the run carries on; `create_case` creates nothing. Turn on Act on reversible actions, or set a workflow to Act, to let them close. A ceiling that can't be read holds the close.
+
+REST closes are unchanged: `POST /api/v1/cases/{id}/close`, a `PATCH` to status closed and a merge close as before, whichever token or service account sends them. A case created closed by a tool now also gets a closure row, with category `unspecified`.
+
+The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for a close that passed this check, `person` for a console close, `api` for everything else. The closure row's channel is unchanged, so nothing is migrated.

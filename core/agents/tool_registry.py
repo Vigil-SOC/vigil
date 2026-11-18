@@ -32,6 +32,7 @@ from core.cases.case_status import (
     CASE_STATUSES,
     CLOSED,
     CaseStatus,
+    StatusChange,
     record_status_change,
     status_change,
 )
@@ -533,6 +534,30 @@ def _status_refusal(status: str) -> Optional[Args]:
     }
 
 
+def held_close(case_id: Optional[str] = None) -> Optional[Args]:
+    """The refusal when autonomy holds a model's close (#4819), else None.
+
+    The run is the bound one, never an argument; none (an /mcp caller) or one
+    with no workflow (chat) follows the fleet. A held close of an existing case
+    leaves a "Left open for a person" activity and writes nothing else.
+    """
+    from core.cases import case_journal_service
+    from core.response.ceiling import close_held
+
+    claims = current_claims()
+    run_id = claims.run_id if claims else None
+    held = close_held(run_id)
+    if not held:
+        return None
+    message = f"Left open for a person: {held}"
+    if case_id:
+        details = {"reason": held, **({"run_id": run_id} if run_id else {})}
+        case_journal_service.append_activity(
+            _data(), case_id, "case_left_open", message, details
+        )
+    return {"error": message}
+
+
 def _resolve_assignee(
     raw: str, current: Optional[str] = None
 ) -> Tuple[Optional[str], Optional[Args]]:
@@ -564,6 +589,10 @@ def create_case(
         return refusal
     if refusal := _status_refusal(status):
         return refusal
+    # Before the case is opened, so a held close leaves no case behind.
+    closing = status == CLOSED
+    if closing and (refusal := held_close()):
+        return refusal
     if assignee is not None:
         # Before the case is opened, so a refusal leaves no case behind.
         assignee, refusal = _resolve_assignee(assignee)
@@ -586,11 +615,27 @@ def create_case(
         finding_ids=ids,
         priority=priority or severity or "medium",
         description=description,
-        status=status,
+        # A closed case is opened, then closed, so it gets its closure row.
+        status="new" if closing else status,
         assignee=assignee,
     )
     if not case:
         return {"error": "Failed to create case"}
+    if closing:
+        try:
+            with service_session() as session:
+                record_status_change(
+                    session,
+                    case["case_id"],
+                    StatusChange.CLOSE,
+                    closed_by=actor(),
+                    by_model=True,
+                )
+        except Exception:  # noqa: BLE001 — no open case left behind for a retry
+            logger.exception("could not close new case %s", case["case_id"])
+            data.delete_case(case["case_id"])
+            return {"error": "Failed to create case"}
+        case = data.get_case(case["case_id"]) or case
     # Tags are an edit after the case exists. The owner is on the creation entry.
     edits: Args = {}
     if tags:
@@ -627,6 +672,10 @@ def update_case(
     case = data.get_case(case_id)
     if not case:
         return {"error": f"Case {case_id} not found"}
+    change = status_change(case.get("status"), status)
+    # Before anything is written, so a held close leaves the case as it was.
+    if change is StatusChange.CLOSE and (refusal := held_close(case_id)):
+        return refusal
 
     updates: Args = {}
     if title:
@@ -680,7 +729,6 @@ def update_case(
         except OwnerNotCurrent as exc:
             return {"error": exc.message, "code": exc.code}
 
-    change = status_change(case.get("status"), status)
     # The write and a close share one session, so a refused close leaves the
     # case as it was. A write with no close owns its own session.
     with service_session() if change else nullcontext() as session:
@@ -692,6 +740,7 @@ def update_case(
                 case_id,
                 change,
                 closed_by=actor(),
+                by_model=change is StatusChange.CLOSE,
             )
     return {"success": True, "case_id": case_id}
 

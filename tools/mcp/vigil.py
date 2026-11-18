@@ -1432,6 +1432,13 @@ def close_case(
                     }
                 )
 
+        # After the arguments are checked, before anything is written. A
+        # re-close of a closed case is held too, with no "left open" activity.
+        stored = get_data_service().get_case(case_id) or {}
+        open_id = None if stored.get("status") == "closed" else case_id
+        if (held := tool_registry.held_close(open_id)) is not None:
+            return jdump(held)
+
         with service_session() as session:
             # Through the service rather than writing the rows here. This tool
             # had its own copy of the close, so the SLA clock, the IOC index and
@@ -1449,6 +1456,7 @@ def close_case(
                 executive_summary=executive_summary,
                 false_positive_reason=false_positive_reason,
                 closure_notes=closure_notes,
+                by_model=True,
                 **cause_arg,
             )
             if closure is None:

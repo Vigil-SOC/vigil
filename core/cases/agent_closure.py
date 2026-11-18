@@ -229,6 +229,11 @@ def activity_actor(
 
 _trail_ready = trail.in_use
 
+# Who closed, on the case.close trail entry (#4819).
+CLOSED_AS_MODEL = "model"
+CLOSED_AS_PERSON = "person"
+CLOSED_AS_API = "api"
+
 
 def record_close(
     session: Session,
@@ -236,6 +241,8 @@ def record_close(
     principal_id: Optional[str],
     case_id: str,
     actor_text: str,
+    category: str,
+    by_model: bool = False,
     credential_id: Optional[str] = None,
     sampled: bool = False,
     evidence_opened: Optional[bool] = None,
@@ -245,12 +252,22 @@ def record_close(
     No ``case_audit_logs`` row: a close does not write one today.
     ``sampled`` is whether the row is in the dismissal sample.
     ``evidence_opened`` is the flag stored on this close, null included.
+    ``closed_as`` is ``model`` when the close passed the autonomy check
+    (``by_model``), ``person`` for a console close, else ``api``.
     """
     if not _trail_ready(session):
         return
     payload: dict[str, Any] = {
         "action": CLOSE_ACTION,
         "case_id": case_id,
+        "category": category,
+        "closed_as": (
+            CLOSED_AS_MODEL
+            if by_model
+            else (
+                CLOSED_AS_PERSON if close_channel() == CHANNEL_COOKIE else CLOSED_AS_API
+            )
+        ),
         "sampled": sampled,
         "evidence_opened": evidence_opened,
     }
