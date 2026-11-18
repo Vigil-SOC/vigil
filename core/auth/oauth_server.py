@@ -52,6 +52,9 @@ CLIENT_UNUSED = timedelta(days=30)
 # Registration is unauthenticated: a cap keeps a flood from filling the table.
 MAX_CLIENTS = 1000
 MAX_REDIRECT_URIS = 10
+# Registration is anonymous and lands on the trail: lengths are capped first.
+MAX_URI = 2000
+MAX_NAME = 200
 
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
@@ -124,11 +127,13 @@ def _refuse_registration(description: str, **fields) -> None:
 
 def _register(client: OAuthClientInformationFull) -> None:
     uris = [str(u) for u in client.redirect_uris or []]
-    if len(uris) > MAX_REDIRECT_URIS:
+    if len(uris) > MAX_REDIRECT_URIS or any(len(u) > MAX_URI for u in uris):
         raise RegistrationError(
             "invalid_client_metadata",
-            f"At most {MAX_REDIRECT_URIS} redirect URIs may be registered.",
+            f"At most {MAX_REDIRECT_URIS} redirect URIs of up to {MAX_URI} "
+            "characters may be registered.",
         )
+    name = client.client_name = (client.client_name or "")[:MAX_NAME] or None
     allowlist = oauth_redirect_allowlist()
     for uri in uris:
         if not redirect_allowed(uri, allowlist):
@@ -154,7 +159,7 @@ def _register(client: OAuthClientInformationFull) -> None:
         session.add(
             OAuthClient(
                 client_id=client.client_id,
-                name=(client.client_name or "")[:200] or None,
+                name=name,
                 redirect_uris=uris,
                 auth_method=client.token_endpoint_auth_method,
                 source="dynamic",
@@ -165,7 +170,7 @@ def _register(client: OAuthClientInformationFull) -> None:
             "oauth.client_registered",
             {"source_ip": request_address.get()},
             client_id=client.client_id,
-            client_name=client.client_name,
+            client_name=name,
             redirect_uris=uris,
         )
 
@@ -176,6 +181,11 @@ def _authorize(client: OAuthClientInformationFull, params: AuthorizationParams) 
     if resource.rstrip("/") != urls["resource"]:
         raise AuthorizeError(
             "invalid_target", f"This server issues tokens only for {urls['resource']}."
+        )
+    # RFC 7636 §4.2: an S256 challenge is 43 characters; the column holds 128.
+    if not 43 <= len(params.code_challenge) <= 128:
+        raise AuthorizeError(
+            "invalid_request", "code_challenge must be 43-128 characters."
         )
     request_id = secrets.token_urlsafe(32)
     now = utcnow()

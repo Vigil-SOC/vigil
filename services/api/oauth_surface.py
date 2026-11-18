@@ -18,6 +18,8 @@ import logging
 from typing import Optional
 
 from limits import parse
+from limits.storage import MemoryStorage
+from limits.strategies import FixedWindowRateLimiter
 from mcp.server.auth.handlers.metadata import (
     MetadataHandler,
     ProtectedResourceMetadataHandler,
@@ -125,6 +127,19 @@ def build_routes() -> list[Route]:
     return routes
 
 
+# slowapi falls back to memory only inside its decorator; this does the same here.
+_FALLBACK = FixedWindowRateLimiter(MemoryStorage())
+
+
+def _hit(rate, path: str, address: str) -> bool:
+    """One request against the limit; True while under it."""
+    try:
+        return limiter.limiter.hit(rate, "oauth", path, address)
+    except Exception:  # noqa: BLE001 - an unreachable store must not answer 500
+        logger.warning("OAuth rate limit storage unavailable; limiting in memory")
+        return _FALLBACK.hit(rate, "oauth", path, address)
+
+
 def _json(status: int, body: dict, headers: Optional[dict] = None) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers=headers)
 
@@ -161,7 +176,7 @@ class OAuthSurface:
         address = client_host(Request(scope))
         rate = _LIMITS.get(path)
         if rate is not None and scope.get("method") != "OPTIONS":
-            if not limiter.limiter.hit(rate, "oauth", path, address):
+            if not _hit(rate, path, address):
                 await _json(
                     429,
                     {"error": "slow_down", "error_description": "Too many requests"},
