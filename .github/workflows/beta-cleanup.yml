@@ -20,7 +20,7 @@ name: Beta cleanup
 
 on:
   schedule:
-    - cron: "0 7 * * 0"   # Sundays, after beta.yml's 06:00 run
+    - cron: "0 10 * * 0"   # Sundays, well after beta.yml's 06:00 run has finished
   workflow_dispatch:
     inputs:
       dry_run:
@@ -70,12 +70,14 @@ jobs:
 
           versions=$(gh api --paginate "$api?per_page=100" | jq -s 'add // []')
 
-          # Digests of every manifest an index lists; none for a plain image or a tag that is not found.
+          # Digests of every manifest an index lists; none for a plain image. "not found" is an
+          # error unless missing-ok is passed: only a signature tag may be absent (unsigned image).
+          # A digest that can't be read would drop what it lists from the keep set.
           children() {
             local out
             if out=$(docker buildx imagetools inspect --raw "$1" 2>&1); then
               jq -r '.manifests[]?.digest' <<< "$out"
-            elif ! grep -qi 'not found' <<< "$out"; then
+            elif [ "${2:-}" != missing-ok ] || ! grep -qi 'not found' <<< "$out"; then
               echo "::error::could not read $1: $out" >&2; return 1
             fi
           }
@@ -86,13 +88,14 @@ jobs:
             | .[] | select((.created_at | fromdateiso8601) < $cut)
             | select((.metadata.container.tags // []) as $t | ($t | length) > 0 and all($t[]; test($re)))
             | .name' <<< "$versions")
+          [ -n "$selected" ] || { echo "$PKG: no beta older than 14 days; nothing to do"; exit 0; }
 
           # Everything that goes with each selected beta, children before its index: "<digest> <role>".
           doomed=$(mktemp)
           for index in $selected; do
             sig_tag=sha256-${index#sha256:}
             sig=$(jq -r --arg t "$sig_tag" '.[] | select((.metadata.container.tags // []) | index($t)) | .name' <<< "$versions")
-            bundles=$(children "$repo:$sig_tag")      # assigned first so a failure stops the run
+            bundles=$(children "$repo:$sig_tag" missing-ok)   # assigned first so a failure stops the run
             manifests=$(children "$repo@$index")
             {
               for d in $bundles; do echo "$d signature bundle"; done
@@ -118,7 +121,7 @@ jobs:
             id=$(jq -r --arg d "$d" '.[] | select(.name == $d) | .id' <<< "$versions")
             [ -n "$id" ] || { echo "::warning::no version for $d ($role); skipping"; continue; }
             n=$((n + 1))
-            if [ "$DRY_RUN" = true ]; then
+            if [ "$DRY_RUN" != false ]; then   # anything but an explicit false is a dry run
               echo "would delete  $d  version $id  ($role)"
             elif err=$(gh api -X DELETE "$api/$id" 2>&1); then
               echo "deleted       $d  version $id  ($role)"
@@ -130,4 +133,4 @@ jobs:
               exit 1
             fi
           done < <(awk '!seen[$1]++' "$doomed")   # first occurrence wins, so order is kept
-          echo "$PKG: $n version(s) of $(grep -c 'beta index' "$doomed" || true) old beta(s) $([ "$DRY_RUN" = true ] && echo 'would be deleted' || echo deleted)"
+          echo "$PKG: $n version(s) of $(grep -c 'beta index' "$doomed" || true) old beta(s) $([ "$DRY_RUN" != false ] && echo 'would be deleted' || echo deleted)"

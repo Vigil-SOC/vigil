@@ -139,7 +139,7 @@ Security keys (WebAuthn) are tied to the hostname the console is reached at: set
 > | `stable` (same as `latest`) | The newest stable release | Anyone who wants stable without pinning |
 > | `beta` | The newest daily build of `main` | Our own deployments, testers |
 >
-> Every `ghcr.io/vigil-soc/vigil-*` image (`backend`, `daemon`, `agent`, `mcp-runner`) is tagged this way. A beta also carries its own version, like `1.2.0-beta.20261115.42`; it never gets `latest` or `stable`. `beta` is a daily build of `main` that may include database changes, and it is one-way: a database that has run a beta can't go back to the previous stable release.
+> Every `ghcr.io/vigil-soc/vigil-*` image (`backend`, `daemon`, `agent`, `mcp-runner`) is tagged this way. A beta also carries its own version, like `1.2.0-beta.20261115.42`; it never gets `latest` or `stable`, and that version tag is deleted 14 days after it is built, so pin to one only for a short test. `beta` is a daily build of `main` that may include database changes, and it is one-way: a database that has run a beta can't go back to the previous stable release.
 >
 > Released images are signed keyless by [`.github/workflows/release.yml`](.github/workflows/release.yml); betas are signed by [`beta.yml`](.github/workflows/beta.yml), so this command rejects them. To verify a release (the image tag drops the leading `v`; the certificate identity uses the git tag):
 >
