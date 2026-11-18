@@ -1238,11 +1238,11 @@ _RUNNING_INVESTIGATION_STATUSES = tuple(
 )
 
 
-def _unfinished_gap_runs(session: Session) -> Set[str]:
-    """The gaps-run proposals whose run is still working: the intake row that carries
-    them is still queued, or the investigation it launched is assigned or executing."""
-    payloads: Iterable[Optional[Dict[str, Any]]] = session.scalars(
-        select(IntakeTrigger.payload)
+def _unfinished_gap_rows(*columns: Any) -> Any:
+    """``columns`` of each gaps-run intake row whose run is still working: the row is
+    still queued, or the investigation it launched is assigned or executing."""
+    return (
+        select(*columns)
         .outerjoin(
             Investigation,
             Investigation.investigation_id == IntakeTrigger.investigation_id,
@@ -1258,6 +1258,13 @@ def _unfinished_gap_runs(session: Session) -> Set[str]:
                 ),
             ),
         )
+    )
+
+
+def _unfinished_gap_runs(session: Session) -> Set[str]:
+    """The gaps-run proposals whose run is still working (``_unfinished_gap_rows``)."""
+    payloads: Iterable[Optional[Dict[str, Any]]] = session.scalars(
+        _unfinished_gap_rows(IntakeTrigger.payload)
     )
     return {
         i
@@ -1290,6 +1297,18 @@ def _shadow_copies(session: Session) -> Dict[int, List[str]]:
             )
         )
     }
+
+
+def unfinished_gap_run() -> Optional[Tuple[int, Optional[str]]]:
+    """The intake row id and investigation id (None while queued) of a gaps run still
+    working, the oldest first; None when there is none."""
+    with unit_of_work() as session:
+        row = session.execute(
+            _unfinished_gap_rows(
+                IntakeTrigger.id, IntakeTrigger.investigation_id
+            ).order_by(IntakeTrigger.id)
+        ).first()
+    return None if row is None else (row[0], row[1])
 
 
 def worked_techniques() -> Set[str]:

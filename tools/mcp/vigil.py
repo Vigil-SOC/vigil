@@ -3,7 +3,7 @@ import inspect
 import json
 import logging
 from datetime import datetime
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
@@ -2144,3 +2144,50 @@ def send_directive(
         }
 
     return _call(steer)
+
+
+# The gaps run queues through the daemon's intake (services.daemon.gaps), which
+# tools/ may not import: core reaches this module, and core never reaches services.
+# The API that serves /mcp hands the starter in at startup.
+_gaps_starter: Optional[Callable[..., Awaitable[Any]]] = None
+
+
+def serve_gaps_runs(starter: Callable[..., Awaitable[Any]]) -> None:
+    global _gaps_starter
+    _gaps_starter = starter
+
+
+@tool("Start the detection gaps run")
+@requires("detections.write")
+async def start_gaps_run() -> str:
+    """Start the detection gaps run now instead of on the daily tick, as you. Returns
+    ``status``: queued (with ``proposal_ids``), nothing_to_raise (with the
+    ``floor``), blind_spots_only, or refused, with a ``message`` saying why. One at
+    a time: refused while another gaps run is unfinished."""
+    from core.auth import tool_principal
+
+    if tool_principal.current_claims() is not None:
+        return jdump(_OUTSIDE_ONLY)
+    # Starting a run, as start_run is.
+    if (refusal := permission_refusal("ai_chat.use")) is not None:
+        return jdump(refusal)
+    if _gaps_starter is None:
+        return jdump({"error": "the gaps run cannot be started from this process"})
+    starter = _gaps_starter
+
+    async def start() -> dict:
+        principal, username = _person()
+        outcome = await starter(
+            {
+                "started_by": username,
+                "principal": tool_principal.mint(
+                    username,
+                    person_id=principal,
+                    origin="person",
+                    ttl=tool_principal.RUN_TTL,
+                ),
+            }
+        )
+        return outcome.as_dict()
+
+    return await _acall(start)

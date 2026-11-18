@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
 from core.config import get_settings
@@ -276,119 +276,22 @@ class TaskScheduler:
         )
 
     async def _run_detection_gaps(self):
-        """Queue a mitre_analyst run on the gaps identify_gaps lists over the last
-        WINDOW_DAYS, counting only evidence no earlier run raised, at or above the
-        floor and not on a technique a rule is already proposed or in shadow for
-        (proposals.worked_techniques), biggest first; none when there are none.
-        With OpenCTI configured, the techniques its newest intrusion sets and
-        reports name are checked here too, in code, and each one with no proven rule
-        is a gap raised once.
+        """The daily detection gaps run (``services.daemon.gaps.start_gaps_run``)."""
+        from services.daemon.gaps import NOT_QUEUED, QUEUED, start_gaps_run
 
-        The run opens no Case: each raised gap a rule can answer is a detection
-        proposal holding the gap and its evidence ids, the run carries their ids in
-        its trigger_context, and the rules it saves are attached to them. A blind
-        spot is a missing data source no rule answers, shown on the Detections page:
-        it is never handed to the run, and is logged as new the day it is raised (it
-        is remembered as raised while it stays open), so a day that raises only blind
-        spots, or nothing, queues nothing. What was raised is remembered
-        only once the run has queued, or found nothing to queue.
-        """
-        if not is_enabled(DETECTION_GAPS_WORKFLOW):
-            logger.info(
-                "Daily detection gaps run skipped: %s is turned off",
-                DETECTION_GAPS_WORKFLOW,
-            )
-            return
-        from core.detections import gap_run
-        from core.detections.engineering import proposals
-        from core.detections.tools import get_security_detection_tools
-
-        started = datetime.now(timezone.utc)
-        window_start = started - timedelta(days=gap_run.WINDOW_DAYS)
-        before = gap_run.read_raised()
-        intel = await gap_run.recent_intel()
-        # Off the loop: the report reads the ledger and Findings synchronously.
-        report = await asyncio.to_thread(
-            asyncio.run,
-            get_security_detection_tools().identify_gaps(
-                since_days=gap_run.WINDOW_DAYS,
-                since=window_start,
-                techniques=sorted(intel) or None,
-            ),
-        )
-        alerts = await asyncio.to_thread(gap_run.alert_ids, window_start)
-        gaps = gap_run.gaps_in(report, alerts, before, intel)
-        worked = await asyncio.to_thread(proposals.worked_techniques)
-        raised, held = gap_run.to_raise(gaps, before, worked, window_start=window_start)
-        after = gap_run.after_run(before, started, window_start, gaps, raised, held)
-        to_draft = gap_run.rule_gaps(raised)
-        blind = [g for g in raised if g.kind == gap_run.BLIND]
-        if blind:
+        outcome = await start_gaps_run()
+        if outcome.blind_spots:
             # Not handed to the run, so this line is where a new one shows.
             logger.info(
                 "Daily detection gaps run: new blind spots, no rule drafted: %s",
-                "; ".join(g.line() for g in blind),
+                "; ".join(outcome.blind_spots),
             )
-        if not to_draft:
-            logger.info(
-                "Daily detection gaps run: no new gaps a rule can answer at or above "
-                "%d, nothing queued",
-                gap_run.GAP_FLOOR,
-            )
-            gap_run.write_raised(after)
-            return
-
-        hypothesis = (
-            "Draft a detection rule for each detection gap below that you judge "
-            "real, check it with check_detection_candidate and save it with "
-            "save_detection_rule. Each gap is tracked as a detection proposal and "
-            "the rules you save attach to it; open no Case. The save's gap_replays "
-            "shows whether the rule fired on the attack the gap's hunts proved: if "
-            "not, revise and save again."
-        )
-        hypothesis += " New gaps, biggest first: " + "; ".join(
-            g.line() for g in to_draft
-        )
-        from services.daemon.orchestrator import insert_intake_trigger
-
-        # Each gap a rule can answer, with its evidence, as a proposal the run's saves
-        # attach to. A record that fails costs the record, not the run.
-        try:
-            proposal_ids = proposals.for_gaps(to_draft)
-        except Exception:  # noqa: BLE001
-            logger.exception("Daily detection gaps run: the gaps were not recorded")
-            proposal_ids = []
-        queued = None
-        try:
-            queued = insert_intake_trigger(
-                kind="schedule",
-                priority="low",
-                payload={
-                    "workflow_id": DETECTION_GAPS_WORKFLOW,
-                    "trigger_type": "scheduled",
-                    "finding_ids": [],
-                    "hypothesis": hypothesis,
-                    # The run's record is the run and its proposals, not a Case.
-                    "no_case": True,
-                    # Read off the run's trigger_context when it saves a rule.
-                    "gap_proposal_ids": proposal_ids,
-                },
-            )
-        finally:
-            if queued is None and proposal_ids:
-                try:
-                    proposals.withdraw_gaps(
-                        proposal_ids,
-                        "The gaps run was not queued; it raises this again.",
-                    )
-                except Exception:  # noqa: BLE001 -- never hides why it was not queued
-                    logger.exception("Daily detection gaps run: drafts not withdrawn")
-        if queued is None:
-            # Nothing was queued: remember nothing, so the next run raises it again.
-            logger.error("Daily detection gaps run: the intake row was not queued")
-            return
-        gap_run.write_raised(after)
-        logger.info("Queued the daily detection gaps run: %s", hypothesis)
+        if outcome.status == NOT_QUEUED:
+            logger.error("Daily detection gaps run: %s", outcome.message)
+        elif outcome.status == QUEUED:
+            logger.info("Queued the daily detection gaps run: %s", outcome.message)
+        else:
+            logger.info("Daily detection gaps run: %s", outcome.message)
 
     # What this hunt is out to test, read off the techniques the estate is showing, so
     # a nightly hunt follows it rather than repeating one fixed question.

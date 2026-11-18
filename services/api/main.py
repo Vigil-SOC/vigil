@@ -105,7 +105,12 @@ async def lifespan(app: FastAPI):
     await _startup(app)
     from mcp.server.transport_security import TransportSecuritySettings
 
+    from services.daemon.gaps import start_gaps_run
     from tools.mcp.vigil import mcp as vigil_mcp
+    from tools.mcp.vigil import serve_gaps_runs
+
+    # start_gaps_run on /mcp queues through the daemon's intake, which tools/ can't import.
+    serve_gaps_runs(start_gaps_run)
 
     # The MCP session manager runs whether or not the surface is open: the
     # toggle is a runtime one, so turning it on must not need a restart, and

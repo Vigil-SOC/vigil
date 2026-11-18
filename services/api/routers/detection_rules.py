@@ -18,9 +18,10 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth import step_up, trail_events
+from core.auth import step_up, tool_principal, trail_events
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -289,6 +290,25 @@ async def update_all_sources(
     background.add_task(_sync_detection_rules)
 
     return {"success": True, "results": results}
+
+
+# Queueing the gaps run is starting a run, as POST /api/v1/agent-runs is.
+_GAPS_RUN = [permission_gate("detections.write"), permission_gate("ai_chat.use")]
+
+
+@router.post("/gaps-run", dependencies=_GAPS_RUN)
+async def start_gaps_run(
+    request: Request, user: User = Depends(get_current_active_user)
+) -> JSONResponse:
+    """Start the detection gaps run now rather than on the daemon's daily tick, as
+    this user. 200 when it queued, or found nothing to queue; 409 with the reason
+    when refused (another gaps run unfinished, or the workflow turned off)."""
+    from services.api.routers.orchestrator import _person
+    from services.daemon import gaps
+
+    outcome = await gaps.start_gaps_run(_person(user, tool_principal.sid_of(request)))
+    code = {gaps.REFUSED: 409, gaps.NOT_QUEUED: 500}.get(outcome.status, 200)
+    return JSONResponse(outcome.as_dict(), status_code=code)
 
 
 @router.get("/stats")

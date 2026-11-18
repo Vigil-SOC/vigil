@@ -51,6 +51,7 @@ _MCP_ONLY = frozenset(
         "list_detection_rules",
         "get_detection_rule",
         "get_detection_coverage",
+        "start_gaps_run",
     }
 )
 
