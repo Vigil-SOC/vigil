@@ -52,7 +52,8 @@ def parse_facts(known: str, field_names: List[str]) -> List[Fact]:
     for claim, cited in _FACT.findall(held):
         claim = claim.replace(_HELD, DEFANGED)
         fact = Fact(claim=claim.strip(" ;").strip())
-        for token in (t.strip() for t in cited.split(",")):
+        # "," or ";" between fields: models write either inside one bracket.
+        for token in (t.strip() for t in re.split(r"[,;]", cited)):
             if not token:
                 continue
             if token.lower() == GENERAL_KNOWLEDGE:
