@@ -336,7 +336,8 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
           <span className="int-probe-ic"><Icon name={result.credentials.success ? 'check2' : 'close'} size={15} /></span>
           <span className="int-probe-name">Saved URL and credentials</span>
           <span className="int-probe-detail" style={result.credentials.success ? { color: 'var(--tx2)' } : undefined}>
-            {result.credentials.success ? 'Accepted' : result.credentials.message}
+            {/* A pass says what was read (Security Lake's regions, a workspace), so show it too. */}
+            {result.credentials.message || (result.credentials.success ? 'Accepted' : 'Failed')}
           </span>
         </div>
       )}

@@ -786,13 +786,14 @@ def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
     One notice per person while an earlier join notice on this Case is unread.
     A watcher who switched ``alert_joined`` off gets none, and a person who may
     not read the Case gets none (``notify``'s ``about_case``). A Case with
-    neither assignee nor watchers tells nobody.
+    neither assignee nor watchers tells the active people on its team instead.
     """
     from urllib.parse import quote
 
     from core.cases.case_notification_service import principal_of
     from core.platform.notices import notify, send_notices
     from core.storage.models import Case, CaseNotification, CaseWatcher
+    from core.teams import members_of
 
     title = finding.get("title") or finding.get("finding_id") or "alert"
     with get_db_manager().session_scope() as session:
@@ -800,15 +801,23 @@ def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
         if case is None:
             raise LookupError(f"case {case_id} is gone")
         names = [case.assignee] if case.assignee else []
-        for watcher in session.scalars(
-            select(CaseWatcher).where(CaseWatcher.case_id == case_id)
-        ):
+        watchers = list(
+            session.scalars(select(CaseWatcher).where(CaseWatcher.case_id == case_id))
+        )
+        for watcher in watchers:
             if (watcher.notification_preferences or {}).get("alert_joined", True):
                 names.append(watcher.user_id)
         # A person who is assignee and watcher is told once.
         principals = dict.fromkeys(
             p for name in names if (p := principal_of(session, name))
         )
+        if not case.assignee and not watchers:
+            # Nobody owns it: tell the team, active people only.
+            principals = dict.fromkeys(
+                u.principal_id
+                for u in members_of(session, case.team_id)
+                if u.is_active and not u.service_account
+            )
         sent = []
         for principal in principals:
             unread = session.scalar(

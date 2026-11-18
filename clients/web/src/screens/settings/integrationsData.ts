@@ -37,7 +37,7 @@ export const WIP_SERVERS = new Set([
 export const EXPERIMENTAL_SERVERS = new Set([
   'crowdstrike', 'sentinelone', 'azure-sentinel', 'splunk',
   'gcp-secops', 'gcp-threat-intel', 'joe-sandbox', 'vstrike',
-  'atomic-red-team', 'cape-sandbox', 'opencti',
+  'atomic-red-team', 'cape-sandbox', 'opencti', 'amazon-security-lake',
 ])
 
 export const EXPERIMENTAL_NOTE = 'Not yet tested against a live instance. It may not work; please report what you find.'
@@ -50,6 +50,7 @@ export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   'gcp-scc': 'GCP Security Command Center',
   'splunk-selfhosted': 'Splunk (Self-Hosted)',
   opencti: 'OpenCTI',
+  'amazon-security-lake': 'Amazon Security Lake',
 }))
 
 interface McpCategory {
@@ -66,7 +67,7 @@ export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'DeepTempo', icon: 'brain', servers: ['loglm'] },
   { label: 'Reference Servers', icon: 'doc', servers: ['github'] },
   { label: 'EDR / XDR', icon: 'shield', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
-  { label: 'SIEM / Data Lake', icon: 'search', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'wazuh', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
+  { label: 'SIEM / Data Lake', icon: 'search', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'opensearch', 'amazon-security-lake', 'wazuh', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
   { label: 'Threat Intelligence', icon: 'target', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'opencti', 'firecrawl', 'cloudforce_one'] },
   { label: 'Cloud Security', icon: 'cloud', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
   { label: 'Identity & Access', icon: 'user', servers: ['okta', 'azure-ad'] },
@@ -91,6 +92,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   'splunk-selfhosted': 'Run SPL searches against a self-hosted Splunk over its REST API (port 8089) for log analysis, correlation searches, and alert triage. Server URL and credentials are configured in Settings.',
   elastic: 'Query Elasticsearch and Elastic Security for logs, IOC hits, and detection alerts. Requires an Elasticsearch URL and API key or username/password.',
   opensearch: 'Query OpenSearch for logs and IOC hits, and ingest Security Analytics findings. Requires an OpenSearch URL and username/password.',
+  'amazon-security-lake': 'Search Amazon Security Lake\'s OCSF sources with Athena SQL, one region per call. Read-only. Only the regions you allow return rows; the others answer with row counts and bytes scanned.',
   opencti: 'Look up observables, indicators, threat actors, malware and attack patterns in OpenCTI and walk their relationships. Read-only. Requires the platform URL and an API token.',
   wazuh: 'Read the Wazuh manager\'s rules and agents\' log collection, and test a rule against a sample event. Read-only. Requires the manager API URL and username/password.',
   'azure-sentinel': 'Query Microsoft Sentinel via KQL for security logs, incidents, and custom detection rules.',
