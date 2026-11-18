@@ -92,6 +92,7 @@ FROZEN_TOOLS = frozenset(
         "get_operator_agent",
         "get_autonomy_ceiling",
         "list_audit_entries",
+        "get_entity_facts",
         "send_directive",
     }
 )
@@ -1671,6 +1672,23 @@ def get_autonomy_ceiling() -> str:
     except Exception as e:
         logger.error("get_autonomy_ceiling failed: %s", e)
         return jdump({"error": "Could not read the autonomy ceiling"})
+
+
+@tool("Entity facts held", reads=True)
+@requires("findings.read")
+def get_entity_facts(limit: Annotated[int, Field(ge=1, le=500)] = 100) -> str:
+    """What Vigil holds from Entra, Okta and Falcon about users and hosts, as GET
+    /api/v1/entity-facts does: per source the rows held, oldest and newest fetch,
+    the hit rate and last failure kind over the last window_hours (the TTL); the
+    limits in force; and the newest ``limit`` rows. Rows on a case you may not
+    read are left out of the rows and every count. Read only."""
+    from core.integrations import entity_facts
+
+    try:
+        return jdump(entity_facts.held(limit))
+    except Exception as e:
+        logger.error("get_entity_facts failed: %s", e)
+        return jdump({"error": "Could not read the entity facts"})
 
 
 @tool("Audit trail", reads=True)

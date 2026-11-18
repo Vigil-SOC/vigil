@@ -454,6 +454,19 @@
     "title": "get_case_iocsArguments",
     "type": "object"
   },
+  "get_entity_facts": {
+    "properties": {
+      "limit": {
+        "default": 100,
+        "maximum": 500,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    "title": "get_entity_factsArguments",
+    "type": "object"
+  },
   "get_finding": {
     "properties": {
       "finding_id": {

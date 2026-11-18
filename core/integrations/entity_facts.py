@@ -25,7 +25,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
@@ -761,3 +761,122 @@ def sweep() -> Dict[str, int]:
     counts = {"expired": expired, "case_closed": closed}
     _audit(ACTION_SWEEP, {"removed": counts})
     return counts
+
+
+# ---- What is held: the operator's read (#4743) ----
+
+
+def held(limit: int = 100) -> Dict[str, Any]:
+    """Per source: rows held, oldest and newest fetch, and over the last TTL the hit
+    rate and last failure kind from the ``entity_facts.read`` entries; the limits in
+    force; and the newest ``limit`` rows. Rows on a Case the caller may not read are
+    left out of the rows and of every count."""
+    from sqlalchemy import func, or_, select
+
+    from core.storage.case_read_hook import read_clause
+    from core.storage.models import Case
+    from core.storage.models.entity_fact import EntityFact as F
+    from core.storage.unit_of_work import unit_of_work
+
+    limits = read_limits()
+    now = utcnow()
+    since = now - timedelta(hours=limits.ttl_hours)
+
+    def visible(q: Any) -> Any:
+        return q.outerjoin(Case, Case.case_id == F.case_id).where(
+            or_(F.case_id.is_(None), read_clause())
+        )
+
+    with unit_of_work() as session:
+        counts = {
+            source: (n, oldest, newest)
+            for source, n, oldest, newest in session.execute(
+                visible(
+                    select(
+                        F.source,
+                        func.count(),
+                        func.min(F.fetched_at),
+                        func.max(F.fetched_at),
+                    ).select_from(F)
+                ).group_by(F.source)
+            )
+        }
+        rows = (
+            session.execute(
+                visible(select(F).select_from(F))
+                .order_by(F.fetched_at.desc(), F.id.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        rows = [
+            {
+                "entity_key": r.entity_key,
+                "source": r.source,
+                "case_id": r.case_id,
+                "fields": r.facts,
+                "fetched_at": r.fetched_at,
+                "expires_at": r.expires_at,
+                "hit_count": r.hit_count,
+            }
+            for r in rows
+        ]
+        # The read's own trail entries: the daemon's skip state is not visible here.
+        reads = session.execute(
+            text("""
+                SELECT occurred_at, payload->'sources' FROM public.audit_trail
+                WHERE payload->>'action' = :action AND occurred_at >= :since
+                ORDER BY occurred_at, seq
+            """),
+            {"action": ACTION_READ, "since": since.replace(tzinfo=timezone.utc)},
+        ).all()
+
+    trail: Dict[str, Dict[str, Any]] = {}
+    for at, sources in reads:
+        for server, entry in (sources if isinstance(sources, dict) else {}).items():
+            if not isinstance(entry, dict):
+                continue
+            t = trail.setdefault(
+                server, {"served": 0, "fetched": 0, "unavailable": 0, "failure": None}
+            )
+            for k in ("served", "fetched", "unavailable"):
+                v = entry.get(k)
+                t[k] += v if isinstance(v, int) and not isinstance(v, bool) else 0
+            if entry.get("reason"):
+                # Naive UTC, as every other time here (core/time.py).
+                t["failure"] = {
+                    "at": at.astimezone(timezone.utc).replace(tzinfo=None),
+                    "reason": str(entry["reason"]),
+                }
+
+    sources = []
+    for s in SOURCES:
+        n, oldest, newest = counts.get(s.server, (0, None, None))
+        t = trail.get(
+            s.server, {"served": 0, "fetched": 0, "unavailable": 0, "failure": None}
+        )
+        asked = t["served"] + t["fetched"] + t["unavailable"]
+        sources.append(
+            {
+                "source": s.server,
+                "label": s.label,
+                "rows": n,
+                "oldest_fetched_at": oldest,
+                "newest_fetched_at": newest,
+                "served": t["served"],
+                "fetched": t["fetched"],
+                "unavailable": t["unavailable"],
+                "hit_rate": t["served"] / asked if asked else None,
+                "last_failure": t["failure"],
+            }
+        )
+    return {
+        "now": now,
+        "window_hours": limits.ttl_hours,
+        "limits": {name: getattr(limits, name) for name in BOUNDS},
+        "defaults": {name: getattr(DEFAULTS, name) for name in BOUNDS},
+        "sources": sources,
+        "rows_total": sum(n for n, _, _ in counts.values()),
+        "rows": rows,
+    }
