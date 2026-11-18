@@ -4308,6 +4308,63 @@
       color: var(--tx0);
    }
 
+   /* the OAuth redirect allowlist (#4789) */
+   .mcp-allow {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--bg2);
+   }
+
+   .mcp-allow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--ln0);
+   }
+
+   .mcp-allow-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 36px;
+      padding: 4px 6px 4px 10px;
+      background: var(--bg1);
+      font-size: 12px;
+   }
+
+   .mcp-allow-list code {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-family: var(--font-mono);
+      color: var(--tx0);
+   }
+
+   .mcp-allow-list .btn,
+   .mcp-allow-when { flex: none; }
+
+   .mcp-allow-add {
+      display: flex;
+      gap: 8px;
+      margin: 0;
+   }
+
+   .mcp-allow-add .field-input { flex: 1 1 auto; min-width: 0; }
+
+   .mcp-allow-refused {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+   }
+
    .mcp-onoff-text b {
       font-size: 13px;
       font-weight: 650;
@@ -8102,3 +8159,51 @@
 .sk-scan-link { color: var(--ac); font-weight: 600; text-decoration: none; }
 .sk-scan-link:hover, .sk-scan-link:focus-visible { text-decoration: underline; }
 .sk-scan-reasons > li { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+/* ---------- OAuth consent (#4789): what the app asks, inside the sign-in shell ---------- */
+.auth .consent-facts {
+   display: grid;
+   grid-template-columns: max-content minmax(0, 1fr);
+   gap: 10px 16px;
+   margin: 0 0 18px;
+   padding: 14px 16px;
+   border: 1px solid var(--line-soft);
+   border-radius: 10px;
+   background: var(--bg-2);
+   font-size: 13px;
+}
+
+.auth .consent-facts dt {
+   color: var(--tx-3);
+}
+
+.auth .consent-facts dd {
+   margin: 0;
+   min-width: 0;
+   overflow-wrap: anywhere;
+   color: var(--tx);
+}
+
+.auth .consent-facts .mono {
+   font-family: var(--mono, ui-monospace, monospace);
+   font-size: 12px;
+}
+
+.auth .consent-role {
+   margin-left: 8px;
+   color: var(--tx-3);
+   text-transform: capitalize;
+}
+
+.auth .consent-note {
+   margin: 0 0 22px;
+   font-size: 12.5px;
+   line-height: 1.55;
+   color: var(--tx-2);
+}
+
+.auth .consent-actions {
+   display: grid;
+   grid-template-columns: 1fr 1fr;
+   gap: 10px;
+}

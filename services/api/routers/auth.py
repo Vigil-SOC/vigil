@@ -1335,13 +1335,22 @@ def _sso_redirect(location: str) -> RedirectResponse:
     return res
 
 
-def _sso_failed(source: Optional[str], refusal: sso.Refused, attempted: str = ""):
-    """The login page with one of three fixed messages; the real reason goes to the trail."""
+def _sso_failed(
+    source: Optional[str],
+    refusal: sso.Refused,
+    attempted: str = "",
+    back: Optional[str] = None,
+):
+    """The login page with one of three fixed messages; the real reason goes to the trail.
+    ``back``: the sign-in's return path, kept so a retry still lands there (#4789)."""
     trail_events.sign_in_failed(
         source, attempted, f"sso:{refusal.reason}", refusal.principal
     )
     logger.info("Single sign-on refused: %s", refusal.reason)
-    return _sso_redirect(f"{context_path_prefix()}/login?sso_error={refusal.code}")
+    query = {"sso_error": refusal.code}
+    if back:
+        query["return"] = _safe_return(back)
+    return _sso_redirect(f"{context_path_prefix()}/login?{urlencode(query)}")
 
 
 def _safe_return(path: Optional[str]) -> str:
@@ -1400,7 +1409,10 @@ def _confirming(request: Request, method: bool = False) -> Optional[dict]:
 @router.get("/sso/start", include_in_schema=False)
 @limiter.limit("10/minute", key_func=sso_rate_key)
 def sso_start(
-    request: Request, confirm: Optional[str] = None, method: Optional[str] = None
+    request: Request,
+    confirm: Optional[str] = None,
+    method: Optional[str] = None,
+    next: Optional[str] = None,
 ):
     """Send the browser to the provider: code flow with PKCE, state and nonce,
     bound to this browser by a signed cookie that lives five minutes.
@@ -1408,7 +1420,8 @@ def sso_start(
     ``confirm``: the path to come back to after Confirm it's you at the provider
     (#4285), for the sign-in this browser already holds. With ``method``, it is for
     a method change instead: the return carries a proof in place of the password
-    (#4756)."""
+    (#4756). ``next``: for a sign-in, the console path to land on afterwards,
+    such as an app's consent page (#4789)."""
     held = None
     if confirm is not None:
         changing = bool(method)
@@ -1423,7 +1436,8 @@ def sso_start(
         # A normal sign-in asks the provider to repeat one older than the
         # sign-in length: a claim counts only with an auth_time inside it.
         max_age = None if held else int(_sso_absolute().total_seconds())
-        url, binding = sso.begin(sso.provider(), held, max_age)
+        back = _safe_return(next) if next and held is None else None
+        url, binding = sso.begin(sso.provider(), held, max_age, back)
     except (sso.Refused, key_ring.KeyRingError) as exc:
         if held is not None:
             logger.info("Confirm it's you through SSO did not start: %s", exc)
@@ -1468,6 +1482,7 @@ def sso_callback(
     token, find or create the account, and sign it in as a password would."""
     source = client_host(request)
     seen: dict = {}
+    held: dict = {}
     try:
         held = sso.binding(request.cookies.get(sso.COOKIE), state)
         if isinstance(held.get("confirm"), dict):
@@ -1480,22 +1495,34 @@ def sso_callback(
         with unit_of_work() as session:
             arrived = _sso_arrive(session, request, p.settings, claims, source)
     except sso.Refused as refusal:
-        return _sso_failed(source, refusal, refusal.attempted or seen.get("email", ""))
+        return _sso_failed(
+            source,
+            refusal,
+            refusal.attempted or seen.get("email", ""),
+            held.get("return"),
+        )
     except (
         Exception
     ):  # noqa: BLE001 - e.g. a concurrent first sign-in's link: never a 500
         logger.exception("Single sign-on callback failed")
-        return _sso_failed(source, sso.Refused("unexpected"), seen.get("email", ""))
+        return _sso_failed(
+            source, sso.Refused("unexpected"), seen.get("email", ""), held.get("return")
+        )
+    back = _safe_return(held.get("return"))
     if isinstance(arrived, str):
         # The login page asks for the Vigil factor; the waiting sign-in takes
-        # the state cookie's place.
+        # the state cookie's place. The page lands on ``return`` afterwards.
+        step = {"sso_step": 1}
+        if held.get("return"):
+            step["return"] = back
         return _with_sso_cookie(
             RedirectResponse(
-                f"{context_path_prefix()}/login?sso_step=1", status.HTTP_302_FOUND
+                f"{context_path_prefix()}/login?{urlencode(step)}",
+                status.HTTP_302_FOUND,
             ),
             arrived,
         )
-    res = _sso_redirect(f"{context_path_prefix()}/")
+    res = _sso_redirect(back)
     _set_cookies_for(res, *arrived[:2])
     return res
 

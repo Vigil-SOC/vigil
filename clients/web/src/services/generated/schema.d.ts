@@ -5627,6 +5627,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/surface/oauth/redirects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Redirect Allowlist
+         * @description The redirect URIs registration allows beyond loopback, and recent refusals.
+         */
+        get: operations["get_api_mcp_surface_oauth_redirects"];
+        /**
+         * Set Redirect Allowlist
+         * @description Replace the allowlist. Each entry is an absolute https URI without a
+         *     fragment (loopback needs no entry), stored as registration will compare it.
+         */
+        put: operations["put_api_mcp_surface_oauth_redirects"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/decisions": {
         parameters: {
             query?: never;
@@ -14907,6 +14932,11 @@ export interface components {
             message?: string | null;
             /** Recovery Codes */
             recovery_codes: string[];
+        };
+        /** RedirectAllowlist */
+        RedirectAllowlist: {
+            /** Uris */
+            uris: string[];
         };
         /**
          * RefreshTokenRequest
@@ -27211,6 +27241,72 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SurfaceToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_mcp_surface_oauth_redirects: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_mcp_surface_oauth_redirects: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectAllowlist"];
             };
         };
         responses: {
