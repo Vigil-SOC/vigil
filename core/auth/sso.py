@@ -199,6 +199,8 @@ def binding(raw: Optional[str], state: Optional[str]) -> dict:
         )
     except (jwt.PyJWTError, key_ring.KeyRingError):
         raise Refused("bad_state_cookie") from None
+    if held.get("typ") == PROOF:  # a method-change proof is never a state cookie
+        raise Refused("bad_state_cookie")
     if not state or not hmac.compare_digest(str(held.get("state", "")), state):
         raise Refused("state_mismatch")
     return held
@@ -320,13 +322,59 @@ def linked_principals(session: Session) -> set[str]:
 
 
 def sso_only(session: Session, user) -> bool:
-    """No local password and linked to a provider: it signs in only through SSO."""
+    """Signs in only through the provider (epic #4751 decision 8): Require single
+    sign-on in force, or no local password and linked to a provider. Never a
+    break-glass account, whose password is the way in when SSO is not."""
+    if getattr(user, "break_glass_at", None) is not None:
+        return False
+    if required():
+        return True
     if user.password_hash:
         return False
     q = session.query(SsoLink.principal_id).filter(
         SsoLink.principal_id == user.principal_id
     )
     return q.first() is not None
+
+
+# A provider confirmation for a method change (#4756): stands in for the password.
+PROOF = "sso_method_proof"
+
+
+def issue_proof(sign_in_id: str, principal_id: str) -> str:
+    """Signed under ``sso``, for this sign-in and person, good for ``LIFE``."""
+    return key_ring.sign(
+        "sso",
+        {
+            "typ": PROOF,
+            "sid": sign_in_id,
+            "principal": principal_id,
+            "exp": datetime.now(timezone.utc) + LIFE,
+        },
+    )
+
+
+def proof_holds(
+    raw: Optional[str], sign_in_id: Optional[str], principal_id: str
+) -> bool:
+    """Whether ``raw`` is a live proof for exactly this sign-in and person. Its type
+    keeps it apart from the state cookie, which is signed under the same purpose."""
+    if not raw or not sign_in_id:
+        return False
+    try:
+        held = jwt.decode(
+            raw,
+            key_ring.token_key("sso", raw),
+            algorithms=["HS256"],
+            options={"require": ["exp"]},
+        )
+    except (jwt.PyJWTError, key_ring.KeyRingError):
+        return False
+    return (
+        held.get("typ") == PROOF
+        and held.get("sid") == sign_in_id
+        and held.get("principal") == principal_id
+    )
 
 
 def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:

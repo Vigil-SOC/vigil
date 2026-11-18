@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, NamedTuple, Optional, Union
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -334,6 +335,9 @@ class MFAVerifyRequest(BaseModel):
     password: Optional[str] = None
     assertion: Optional[dict] = None
     challenge: Optional[str] = None
+    # In place of the password for a person who signs in only through the
+    # provider: the proof GET /sso/start?confirm=…&method=1 hands back (#4756).
+    sso_proof: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -518,6 +522,10 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
     )
     # Whether this install has security keys, and why not when it has none.
     payload["security_keys"] = security_keys.availability().dump()
+    # Signs in only through the provider: confirms there, not with a password,
+    # before a method change (#4756).
+    payload["sso_only"] = sso.sso_only(session, user)
+    payload["sso_provider"] = step_up._provider_name() if payload["sso_only"] else None
     return payload
 
 
@@ -1310,53 +1318,76 @@ def _safe_return(path: Optional[str]) -> str:
     return f"{context_path_prefix()}/"
 
 
-def _with_outcome(path: str, outcome: str) -> str:
-    return f"{path}{'&' if '?' in path else '?'}sso_confirm={outcome}"
+def _with_outcome(path: str, outcome: str, method: bool = False, **extra) -> str:
+    # A method change comes back under its own mark, so it never reads as Confirm it's you.
+    query = urlencode({"sso_method" if method else "sso_confirm": outcome, **extra})
+    return f"{path}{'&' if '?' in path else '?'}{query}"
 
 
-def _confirming(request: Request) -> Optional[dict]:
-    """The open sign-in an access cookie names, for Confirm it's you through the provider."""
+def _confirming(request: Request, method: bool = False) -> Optional[dict]:
+    """The open sign-in an access cookie names, for Confirm it's you through the
+    provider, or (``method``) for a method change in place of the password (#4756)."""
     raw = request.cookies.get(ACCESS_COOKIE_NAME)
     payload = AuthService.verify_jwt_token(raw) if raw else None
     if not payload or payload.get("token_type") != "access" or not payload.get("sid"):
         return None
+    # A method change is a setup route: a person held at setup still gets there.
     user, refusal = _check_sign_in(
-        payload.get("user_id"), payload["sid"], request.headers.get("user-agent"), False
+        payload.get("user_id"),
+        payload["sid"],
+        request.headers.get("user-agent"),
+        False,
+        method,
     )
     if user is None or refusal:
         return None
-    # Only for whom the refusal offers it: anyone else confirms the Vigil way.
+    # Only for whom the refusal (or the method dialog) offers it: anyone else
+    # confirms the Vigil way.
     with unit_of_work() as session:
-        if not step_up.at_provider(session, user.principal_id, payload["sid"]):
+        if method:
+            allowed = sso.sso_only(session, user)
+        else:
+            allowed = step_up.at_provider(session, user.principal_id, payload["sid"])
+        if not allowed:
             return None
     return {
         "sid": payload["sid"],
         "principal": user.principal_id,
         "started": int(datetime.now(timezone.utc).timestamp()),
+        **({"method": True} if method else {}),
     }
 
 
 @router.get("/sso/start", include_in_schema=False)
 @limiter.limit("10/minute", key_func=sso_rate_key)
-def sso_start(request: Request, confirm: Optional[str] = None):
+def sso_start(
+    request: Request, confirm: Optional[str] = None, method: Optional[str] = None
+):
     """Send the browser to the provider: code flow with PKCE, state and nonce,
     bound to this browser by a signed cookie that lives five minutes.
 
     ``confirm``: the path to come back to after Confirm it's you at the provider
-    (#4285), for the sign-in this browser already holds."""
+    (#4285), for the sign-in this browser already holds. With ``method``, it is for
+    a method change instead: the return carries a proof in place of the password
+    (#4756)."""
     held = None
     if confirm is not None:
-        held = _confirming(request)
+        changing = bool(method)
+        held = _confirming(request, changing)
         if held is None:
             # Back with "failed": the console's next request refreshes or signs out as it should.
-            return _sso_redirect(_with_outcome(_safe_return(confirm), "failed"))
+            return _sso_redirect(
+                _with_outcome(_safe_return(confirm), "failed", changing)
+            )
         held["return"] = _safe_return(confirm)
     try:
         url, binding = sso.begin(sso.provider(), held)
     except (sso.Refused, key_ring.KeyRingError) as exc:
         if held is not None:
             logger.info("Confirm it's you through SSO did not start: %s", exc)
-            return _sso_redirect(_with_outcome(held["return"], "failed"))
+            return _sso_redirect(
+                _with_outcome(held["return"], "failed", bool(held.get("method")))
+            )
         refusal = (
             exc if isinstance(exc, sso.Refused) else sso.Refused("key_ring_unavailable")
         )
@@ -1416,6 +1447,7 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
     sign-in, cookie, account, link or role is touched."""
     c = held["confirm"]
     back, sid, pid = _safe_return(c.get("return")), c["sid"], c["principal"]
+    changing = bool(c.get("method"))
     try:
         if error or not code:
             raise sso.Refused("provider_error" if error else "no_code")
@@ -1426,7 +1458,7 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
     except sso.Refused as refusal:
         # Nothing was answered (a cancel, a provider fault): not a failed confirmation.
         logger.info("Confirm it's you through SSO refused: %s", refusal.reason)
-        return _sso_redirect(_with_outcome(back, "failed"))
+        return _sso_redirect(_with_outcome(back, "failed", changing))
     auth_time = claims.get("auth_time")
     problem = None
     if link is None or link.principal_id != pid:
@@ -1441,7 +1473,24 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
         logger.info("Confirm it's you through SSO failed: %s", problem)
         # The third in a row ends the sign-in; the console's next request shows it.
         step_up._fail(sid, pid, source)
-        return _sso_redirect(_with_outcome(back, "failed"))
+        return _sso_redirect(_with_outcome(back, "failed", changing))
+    if changing:
+        # A proof for the method change, never the window: a person who holds a
+        # Vigil factor must still use it (epic #4751 decisions 7 and 10).
+        with unit_of_work() as session:
+            user = session.query(User).filter(User.principal_id == pid).first()
+            row = session.get(SignIn, sid)
+            still = (
+                user is not None
+                and row is not None
+                and row.ended_at is None
+                and row.principal_id == pid
+                and sso.sso_only(session, user)
+            )
+        if not still:
+            return _sso_redirect(_with_outcome(back, "failed", True))
+        proof = sso.issue_proof(sid, pid)
+        return _sso_redirect(_with_outcome(back, "ok", True, sso_proof=proof))
     with unit_of_work() as session:
         # Still the person who confirms at the provider, with the sign-in still open.
         done = step_up.at_provider(session, pid, sid) and step_up.confirmed(
@@ -2622,16 +2671,20 @@ def verify_mfa(
             strong=True,
             signed_in=_recovery_window(request, session),
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     elif not current_user.mfa_enabled:
-        # The first method needs only the password; a wrong one counts toward
-        # the three that end this sign-in.
+        # The first method needs only the password (or the provider's proof); a
+        # wrong one counts toward the three that end this sign-in.
         step_up.confirm(
             current_user,
             session,
             _session_sid(request),
             password=body.password,
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     if not body.code:
         raise HTTPException(
@@ -2709,6 +2762,8 @@ def _strong_check(
         strong=True,
         signed_in=_recovery_window(request, session),
         source=client_host(request),
+        method_change=True,
+        sso_proof=body.sso_proof,
     )
 
 
@@ -3018,6 +3073,8 @@ def register_security_key(
             _session_sid(request),
             password=body.password,
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     else:
         _strong_check(request, current_user, body, session)

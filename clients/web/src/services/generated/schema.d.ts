@@ -13823,6 +13823,8 @@ export interface components {
             code?: string | null;
             /** Password */
             password?: string | null;
+            /** Sso Proof */
+            sso_proof?: string | null;
         };
         /** MappingEffect */
         MappingEffect: {
@@ -14826,6 +14828,8 @@ export interface components {
             password?: string | null;
             /** Registration Challenge */
             registration_challenge: string;
+            /** Sso Proof */
+            sso_proof?: string | null;
         };
         /** RejectRequest */
         RejectRequest: {
