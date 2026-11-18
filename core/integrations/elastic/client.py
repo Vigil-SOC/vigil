@@ -1,7 +1,7 @@
 """Elastic Security / Elasticsearch API service for SIEM integration."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 import httpx
@@ -164,8 +164,14 @@ class ElasticService:
         index: Optional[str] = None,
         size: int = 100,
         sort: Optional[List[Dict[str, Any]]] = None,
+        source: Optional[Union[List[str], bool]] = None,
+        aggs: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Run an Elasticsearch query and return the raw response body.
+
+        ``source`` limits each hit to those fields (``_source`` includes), or
+        False returns no fields;
+        ``aggs`` is sent as the request's aggregations. Both are omitted when None.
 
         A failed request returns None, but a client that cannot be built (an
         unusable CA path) or an invalid index name raises, so the caller
@@ -175,6 +181,12 @@ class ElasticService:
         body: Dict[str, Any] = {"query": query, "size": size}
         if sort:
             body["sort"] = sort
+        if source is not None:
+            body["_source"] = (
+                source if isinstance(source, bool) else {"includes": source}
+            )
+        if aggs is not None:
+            body["aggs"] = aggs
         client = self.es_client
         self.last_search_error = None
         try:
