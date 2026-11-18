@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, 'release/**' ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, 'release/**' ]
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
@@ -17,7 +17,7 @@ jobs:
   lint-backend:
     name: Lint Backend
     # Canonical repo only. Forks can't run this pipeline (missing secrets) so
-    # pushes to a fork's main/develop just email the owner
+    # pushes to a fork's main just email the owner
     # a failure. For pull_request events github.repository is the BASE repo, so
     # contributor PRs against Vigil-SOC/vigil still run CI as normal.
     if: github.repository == 'Vigil-SOC/vigil'

@@ -1,0 +1,60 @@
+# .github/workflows/release-branch.yml
+#
+# Every vX.Y.0 tag (a minor, merged by hand from main's release PR) gets a
+# release/X.Y.x branch cut at the tag's commit; every other release/* branch
+# is deleted, so exactly one exists. Fix releases (X.Y.1, ...) come from that
+# branch through its own release PR (see release-please.yml, docs/releasing.md).
+
+name: Release branch
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-branch
+  cancel-in-progress: false
+
+jobs:
+  release-branch:
+    # Canonical repo only: forks lack the release-please App vars/secrets.
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The App token (not GITHUB_TOKEN) so the ruleset bypass on release/**
+      # applies, and so creating the branch triggers release-please.yml.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      - name: Cut release branch and prune the old ones
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          branch="release/${TAG#v}"; branch="${branch%.0}.x"
+          if cur=$(gh api "repos/$REPO/git/ref/heads/$branch" --jq .object.sha 2>/dev/null); then
+            [ "$cur" = "$SHA" ] || { echo "::error::$branch already exists at $cur, not at $TAG ($SHA)."; exit 1; }
+            echo "$branch already at $TAG."
+          else
+            gh api "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$SHA" --silent
+            echo "Created $branch at $SHA"
+          fi
+          # Never the branch just made.
+          gh api --paginate "repos/$REPO/git/matching-refs/heads/release/" --jq '.[].ref' |
+            { grep -vxF "refs/heads/$branch" || true; } |
+            while read -r ref; do
+              gh api -X DELETE "repos/$REPO/git/$ref" --silent
+              echo "Deleted $ref"
+            done
