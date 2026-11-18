@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from core.exceptions import TeamRefused
 from core.storage import case_trail_hook
 from core.storage.models import Case, Finding, Team
+from core.storage.shared_ioc_repository import reconcile_case_safely
 from core.time import utcnow
 
 
@@ -89,7 +90,7 @@ def insert_case(
         # finding the case was opened from.
         given = {fid: n for n, fid in enumerate(finding_ids)}
         case.findings.extend(sorted(findings, key=lambda f: given[f.finding_id]))
-        session.flush()
+        reconcile_case_safely(session, case_id)
 
     if writer := case_trail_hook.writer(session):
         writer.append_case(

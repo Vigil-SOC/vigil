@@ -86,6 +86,16 @@ class Case(Base):
         ARRAY(String), nullable=True
     )
 
+    # The shared IOC index (#4733). NULL synced: never reconciled, so matching
+    # still reads this Case's legacy Investigation rows. Stale: a write to the
+    # index failed and none has succeeded since.
+    indicators_synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, default=utcnow, server_default=text("now()")
+    )
+    indicators_stale_since: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")

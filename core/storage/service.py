@@ -37,6 +37,7 @@ from core.storage.models import (
     case_findings,
 )
 from core.storage.schemas import FindingSchema
+from core.storage.shared_ioc_repository import reconcile_case_safely
 from core.storage.technique_confidence import rank_by_confidence
 from core.time import utcnow
 
@@ -1301,6 +1302,14 @@ class DatabaseService:
                 "restricted_not_counted": hidden,
             }
 
+    def _scope(self, session=None):
+        """The caller's session as is, or a new one that commits on exit."""
+        return (
+            nullcontext(session)
+            if session is not None
+            else self.db_manager.session_scope()
+        )
+
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def update_case(self, case_id: str, *, session=None, **updates) -> bool:
         """
@@ -1315,12 +1324,7 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        scope = (
-            nullcontext(session)
-            if session is not None
-            else self.db_manager.session_scope()
-        )
-        with scope as session:
+        with self._scope(session) as session:
             case = session.get(Case, case_id)
             if not case or not case_read_hook.may_read(case):
                 logger.warning(f"Case not found: {case_id}")
@@ -1337,6 +1341,8 @@ class DatabaseService:
                 now = {f.finding_id for f in case.findings}
                 findings = (sorted(now - was), sorted(was - now))
                 _record_removals(session, case_id, added=now - was, removed=was - now)
+                if now != was:
+                    reconcile_case_safely(session, case_id)
 
             # Update remaining mapped fields
             before, after = {}, {}
@@ -1378,18 +1384,22 @@ class DatabaseService:
             return True
 
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
-    def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
+    def add_finding_to_case(
+        self, case_id: str, finding_id: str, *, session=None
+    ) -> bool:
         """
         Add a finding to a case.
 
         Args:
             case_id: Case ID
             finding_id: Finding ID
+            session: The caller's session, so the link and the index write
+                commit together; None owns one here.
 
         Returns:
             True if successful, False otherwise
         """
-        with self.db_manager.session_scope() as session:
+        with self._scope(session) as session:
             case = session.get(Case, case_id)
             finding = session.get(Finding, finding_id)
 
@@ -1401,7 +1411,7 @@ class DatabaseService:
                 case.findings.append(finding)
                 case.updated_at = utcnow()
                 _record_removals(session, case_id, added={finding_id}, removed=())
-                session.flush()
+                reconcile_case_safely(session, case_id)
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
                         session, writer.FINDINGS_LINK, case_id, linked=[finding_id]
@@ -1411,18 +1421,21 @@ class DatabaseService:
             return True
 
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
-    def remove_finding_from_case(self, case_id: str, finding_id: str) -> bool:
+    def remove_finding_from_case(
+        self, case_id: str, finding_id: str, *, session=None
+    ) -> bool:
         """
         Remove a finding from a case.
 
         Args:
             case_id: Case ID
             finding_id: Finding ID
+            session: The caller's session; None owns one here.
 
         Returns:
             True if successful, False otherwise
         """
-        with self.db_manager.session_scope() as session:
+        with self._scope(session) as session:
             case = session.get(Case, case_id)
             finding = session.get(Finding, finding_id)
 
@@ -1434,7 +1447,7 @@ class DatabaseService:
                 case.findings.remove(finding)
                 case.updated_at = utcnow()
                 _record_removals(session, case_id, added=(), removed={finding_id})
-                session.flush()
+                reconcile_case_safely(session, case_id)
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
                         session, writer.UNLINK, case_id, unlinked=[finding_id]

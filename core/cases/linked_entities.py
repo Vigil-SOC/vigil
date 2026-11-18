@@ -10,20 +10,12 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from core.storage.case_indicators import context_indicators
+
 # entity_context keys, as the sources write them, by what they name.
 ENTITY_KEYS = ("hostnames", "hosts", "usernames", "users")
-IOC_KEYS = {
-    "src_ips": "ip",
-    "dest_ips": "ip",
-    "source_ips": "ip",
-    "ips": "ip",
-    "ip_addresses": "ip",
-    "domains": "domain",
-    "urls": "url",
-    "emails": "email",
-    "file_hashes": "hash",
-    "hashes": "hash",
-}
+# What counts as an IOC among a Case's indicators; an IP's role is not shown.
+IOC_KINDS = ("ip", "domain", "url", "email", "hash")
 
 LINKED_SOURCE = "Linked alert"
 
@@ -83,12 +75,11 @@ def finding_entity_summary(
 
 def finding_iocs(context: Any) -> list[tuple[str, str]]:
     """``(ioc_type, value)`` pairs one alert names, once each."""
-    found = [
-        (kind, value)
-        for key, kind in IOC_KEYS.items()
-        for value in _values(context, key)
-        if value
-    ]
+    found = []
+    for ioc_type, value in context_indicators(context):
+        kind = "ip" if ioc_type in ("src_ip", "dst_ip") else ioc_type
+        if kind in IOC_KINDS and value.strip():
+            found.append((kind, value.strip()))
     return list(dict.fromkeys(found))
 
 
