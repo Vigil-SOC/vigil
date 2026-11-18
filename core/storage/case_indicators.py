@@ -40,24 +40,34 @@ def intake_use(key_type: str) -> Optional[str]:
     return "same_title" if key_type in SAME_TITLE else None
 
 
+def _items(raw: Any) -> List[str]:
+    """A field's values: a lone string or number counts as a list of one."""
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+    return [
+        str(i).strip() for i in items if isinstance(i, (str, int)) and str(i).strip()
+    ]
+
+
 def context_indicators(context: Any) -> List[Tuple[str, str]]:
     """The ``(ioc_type, value)`` pairs one ``entity_context`` names.
 
     An IP's type is its role (``src_ip``, ``dst_ip``) where the field says one.
+    Sources write a list field as a lone value or with junk in it, so each is
+    cleaned to strings before ``context_candidates`` reads it.
     """
-    found = [(typed, value) for _, value, typed in context_candidates(_wrap(context))]
-    if isinstance(context, Mapping):
-        for kind, names in EXTRA_LISTS:
-            for name in names:
-                raw = context.get(name)
-                for item in raw if isinstance(raw, (list, tuple)) else [raw]:
-                    if isinstance(item, (str, int)) and str(item).strip():
-                        found.append((kind, str(item).strip()))
+    if not isinstance(context, Mapping):
+        return []
+    cleaned = {
+        name: _items(raw) if isinstance(raw, (list, tuple, str, int)) else raw
+        for name, raw in context.items()
+    }
+    found = [
+        (typed, value)
+        for _, value, typed in context_candidates({"entity_context": cleaned})
+    ]
+    for kind, names in EXTRA_LISTS:
+        found += [(kind, v) for name in names for v in _items(context.get(name))]
     return found
-
-
-def _wrap(context: Any) -> dict:
-    return {"entity_context": context}
 
 
 def case_indicators(session: Session, case_id: str) -> Set[Tuple[str, str]]:
