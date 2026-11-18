@@ -7,6 +7,8 @@ import { drain, grantOf, journalNote } from "./inbox.js";
 import type { Journal } from "./journal.js";
 import { boundBy, boundReason, standingOf, TOOL_FAILURE } from "./opening.js";
 import { buildReport, renderCaseFile } from "./report.js";
+import type { ToolFailure } from "../../contracts/tool.js";
+import { scrub } from "../../core/security.js";
 import { criticPayload, sanitize, sanitizeQuestion } from "./sanitize.js";
 import { evidenceStrength, isGap, OPERATOR_GAP_PROVENANCE, recordsFailedQuery, unmetPredicates, UNDECLARED_SOURCE, NULL_CHECK_PROVENANCE, CRITIC_SOURCE_SYSTEM } from "./strength.js";
 import { huntStarved, terminationVerdict, type TerminationVerdict } from "./termination.js";
@@ -35,6 +37,20 @@ export const AGENT_HYPOTHESIS_PROVENANCE = "agent";
 // Prefixes the park a raised checkpoint sets, so lifting one can never lift the
 // budget park, which takes a different set of answers entirely.
 const AWAITING = "awaiting ";
+
+// What a failed call said, kept on its gap: enough for a region and a query id.
+const GAP_DETAIL_CAP = 400;
+
+// An MCP server's failure often arrives as its JSON body, {"error": "..."}: the sentence is the error.
+function errorOf(detail: string): string {
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    const error = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>)["error"] : undefined;
+    return typeof error === "string" && error !== "" ? error : detail;
+  } catch {
+    return detail;
+  }
+}
 
 // Why a hypothesis could not be settled when the cause is what the hunt could not see.
 export function couldNotFinish(gaps: number): string {
@@ -126,12 +142,18 @@ export class HuntBook {
 
   // A blind spot: a call the estate could not answer. openGaps counts it once per tool,
   // on the hypothesis it names or every claim, so it gap-locks as a failed dispatch did.
-  appendGap(tool: string, kind: "timeout" | "unavailable" | "backend_error", hypothesisId: string | null): void {
+  // What the call said (a region, a query id) is kept as failure_reason, scrubbed and
+  // capped: it is a remote server's text, and it reaches the report and the narrator.
+  appendGap(tool: string, server: string | null, failure: ToolFailure, hypothesisId: string | null): void {
+    const { kind } = failure;
+    const said = kind === "timeout"
+      ? `${tool} did not answer within ${Math.round(failure.timeoutMs / 1000)}s`
+      : scrub(errorOf(failure.detail).replace(/\s+/g, " ").trim(), GAP_DETAIL_CAP) || `${tool} failed (${kind})`;
     this.appendEvidence([
       {
         source_system: "dispatcher",
         summary: "A query the hunt wanted could not be run",
-        payload: { tool, kind, gap_key: `${tool}:${kind}:${hypothesisId ?? "-"}`, hypothesis_id: hypothesisId },
+        payload: { tool, kind, gap_key: `${tool}:${kind}:${hypothesisId ?? "-"}`, hypothesis_id: hypothesisId, server, failure_reason: said },
         salience: "routine",
         why_notable: "a blind spot in what this run could see, not a finding",
         provenance: TOOL_FAILURE,

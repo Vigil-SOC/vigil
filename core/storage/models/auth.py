@@ -89,6 +89,11 @@ class SignIn(Base):
     auth_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default="password", server_default="password"
     )
+    # An SSO sign-in's way of meeting MFA (core/auth/sign_ins.py, epic #4751).
+    mfa_met: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Set when the end comes before started_at plus the absolute length: an SSO
+    # sign-in whose MFA came from an earlier sign-in at the provider.
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # The browser's user agent: the sign-in's tokens are honoured only from it.
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -109,6 +114,11 @@ class SignIn(Base):
             " 'sign_in_limit', 'too_many_confirmations', 'restore',"
             " 'recovery', 'mfa_reset')",
             name="sign_ins_end_reason_check",
+        ),
+        CheckConstraint(
+            "mfa_met IN ('provider_mfa', 'provider_phr', 'vigil_factor',"
+            " 'step_down', 'none')",
+            name="sign_ins_mfa_met_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),
     )
@@ -464,6 +474,19 @@ class McpCredential(Base):
     # When the unused-token reminder went out (core.auth.token_unused). Whether it
     # still counts is judged against last use, the last restore and the period.
     reminded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # An OAuth grant (#4787): the client it was issued to, the access token's
+    # end, and SHA-256s of the current and previous refresh tokens. All null on
+    # a personal API token.
+    oauth_client_id: Mapped[Optional[str]] = mapped_column(
+        String(50), ForeignKey("oauth_clients.client_id"), nullable=True
+    )
+    access_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    refresh_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    previous_refresh_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
 
     __table_args__ = (Index("idx_mcp_credentials_user", "user_id"),)
 
@@ -500,6 +523,63 @@ class McpCredential(Base):
             "successor_id": self.successor_id,
             "status": self.status(),
         }
+
+
+class OAuthClient(Base):
+    """A client that registered itself with the authorization server (#4787).
+
+    Public only: no secret is issued or stored. ``source`` is how it came to
+    exist (``dynamic`` registration today). Built by
+    ``core/upgrade/versions/0098_oauth_clients.sql``.
+    """
+
+    __tablename__ = "oauth_clients"
+
+    client_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    redirect_uris: Mapped[list] = mapped_column(JSONB, nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="dynamic", server_default="dynamic"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class OAuthPending(Base):
+    """An authorization request waiting for consent, then its code (#4787).
+
+    Keyed by a SHA-256 of the request id; the code is stored the same way.
+    """
+
+    __tablename__ = "oauth_pending"
+
+    request_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    client_id: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("oauth_clients.client_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    redirect_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    redirect_uri_explicit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    state: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    code_challenge: Mapped[str] = mapped_column(String(128), nullable=False)
+    scopes: Mapped[str] = mapped_column(Text, nullable=False)
+    resource: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(50), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=True
+    )
+    code_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_oauth_pending_expires", "expires_at"),)
 
 
 class BreachedPassword(Base):

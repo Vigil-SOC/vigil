@@ -49,15 +49,39 @@ SIGN_IN_LIMIT = "sign_in_limit"
 # unavailable (a step-down), or a key-only person's recovery code doing so.
 MFA_STEP_DOWN = "mfa_step_down"
 RECOVERY_STEP_DOWN = "recovery_step_down"
-# Through the single sign-on provider, which carries its own MFA (#4284).
+# Through the single sign-on provider (#4284). Whether it met MFA is ``mfa_met``.
 SSO = "sso"
 # A break-glass account's password, code and reason (#4532): "Confirm it's you"
 # passes for the life of the sign-in.
 BREAK_GLASS = "break_glass"
-WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, SSO, BREAK_GLASS)
-# Never held at MFA or key setup: the provider carries the MFA, or the
-# break-glass code did, and a hold would strand the custodian mid-incident.
-NOT_HELD = (SSO, BREAK_GLASS)
+WITH_MFA = ("mfa", MFA_STEP_DOWN, RECOVERY_STEP_DOWN, BREAK_GLASS)
+# Never held at MFA or key setup: the break-glass code carried the MFA, and a hold
+# would strand the custodian mid-incident.
+NOT_HELD = (BREAK_GLASS,)
+
+# How an SSO sign-in met MFA (epic #4751 decision 5); null on any other sign-in
+# and on SSO sign-ins from before the check. The provider's two count only on its
+# signed claim with a recent auth_time (core/auth/sso.py ``judged``).
+PROVIDER_MFA = "provider_mfa"
+PROVIDER_PHR = "provider_phr"
+VIGIL_FACTOR = "vigil_factor"
+# Security keys required but unavailable: the app, or the provider's mfa, stood in.
+STEP_DOWN = "step_down"
+NONE = "none"
+MET = (PROVIDER_MFA, PROVIDER_PHR, VIGIL_FACTOR, STEP_DOWN)
+
+
+def with_mfa(row: Optional[SignIn]) -> bool:
+    """Whether this sign-in got in with MFA, whichever route it took."""
+    return row is not None and (row.auth_method in WITH_MFA or row.mfa_met in MET)
+
+
+def end_of(row: SignIn, absolute: timedelta) -> datetime:
+    """When the sign-in reaches its absolute end: its start plus the policy's
+    length, or sooner when its MFA came from an older provider sign-in."""
+    end = row.started_at + absolute
+    return min(end, row.ends_at) if row.ends_at else end
+
 
 # Three failed confirmations in a row (core/auth/step_up.py).
 TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
@@ -151,6 +175,8 @@ class SignInEntry(BaseModel):
     address: Optional[str] = None
     # 'password', 'mfa', or a step-down while security keys are unavailable
     auth_method: str
+    # How an SSO sign-in met MFA; null on other sign-ins and older SSO ones.
+    mfa_met: Optional[str] = None
     ended_at: OptDateTime = None
     end_reason: Optional[str] = None
     end_reason_text: Optional[str] = None
@@ -174,6 +200,7 @@ def shape(row: SignIn, current: Optional[str] = None) -> dict:
         "device": row.device,
         "address": row.address,
         "auth_method": row.auth_method,
+        "mfa_met": row.mfa_met,
         "ended_at": row.ended_at,
         "end_reason": row.end_reason,
         "end_reason_text": (
@@ -230,7 +257,12 @@ def start(
     auth_method: str = "password",
     user_agent: Optional[str] = None,
     address: Optional[str] = None,
+    mfa_met: Optional[str] = None,
+    confirmed_at: Optional[datetime] = None,
+    ends_at: Optional[datetime] = None,
 ) -> SignIn:
+    """``confirmed_at``: when the factor that met MFA was given, where that is not
+    now (a provider's auth_time). ``ends_at``: an end sooner than the policy's."""
     now = utcnow()
     row = SignIn(
         sign_in_id=sign_in_id,
@@ -243,8 +275,12 @@ def start(
         device=device_of(user_agent),
         address=address,
         refresh_generation=0,
+        mfa_met=mfa_met,
+        ends_at=ends_at,
         # Completing MFA at sign-in starts the confirmation window.
-        confirmed_at=now if auth_method in WITH_MFA else None,
+        confirmed_at=(
+            (confirmed_at or now) if auth_method in WITH_MFA or mfa_met in MET else None
+        ),
     )
     session.add(row)
     return row

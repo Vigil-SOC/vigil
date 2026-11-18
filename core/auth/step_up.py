@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from core.auth import security_keys, session_policy, sign_ins, trail_events
+from core.auth import security_keys, session_policy, sign_ins, sso, trail_events
 from core.auth.auth_service import AuthService
 from core.auth.current_user import get_current_user
 from core.storage.models import SignIn, User
@@ -41,6 +41,8 @@ BAD_CODE = (
     "That code didn't work. Check the app and try again; codes change every 30 seconds."
 )
 BAD_PASSWORD = "That password didn't work. Try again."
+CONFIRM_AT_PROVIDER = "Confirm it's you at your SSO provider first."
+BAD_PROOF = "Your confirmation at your SSO provider has expired. Confirm there again."
 # Never says which of the two was right.
 BAD_STRONG = "That didn't work. Check your password and code, then try again."
 
@@ -70,28 +72,25 @@ def open_window(session: Session, sign_in_id: Optional[str]) -> bool:
     return updated > 0
 
 
-def _via_provider(mfa: Optional[bool], password: Optional[str], method) -> bool:
-    """No MFA and no password, signed in through the provider: confirms there (#4285)."""
-    return not mfa and not password and method == sign_ins.SSO
-
-
 def at_provider(session: Session, principal_id: str, sign_in_id: str) -> bool:
-    """Whether this person confirms at the provider for this open sign-in of theirs."""
-    user = (
-        session.query(User.mfa_enabled, User.password_hash)
-        .filter(User.principal_id == principal_id)
-        .first()
-    )
-    method = (
-        session.query(SignIn.auth_method)
+    """Whether this person confirms at the provider for this open sign-in of theirs:
+    no Vigil factor, and signs in only through the provider (#4285, #4756)."""
+    user = session.query(User).filter(User.principal_id == principal_id).first()
+    open_ = (
+        session.query(SignIn.sign_in_id)
         .filter(
             SignIn.sign_in_id == sign_in_id,
             SignIn.principal_id == principal_id,
             SignIn.ended_at.is_(None),
         )
-        .scalar()
+        .first()
     )
-    return user is not None and _via_provider(*user, method)
+    return (
+        user is not None
+        and open_ is not None
+        and not user.mfa_enabled
+        and sso.sso_only(session, user)
+    )
 
 
 def confirmed(
@@ -128,7 +127,7 @@ def check(request: Request, user_id: str, action: str) -> None:
 
     ``action`` names the change in the dialog's title ("change settings").
     A person with no MFA is sent to set it up: the window needs a factor. One
-    with no password either, signed in through the provider, confirms there (#4285).
+    who signs in only through the provider (``sso.sso_only``) confirms there (#4285).
     """
     actor = getattr(request.state, "vigil_http_actor", None)
     claims = getattr(request.state, "access_claims", None)
@@ -137,20 +136,17 @@ def check(request: Request, user_id: str, action: str) -> None:
     if actor is None or not actor.person or not sid:
         return
     with unit_of_work() as session:
-        mfa, password = (
-            session.query(User.mfa_enabled, User.password_hash)
-            .filter(User.user_id == user_id)
-            .first()
-        ) or (False, None)
+        user = session.query(User).filter(User.user_id == user_id).first()
         confirmed, method = (
             session.query(SignIn.confirmed_at, SignIn.auth_method)
             .filter(SignIn.sign_in_id == sid)
             .first()
         ) or (None, None)
-    # A break-glass sign-in spent a code to get in; asking again would spend more.
-    if method == sign_ins.BREAK_GLASS:
-        return
-    via_provider = _via_provider(mfa, password, method)
+        # A break-glass sign-in spent a code to get in; asking again would spend more.
+        if method == sign_ins.BREAK_GLASS:
+            return
+        mfa = bool(user and user.mfa_enabled)
+        via_provider = user is not None and not mfa and sso.sso_only(session, user)
     if not mfa and not via_provider:
         raise _refusal(
             MFA_FIRST,
@@ -253,6 +249,8 @@ def confirm(
     signed_in: bool = False,
     source: Optional[str] = None,
     settle: bool = True,
+    method_change: bool = False,
+    sso_proof: Optional[str] = None,
 ) -> None:
     """Check it is still the person, or raise.
 
@@ -267,18 +265,30 @@ def confirm(
     ``settle=False`` only checks the factor. The caller opens the window, and only
     when ``auth.confirmed`` was appended: ending one's own sign-ins must not
     widen the sign-in when that entry can only be held.
+    ``method_change``: adding or changing a sign-in method. For a person who signs
+    in only through the provider, ``sso_proof`` from confirming there stands in for
+    the password, and a password is never taken (#4756).
     """
     needs_password = strong or not user.mfa_enabled
     needs_code = user.mfa_enabled and not signed_in
-    if needs_password and not password:
+    via_proof = method_change and needs_password and sso.sso_only(session, user)
+    if via_proof and not sso_proof:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, CONFIRM_AT_PROVIDER)
+    if needs_password and not via_proof and not password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your password.")
     if needs_code and not code and not assertion:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, BAD_CODE)
 
     problem = None
-    if needs_password and not AuthService.verify_password(password, user.password_hash):
+    if via_proof and not sso.proof_holds(sso_proof, sign_in_id, user.principal_id):
+        problem = BAD_PROOF
+    elif (
+        needs_password
+        and not via_proof
+        and not AuthService.verify_password(password, user.password_hash)
+    ):
         problem = BAD_STRONG if strong else BAD_PASSWORD
-    # The code is only spent once the password is right.
+    # The code is only spent once the password (or the proof) is right.
     elif needs_code and assertion:
         try:
             security_keys.verify_assertion(

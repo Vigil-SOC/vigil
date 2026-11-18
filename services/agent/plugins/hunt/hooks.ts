@@ -190,7 +190,9 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         // A call the estate could not answer is a blind spot the verdicts count.
         const failure = seen.attempt.wrapped.failure;
         if (!OWN.has(seen.call.tool) && failure !== null && isVisibilityGap(failure)) {
-          book.appendGap(seen.call.tool, failure.kind as "timeout" | "unavailable" | "backend_error", null);
+          // The server is the spec's, never guessed from the tool's name.
+          const server = ctx.options.spec.tools.find((tool) => tool.id === seen.call.tool)?.["server"];
+          book.appendGap(seen.call.tool, typeof server === "string" && server !== "" ? server : null, failure, null);
         }
         return {
           projection: book.projection,

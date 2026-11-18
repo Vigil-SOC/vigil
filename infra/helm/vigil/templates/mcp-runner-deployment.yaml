@@ -6,6 +6,11 @@ infra/docker/Dockerfile.mcp-runner; mirrors the compose service.
 Holds no app secret: no vigil.envFrom, no POSTGRES_*, no state directory. Only
 its bearer token, by secretKeyRef.
 
+automountServiceAccountToken: false does not stop the EKS IRSA / Pod Identity
+webhook: it injects its own projected token volume and AWS_* env regardless.
+The supervisor copies that root-owned 0600 token into the Security Lake
+server's HOME as its uid (services/mcp_runner/supervisor.py, AWS_FILE_VARS).
+
 Nothing is mounted at /var/lib/vigil/mcp: each server's HOME and the uid map
 are baked there at image build, and a volume would hide them.
 */ -}}
@@ -91,11 +96,11 @@ spec:
             {{- toYaml .Values.mcpRunner.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.mcpRunner.securityContext | nindent 12 }}
-          {{- with list (include "vigil.caBundleVolumeMount" .) (include "vigil.detectionRulesVolumeMount" (dict "context" . "readOnly" true)) | join "" | trim }}
+          {{- with list (include "vigil.caBundleVolumeMount" .) (include "vigil.detectionRulesVolumeMount" (dict "context" . "readOnly" true)) (.Values.mcpRunner.extraVolumeMounts | default list | toYaml | trimPrefix "[]" | printf "\n%s") | join "" | trim }}
           volumeMounts:
             {{- . | nindent 12 }}
           {{- end }}
-      {{- with list (include "vigil.caBundleVolume" .) (include "vigil.detectionRulesVolume" .) | join "" | trim }}
+      {{- with list (include "vigil.caBundleVolume" .) (include "vigil.detectionRulesVolume" .) (.Values.mcpRunner.extraVolumes | default list | toYaml | trimPrefix "[]" | printf "\n%s") | join "" | trim }}
       volumes:
         {{- . | nindent 8 }}
       {{- end }}

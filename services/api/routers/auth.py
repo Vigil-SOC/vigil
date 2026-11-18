@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, NamedTuple, Optional, Union
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -334,6 +335,9 @@ class MFAVerifyRequest(BaseModel):
     password: Optional[str] = None
     assertion: Optional[dict] = None
     challenge: Optional[str] = None
+    # In place of the password for a person who signs in only through the
+    # provider: the proof GET /sso/start?confirm=…&method=1 hands back (#4756).
+    sso_proof: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -465,7 +469,7 @@ def _continue_sign_in(
         return _INVALID_REFRESH_TOKEN
     limit = _limits(user, session)
     now = utcnow()
-    if row.started_at + limit.absolute <= now:
+    if sign_ins.end_of(row, limit.absolute) <= now:
         sign_ins.end(sid, sign_ins.LENGTH_LIMIT, session)
         return _Ended(sign_ins.LENGTH_LIMIT)
     if limit.idle and row.last_action_at + limit.idle <= now:
@@ -490,7 +494,7 @@ def _continue_sign_in(
         "refresh",
         sid=sid,
         generation=current,
-        not_after=row.started_at + limit.absolute,
+        not_after=sign_ins.end_of(row, limit.absolute),
     )
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
     row.expires_at = _exp_datetime(refresh_payload.get("exp"))
@@ -501,7 +505,7 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
     """User dict plus resolved permissions — the shape the SPA gates on.
     Login/refresh must include it, not just /me: the client stores the user
     from the login response and checks permissions before any /me refresh.
-    ``sid`` is the sign-in asking: one through single sign-on is never held at setup."""
+    ``sid`` is the sign-in asking: how it met MFA decides a hold at setup."""
     row = session.get(SignIn, sid) if sid else None
     payload = UserSchema.dump(user)
     payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
@@ -513,11 +517,15 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
             user,
             [name for name, on in payload["permissions"].items() if on],
             session_policy.policy(),
-            via_sso=row is not None and row.auth_method in sign_ins.NOT_HELD,
+            row,
         )
     )
     # Whether this install has security keys, and why not when it has none.
     payload["security_keys"] = security_keys.availability().dump()
+    # Signs in only through the provider: confirms there, not with a password,
+    # before a method change (#4756).
+    payload["sso_only"] = sso.sso_only(session, user)
+    payload["sso_provider"] = step_up._provider_name() if payload["sso_only"] else None
     return payload
 
 
@@ -859,6 +867,110 @@ def _mfa_required(
     )
 
 
+class _Factor(NamedTuple):
+    """What a second step that held came to."""
+
+    # Set when security keys are required of this person: how the sign-in got in
+    # while keys are unavailable (a step-down), or that the app alone did not count.
+    step_down: Optional[str]
+    app_not_counted: bool
+    # A recovery code took every method: the console goes straight to setup.
+    recovered: bool
+    new_codes: Optional[List[str]]
+
+
+def _second_factor(
+    session: Session,
+    user: User,
+    code: Optional[str],
+    webauthn: Optional[dict],
+    challenge: Optional[str],
+    key_required: bool,
+    source: Optional[str],
+    failed,
+    marked: bool = False,
+    reason: str = "",
+) -> _Factor:
+    """The sign-in's second step, for a password and for single sign-on alike:
+    the app, a key or a recovery code, a wrong one counted toward the lock, the
+    key rule with its step-down, and recovery. Raises 401 when it does not hold;
+    ``failed`` puts the refusal on the trail. The lock itself is the caller's to
+    clear once the sign-in goes ahead."""
+    if user in session:
+        session.expire(user)
+    step_down: Optional[str] = None
+    app_not_counted = recovered = False
+    new_codes = None
+    # The login step is the one place a wrong code counts toward a lock.
+    if webauthn:
+        try:
+            # The lock is authoritative, as it is for a code.
+            if _account_is_locked(user):
+                raise security_keys.KeyRefused("locked")
+            security_keys.verify_assertion(
+                session, user, webauthn, challenge, security_keys.SIGN_IN
+            )
+            accepted = CODE_KEY
+        except security_keys.KeyRefused as exc:
+            accepted = None
+            # A key switched off by configuration is not a wrong key.
+            if not isinstance(exc, security_keys.KeysUnavailable):
+                AuthService._count_mfa_failure(user.user_id, user.username, source)
+    else:
+        accepted = AuthService.verify_mfa_code(
+            user.user_id, code or "", session, count_failures=True, source=source
+        )
+    if not accepted:
+        failed("bad_security_key" if webauthn else "bad_mfa_code")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid security key" if webauthn else "Invalid MFA code",
+        )
+    keyed = security_keys.has_keys(session, user.principal_id)
+    keys_up = security_keys.availability().available
+    if key_required and accepted == CODE_APP:
+        if keyed and keys_up:
+            failed("security_key_required")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A security key is required to sign in",
+            )
+        # Keys down: the app stands in, marked. Keys up and none held: the
+        # sign-in goes on to setup, but the app does not open the window.
+        if keys_up:
+            app_not_counted = True
+        else:
+            step_down = "app"
+    key_only = keyed and not mfa_methods.has_app(user, keyed)
+    if marked:
+        # A break-glass factor: a code is spent and nothing else changes; the
+        # host's codes are never replaced here.
+        _break_glass_used(
+            session,
+            user,
+            reason,
+            source,
+            {CODE_APP: "authenticator_app", CODE_KEY: "security_key"}.get(
+                accepted, "recovery_code"
+            ),
+        )
+    elif accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
+        # The one exception to recovery: with keys unavailable the code is
+        # spent and nothing else changes, so the person can add the app.
+        step_down = "recovery_code"
+        _recovery_step_down(session, user, source)
+    elif accepted == CODE_RECOVERY:
+        # Recovery (#4233): the code is spent, every method and the rest of
+        # the codes go, the other sign-ins end with their runs, and this one
+        # carries on into setup. An old-scheme code only upgrades the set.
+        _recover(session, user, source)
+        recovered = True
+    # Whether TOTP or an old code got in, an old-scheme set ends here.
+    if not marked:
+        new_codes = AuthService.upgrade_recovery_codes(user)
+    return _Factor(step_down, app_not_counted, recovered, new_codes)
+
+
 # Two evictions of one account within this long tell its managers.
 EVICTION_WINDOW = timedelta(hours=1)
 EVICTION_TEXT = (
@@ -1076,89 +1188,24 @@ def login(
         # failure count on the other connection would wait out the request.
         # Drop the pending reset first. Put it back only if the code is good.
         pending_reset = user in session
-        if pending_reset:
-            session.expire(user)
-        # The login step is the one place a wrong code counts toward a lock.
-        if payload.webauthn:
-            try:
-                # The lock is authoritative, as it is for a code.
-                if _account_is_locked(user):
-                    raise security_keys.KeyRefused("locked")
-                security_keys.verify_assertion(
-                    session,
-                    user,
-                    payload.webauthn,
-                    payload.webauthn_challenge,
-                    security_keys.SIGN_IN,
-                )
-                accepted = CODE_KEY
-            except security_keys.KeyRefused as exc:
-                accepted = None
-                # A key switched off by configuration is not a wrong key.
-                if not isinstance(exc, security_keys.KeysUnavailable):
-                    AuthService._count_mfa_failure(user.user_id, user.username, source)
-        else:
-            accepted = AuthService.verify_mfa_code(
-                user.user_id,
-                payload.mfa_code,
-                session,
-                count_failures=True,
-                source=source,
-            )
-        if not accepted:
-            failed("bad_security_key" if payload.webauthn else "bad_mfa_code")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=(
-                    "Invalid security key" if payload.webauthn else "Invalid MFA code"
-                ),
-            )
-        keyed = security_keys.has_keys(session, user.principal_id)
-        keys_up = security_keys.availability().available
-        if key_required and accepted == CODE_APP:
-            if keyed and keys_up:
-                failed("security_key_required")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="A security key is required to sign in",
-                )
-            # Keys down: the app stands in, marked. Keys up and none held: the
-            # sign-in goes on to setup, but the app does not open the window.
-            if keys_up:
-                app_not_counted = True
-            else:
-                step_down = "app"
+        factor = _second_factor(
+            session,
+            user,
+            payload.mfa_code,
+            payload.webauthn,
+            payload.webauthn_challenge,
+            key_required,
+            source,
+            failed,
+            marked=marked,
+            reason=reason,
+        )
+        step_down, app_not_counted = factor.step_down, factor.app_not_counted
+        recovered, new_recovery_codes = factor.recovered, factor.new_codes
         if pending_reset:
             clear_lock(user)
             user.last_login = utcnow()
             user.login_count = (user.login_count or 0) + 1
-        key_only = keyed and not mfa_methods.has_app(user, keyed)
-        if marked:
-            # A break-glass factor: a code is spent and nothing else changes; the
-            # host's codes are never replaced here.
-            _break_glass_used(
-                session,
-                user,
-                reason,
-                source,
-                {CODE_APP: "authenticator_app", CODE_KEY: "security_key"}.get(
-                    accepted, "recovery_code"
-                ),
-            )
-        elif accepted == CODE_RECOVERY and key_required and key_only and not keys_up:
-            # The one exception to recovery: with keys unavailable the code is
-            # spent and nothing else changes, so the person can add the app.
-            step_down = "recovery_code"
-            _recovery_step_down(session, user, source)
-        elif accepted == CODE_RECOVERY:
-            # Recovery (#4233): the code is spent, every method and the rest of
-            # the codes go, the other sign-ins end with their runs, and this one
-            # carries on into setup. An old-scheme code only upgrades the set.
-            _recover(session, user, source)
-            recovered = True
-        # Whether TOTP or an old code got in, an old-scheme set ends here.
-        if not marked:
-            new_recovery_codes = AuthService.upgrade_recovery_codes(user)
 
     # The password and any MFA code are good; the password may have joined the
     # breached list since it was set, be too short for one factor, or be past the
@@ -1310,62 +1357,91 @@ def _safe_return(path: Optional[str]) -> str:
     return f"{context_path_prefix()}/"
 
 
-def _with_outcome(path: str, outcome: str) -> str:
-    return f"{path}{'&' if '?' in path else '?'}sso_confirm={outcome}"
+def _with_outcome(path: str, outcome: str, method: bool = False, **extra) -> str:
+    # A method change comes back under its own mark, so it never reads as Confirm it's you.
+    query = urlencode({"sso_method" if method else "sso_confirm": outcome, **extra})
+    return f"{path}{'&' if '?' in path else '?'}{query}"
 
 
-def _confirming(request: Request) -> Optional[dict]:
-    """The open sign-in an access cookie names, for Confirm it's you through the provider."""
+def _confirming(request: Request, method: bool = False) -> Optional[dict]:
+    """The open sign-in an access cookie names, for Confirm it's you through the
+    provider, or (``method``) for a method change in place of the password (#4756)."""
     raw = request.cookies.get(ACCESS_COOKIE_NAME)
     payload = AuthService.verify_jwt_token(raw) if raw else None
     if not payload or payload.get("token_type") != "access" or not payload.get("sid"):
         return None
+    # A method change is a setup route: a person held at setup still gets there.
     user, refusal = _check_sign_in(
-        payload.get("user_id"), payload["sid"], request.headers.get("user-agent"), False
+        payload.get("user_id"),
+        payload["sid"],
+        request.headers.get("user-agent"),
+        False,
+        method,
     )
     if user is None or refusal:
         return None
-    # Only for whom the refusal offers it: anyone else confirms the Vigil way.
+    # Only for whom the refusal (or the method dialog) offers it: anyone else
+    # confirms the Vigil way.
     with unit_of_work() as session:
-        if not step_up.at_provider(session, user.principal_id, payload["sid"]):
+        if method:
+            allowed = sso.sso_only(session, user)
+        else:
+            allowed = step_up.at_provider(session, user.principal_id, payload["sid"])
+        if not allowed:
             return None
     return {
         "sid": payload["sid"],
         "principal": user.principal_id,
         "started": int(datetime.now(timezone.utc).timestamp()),
+        **({"method": True} if method else {}),
     }
 
 
 @router.get("/sso/start", include_in_schema=False)
 @limiter.limit("10/minute", key_func=sso_rate_key)
-def sso_start(request: Request, confirm: Optional[str] = None):
+def sso_start(
+    request: Request, confirm: Optional[str] = None, method: Optional[str] = None
+):
     """Send the browser to the provider: code flow with PKCE, state and nonce,
     bound to this browser by a signed cookie that lives five minutes.
 
     ``confirm``: the path to come back to after Confirm it's you at the provider
-    (#4285), for the sign-in this browser already holds."""
+    (#4285), for the sign-in this browser already holds. With ``method``, it is for
+    a method change instead: the return carries a proof in place of the password
+    (#4756)."""
     held = None
     if confirm is not None:
-        held = _confirming(request)
+        changing = bool(method)
+        held = _confirming(request, changing)
         if held is None:
             # Back with "failed": the console's next request refreshes or signs out as it should.
-            return _sso_redirect(_with_outcome(_safe_return(confirm), "failed"))
+            return _sso_redirect(
+                _with_outcome(_safe_return(confirm), "failed", changing)
+            )
         held["return"] = _safe_return(confirm)
     try:
-        url, binding = sso.begin(sso.provider(), held)
+        # A normal sign-in asks the provider to repeat one older than the
+        # sign-in length: a claim counts only with an auth_time inside it.
+        max_age = None if held else int(_sso_absolute().total_seconds())
+        url, binding = sso.begin(sso.provider(), held, max_age)
     except (sso.Refused, key_ring.KeyRingError) as exc:
         if held is not None:
             logger.info("Confirm it's you through SSO did not start: %s", exc)
-            return _sso_redirect(_with_outcome(held["return"], "failed"))
+            return _sso_redirect(
+                _with_outcome(held["return"], "failed", bool(held.get("method")))
+            )
         refusal = (
             exc if isinstance(exc, sso.Refused) else sso.Refused("key_ring_unavailable")
         )
         return _sso_failed(client_host(request), refusal)
-    res = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    return _with_sso_cookie(RedirectResponse(url, status.HTTP_302_FOUND), binding)
+
+
+def _with_sso_cookie(res: Response, value: str) -> Response:
     # Lax, not the auth cookies' setting: it has to ride the provider's top-level redirect back.
     res.set_cookie(
         sso.COOKIE,
-        binding,
+        value,
         max_age=int(sso.LIFE.total_seconds()),
         path=_sso_cookie_path(),
         secure=_cookie_secure(),
@@ -1373,6 +1449,11 @@ def sso_start(request: Request, confirm: Optional[str] = None):
         samesite="lax",
     )
     return res
+
+
+def _sso_absolute() -> timedelta:
+    """The absolute sign-in length: how recent a provider's MFA must be to count."""
+    return timedelta(hours=session_policy.policy().absolute_hours)
 
 
 @router.get("/sso/callback", include_in_schema=False)
@@ -1397,7 +1478,7 @@ def sso_callback(
         claims = sso.verify(p, sso.exchange(p, code, held["verifier"]), held["nonce"])
         seen["email"] = claims["email"]
         with unit_of_work() as session:
-            tokens = _sso_sign_in(session, request, p.settings, claims, source)
+            arrived = _sso_arrive(session, request, p.settings, claims, source)
     except sso.Refused as refusal:
         return _sso_failed(source, refusal, refusal.attempted or seen.get("email", ""))
     except (
@@ -1405,8 +1486,17 @@ def sso_callback(
     ):  # noqa: BLE001 - e.g. a concurrent first sign-in's link: never a 500
         logger.exception("Single sign-on callback failed")
         return _sso_failed(source, sso.Refused("unexpected"), seen.get("email", ""))
+    if isinstance(arrived, str):
+        # The login page asks for the Vigil factor; the waiting sign-in takes
+        # the state cookie's place.
+        return _with_sso_cookie(
+            RedirectResponse(
+                f"{context_path_prefix()}/login?sso_step=1", status.HTTP_302_FOUND
+            ),
+            arrived,
+        )
     res = _sso_redirect(f"{context_path_prefix()}/")
-    _set_cookies_for(res, *tokens)
+    _set_cookies_for(res, *arrived[:2])
     return res
 
 
@@ -1416,6 +1506,7 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
     sign-in, cookie, account, link or role is touched."""
     c = held["confirm"]
     back, sid, pid = _safe_return(c.get("return")), c["sid"], c["principal"]
+    changing = bool(c.get("method"))
     try:
         if error or not code:
             raise sso.Refused("provider_error" if error else "no_code")
@@ -1426,7 +1517,7 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
     except sso.Refused as refusal:
         # Nothing was answered (a cancel, a provider fault): not a failed confirmation.
         logger.info("Confirm it's you through SSO refused: %s", refusal.reason)
-        return _sso_redirect(_with_outcome(back, "failed"))
+        return _sso_redirect(_with_outcome(back, "failed", changing))
     auth_time = claims.get("auth_time")
     problem = None
     if link is None or link.principal_id != pid:
@@ -1441,7 +1532,28 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
         logger.info("Confirm it's you through SSO failed: %s", problem)
         # The third in a row ends the sign-in; the console's next request shows it.
         step_up._fail(sid, pid, source)
-        return _sso_redirect(_with_outcome(back, "failed"))
+        return _sso_redirect(_with_outcome(back, "failed", changing))
+    if changing:
+        # A proof for the method change, never the window: a person who holds a
+        # Vigil factor must still use it (epic #4751 decisions 7 and 10).
+        with unit_of_work() as session:
+            user = session.query(User).filter(User.principal_id == pid).first()
+            row = session.get(SignIn, sid)
+            still = (
+                user is not None
+                and row is not None
+                and row.ended_at is None
+                and row.principal_id == pid
+                and sso.sso_only(session, user)
+            )
+        if not still:
+            return _sso_redirect(_with_outcome(back, "failed", True))
+        proof = sso.issue_proof(sid, pid)
+        return _sso_redirect(_with_outcome(back, "ok", True, sso_proof=proof))
+    if sso.judged(claims, _sso_absolute())[0] is None:
+        # Not a failed confirmation: the provider confirmed who, not a second factor.
+        logger.info("Confirm it's you through SSO: no qualifying MFA claim")
+        return _sso_redirect(_with_outcome(back, step_up.MFA_FIRST))
     with unit_of_work() as session:
         # Still the person who confirms at the provider, with the sign-in still open.
         done = step_up.at_provider(session, pid, sid) and step_up.confirmed(
@@ -1572,16 +1684,104 @@ def _sso_role(s, claims: dict, notes: dict) -> Optional[tuple[str, str]]:
     return None
 
 
-def _sso_sign_in(
-    session: Session, request: Request, s, claims: dict, source: Optional[str]
-) -> tuple[str, str]:
-    """Find, link or create the account, apply name, email and role from the
-    token, and start the sign-in. Returns the access and refresh tokens."""
-    from services.api.routers.users import _leaves_no_manager
+# What a waiting sign-in keeps of the token: enough to finish, never the groups.
+_SSO_KEPT = (
+    "sub", "email", "email_verified", "name", "given_name", "family_name",
+    "preferred_username", "amr", "acr", "auth_time",
+)  # fmt: skip
 
+
+def _sso_key_required(session: Session, user: User, match, notes: dict) -> bool:
+    """Whether Require phishing-resistant MFA covers the role this sign-in carries."""
+    role_id = match[0] if match and not notes.get("managed") else user.role_id
+    role = session.get(Role, role_id) or session.get(Role, user.role_id)
+    held = [name for name, on in ((role and role.permissions) or {}).items() if on]
+    return session_policy.mfa_covered(
+        held, False, session_policy.policy().require_phishing_resistant
+    )
+
+
+def _sso_met(
+    session: Session, user: User, key_required: bool, met: Optional[str]
+) -> Optional[str]:
+    """How the provider's word meets MFA for this person (``sign_ins`` value), or
+    None: ask for their Vigil factor (epic #4751 decision 6). A person with no
+    factor goes on, and ``setup_needed`` holds them if they are covered."""
+    if met == sign_ins.PROVIDER_PHR:
+        return met
+    if met == sign_ins.PROVIDER_MFA:
+        if not key_required:
+            return met
+        if not security_keys.availability().available:
+            return sign_ins.STEP_DOWN  # the provider's mfa stands in, as the app does
+        # Keys required and working: a key holder is asked for it; anyone else
+        # goes on and is held at "Add a security key".
+        return None if security_keys.has_keys(session, user.principal_id) else met
+    return None if user.mfa_enabled else sign_ins.NONE
+
+
+def _sso_arrive(
+    session: Session, request: Request, s, claims: dict, source: Optional[str]
+) -> Union[tuple[str, str, User, str], str]:
+    """The callback's half: find the account and judge the token. Signed in
+    (the tokens) when the provider's word is enough or there is no Vigil factor
+    to ask for; otherwise the waiting sign-in's cookie, with everything this
+    transaction did rolled back, so nothing is written before the factor."""
     notes: dict = {}
     user = _sso_account(session, s, claims, notes)
     match = _sso_role(s, claims, notes)
+    met, auth_time = sso.judged(claims, _sso_absolute())
+    # A new account has no factor to ask for: created, then held if covered.
+    key_required = user is not None and _sso_key_required(session, user, match, notes)
+    how = _sso_met(session, user, key_required, met) if user else met or sign_ins.NONE
+    if how is None:
+        kept = {k: claims[k] for k in _SSO_KEPT if k in claims}
+        if notes.get("directory_claim"):
+            kept[s.directory_id_claim] = notes["directory_claim"]
+        waiting = {
+            "principal": user.principal_id,
+            "claims": kept,
+            "match": list(match) if match else None,
+            "groups": notes.get("groups"),
+            "met": met,
+            "key_required": key_required,
+        }
+        session.rollback()
+        return sso.hold(waiting)
+    provider = how != sign_ins.NONE and met is not None
+    return _sso_sign_in(
+        session,
+        request,
+        s,
+        claims,
+        source,
+        user,
+        match,
+        notes,
+        how,
+        auth_time if provider else None,
+    )
+
+
+def _sso_sign_in(
+    session: Session,
+    request: Request,
+    s,
+    claims: dict,
+    source: Optional[str],
+    user: Optional[User],
+    match: Optional[tuple[str, str]],
+    notes: dict,
+    mfa_met: str,
+    provider_time: Optional[int] = None,
+) -> tuple[str, str, User, str]:
+    """Link or create the account ``_sso_account`` found, apply name, email and
+    role from the token, and start the sign-in, recorded with how it met MFA.
+    ``provider_time``: the provider's auth_time when its MFA counted, which opens
+    the window and brings the end forward. Returns the access and refresh tokens,
+    the account and the sign-in id."""
+    from services.api.routers.users import _leaves_no_manager
+
     email = claims["email"].strip()
     given = " ".join(
         str(claims[k]) for k in ("given_name", "family_name") if claims.get(k)
@@ -1690,13 +1890,17 @@ def _sso_sign_in(
     ua = request.headers.get("user-agent")
     sid = sign_ins.new_id()
     limit = _limits(user, session)
+    now = utcnow()
+    # A provider's MFA lasts the sign-in length from when it was given (decision 2).
+    factor_at = _exp_datetime(provider_time) if provider_time is not None else None
+    ends_at = min(now, factor_at) + limit.absolute if factor_at else None
     access_token = AuthService.generate_jwt_token(user, "access", sid=sid)
     refresh_token = AuthService.generate_jwt_token(
         user,
         "refresh",
         sid=sid,
         generation=0,
-        not_after=utcnow() + limit.absolute,
+        not_after=ends_at or now + limit.absolute,
     )
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
     evicted = sign_ins.make_room(session, user.principal_id, limit.sign_in_limit)
@@ -1708,6 +1912,9 @@ def _sso_sign_in(
         auth_method=sign_ins.SSO,
         user_agent=ua,
         address=source,
+        mfa_met=mfa_met,
+        confirmed_at=factor_at,
+        ends_at=ends_at,
     )
     if evicted:
         _tell_of_eviction(session, user, sid, ua, source)
@@ -1723,10 +1930,129 @@ def _sso_sign_in(
         provider=s.issuer,
         amr=claims.get("amr"),
         acr=claims.get("acr"),
+        mfa_met=mfa_met,
+        auth_time=claims.get("auth_time"),
         **notes,
     )
     logger.info("User signed in through single sign-on: %s", user.username)
-    return access_token, refresh_token
+    return access_token, refresh_token, user, sid
+
+
+class SsoFinishRequest(BaseModel):
+    """The Vigil factor after the provider: a code, or a key's assertion and the
+    challenge the first call's 401 carried."""
+
+    mfa_code: Optional[str] = None
+    webauthn: Optional[dict] = None
+    webauthn_challenge: Optional[str] = None
+
+
+def _sso_refused(source: Optional[str], refusal: sso.Refused, attempted: str):
+    """A waiting sign-in that can't finish: the login page's SSO message by code.
+    Raised, so a code spent on the way is not."""
+    trail_events.sign_in_failed(
+        source, attempted, f"sso:{refusal.reason}", refusal.principal
+    )
+    logger.info("Single sign-on refused at the second step: %s", refusal.reason)
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "sso_refused", "sso_error": refusal.code},
+    )
+
+
+@router.post("/sso/finish", response_model=LoginResponse)
+@limiter.limit("5/minute", key_func=sso_rate_key)
+def sso_finish(
+    request: Request,
+    response: Response,
+    payload: SsoFinishRequest,
+    session: UnitOfWorkSession,
+):
+    """The second step of a sign-in through the provider whose token didn't meet
+    MFA (#4757): the person's Vigil factor, checked exactly as ``login`` checks
+    it. Without one, the 401 ``X-MFA-Required`` offer, as login's first call.
+    Only once it holds is the account found, updated and signed in."""
+    source = client_host(request)
+    held = sso.waiting(request.cookies.get(sso.COOKIE))
+    if held is None:
+        raise _sso_refused(source, sso.Refused("pending_expired", "expired"), "")
+    claims, pid = held["claims"], held["principal"]
+    email = claims.get("email", "")
+
+    def failed(reason: str) -> None:
+        trail_events.sign_in_failed(source, email, reason, pid)
+
+    s = sso_settings.settings()
+    user = session.query(User).filter(User.principal_id == pid).first()
+    if not sso.is_on(s):
+        raise _sso_refused(source, sso.Refused("sso_off", principal=pid), email)
+    if user is None or not user.is_active:
+        raise _sso_refused(
+            source, sso.Refused("account_deactivated", sso.DEACTIVATED, pid), email
+        )
+    if _account_is_locked(user):
+        failed("locked")
+        raise AccountLockedError(user.locked_until)
+    key_required = bool(held.get("key_required"))
+    if not payload.mfa_code and not payload.webauthn:
+        return _mfa_required(session, user, key_required)
+    factor = _second_factor(
+        session,
+        user,
+        payload.mfa_code,
+        payload.webauthn,
+        payload.webauthn_challenge,
+        key_required,
+        source,
+        failed,
+    )
+    clear_lock(user)
+    met = held.get("met")
+    if factor.step_down:
+        how, provider_time = sign_ins.STEP_DOWN, None
+    elif user.mfa_enabled and not factor.app_not_counted:
+        how, provider_time = sign_ins.VIGIL_FACTOR, None
+    elif met:  # a recovery code took the methods; the provider's mfa still counts
+        how, provider_time = met, claims.get("auth_time")
+    else:
+        how, provider_time = sign_ins.NONE, None
+    match = tuple(held["match"]) if held.get("match") else None
+    notes: dict = {"groups": held["groups"]} if held.get("groups") else {}
+    if factor.step_down:  # on the trail as login puts it
+        notes["step_down"] = factor.step_down
+    try:
+        found = _sso_account(session, s, claims, notes)
+        if found is None or found.principal_id != pid:
+            raise sso.Refused("account_changed", principal=pid)
+        access, refresh, user, sid = _sso_sign_in(
+            session,
+            request,
+            s,
+            claims,
+            source,
+            found,
+            match,
+            notes,
+            how,
+            provider_time,
+        )
+    except sso.Refused as refusal:
+        raise _sso_refused(source, refusal, refusal.attempted or email)
+    _set_cookies_for(response, access, refresh)
+    response.delete_cookie(
+        sso.COOKIE,
+        path=_sso_cookie_path(),
+        secure=_cookie_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+    return LoginResponse(
+        access_token=access,
+        refresh_token=refresh,
+        user=_user_payload(user, session, sid),
+        recovery_codes=factor.new_codes,
+        mfa_removed=factor.recovered,
+    )
 
 
 @router.post("/logout")
@@ -2134,7 +2460,9 @@ def _sign_in_timing(request: Request, user: User, session: Session) -> Optional[
             if limit.idle
             else None
         ),
-        "ends_in_seconds": int((row.started_at + limit.absolute - now).total_seconds()),
+        "ends_in_seconds": int(
+            (sign_ins.end_of(row, limit.absolute) - now).total_seconds()
+        ),
     }
 
 
@@ -2622,16 +2950,20 @@ def verify_mfa(
             strong=True,
             signed_in=_recovery_window(request, session),
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     elif not current_user.mfa_enabled:
-        # The first method needs only the password; a wrong one counts toward
-        # the three that end this sign-in.
+        # The first method needs only the password (or the provider's proof); a
+        # wrong one counts toward the three that end this sign-in.
         step_up.confirm(
             current_user,
             session,
             _session_sid(request),
             password=body.password,
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     if not body.code:
         raise HTTPException(
@@ -2681,10 +3013,17 @@ def _recovery_window(request: Request, session: Session) -> bool:
     row = session.get(SignIn, _session_sid(request) or "")
     if row and row.ended_at is None and row.auth_method == sign_ins.BREAK_GLASS:
         return True
+    if row and row.auth_method == sign_ins.SSO and row.mfa_met == sign_ins.STEP_DOWN:
+        # After the provider, a key-only person's recovery code is the one Vigil
+        # step-down (the app's needs an app); the provider's has a stored end.
+        user = session.query(User).filter(User.principal_id == row.principal_id).first()
+        keyed = user is not None and security_keys.has_keys(session, user.principal_id)
+        if row.ends_at is not None or not keyed or mfa_methods.has_app(user, keyed):
+            return False
+    elif not (row and row.auth_method == sign_ins.RECOVERY_STEP_DOWN):
+        return False
     return bool(
-        row
-        and row.auth_method == sign_ins.RECOVERY_STEP_DOWN
-        and step_up.window_end(row.confirmed_at)
+        step_up.window_end(row.confirmed_at)
         # Once keys are back a key is asked for again.
         and not security_keys.availability().available
     )
@@ -2709,6 +3048,8 @@ def _strong_check(
         strong=True,
         signed_in=_recovery_window(request, session),
         source=client_host(request),
+        method_change=True,
+        sso_proof=body.sso_proof,
     )
 
 
@@ -3018,6 +3359,8 @@ def register_security_key(
             _session_sid(request),
             password=body.password,
             source=client_host(request),
+            method_change=True,
+            sso_proof=body.sso_proof,
         )
     else:
         _strong_check(request, current_user, body, session)

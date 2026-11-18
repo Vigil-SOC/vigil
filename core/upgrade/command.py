@@ -717,10 +717,14 @@ def run(
 
 
 def _default_url() -> str:
-    from core.storage.connection import DatabaseConfig
+    from core.storage.connection import DatabaseConfig, MissingPostgresPasswordError
 
     # POSTGRES_* only: the upgrade logs in as the owner, not the app's DSN.
-    return DatabaseConfig(connection_string="").get_database_url()
+    try:
+        return DatabaseConfig(connection_string="").get_database_url()
+    except MissingPostgresPasswordError as e:
+        # One line, not a traceback: the message says what to run.
+        raise SystemExit(f"ERROR: {e}") from None
 
 
 def main(argv: Optional[list[str]] = None) -> int:

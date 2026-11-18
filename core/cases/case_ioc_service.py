@@ -9,18 +9,29 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import and_
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from core.cases import case_trail
 from core.cases.case_records_service import readable_case
 from core.cases.linked_entities import LINKED_SOURCE
 from core.exceptions import NotFoundError
-from core.storage.models import CaseIOC
+from core.storage.case_indicators import context_indicators, intake_use
+from core.storage.models import (
+    CaseIOC,
+    Finding,
+    Investigation,
+    SharedIOC,
+    case_findings,
+)
+from core.storage.schemas import CaseIOCSchema
 from core.storage.shared_ioc_repository import (
+    fold_key,
+    make_key,
     mark_key,
     marked_keys,
     reconcile_case_safely,
+    split_key,
 )
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -32,6 +43,10 @@ def is_marked(session: Session, case_id: str, ioc_type: str, value: str) -> bool
     """Whether the Case holds a false-positive mark on this value, under any spelling or IP role."""
     key = mark_key(ioc_type, value)
     return key is not None and key in marked_keys(session, [case_id]).get(case_id, ())
+
+
+# The entity list names these, not the IOC list.
+_ENTITY_TYPES = ("user", "process")
 
 
 class CaseIOCService:
@@ -340,6 +355,85 @@ class CaseIOCService:
                 query = query.filter(CaseIOC.is_active.is_(True))
 
             return query.order_by(CaseIOC.threat_level.desc()).all()
+
+    def list_iocs(
+        self,
+        case_id: str,
+        ioc_type: Optional[str] = None,
+        session: Optional[Session] = None,
+    ) -> List[dict]:
+        """The Case's indicators as the API and MCP list them: recorded, then derived.
+
+        Derived rows are what its findings name, from the one extractor, and carry
+        no ``ioc_id``. Each row says what intake does with it (``intake``) and,
+        when intake can use it, whether the index holds it yet (``linked``);
+        a marked one is never "not linked". Computed on read; nothing is stored.
+        """
+        with unit_of_work(session) as session:
+            case = readable_case(session, case_id)
+            recorded = self.get_case_iocs(case_id, session=session)
+            rows = [(CaseIOCSchema.dump(i), i.ioc_type, i.value) for i in recorded]
+
+            seen = {make_key(t, v) or f"{t}:{v}" for _, t, v in rows}
+            findings = session.execute(
+                select(Finding.entity_context, Finding.data_source, Finding.title)
+                .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
+                .where(case_findings.c.case_id == case_id)
+                .order_by(Finding.finding_id)
+            ).all()
+            for context, _, _ in findings:
+                for t, v in context_indicators(context):
+                    v = v.strip()
+                    key = make_key(t, v) or f"{t}:{v}"
+                    if t in _ENTITY_TYPES or not v or key in seen:
+                        continue
+                    seen.add(key)
+                    row = {
+                        "case_id": case_id,
+                        "ioc_type": t,
+                        "value": v,
+                        "source": LINKED_SOURCE,
+                    }
+                    rows.append((CaseIOCSchema.dump(row), t, v))
+
+            # matching_cases reads a hostname only against a finding with both.
+            has_title = any(src and (title or "").strip() for _, src, title in findings)
+            indexed = self._indexed_keys(session, case_id, case.indicators_synced_at)
+            marked = marked_keys(session, [case_id]).get(case_id, set())
+
+            out = []
+            for row, t, v in rows:
+                if ioc_type and (t or "").lower() != ioc_type.lower():
+                    continue
+                key = make_key(t, v)
+                pair = split_key(key) if key else None
+                use = intake_use(pair[0]) if pair else None
+                if use == "same_title" and not has_title:
+                    use = None
+                fk = fold_key(key)
+                is_marked = fk in marked
+                if is_marked:
+                    row["is_false_positive"] = True
+                row["intake"] = use or "none"
+                row["linked"] = (key in indexed) if use and not is_marked else None
+                out.append(row)
+            return out
+
+    @staticmethod
+    def _indexed_keys(session: Session, case_id: str, synced_at) -> set:
+        """The keys intake reads for a Case: its own rows, and legacy rows until it is synced."""
+        columns = (SharedIOC.ioc_type, SharedIOC.value)
+        queries = [select(*columns).where(SharedIOC.case_id == case_id)]
+        if synced_at is None:
+            queries.append(
+                select(*columns)
+                .join(
+                    Investigation,
+                    Investigation.investigation_id == SharedIOC.investigation_id,
+                )
+                .where(Investigation.case_id == case_id)
+            )
+        return {f"{t}:{v}" for q in queries for t, v in session.execute(q)}
 
     def export_iocs_json(self, case_id: str, session: Optional[Session] = None) -> str:
         """

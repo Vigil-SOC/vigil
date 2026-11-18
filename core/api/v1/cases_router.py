@@ -65,11 +65,7 @@ from core.cases.case_status import (
 )
 from core.cases.closure import PERSON_CHANNELS, ClosureCategory, FalsePositiveCause
 from core.cases.combined_state import queue_item
-from core.cases.linked_entities import (
-    LINKED_SOURCE,
-    finding_entities,
-    linked_iocs,
-)
+from core.cases.linked_entities import finding_entities
 from core.deps import provide_workflows
 from core.detections.inventory import catalog
 from core.findings.arrival_counts import utc_day_bounds
@@ -1300,25 +1296,9 @@ def mark_ioc_false_positive(
 def get_iocs(case_id: str, session: UnitOfWorkSession, ioc_type: Optional[str] = None):
     """Get all IOCs for case: the ones recorded, then those its linked alerts name.
 
-    The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
-    one already recorded is not listed twice.
+    Each says what intake does with it and whether the index holds it yet.
     """
-    ioc_service = CaseIOCService()
-    recorded = ioc_service.get_case_iocs(case_id, session=session)
-    iocs = [i for i in recorded if not ioc_type or i.ioc_type == ioc_type]
-    contexts = session.scalars(
-        select(Finding.entity_context)
-        .join(case_findings, case_findings.c.finding_id == Finding.finding_id)
-        .where(case_findings.c.case_id == case_id)
-        .order_by(Finding.finding_id)
-    ).all()
-    held = [(ioc.ioc_type or "", ioc.value or "") for ioc in recorded]
-    derived = [
-        {"case_id": case_id, "ioc_type": kind, "value": value, "source": LINKED_SOURCE}
-        for kind, value in linked_iocs(contexts, held)
-        if not ioc_type or kind == ioc_type.lower()
-    ]
-    return {"iocs": [*CaseIOCSchema.dump_many(iocs), *derived]}
+    return {"iocs": CaseIOCService().list_iocs(case_id, ioc_type, session=session)}
 
 
 @router.post(

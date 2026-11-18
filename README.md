@@ -127,6 +127,7 @@ Security keys (WebAuthn) are tied to the hostname the console is reached at: set
 `start.sh` provisions the pinned Python with [uv](https://docs.astral.sh/uv/), installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional), initializes the schema and reference data, and launches the API, the agent layer, and the frontend. No LogLM or cloud API key is needed to reach a running UI.
 
 - **`AGENT_INTERNAL_TOKEN`** lets the agent layer talk to the API. `start.sh` (and `setup_dev.sh`) creates `.env` from `env.example` and fills an empty token with a random one; a value already set is kept. Without it the agent layer does not start: workflow runs stay queued and chat answers 503.
+- **Database passwords.** `POSTGRES_PASSWORD` (the database owner), `POSTGRES_APP_PASSWORD` (the `vigil_app` login the backend, daemon and workers use) and `POSTGRES_AGENT_PASSWORD` (the `vigil_agent` login the agent layer uses) are generated per install and kept in `.env`. `start.sh` fills an empty one, replaces one still holding a value an older `env.example` shipped, and sets the database to match `.env` on every start; Compose and the backend refuse a published value unless `DEV_MODE=true`.
 - **The SOC daemon** (alert polling, auto-triage) runs only with `./start.sh -d`; the foreground start says so. Setup's system checks show whether the daemon and the agent layer are running.
 - **Authentication is on by default.** No account or default password ships; the first visit creates the admin, using the setup code the API prints at startup while no account exists. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
 
@@ -237,12 +238,22 @@ cd clients/web && npm install && npm run dev
 docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-Pass the repo-root `.env` explicitly, or `AGENT_INTERNAL_TOKEN` reaches the containers empty (`./setup_dev.sh` fills an empty one in `.env`). The `backend` container refuses to start without `JWT_SECRET_KEY`. Set it in `.env`, for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48`.
+Run `./start.sh` (or `./setup_dev.sh` on a fresh checkout) once first: it writes the three database passwords into `.env`, and `up` stops with a one-line message while any is empty. Pass the repo-root `.env` explicitly, or the containers get none of its values and `AGENT_INTERNAL_TOKEN` reaches them empty. The `backend` container refuses to start without `JWT_SECRET_KEY`. Set it in `.env`, for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48`.
 
 The default set runs the database, cache, gateway, backup, API, and agent layer: everything a chat-driven workflow needs. Opt-in profiles add more: `daemon` (the SOC daemon plus the ARQ worker, for headless 24/7 monitoring), `dev`, `observability`, `splunk`, `kafka`, `elastic`, and `misp`:
 
 ```bash
 docker compose --env-file .env -f infra/docker/docker-compose.yml --profile daemon up -d
+```
+
+**Change a database password.** Postgres keeps the owner password in its volume from the first start, so editing `.env` alone locks the owner out. Edit `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD` or `POSTGRES_AGENT_PASSWORD` in `.env` (keep them all different), then run `./start.sh`: it sets all three in the database from `.env` before anything logs in. Without `start.sh`, set them yourself first, then restart the stack:
+
+```bash
+docker exec -i deeptempo-postgres psql -U deeptempo -d deeptempo_soc <<'SQL'
+ALTER ROLE deeptempo PASSWORD '<new owner password>';
+ALTER ROLE vigil_app PASSWORD '<new vigil_app password>';
+ALTER ROLE vigil_agent PASSWORD '<new vigil_agent password>';
+SQL
 ```
 
 On the host, `./start.sh -d` also runs the daemon (`services/daemon/main.py`), or run it alone against a running stack with `python services/daemon/main.py`.

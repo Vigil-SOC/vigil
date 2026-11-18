@@ -10,6 +10,18 @@ type Surface = {
   path: string
   // Whether any token that is not revoked or expired exists on the install.
   has_token: boolean
+  oauth: OAuth
+}
+
+// OAuth on the surface. Every URL is computed from VIGIL_FRONTEND_URL.
+type OAuth = {
+  enabled: boolean // effective: switched on and nothing refuses it
+  requested: boolean // the switch itself
+  refusal: string | null
+  issuer: string
+  resource: string
+  authorization_server_metadata: string
+  protected_resource_metadata: string | null
 }
 
 /**
@@ -58,6 +70,20 @@ export default function McpSurfacePanel({ notify }: SectionProps) {
     }
   }
 
+  const toggleOAuth = async (enabled: boolean) => {
+    setBusy(true)
+    try {
+      await mcpApi.setSurfaceOAuthEnabled(enabled)
+      notify('ok', enabled ? 'OAuth for MCP clients is on.' : 'OAuth for MCP clients is off.')
+      load()
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      notify('err', typeof detail === 'string' ? detail : 'Could not change OAuth for MCP clients')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!surface) {
     return failed ? (
       <EmptyState
@@ -92,6 +118,43 @@ export default function McpSurfacePanel({ notify }: SectionProps) {
         </span>
         <Toggle checked={surface.enabled} label="Vigil MCP server" disabled={busy} onChange={toggle} />
       </div>
+
+      <div className="mcp-onoff">
+        <span className="mcp-onoff-text">
+          <b>{surface.oauth.enabled ? 'MCP clients sign in with OAuth' : 'OAuth off'}</b>
+          <span>Lets MCP clients sign in through Vigil instead of pasting an API token</span>
+        </span>
+        <Toggle
+          checked={surface.oauth.enabled}
+          label="OAuth for MCP clients"
+          disabled={busy}
+          onChange={toggleOAuth}
+        />
+      </div>
+
+      <dl className="mcp-urls">
+        <dt>Issuer</dt>
+        <dd><code>{surface.oauth.issuer}</code></dd>
+        <dt>Resource</dt>
+        <dd><code>{surface.oauth.resource}</code></dd>
+        <dt>Server metadata</dt>
+        <dd><code>{surface.oauth.authorization_server_metadata}</code></dd>
+        {surface.oauth.protected_resource_metadata && (
+          <>
+            <dt>Resource metadata</dt>
+            <dd><code>{surface.oauth.protected_resource_metadata}</code></dd>
+          </>
+        )}
+      </dl>
+
+      {surface.oauth.requested && surface.oauth.refusal && (
+        <div className="mcp-callout" role="status">
+          <span>
+            <Icon name="alert" size={16} /> OAuth is switched on but not in effect.{' '}
+            {surface.oauth.refusal}
+          </span>
+        </div>
+      )}
 
       {noToken && (
         <div className="mcp-callout" role="status">

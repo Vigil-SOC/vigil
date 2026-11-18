@@ -286,7 +286,36 @@ mcpRunner:
   tolerations: []
   affinity: {}
   # HTTPS_PROXY/NO_PROXY etc. set here are forwarded to every server it starts.
+  # The AWS credential pointers (AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE,
+  # AWS_CONFIG_FILE, AWS_PROFILE, AWS_REGION, ...) reach the Security Lake server
+  # only, and never raw keys. On EKS, annotate serviceAccount for IRSA or add a
+  # Pod Identity association: the webhook injects the token volume and env even
+  # with automountServiceAccountToken: false, and serviceAccount is shared with
+  # the backend, whose Settings test runs on the same role. The token is
+  # projected root-owned 0600 (no fsGroup); the runner copies each file a
+  # pointer names into that server's own 0700 HOME, as its uid, and refreshes
+  # the copy every 60 s, so no other server's uid can read it.
   extraEnv: []
+  # Without the webhook (self-managed IRSA), project the token yourself:
+  #   extraVolumes:
+  #     - name: aws-iam-token
+  #       projected:
+  #         sources:
+  #           - serviceAccountToken:
+  #               audience: sts.amazonaws.com
+  #               expirationSeconds: 86400
+  #               path: token
+  #   extraVolumeMounts:
+  #     - name: aws-iam-token
+  #       mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+  #       readOnly: true
+  #   extraEnv:
+  #     - {name: AWS_ROLE_ARN, value: "arn:aws:iam::123456789012:role/vigil-security-lake"}
+  #     - {name: AWS_WEB_IDENTITY_TOKEN_FILE, value: /var/run/secrets/eks.amazonaws.com/serviceaccount/token}
+  # A shared config works the same way: a Secret volume with defaultMode: 0400,
+  # mounted read-only, and AWS_CONFIG_FILE pointing at it.
+  extraVolumes: []
+  extraVolumeMounts: []
 
 # -----------------------------------------------------------------------------
 # Read-only case shell (#4199): the agent image's `node dist/shell.js`, behind

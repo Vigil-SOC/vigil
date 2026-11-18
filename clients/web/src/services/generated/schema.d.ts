@@ -1485,6 +1485,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/sso/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sso Finish
+         * @description The second step of a sign-in through the provider whose token didn't meet
+         *     MFA (#4757): the person's Vigil factor, checked exactly as ``login`` checks
+         *     it. Without one, the 401 ``X-MFA-Required`` offer, as login's first call.
+         *     Only once it holds is the account found, updated and signed in.
+         */
+        post: operations["post_api_auth_sso_finish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/sso/mapping": {
         parameters: {
             query?: never;
@@ -2691,8 +2714,7 @@ export interface paths {
          * Get Iocs
          * @description Get all IOCs for case: the ones recorded, then those its linked alerts name.
          *
-         *     The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
-         *     one already recorded is not listed twice.
+         *     Each says what intake does with it and whether the index holds it yet.
          */
         get: operations["get_api_cases_case_id_iocs"];
         put?: never;
@@ -5577,6 +5599,27 @@ export interface paths {
          * @description Open or close the surface. Takes effect without a restart.
          */
         put: operations["put_api_mcp_surface"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/surface/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Surface Oauth
+         * @description Turn OAuth on the surface on or off. On is refused, with the reason,
+         *     unless the surface is open and the public base URL is https or loopback.
+         */
+        put: operations["put_api_mcp_surface_oauth"];
         post?: never;
         delete?: never;
         options?: never;
@@ -8981,8 +9024,7 @@ export interface paths {
          * Get Iocs
          * @description Get all IOCs for case: the ones recorded, then those its linked alerts name.
          *
-         *     The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
-         *     one already recorded is not listed twice.
+         *     Each says what intake does with it and whether the index holds it yet.
          */
         get: operations["get_api_v1_cases_case_id_iocs"];
         put?: never;
@@ -11114,6 +11156,8 @@ export interface components {
             enrichment_data?: unknown | null;
             /** First Seen */
             first_seen?: string | null;
+            /** Intake */
+            intake?: string | null;
             /** Ioc Id */
             ioc_id?: number | null;
             /** Ioc Type */
@@ -11124,6 +11168,8 @@ export interface components {
             is_false_positive?: boolean | null;
             /** Last Seen */
             last_seen?: string | null;
+            /** Linked */
+            linked?: boolean | null;
             /** Reputation Score */
             reputation_score?: number | null;
             /** Source */
@@ -13861,6 +13907,8 @@ export interface components {
             code?: string | null;
             /** Password */
             password?: string | null;
+            /** Sso Proof */
+            sso_proof?: string | null;
         };
         /** MappingEffect */
         MappingEffect: {
@@ -14864,6 +14912,8 @@ export interface components {
             password?: string | null;
             /** Registration Challenge */
             registration_challenge: string;
+            /** Sso Proof */
+            sso_proof?: string | null;
         };
         /** RejectRequest */
         RejectRequest: {
@@ -15570,6 +15620,8 @@ export interface components {
             ended_at?: string | null;
             /** Last Action At */
             last_action_at: string;
+            /** Mfa Met */
+            mfa_met?: string | null;
             /** Sign In Id */
             sign_in_id: string;
             /** Started At */
@@ -16009,6 +16061,21 @@ export interface components {
              * @constant
              */
             version: 1;
+        };
+        /**
+         * SsoFinishRequest
+         * @description The Vigil factor after the provider: a code, or a key's assertion and the
+         *     challenge the first call's 401 carried.
+         */
+        SsoFinishRequest: {
+            /** Mfa Code */
+            mfa_code?: string | null;
+            /** Webauthn */
+            webauthn?: {
+                [key: string]: unknown;
+            } | null;
+            /** Webauthn Challenge */
+            webauthn_challenge?: string | null;
         };
         /**
          * SsoSettingsIn
@@ -19539,6 +19606,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndedSignIns"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_auth_sso_finish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27032,6 +27132,41 @@ export interface operations {
         };
     };
     put_api_mcp_surface: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SurfaceToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_mcp_surface_oauth: {
         parameters: {
             query?: never;
             header?: {

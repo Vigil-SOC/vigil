@@ -215,6 +215,9 @@ ensure_bifrost_admin_password
 # Redis requires a password; host-run backend, daemon, worker and agents inherit
 # it as REDIS_PASSWORD (REDIS_URL stays password-free).
 ensure_redis_password || exit 1
+# The three database passwords, per install. A published one (env.example's old
+# values) is replaced here, and the database is set to match once it is up.
+ensure_postgres_passwords --replace-published
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs
@@ -235,6 +238,8 @@ esac
 
 # --- Services (autostart list + any --with/--all extras) ---
 start_autostart_services
+# Before anything logs in: .env may have just got new values.
+sync_postgres_passwords || exit 1
 for svc in $EXTRA_SERVICES; do
     ensure_container "$(service_container "$svc")" "$svc" "$(service_profile "$svc")"
 done

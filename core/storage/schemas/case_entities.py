@@ -145,6 +145,10 @@ class CaseIOCSchema(ORMSchema):
     context: Optional[str] = None
     is_active: Optional[bool] = None
     is_false_positive: Optional[bool] = None
+    # What intake does with it (attach, link, same_title, none) and, for one it
+    # can use, whether the index holds it yet; set by CaseIOCService.list_iocs.
+    intake: Optional[str] = None
+    linked: Optional[bool] = None
     created_at: OptDateTime = None
     updated_at: OptDateTime = None
 

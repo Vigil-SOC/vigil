@@ -18,8 +18,8 @@ fi
 [ "$WARNINGS" -gt 0 ] && echo ""
 
 # Environment. Create-only: an existing .env is never replaced, so an install
-# already configured for the DEV_MODE bypass keeps it. The one edit is filling an
-# empty AGENT_INTERNAL_TOKEN and BIFROST_ADMIN_PASSWORD, below.
+# already configured for the DEV_MODE bypass keeps it. The one edit is filling
+# empty minted values (agent token, Bifrost and database passwords), below.
 if [ ! -f "$REPO_ROOT/.env" ]; then
     # Owner-only: it is about to hold the agent layer's token.
     (umask 077; cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env")
@@ -35,6 +35,8 @@ ensure_agent_token
 ensure_bifrost_admin_password
 # Redis requires a password; compose starts it with this one below.
 ensure_redis_password
+# The three database passwords, filled once. ./start.sh replaces a published one.
+ensure_postgres_passwords
 
 # Python
 ensure_venv
