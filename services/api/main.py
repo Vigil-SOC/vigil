@@ -249,6 +249,13 @@ key_age.register()
 break_glass.register()
 register_medic_notices()
 register_indicator_notices()
+
+# The OAuth authorization server at the host root (#4787). Inside CSRF, which
+# exempts its unprefixed /token, /register and /revoke, and outside the app's
+# CORS, so the SDK's own CORS answers a connector's preflight.
+from services.api.oauth_surface import OAuthSurface  # noqa: E402
+
+app.add_middleware(OAuthSurface)
 app.add_middleware(CSRFMiddleware)
 
 # A 401 on /scim/ never reaches the handler. The note counts it and does not
@@ -1067,6 +1074,8 @@ _SERVED_BY_THE_BACKEND = (
     "/redoc",
     "/openapi.json",
 )
+# The OAuth server's addresses sit at the host root, whatever the context path.
+from services.api.oauth_surface import ROOT_PREFIXES as _OAUTH_AT_ROOT  # noqa: E402
 
 
 def inject_index_head(raw: str, context_path: str, tags: list[str]) -> str:
@@ -1097,9 +1106,10 @@ def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool
     """
     if method not in ("GET", "HEAD"):
         return False
+    prefixed = [f"{context_path}{prefix}" for prefix in _SERVED_BY_THE_BACKEND]
     return not any(
-        path == f"{context_path}{prefix}" or path.startswith(f"{context_path}{prefix}/")
-        for prefix in _SERVED_BY_THE_BACKEND
+        path == prefix or path.startswith(f"{prefix}/")
+        for prefix in prefixed + list(_OAUTH_AT_ROOT)
     )
 
 

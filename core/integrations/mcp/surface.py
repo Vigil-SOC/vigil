@@ -32,6 +32,9 @@ CONFIG_KEY = "mcp.server_enabled"
 # The key the OAuth toggle writes (#4765). Named without "auth": CodeQL reads
 # that as a credential and flags every log line the key name reaches.
 SIGN_IN_SETTING = "mcp.oauth_enabled"
+# Redirect URIs a registering client may name beyond loopback (#4787). Stored as
+# {"uris": [...]}; empty, and so loopback only, until an operator adds one.
+REDIRECT_ALLOWLIST_SETTING = "mcp.oauth_redirect_allowlist"
 
 # Hosts allowed over plain http: the set the MCP SDK's validate_issuer_url takes.
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
@@ -161,6 +164,34 @@ def is_oauth_enabled() -> bool:
 def set_oauth_enabled(enabled: bool, updated_by: str) -> bool:
     """Record the operator's OAuth choice. Callers check ``oauth_refusal`` first."""
     return _write_flag(SIGN_IN_SETTING, enabled, updated_by)
+
+
+def oauth_redirect_allowlist() -> list[str]:
+    """Non-loopback redirect URIs an operator allows, matched exactly. Empty when unread."""
+    try:
+        from core.storage.config_service import get_config_service
+
+        stored = get_config_service().get_system_config(REDIRECT_ALLOWLIST_SETTING)
+    except Exception:  # noqa: BLE001 - an unreadable list allows nothing extra
+        logger.warning(
+            "Could not read %s; allowing loopback only", REDIRECT_ALLOWLIST_SETTING
+        )
+        return []
+    uris = (stored or {}).get("uris") or []
+    return [u for u in uris if isinstance(u, str)]
+
+
+def set_oauth_redirect_allowlist(uris: list[str], updated_by: str) -> bool:
+    """Replace the allowlist. Returns whether it was written."""
+    from core.storage.config_service import get_config_service
+
+    return bool(
+        get_config_service(user_id=updated_by).set_system_config(
+            key=REDIRECT_ALLOWLIST_SETTING,
+            value={"uris": [str(u) for u in uris]},
+            config_type="mcp",
+        )
+    )
 
 
 @contextmanager

@@ -398,6 +398,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "email.expired": "An email confirmation link expired unused",
     "auth.emergency_rotation": "Rotated keys with no overlap, in an emergency",
     "credential.minted": "Issued an API token",
+    "oauth.client_registered": lambda p: "Registered an OAuth client"
+    + (f" ({p['client_name']})" if p.get("client_name") else ""),
+    "oauth.client_registration_refused": lambda p: "Refused an OAuth client's "
+    + f"redirect URI {p.get('redirect_uri')}; allow it in {p.get('allow_in')}",
     "credential.rotated": lambda p: "Rotated an API token"
     + (" (suspected compromise)" if p.get("compromised") else ""),
     "credential.revoked": lambda p: "Revoked an API token"
