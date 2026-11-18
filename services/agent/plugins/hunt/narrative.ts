@@ -1,5 +1,5 @@
 import type { Projection } from "./ledger.js";
-import type { HuntReport } from "./report.js";
+import { gapText, type HuntReport } from "./report.js";
 import { isGap } from "./strength.js";
 
 // The account a person reads first. Everything else in the report is a table: what
@@ -102,7 +102,7 @@ export function narrativeInput(projection: Projection, report: HuntReport): stri
 
   const gaps = report.gaps.length === 0
     ? "None: every query the hunt wanted to run came back."
-    : report.gaps.map((gap) => `- iteration ${gap.iteration}: ${gap.query_intent || gap.summary}`).join("\n");
+    : report.gaps.map((gap) => `- iteration ${gap.iteration}: ${gap.query_intent || gapText(gap)}`).join("\n");
 
   const handoffs = report.handoffs.length === 0
     ? "None."
