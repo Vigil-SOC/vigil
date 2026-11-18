@@ -20,7 +20,6 @@ from core.storage.case_indicators import context_indicators, intake_use
 from core.storage.models import (
     CaseIOC,
     Finding,
-    Investigation,
     SharedIOC,
     case_findings,
 )
@@ -370,7 +369,7 @@ class CaseIOCService:
         a marked one is never "not linked". Computed on read; nothing is stored.
         """
         with unit_of_work(session) as session:
-            case = readable_case(session, case_id)
+            readable_case(session, case_id)  # 404 unless the caller may read it
             recorded = self.get_case_iocs(case_id, session=session)
             rows = [(CaseIOCSchema.dump(i), i.ioc_type, i.value) for i in recorded]
 
@@ -398,7 +397,7 @@ class CaseIOCService:
 
             # matching_cases reads a hostname only against a finding with both.
             has_title = any(src and (title or "").strip() for _, src, title in findings)
-            indexed = self._indexed_keys(session, case_id, case.indicators_synced_at)
+            indexed = self._indexed_keys(session, case_id)
             marked = marked_keys(session, [case_id]).get(case_id, set())
 
             out = []
@@ -420,20 +419,14 @@ class CaseIOCService:
             return out
 
     @staticmethod
-    def _indexed_keys(session: Session, case_id: str, synced_at) -> set:
-        """The keys intake reads for a Case: its own rows, and legacy rows until it is synced."""
-        columns = (SharedIOC.ioc_type, SharedIOC.value)
-        queries = [select(*columns).where(SharedIOC.case_id == case_id)]
-        if synced_at is None:
-            queries.append(
-                select(*columns)
-                .join(
-                    Investigation,
-                    Investigation.investigation_id == SharedIOC.investigation_id,
-                )
-                .where(Investigation.case_id == case_id)
+    def _indexed_keys(session: Session, case_id: str) -> set:
+        """The keys intake reads for a Case: its rows in the shared index."""
+        rows = session.execute(
+            select(SharedIOC.ioc_type, SharedIOC.value).where(
+                SharedIOC.case_id == case_id
             )
-        return {f"{t}:{v}" for q in queries for t, v in session.execute(q)}
+        )
+        return {f"{t}:{v}" for t, v in rows}
 
     def export_iocs_json(self, case_id: str, session: Optional[Session] = None) -> str:
         """

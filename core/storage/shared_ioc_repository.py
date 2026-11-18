@@ -1,9 +1,8 @@
 """Repository for ``shared_iocs`` — the index intake joins alerts to Cases by.
 
 A Case is the subject: its rows are kept in step with what it holds by
-``reconcile_case``. Rows of an Investigation written before that (``case_id``
-NULL) still count for a Case never reconciled. An indicator is keyed as ``"<ioc_type>:<value>"``, stripped, defanged and
-lower-cased — the rule memory's Entity Keys use, so the two agree.
+``reconcile_case``. An indicator is keyed as ``"<ioc_type>:<value>"``, stripped,
+defanged and lower-cased — the rule memory's Entity Keys use, so the two agree.
 Operates on a caller-provided ``Session``; it never opens or closes one.
 """
 
@@ -25,7 +24,6 @@ from core.storage.models import (
     Case,
     CaseIOC,
     Finding,
-    Investigation,
     SharedIOC,
     case_findings,
 )
@@ -207,7 +205,7 @@ class SharedIOCRepository:
 
         Locks the Case row. Keys a person marked a false positive (by the mark
         fold) are left out, and only the types intake reads are written. Stamps
-        the Case synced and clears its stale mark, so its legacy rows stop counting.
+        the Case synced and clears its stale mark.
         """
         if (
             self.session.scalar(
@@ -242,10 +240,7 @@ class SharedIOCRepository:
                         for t, v in sorted(wanted - have)
                     ]
                 )
-                .on_conflict_do_nothing(
-                    index_elements=["case_id", "ioc_type", "value"],
-                    index_where=SharedIOC.case_id.is_not(None),
-                )
+                .on_conflict_do_nothing(index_elements=["case_id", "ioc_type", "value"])
             )
         if have - wanted:
             self.session.execute(
@@ -275,8 +270,7 @@ class SharedIOCRepository:
         A Case matches on a source IP or file hash it holds (an IP that was only a
         destination, or whose role was never recorded, matches too but doesn't
         ``attach``), or on a hostname it holds while the Case has a finding with
-        the same ``data_source`` and trimmed, case-insensitive ``title``. A Case
-        never reconciled is also matched on its Investigations' legacy rows.
+        the same ``data_source`` and trimmed, case-insensitive ``title``.
         Raises on a failed read: the caller decides what that means.
         """
         entity_keys, host_keys = finding_match_keys(finding)
@@ -293,36 +287,27 @@ class SharedIOCRepository:
 
         status = Case.status != "closed" if open else Case.status == "closed"
         columns = (Case.case_id, SharedIOC.ioc_type, SharedIOC.value, Case.updated_at)
-        # A Case's own rows, and the legacy rows of its Investigations only while
-        # it has never been reconciled: after that they are stale.
-        bases = [
+        base = (
             select(*columns)
             .join(SharedIOC, SharedIOC.case_id == Case.case_id)
-            .where(status),
-            select(*columns)
-            .join(Investigation, Investigation.case_id == Case.case_id)
-            .join(
-                SharedIOC, SharedIOC.investigation_id == Investigation.investigation_id
-            )
-            .where(status, Case.indicators_synced_at.is_(None)),
-        ]
+            .where(status)
+        )
         rows: List[Tuple[str, str, str, Any, bool]] = []
-        for base in bases:
-            if clauses:
-                rows += [
-                    (*r, False) for r in self.session.execute(base.where(or_(*clauses)))
-                ]
-            if host_clauses:
-                same_title = (
-                    base.join(case_findings, case_findings.c.case_id == Case.case_id)
-                    .join(Finding, Finding.finding_id == case_findings.c.finding_id)
-                    .where(
-                        or_(*host_clauses),
-                        Finding.data_source == source,
-                        func.lower(func.btrim(Finding.title, " \t\r\n")) == title,
-                    )
+        if clauses:
+            rows += [
+                (*r, False) for r in self.session.execute(base.where(or_(*clauses)))
+            ]
+        if host_clauses:
+            same_title = (
+                base.join(case_findings, case_findings.c.case_id == Case.case_id)
+                .join(Finding, Finding.finding_id == case_findings.c.finding_id)
+                .where(
+                    or_(*host_clauses),
+                    Finding.data_source == source,
+                    func.lower(func.btrim(Finding.title, " \t\r\n")) == title,
                 )
-                rows += [(*r, True) for r in self.session.execute(same_title)]
+            )
+            rows += [(*r, True) for r in self.session.execute(same_title)]
 
         # A key marked false positive on a Case no longer matches it; its other
         # keys still do. Read here, not at index write, so it holds at once.

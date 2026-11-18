@@ -85,7 +85,6 @@ class SharedIOCSchema(ORMSchema):
     """SharedIOC."""
 
     id: Optional[int] = None
-    investigation_id: Optional[str] = None
     ioc_type: Optional[str] = None
     value: Optional[str] = None
     created_at: OptDateTime = None
