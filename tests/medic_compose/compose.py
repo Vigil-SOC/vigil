@@ -83,6 +83,10 @@ def clean_env(home: Path, **extra: str) -> dict[str, str]:
     # The compose file requires one (`${REDIS_PASSWORD:?}`); this environment is
     # built from scratch, so it never inherits an operator's.
     env["REDIS_PASSWORD"] = "medic-test-redis-password"
+    # Same for the three database passwords (`${POSTGRES_*PASSWORD:?}`).
+    env["POSTGRES_PASSWORD"] = "medic-test-postgres-owner-password"
+    env["POSTGRES_APP_PASSWORD"] = "medic-test-postgres-app-password"
+    env["POSTGRES_AGENT_PASSWORD"] = "medic-test-postgres-agent-password"
     env.update(extra)
     return env
 

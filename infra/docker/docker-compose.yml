@@ -10,7 +10,9 @@ x-agent-env: &agent-env
   - POSTGRES_DB=deeptempo_soc
   # vigil_agent, not vigil_app: the agent tables and nothing else (0081_agent_role).
   - POSTGRES_USER=vigil_agent
-  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
+  # Empty, not `:?`: an unset value renders, and the upgrade one-shot
+  # (initdb/00_apply.sh) refuses it before anything logs in as vigil_agent.
+  - POSTGRES_PASSWORD=${POSTGRES_AGENT_PASSWORD:-}
   - REDIS_URL=redis://redis:6379/0
   # The agent reads REDIS_PASSWORD only beside REDIS_HOST, and the password is
   # never put in a URL, so the parts are named as the Helm chart names them.
@@ -95,15 +97,14 @@ services:
     environment:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       # The upgrade one-shot sets vigil_app's password from this. Not the owner password.
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       # Loopback-only. A bare "5432:5432" publishes on 0.0.0.0, which put the
       # findings, cases and llm_provider_configs tables in reach of anything on
-      # the operator's network -- behind a password whose default is committed
-      # above. Nothing off-host consumes this: sibling containers dial
+      # the operator's network. Nothing off-host consumes this: sibling containers dial
       # postgres:5432 over deeptempo-network and a host-run backend uses
       # loopback. Widening this is a deployment decision, not a default.
       - "127.0.0.1:5432:5432"
@@ -134,12 +135,15 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
-      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
-      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-vigil_agent_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+      # Empty is refused by 00_apply.sh ("run ./start.sh once").
+      POSTGRES_AGENT_PASSWORD: ${POSTGRES_AGENT_PASSWORD:-}
       VIGIL_UPGRADE_DIR: /var/lib/vigil-upgrade
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
+      # On, a published database password is accepted (00_apply.sh, core.upgrade).
+      DEV_MODE: ${DEV_MODE:-false}
     volumes:
       - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade
       - ./upgrade-oneshot.sh:/upgrade-oneshot.sh:ro
@@ -201,7 +205,7 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: vigil_app
-      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Pushed to Bifrost at startup (core/llm/bifrost/admin.py sync_env_provider_keys).
@@ -328,7 +332,7 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       VIGIL_BACKUP_OWNER_CONNECTION: "1"
       RESTIC_CACHE_DIR: /tmp/restic-cache
       # A restore empties the agent-run queue.
@@ -339,6 +343,8 @@ services:
       # The only bypass: both must be set, and the version must be this image.
       VIGIL_UPGRADE_ACK_VERSION: ${VIGIL_UPGRADE_ACK_VERSION:-}
       VIGIL_UPGRADE_ACK_REASON: ${VIGIL_UPGRADE_ACK_REASON:-}
+      # On, a published database password is accepted. Inherited by backup-pre-upgrade.
+      DEV_MODE: ${DEV_MODE:-false}
     volumes:
       - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
       - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations
@@ -423,7 +429,9 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: vigil_app
-      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+      # On, a published database password is accepted, as in backend.
+      DEV_MODE: ${DEV_MODE:-false}
       # AI
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -558,7 +566,9 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
       - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:-vigil_app_password_change_me}
+      - POSTGRES_PASSWORD=${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
+      # On, a published database password is accepted, as in backend.
+      - DEV_MODE=${DEV_MODE:-false}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
