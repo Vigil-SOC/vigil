@@ -2018,6 +2018,17 @@ def propose_lead_hunt(finding_id: str) -> str:
         return jdump({"error": refused.detail})
 
 
+@tool("Insider lead list", reads=True)
+@requires("automation.read")
+def insider_leads() -> str:
+    """Which sources and rule names are insider leads, and the readers and teams of
+    the cases they open: ``{sources, rule_names, readers, teams}``. With no source
+    or rule name, automatic start is off. A person sets it in the console."""
+    from core.workflows.insider_lead import leads
+
+    return jdump(leads())
+
+
 @tool("List runs", reads=True)
 @requires("ai_chat.use")
 def list_runs(

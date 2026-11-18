@@ -566,7 +566,8 @@ function Header({ name, wf, actions, definition, onSave, onChangeDescription }: 
   )
 }
 
-export default function WorkflowReaderPane(props: ReaderProps) {
+/** `children` close the pane, under the stages (the threat-hunt lead list). */
+export default function WorkflowReaderPane(props: ReaderProps & { children?: ReactNode }) {
   const draft = 'draft' in props ? props.draft : null
   const { phase, definition, pre, missing } = useSource('wf' in props ? props.wf.id : null, draft, 'draft' in props ? props.grants : [])
   const [selected, setSelected] = useState<number | null>(null)
@@ -616,6 +617,7 @@ export default function WorkflowReaderPane(props: ReaderProps) {
                 {panels}
               </>
             )}
+            {props.children}
           </>
         )}
       </div>
