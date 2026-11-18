@@ -36,7 +36,7 @@ import { CasePage } from './CasePage'
 import { MoveCaseDialog, type MoveTeam } from './MoveCaseDialog'
 import { ReaderPicker, RestrictCaseDialog, RestrictHelp, RestrictedMark, useNamedTeams, useReaderNames } from './RestrictCase'
 import { caseConflicts, errorDetail, OWNER_CANNOT_READ_NOTE, STALE_OWNER_NOTE } from './caseFormat'
-import { ClosureFields, closurePayload, closureProblem, type ClosureCategory } from './ClosureFields'
+import { ClosureFields, closurePayload, closureProblem, type ClosureCategory, type ClosureChoice } from './ClosureFields'
 import { LATER_RELEASE } from '../../shared/later'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { falseCloseText } from '../../shared/autonomy'
@@ -1115,7 +1115,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
   // the fields it changes, so the server can refuse one that has moved since.
   const [seen, setSeen] = useState<CaseEditValues>(c.stored)
   const [conflicts, setConflicts] = useState<CaseConflict[]>([])
-  const [category, setCategory] = useState<ClosureCategory>('resolved')
+  const [category, setCategory] = useState<ClosureChoice>('')
   const [reason, setReason] = useState('')
   const [cause, setCause] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1135,6 +1135,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
   const save = async (mine: CaseEditValues, stored: CaseEditValues) => {
     if (!mine.title.trim()) { setErr('Title is required.'); return }
     const isClosing = closingFrom(mine, stored)
+    if (isClosing && !category) return
     const problem = isClosing ? closureProblem(category, reason) : null
     if (problem) { setErr(problem); return }
     // Only what this person changed: sending the rest would write back old values
@@ -1168,7 +1169,8 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
       if (isClosing) {
-        await casesApi.closeCase(c.id, { ...closurePayload(category, reason, cause), expected: { status: stored.status } })
+        // `category` is set: a close with none returned before the save began
+        await casesApi.closeCase(c.id, { ...closurePayload(category as ClosureCategory, reason, cause), expected: { status: stored.status } })
       }
       onSaved()
       onClose()
@@ -1257,7 +1259,7 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
       {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
       <div className="flex justify-end gap-2.5">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={() => void save(values, seen)} disabled={busy || conflicts.length > 0}>{busy ? 'Saving…' : 'Save changes'}</button>
+        <button className="btn primary" onClick={() => void save(values, seen)} disabled={busy || conflicts.length > 0 || (closing && !category)}>{busy ? 'Saving…' : 'Save changes'}</button>
       </div>
     </div>
   )

@@ -10,9 +10,16 @@ import { CLOSURE_CATEGORIES } from './useCases'
  *  than a determination, so it records a category and mints no verdict. */
 export type ClosureCategory = (typeof CLOSURE_CATEGORIES)[number]['value']
 
+/** A close form's category before anyone picks one. Nothing is preselected: a
+ *  default would record a determination the closer never made. */
+export type ClosureChoice = ClosureCategory | ''
+
+/** The close stays disabled until a category is chosen; "Unable to resolve" is on offer so this never blocks. */
+const CLOSURE_CHOICE_NEEDED = 'Choose what it turned out to be to close the case.'
+
 /** The determination the epic exists for. "It is benign" with nothing behind it
  *  is the one claim nobody can weigh later, so it is the one reason required. */
-export function closureProblem(category: ClosureCategory, reason: string): string | null {
+export function closureProblem(category: ClosureChoice, reason: string): string | null {
   return category === 'false_positive' && !reason.trim()
     ? 'Say why this is a false positive — it becomes the reason on the record.'
     : null
@@ -35,7 +42,7 @@ export function closurePayload(category: ClosureCategory, reason: string, cause:
 
 /** The category and reason a Case is closed with; shared by Edit and Close so the rule has one home. */
 export function ClosureFields({ category, reason, cause, onCategory, onReason, onCause }: {
-  category: ClosureCategory
+  category: ClosureChoice
   reason: string
   cause: string
   onCategory: (c: ClosureCategory) => void
@@ -46,7 +53,10 @@ export function ClosureFields({ category, reason, cause, onCategory, onReason, o
     <>
       <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
         <span>What it turned out to be</span>
-        <Select value={category} onSelect={(v) => onCategory(v as ClosureCategory)} options={[...CLOSURE_CATEGORIES]} />
+        <Select value={category} placeholder="Choose one" onSelect={(v) => onCategory(v as ClosureCategory)} options={[...CLOSURE_CATEGORIES]} />
+        {!category && (
+          <span className="text-[11.5px] font-normal normal-case tracking-normal text-tx-3 leading-[1.45]">{CLOSURE_CHOICE_NEEDED}</span>
+        )}
       </label>
       {category === 'false_positive' && (
         <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
@@ -84,20 +94,19 @@ export function ClosureFields({ category, reason, cause, onCategory, onReason, o
   )
 }
 
-/** Close a Case from its page, or re-close one the agent closed (`initial` preselects the determination).
+/** Close a Case from its page, or re-close one the agent closed. The category starts empty every time.
  *  Calls only the close endpoint, which sets the status itself.
  *  `evidenceOpened` is sent only when the caller passes it. The list's close goes through `closurePayload` and leaves the field off. */
-export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close case', evidenceOpened, onClose, onClosed }: {
+export function CloseCaseDialog({ open, id, title = 'Close case', evidenceOpened, onClose, onClosed }: {
   open: boolean
   id: string
-  initial?: ClosureCategory
   title?: string
   /** This session opened the Evidence section before the close. Omitted, the body does not carry the flag. */
   evidenceOpened?: boolean
   onClose: () => void
   onClosed: () => void
 }) {
-  const [category, setCategory] = useState<ClosureCategory>(initial)
+  const [category, setCategory] = useState<ClosureChoice>('')
   const [reason, setReason] = useState('')
   const [cause, setCause] = useState('')
   const [busy, setBusy] = useState(false)
@@ -105,14 +114,15 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
 
   useEffect(() => {
     if (open) {
-      setCategory(initial)
+      setCategory('')
       setReason('')
       setCause('')
       setErr('')
     }
-  }, [open, initial])
+  }, [open])
 
   const submit = async () => {
+    if (!category) return
     const problem = closureProblem(category, reason)
     if (problem) { setErr(problem); return }
     setBusy(true)
@@ -138,7 +148,7 @@ export function CloseCaseDialog({ open, id, initial = 'resolved', title = 'Close
         {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
         <div className="flex justify-end gap-2.5">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Closing…' : 'Close case'}</button>
+          <button className="btn primary" onClick={submit} disabled={busy || !category}>{busy ? 'Closing…' : 'Close case'}</button>
         </div>
       </div>
     </Popup>
