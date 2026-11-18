@@ -12,10 +12,12 @@ OAuth is off by default, and it stays off until an operator turns it on.
 OAuth goes on only when all three of these hold. Vigil checks them each time a request arrives, not just when the switch is flipped:
 
 1. **The MCP surface is open.** Settings → Integrations → Vigil MCP server, or `VIGIL_MCP_ENABLED`.
-2. **The public base URL is https or loopback.** That URL is `VIGIL_FRONTEND_URL`. Under a sub-path deploy it carries the same prefix as `VIGIL_CONTEXT_PATH`, and it has no query or fragment. Plain `http` is accepted only for `localhost`, `127.0.0.1` and `::1`.
+2. **The public base URL is https or loopback.** That URL is `VIGIL_FRONTEND_URL`; unset, it falls back to the console on `localhost`, which counts as loopback. Under a sub-path deploy it carries the same prefix as `VIGIL_CONTEXT_PATH`, and it has no query or fragment. Plain `http` is accepted only for `localhost`, `127.0.0.1` and `::1`.
 3. **`mcp.oauth_enabled` is on.** Use the **OAuth for MCP clients** switch on the same panel. `VIGIL_MCP_OAUTH_ENABLED` sets the value an install boots with, and a value saved from Settings wins over it.
 
 If you switch it on while (1) or (2) does not hold, Vigil refuses and gives the reason. A value that was already stored, or set by the environment, has no effect until both hold. The panel then reads "OAuth is switched on but not in effect" and gives the reason.
+
+Turning OAuth off stops new connections and refreshes; it does not end existing grants. An access token already issued keeps working on `/mcp` until its hour is up, and the grants work again if OAuth is turned back on. To cut a client off, revoke its grant (see [A grant is a token](#a-grant-is-a-token)).
 
 Every URL comes from `VIGIL_FRONTEND_URL`, never from a request's `Host` header. The panel shows each one:
 
@@ -23,8 +25,8 @@ Every URL comes from `VIGIL_FRONTEND_URL`, never from a request's `Host` header.
 |---|---|
 | Issuer | the origin of `VIGIL_FRONTEND_URL`, with no path |
 | Resource | `VIGIL_FRONTEND_URL` + `/mcp` |
-| Authorization server metadata | `{issuer}/.well-known/oauth-authorization-server` |
-| Protected resource metadata | `{issuer}/.well-known/oauth-protected-resource{context path}/mcp` |
+| Server metadata | `{issuer}/.well-known/oauth-authorization-server` |
+| Resource metadata | `{issuer}/.well-known/oauth-protected-resource{context path}/mcp` |
 
 While OAuth is off, every OAuth path returns 404. A refused `/mcp` request then gets a bare `WWW-Authenticate: Bearer` header. While OAuth is on, that header also carries `resource_metadata="…"`, which is where a client begins discovery.
 
@@ -41,16 +43,21 @@ The authorization server sits at the **host root**, even when the console is ser
 
 A proxy that sends the whole host to Vigil needs nothing more. A proxy that sends only `/vigil/*` to Vigil, or that sends paths to the console and the API separately, needs each of these routes added. Otherwise discovery receives a 404 or the console's HTML. The consent page (`{base}/oauth/authorize`) and its API (`{base}/api/oauth/authorizations/…`) are ordinary console addresses under the context path.
 
-As a Caddy example, where `127.0.0.1:6987` is the backend:
+As a Caddy example with no context path, for `./start.sh`: there the console runs on `:6988` behind Vite, which forwards only `/api`, so put this in front and point `VIGIL_FRONTEND_URL` at it (`http://localhost:8480`):
 
 ```caddy
-@vigil path /.well-known/oauth-authorization-server* /.well-known/oauth-protected-resource* /authorize /token /register /revoke /mcp /mcp/* /api/*
-handle @vigil {
-  reverse_proxy 127.0.0.1:6987
+:8480 {
+  @vigil path /.well-known/oauth-authorization-server* /.well-known/oauth-protected-resource* /authorize /token /register /revoke /mcp /mcp/* /api/*
+  handle @vigil {
+    reverse_proxy 127.0.0.1:6987   # the backend
+  }
+  handle {
+    reverse_proxy 127.0.0.1:6988   # the console, including the consent page
+  }
 }
 ```
 
-`./start.sh` runs the console on `:6988` behind Vite, and Vite forwards only `/api`. So when you develop locally, put a proxy like this in front, and point `VIGIL_FRONTEND_URL` at that proxy.
+Under a context path, `/mcp` and `/api` move under it (`/vigil/mcp`, `/vigil/api/*`) and the six OAuth paths stay at the root.
 
 ## Redirect URIs: the allowlist
 
@@ -59,16 +66,16 @@ A client registers the redirect URIs it will use, and Vigil accepts only two kin
 - **Loopback**: `http` or `https` on `localhost`, `127.0.0.1` or `::1`, on any port. Desktop and CLI clients use these, and they need no setup.
 - **The URIs an operator allows**, matched exactly. The list is `mcp.oauth_redirect_allowlist`, under **Redirect URIs allowed** on the Vigil MCP server panel. It starts empty, and no vendor's callback is built in. Each entry must be an absolute `https` URI with no fragment, and the list holds up to 50.
 
-Vigil refuses any other registration with `invalid_client_metadata`. The refusal goes on the audit trail as `oauth.client_registration_refused`, with the exact `redirect_uri` the client asked for. To let that client in:
+A URI with a fragment is refused even on loopback. Vigil refuses any other registration with `invalid_client_metadata`. The refusal goes on the audit trail as `oauth.client_registration_refused`, with the `redirect_uri` as Vigil parsed it (host lowercased), which is the string to allow. To let that client in:
 
-1. Find the refusal. The panel lists the last 30 days of refusals under the allowlist field, and Settings › Audit shows each entry ("Refused an OAuth client's redirect URI … allow it in mcp.oauth_redirect_allowlist").
+1. Find the refusal. The panel lists up to 10 recently refused URIs (newest first, from the last 30 days, leaving out any already allowed) under the allowlist field, and Settings › Audit shows each entry ("Refused an OAuth client's redirect URI … allow it in mcp.oauth_redirect_allowlist").
 2. Check that the URI belongs to the client you mean to allow.
 3. Click **Allow** next to it, or paste it into the field.
 4. Have the client connect again. Its next registration succeeds.
 
 If you later remove a URI from the list, a client already registered with it can no longer use it.
 
-The published callbacks of common hosted clients are listed below as equals, so add only the ones you use. The vendor's documentation is the authority, and the refusal on the trail always shows the exact string a client sent.
+The published callbacks of common hosted clients are listed below as equals, so add only the ones you use. The vendor's documentation is the authority, and the refusal on the trail shows the string a client needs.
 
 | Client | Redirect URI |
 |---|---|
@@ -126,10 +133,10 @@ A grant ends when any of the following happens:
 - The holder's account is deactivated.
 - It reaches its expiry.
 - The unused-token rule finds it idle past `token_unused_days`. This works the same as for any other token.
-- A used refresh token is presented again. Someone else may then hold a copy, so Vigil ends the grant, records `oauth.refresh_reuse`, and sends the holder a high-priority notice.
+- The refresh token just replaced by a rotation is presented again. Someone else may then hold a copy, so Vigil ends the grant, records `oauth.refresh_reuse`, and sends the holder a high-priority notice.
 
 After a grant ends, its access token gets a 401 at `/mcp` and its refresh token gets `invalid_grant`. To connect again, the person approves a new request.
 
 ## On the audit trail
 
-Registration, consent, the grant and refresh reuse each write an entry. [The audit trail page](audit-trail.md#oauth-on-the-mcp-surface) lists them. A tool call through a grant acts as the person who approved it, so an action it records on the trail names that person and the grant's `credential_id`.
+Registration, consent, the grant and refresh reuse each write an entry. [The audit trail page](audit-trail.md#oauth-on-the-mcp-surface) lists them. A tool call through a grant acts as the person who approved it, and the trail names that person; case handoff and closure entries also carry the grant's `credential_id`.

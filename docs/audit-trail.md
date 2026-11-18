@@ -56,10 +56,10 @@ With OAuth on (see [OAuth on the MCP surface](mcp-oauth.md)), the authorization 
 | Action | Shown as | Written when | Actor |
 |---|---|---|---|
 | `oauth.client_registered` | Registered an OAuth client (name) | A client registers at `/register`. Carries the `client_id`, the name and the redirect URIs. The caller's address sits beside the payload. | none (registration is anonymous) |
-| `oauth.client_registration_refused` | Refused an OAuth client's redirect URI …; allow it in mcp.oauth_redirect_allowlist | A registration names a redirect URI that is neither loopback nor on the allowlist. Carries the `redirect_uri` exactly as sent; allowing that string lets the client register. | none |
+| `oauth.client_registration_refused` | Refused an OAuth client's redirect URI …; allow it in mcp.oauth_redirect_allowlist | A registration names a redirect URI that is neither loopback nor on the allowlist, or that carries a fragment. Carries the `redirect_uri` as Vigil parsed it; allowing that string lets the client register. A registration refused for its size (over 10 URIs, an over-long URI, or the 1,000-client cap) writes no entry. | none |
 | `oauth.consent_granted` | Approved an app's request to connect | A person approves on the consent page. | that person |
 | `oauth.consent_denied` | Denied an app's request to connect | A person denies on the consent page. | that person |
 | `oauth.grant_issued` | Connected an app | The client exchanges its code and the grant is created. Carries the grant's `credential_id`, the `client_id` and the expiry. | the person who approved |
-| `oauth.refresh_reuse` | Ended an app's connection: an old refresh token was presented again | A refresh token that was already rotated comes back. The grant ends and its holder is told. | system |
+| `oauth.refresh_reuse` | Ended an app's connection: an old refresh token was presented again | The refresh token replaced by the latest rotation comes back. The grant ends and its holder is told. An older one only gets `invalid_grant`. | system |
 
-A grant ended any other way is the ordinary token entry: `credential.revoked` (from the tokens list, or with reason "by the app" when the client calls `/revoke`), `credential.expired`, or the unused-token rule's revocation.
+A grant ended any other way is the ordinary token entry: `credential.revoked` (from the tokens list, or with reason "by the app" when the client calls `/revoke`), or the unused-token rule's revocation. A grant that reaches its expiry writes no entry; its tokens stop working.
