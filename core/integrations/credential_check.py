@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple
 import httpx
 
 from core.integrations._base.config import missing, resolve
+from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
@@ -321,6 +322,18 @@ async def _security_hub() -> Outcome:
     return True, f"Read AWS Security Hub findings in {region}{source}"
 
 
+async def _security_lake() -> Outcome:
+    from core.integrations.amazon_security_lake import lake
+
+    config = resolve(AMAZON_SECURITY_LAKE)
+    # The server's own discovery, every region at once, inside CHECK_TIMEOUT. It
+    # runs on this backend's AWS chain, which must match the runner's.
+    found = await asyncio.to_thread(
+        lake.discover, lambda: lake.build_session(config), CHECK_TIMEOUT - 2.5
+    )
+    return lake.summary(found, lake.parse_regions(config.get("allowed_regions")))
+
+
 async def _defender() -> Outcome:
     from core.integrations._base.aad_token import (
         TokenError,
@@ -406,6 +419,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     OPENCTI.id: _opencti,
     AZURE_SENTINEL.id: _sentinel,
     AWS_SECURITY_HUB.id: _security_hub,
+    AMAZON_SECURITY_LAKE.id: _security_lake,
     MICROSOFT_DEFENDER.id: _defender,
     CROWDSTRIKE.id: _crowdstrike,
 }

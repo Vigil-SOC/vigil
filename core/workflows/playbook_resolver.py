@@ -119,6 +119,8 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         # splunk_execute first: it takes earliest, which nl_search cannot express.
         Candidate("splunk-selfhosted", ("splunk_execute", "splunk_nl_search")),
         Candidate("elastic", ("elastic_search_logs", "elastic_search_by_ioc")),
+        # One region per call; a region not allowed answers a pointer, never rows.
+        Candidate("amazon-security-lake", ("security_lake_query",)),
         # Third-party servers: unverifiable from this repo, so these are preferences
         # matched against whatever the server reports.
         Candidate("splunk", ("run_splunk_search", "search", "oneshot_search")),
@@ -140,6 +142,9 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     # deployment with no sidecar answers each call unavailable.
     "shell": (Candidate(None, ("read_case_shell",)),),
     "get_finding": (Candidate(None, ("get_finding",)),),
+    # The rules declaring a technique, their stage and checks, what LogLM flagged
+    # on it and the hunts that tested it. Context for where to look, never evidence.
+    "detection_coverage": (Candidate(None, ("analyze_coverage",)),),
     # A threat-intel platform's own graph, one tool each: an observable's indicators,
     # one indicator, named actors and malware, and what an entity links to. OpenCTI is
     # opt-in, so a hunt holds these when it is connected and misses nothing when not
@@ -171,6 +176,9 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     # One row of our own Postgres. Its size is the record behind the alert, which
     # result_cap bounds, so the row cap is only the shape the bounds model asks for.
     "get_finding": {"timeout_ms": 15_000, "max_rows": 1},
+    # A read of our own Postgres, one answer per technique asked; the row cap is
+    # only the bounds model's shape.
+    "detection_coverage": {"timeout_ms": 30_000, "max_rows": 20},
     # A save proves the rule on the SIEM, then a gaps run's save lints and replays
     # its proposal (tools.GAP_REPLAY_TIMEOUT_S): the 30s default would cut the
     # answer off after the rule is saved.
@@ -545,6 +553,7 @@ HUNT_CAPABILITIES = (
     # Bound on the run rather than granted to every role: `needs` in the arch is
     # what decides who holds it, and the lead and critic are not granted it.
     "entity_recall",
+    "detection_coverage",
     "intel_observable",
     "intel_indicator",
     "intel_entities",
@@ -552,9 +561,11 @@ HUNT_CAPABILITIES = (
 )
 
 # Needs a hunt holds when the deployment answers them and goes without otherwise,
-# with no blind spot journalled: an opt-in integration that is not connected is not
-# a gap in this estate's visibility. Mirrors `optional` in the hunt plugin.yaml.
+# with no blind spot journalled: an opt-in integration that is not connected, or a
+# coverage read, says nothing about this estate's visibility. Mirrors `optional`
+# in the hunt plugin.yaml.
 OPTIONAL_HUNT_CAPABILITIES = (
+    "detection_coverage",
     "intel_observable",
     "intel_indicator",
     "intel_entities",
