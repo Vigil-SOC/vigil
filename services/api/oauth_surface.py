@@ -15,16 +15,26 @@ OAuth path is a 404.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Optional
 
 from limits import parse
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
+from mcp.server.auth.errors import stringify_pydantic_error
 from mcp.server.auth.handlers.metadata import (
     MetadataHandler,
     ProtectedResourceMetadataHandler,
 )
+from mcp.server.auth.handlers.revoke import RevocationRequest
+from mcp.server.auth.middleware.client_auth import (
+    AuthenticationError,
+    ClientAuthenticator,
+)
 from mcp.server.auth.routes import (
+    REVOCATION_PATH,
+    _body_limited,
+    _cors,
     build_metadata,
     cors_middleware,
     create_auth_routes,
@@ -32,10 +42,10 @@ from mcp.server.auth.routes import (
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route, Router
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route, Router, request_response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.auth.oauth_server import SCOPE, VigilOAuthProvider, request_address
@@ -82,17 +92,69 @@ def _metadata_route(path: str, handler) -> Route:
     )
 
 
+class _PublicRevocation(RevocationRequest):
+    # mcp 2.3.0 requires the field, so a public client's RFC 7009 request is a 400.
+    client_secret: Optional[str] = None
+
+
+def _revoke_route(provider: VigilOAuthProvider) -> Route:
+    """The SDK's ``/revoke`` handler, with ``client_secret`` optional."""
+    authenticator = ClientAuthenticator(provider)
+
+    async def handle(request: Request) -> Response:
+        try:
+            client = await authenticator.authenticate_request(request)
+        except AuthenticationError as e:
+            return _json(
+                401, {"error": "unauthorized_client", "error_description": e.message}
+            )
+        try:
+            body = _PublicRevocation.model_validate(dict(await request.form()))
+        except ValidationError as e:
+            return _json(
+                400,
+                {
+                    "error": "invalid_request",
+                    "error_description": stringify_pydantic_error(e),
+                },
+            )
+        loaders = [
+            provider.load_access_token,
+            partial(provider.load_refresh_token, client),
+        ]
+        if body.token_type_hint == "refresh_token":
+            loaders.reverse()
+        token = None
+        for load in loaders:
+            if (token := await load(body.token)) is not None:
+                break
+        # An unknown token, or another client's, is a 200 that revokes nothing (RFC 7009).
+        if token is not None and token.client_id == client.client_id:
+            await provider.revoke_token(token)
+        return Response(
+            status_code=200, headers={"Cache-Control": "no-store", "Pragma": "no-cache"}
+        )
+
+    return Route(
+        REVOCATION_PATH,
+        endpoint=_cors(_body_limited(request_response(handle)), ["POST", "OPTIONS"]),
+        methods=["POST", "OPTIONS"],
+    )
+
+
 def build_routes() -> list[Route]:
     """The SDK's routes, with both documents restated from ``oauth_urls``.
 
     The SDK's own documents carry the issuer as a pydantic URL, which gains a
     trailing slash the issuer does not have (RFC 8414 compares it exactly), and
-    advertise only the secret-based client auth Vigil never issues.
+    advertise only the secret-based client auth Vigil never issues. ``/revoke``
+    is replaced so a public client need not send ``client_secret``.
     """
     urls = oauth_urls()
     issuer, resource = urls["issuer"], urls["resource"]
+    provider = VigilOAuthProvider()
     routes = create_auth_routes(
-        VigilOAuthProvider(),
+        provider,
         AnyHttpUrl(issuer),
         client_registration_options=_REGISTRATION,
         revocation_options=_REVOCATION,
@@ -107,8 +169,9 @@ def build_routes() -> list[Route]:
         authorization_response_iss_parameter_supported=True,
     )
     metadata = OAuthMetadata.model_validate(document)
-    routes = [r for r in routes if r.path != AS_METADATA]
+    routes = [r for r in routes if r.path not in (AS_METADATA, REVOCATION_PATH)]
     routes.append(_metadata_route(AS_METADATA, MetadataHandler(metadata)))
+    routes.append(_revoke_route(provider))
 
     (prm_route,) = create_protected_resource_routes(
         AnyHttpUrl(resource), [AnyHttpUrl(issuer)], scopes_supported=[SCOPE]
