@@ -44,7 +44,7 @@ def _server():
 _cached_tools: Optional[List[Dict[str, Any]]] = None
 
 # Tools /mcp still serves that are not offered to Vigil's own agents (#4239).
-_MCP_ONLY = frozenset({"get_case"})
+_MCP_ONLY = frozenset({"get_case", "start_gaps_run"})
 
 
 def list_tools() -> List[Dict[str, Any]]:
