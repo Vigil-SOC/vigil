@@ -58,7 +58,10 @@ from core.storage.models import (
     DetectionRuleStage,
     DetectionRuleVersion,
     Finding,
+    FindingMitrePrediction,
+    case_findings,
 )
+from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -580,7 +583,8 @@ def techniques_per_language() -> Dict[str, int]:
 
 def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
     """Active rules declaring ``technique``: the count by format (rules failing lint
-    left out, as they are no coverage) and the first ``top``."""
+    left out, as they are no coverage) and the first ``top`` with their stage,
+    what LogLM flagged on it, and the concluded hunts that tested it."""
     declares = DetectionRule.techniques.contains([technique])
     with get_db_manager().session_scope() as session:
         by_source = dict(
@@ -613,14 +617,96 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
             _summary(rule, content, checks, 200) for rule, content, checks in first
         ]
         _with_links(session, detections, [rule for rule, _, _ in first])
+        # Each listed rule's current rollout stage, as _stage_fields reads it:
+        # an overlay copy has stage rows, any other rule has none (null).
+        stages = dict(
+            session.execute(
+                select(CURRENT_STAGE.c.rule_id, CURRENT_STAGE.c.stage).where(
+                    CURRENT_STAGE.c.rule_id.in_([d["rule_id"] for d in detections])
+                )
+            ).all()
+        )
+        for detection in detections:
+            detection["stage"] = stages.get(detection["rule_id"])
         deployed = _repo_deployed(session, declares)
+        loglm = _loglm_flags(session, technique)
+        earlier = _earlier_hunts(session, technique)
     return {
         "count": sum(by_source.values()),
         "by_source": by_source,
         "by_tool": by_tool,
         "repo_deployed": deployed,
         "detections": detections,
+        "loglm": loglm,
+        "earlier_hunts": earlier,
     }
+
+
+LOGLM_DAYS = 30
+LOGLM_IDS = 5
+EARLIER_HUNTS = 10
+
+
+def _loglm_flags(session: Any, technique: str) -> Dict[str, Any]:
+    """LogLM findings stored in the last LOGLM_DAYS days with a prediction on
+    ``technique``: how many, and the newest few ids. An id linked to a Case the
+    caller can't read (#4359) is left out of the ids; it still counts."""
+    # Here, not at import: core.auth needs the JWT secret, which image builds lack.
+    from core.auth.permissions import case_read_clause
+    from core.storage.models import Case
+
+    flagged = (
+        Finding.data_source == "loglm",
+        Finding.created_at >= utcnow() - timedelta(days=LOGLM_DAYS),
+        select(FindingMitrePrediction.finding_id)
+        .where(
+            FindingMitrePrediction.finding_id == Finding.finding_id,
+            func.upper(FindingMitrePrediction.technique_id) == technique,
+        )
+        .exists(),
+    )
+    restricted = (
+        select(case_findings.c.finding_id)
+        .join(Case, Case.case_id == case_findings.c.case_id)
+        .where(case_findings.c.finding_id == Finding.finding_id, ~case_read_clause())
+        .exists()
+    )
+    count = session.scalar(select(func.count()).select_from(Finding).where(*flagged))
+    ids = session.scalars(
+        select(Finding.finding_id)
+        .where(*flagged, ~restricted)
+        .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
+        .limit(LOGLM_IDS)
+    ).all()
+    return {"days": LOGLM_DAYS, "count": count or 0, "newest": list(ids)}
+
+
+def _earlier_hunts(session: Any, technique: str) -> List[Dict[str, Any]]:
+    """Concluded hunts on ``technique``, newest first, one per hunt with each
+    hypothesis outcome. A hunt whose run the caller can't read is left out."""
+    from core.memory.prior_hunts import list_prior_hunts
+    from core.workflows.workflow_run_service import run_hidden
+
+    hunts: Dict[str, Dict[str, Any]] = {}
+    skipped: Set[str] = set()
+    for row in list_prior_hunts((), [technique], session=session)["concluded"]:
+        if row["investigation_id"] in skipped:
+            continue
+        hunt = hunts.get(row["investigation_id"])
+        if hunt is None:
+            run_id = row["origin_run_id"]
+            if len(hunts) == EARLIER_HUNTS or (run_id and run_hidden(session, run_id)):
+                skipped.add(row["investigation_id"])
+                continue
+            hunt = hunts[row["investigation_id"]] = {
+                "origin_run_id": run_id,
+                "concluded_at": row["concluded_at"],
+                "outcomes": [],
+            }
+        hunt["outcomes"].append(
+            {"hypothesis": str(row["statement"] or "")[:200], "outcome": row["outcome"]}
+        )
+    return list(hunts.values())
 
 
 def _repo_deployed(session: Any, declares: Any) -> Dict[str, Dict[str, int]]:

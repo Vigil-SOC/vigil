@@ -11,6 +11,13 @@ Start from the board in your brief. For each active hypothesis, say what it
 predicts you would see if it were true and what the benign explanation predicts
 instead. Query for what separates them.
 
+When you hold analyze_coverage, ask it for the board's techniques: the rules on
+each (stage, and whether checks.caught shows they have caught a real attack),
+what LogLM flagged and which earlier hunts tested it. It shapes where to look
+and lets the conclusion say whether existing coverage caught the threat. It is
+never evidence: do not record or link it. If the read fails, say so in
+open_questions.
+
 ## One step down, or one step across
 
 - **Deeper** keeps the same entity and hypothesis and asks one layer down: the

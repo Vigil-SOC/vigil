@@ -115,7 +115,8 @@ def _helper(phase: Dict[str, Any], tools: List[str]) -> Dict[str, Any]:
 
 
 # The needs a hunt-like kind's plugin declares. Adjudicate's does not take the
-# optional intel needs, so its preflight neither lists nor reports them.
+# optional needs (intel and detection coverage), so its preflight neither lists
+# nor reports them.
 def _hunt_needs(kind: str) -> Tuple[str, ...]:
     if kind == HUNT_RUN_KIND:
         return HUNT_CAPABILITIES
