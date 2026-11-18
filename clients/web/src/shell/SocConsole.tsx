@@ -225,6 +225,11 @@ function SocConsoleInner() {
     else openChat(text, document)
   }, [openCaseId, openChat])
   const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
+  // a run the command bar started: the dock opens on its case
+  const followRun = useCallback((caseId: string, text: string) => {
+    setChatOpen(true)
+    setChatSeed({ text, caseId })
+  }, [])
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -608,6 +613,7 @@ function SocConsoleInner() {
       onOpenChat={askVigil}
       openCaseId={openCaseId}
       onOpenCase={setDrawerCase}
+      onRunStarted={followRun}
       onGo={(next, options) => {
         if (drawerCase) setDrawerCase(null)
         go(next, options)

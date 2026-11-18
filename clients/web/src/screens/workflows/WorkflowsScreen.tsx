@@ -2619,7 +2619,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
 
 /** What a concluded run led to for detection, once; null while in flight, unread, or not
  *  readable (no detections.read, or the read failed): the tab is then not offered. */
-function useHuntDetections(runId: string, concluded: boolean): HuntDetectionsRead | null {
+export function useHuntDetections(runId: string, concluded: boolean): HuntDetectionsRead | null {
   const [read, setRead] = useState<HuntDetectionsRead | null>(null)
   useEffect(() => {
     if (!concluded) return
@@ -3435,7 +3435,7 @@ function ReportBody({ md }: { md: string }) {
 
 /** queued for the worker holding the ledger, so nothing here is instant — the
  *  panel re-reads rather than claiming the run obeyed */
-function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSteered: () => void }) {
+export function Steer({ runId, hunt, onSteered }: { runId: string; hunt: boolean; onSteered: () => void }) {
   const [note, setNote] = useState('')
   const [entity, setEntity] = useState('')
   const [busy, setBusy] = useState<string | null>(null)

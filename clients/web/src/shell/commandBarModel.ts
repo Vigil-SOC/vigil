@@ -220,6 +220,9 @@ export const COMMANDS: CommandDef[] = [
 
 export const LIVE_COMMANDS = COMMANDS.filter((c): c is LiveCommand => !c.later)
 
+/** The ordinary turn that follows a run started from the bar or the dock, so the conversation on its case is kept. */
+export const startedText = (command: LiveCommand) => `I started the ${command.runs.toLowerCase()} on this case with ${command.name}. Give me the case brief.`
+
 type DestTag = 'Case' | 'Alert' | 'Page' | 'Command' | 'Recent' | 'Ask' | 'Argument'
 
 export type Section =
