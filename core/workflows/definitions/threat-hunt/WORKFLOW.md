@@ -44,6 +44,9 @@ attack_techniques:
   - T1041       # Exfiltration over C2 channel
   - T1048       # Exfiltration over alternative protocol
   - T1567       # Exfiltration over web service
+  - T1537       # Transfer data to cloud account
+  - T1052       # Exfiltration over physical medium (USB)
+  - T1213       # Data from information repositories (SharePoint, Confluence)
   # Getting in
   - T1190       # Exploit public-facing application
   - T1566.001   # Spearphishing attachment

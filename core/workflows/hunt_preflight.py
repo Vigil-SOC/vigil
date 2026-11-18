@@ -93,6 +93,7 @@ HUNT_SKILLS = (
     "network-shape",
     "threat-intel",
     "ai-agent-activity",
+    "insider-threat",
 )
 PLUGIN_SKILLS = {HUNT_RUN_KIND: HUNT_SKILLS, ADJUDICATE_RUN_KIND: HUNT_SKILLS}
 LEAD_NAMES = {HUNT_RUN_KIND: "Hunt lead", ADJUDICATE_RUN_KIND: "Adjudication lead"}
