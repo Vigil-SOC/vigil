@@ -27,7 +27,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from core.auth.mcp_credential_service import authenticate
 from core.auth.service_account import is_medic
 from core.cases.agent_closure import bound_credential
-from core.integrations.mcp.surface import acting_as, is_enabled
+from core.integrations.mcp.surface import (
+    acting_as,
+    is_enabled,
+    is_oauth_enabled,
+    oauth_urls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +100,24 @@ def serve_at(app, gate: ASGIApp) -> None:
     app.add_middleware(BareMountPath, path=address)
 
 
+def _challenge() -> str:
+    """``Bearer``, naming the protected-resource document when OAuth is on so a
+    client can discover the authorization server (RFC 9728 §5.1). Built from the
+    configured base URL, never the request's Host."""
+    if is_oauth_enabled():
+        metadata = oauth_urls()["protected_resource_metadata"]
+        if metadata:
+            return f'Bearer resource_metadata="{metadata}"'
+    return "Bearer"
+
+
+def _for_this_resource(resource: Optional[str]) -> bool:
+    """A grant's tokens work only at the resource they were issued for."""
+    return resource is None or (
+        resource.rstrip("/") == oauth_urls()["resource"].rstrip("/")
+    )
+
+
 def _bearer(scope: Scope) -> Optional[str]:
     for key, value in scope.get("headers") or []:
         if key.lower() != b"authorization":
@@ -109,8 +132,11 @@ class McpSurfaceGate:
     """Decides whether a request reaches the MCP server, and as whom.
 
     The server app it guards is built by the lifespan rather than at import,
-    because each ``streamable_http_app()`` carries its own session manager and
-    a manager runs once. The mount is fixed; what it points at is not.
+    because each ``streamable_http_app()`` carries its own manager and a manager
+    runs once. The mount is fixed; what it points at is not.
+
+    The server is stateless: every request is authenticated and bound here on
+    its own, so no request depends on which process served the one before.
     """
 
     def __init__(self, app: Optional[ASGIApp] = None):
@@ -141,17 +167,23 @@ class McpSurfaceGate:
             # Off the loop: a refusal may wait on the audit trail's lock.
             authenticated = await asyncio.to_thread(authenticate, token)
             # Medic's token reads the HTTP API only (#2851): refused as unknown.
-            if authenticated is not None and not is_medic(authenticated.user):
+            # So is an OAuth token issued for another resource.
+            if (
+                authenticated is not None
+                and not is_medic(authenticated.user)
+                and _for_this_resource(authenticated.resource)
+            ):
                 user = authenticated.user
                 credential_id = authenticated.credential_id
         if user is None:
             # One answer for no credential, an unknown one, a revoked one and
             # an expired one. A holder of a working credential learns nothing
             # from the difference; someone trying them would learn plenty.
+            challenge = await asyncio.to_thread(_challenge)
             await JSONResponse(
                 {"detail": "Not authenticated"},
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": challenge},
             )(scope, receive, send)
             return
 
@@ -160,37 +192,7 @@ class McpSurfaceGate:
             return
 
         with acting_as(user.username), bound_credential(credential_id):
-            await self.app(_owned_by(scope, user), receive, send)
-
-
-def _owned_by(scope: Scope, user) -> Scope:
-    """The scope, saying whose it is in the terms the session manager reads.
-
-    A session belongs to the credential that opened it, and the SDK enforces
-    that by comparing ``scope["user"]`` against the principal recorded when the
-    session was created -- but only when that user is one of its own
-    ``AuthenticatedUser``. Vigil authenticates ahead of the server rather than
-    through its token verifier, so without this the principal is ``None`` on
-    every request, ``None`` matches ``None``, and any authenticated caller who
-    learned another's ``mcp-session-id`` could post on it.
-
-    The principal is the person, not the credential: two credentials issued to
-    one user are one principal, and may continue each other's session.
-    """
-    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-    from mcp.server.auth.provider import AccessToken
-
-    return {
-        **scope,
-        "user": AuthenticatedUser(
-            AccessToken(
-                token="",
-                client_id=user.username,
-                scopes=[],
-                subject=str(getattr(user, "user_id", user.username)),
-            )
-        ),
-    }
+            await self.app(scope, receive, send)
 
 
 def _dev_mode_user(token: str):

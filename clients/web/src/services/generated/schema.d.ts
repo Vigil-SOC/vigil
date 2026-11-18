@@ -5627,6 +5627,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/surface/oauth/redirects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Redirect Allowlist
+         * @description The redirect URIs registration allows beyond loopback, and recent refusals.
+         */
+        get: operations["get_api_mcp_surface_oauth_redirects"];
+        /**
+         * Set Redirect Allowlist
+         * @description Replace the allowlist. Each entry is an absolute https URI without a
+         *     fragment (loopback needs no entry), stored as registration will compare it.
+         */
+        put: operations["put_api_mcp_surface_oauth_redirects"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/medic/decisions": {
         parameters: {
             query?: never;
@@ -5990,6 +6015,31 @@ export interface paths {
          * @description Marks this person's own notices read; returns the listing.
          */
         post: operations["post_api_notices_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oauth/authorizations/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read
+         * @description The client asking, the host it returns to, and the resource it wants.
+         */
+        get: operations["get_api_oauth_authorizations_request_id"];
+        put?: never;
+        /**
+         * Decide
+         * @description Approve or deny, as a person signed in to the console. Approving connects
+         *     the app as you, so it asks you to confirm it's you first.
+         */
+        post: operations["post_api_oauth_authorizations_request_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9682,6 +9732,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/insider-leads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Insider Leads
+         * @description Which findings are insider leads and who reads the cases they open:
+         *     ``{sources, rule_names, readers, teams}``. With no source or rule name,
+         *     automatic start is off.
+         */
+        get: operations["get_api_workflows_threat-hunt_insider-leads"];
+        /**
+         * Set Insider Leads
+         * @description Replace the lead list. Adding anything is a person's own act, not a token's;
+         *     a list left on needs a reader or team, each checked as for a restricted case.
+         */
+        put: operations["put_api_workflows_threat-hunt_insider-leads"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/threat-hunt/lead-proposal": {
         parameters: {
             query?: never;
@@ -12364,6 +12441,14 @@ export interface components {
              */
             source: "microsoft_defender" | "azure_sentinel";
         };
+        /** ConsentDecision */
+        ConsentDecision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "deny";
+        };
         /**
          * ContentBlock
          * @description Content block for message (text or image).
@@ -13287,6 +13372,17 @@ export interface components {
             message: string;
             /** Success */
             success: boolean;
+        };
+        /** InsiderLeadsBody */
+        InsiderLeadsBody: {
+            /** Readers */
+            readers?: string[];
+            /** Rule Names */
+            rule_names?: string[];
+            /** Sources */
+            sources?: string[];
+            /** Teams */
+            teams?: string[];
         };
         /** IntakeLaunchResponse */
         IntakeLaunchResponse: {
@@ -14836,6 +14932,11 @@ export interface components {
             message?: string | null;
             /** Recovery Codes */
             recovery_codes: string[];
+        };
+        /** RedirectAllowlist */
+        RedirectAllowlist: {
+            /** Uris */
+            uris: string[];
         };
         /**
          * RefreshTokenRequest
@@ -27163,6 +27264,72 @@ export interface operations {
             };
         };
     };
+    get_api_mcp_surface_oauth_redirects: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_mcp_surface_oauth_redirects: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectAllowlist"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_medic_decisions: {
         parameters: {
             query?: never;
@@ -27783,6 +27950,76 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["NoticesReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_oauth_authorizations_request_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_oauth_authorizations_request_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentDecision"];
             };
         };
         responses: {
@@ -34280,6 +34517,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_workflows_threat-hunt_insider-leads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_workflows_threat-hunt_insider-leads": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsiderLeadsBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

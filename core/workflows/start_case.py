@@ -2,7 +2,7 @@
 
 - A named case the caller can't read is not found, as one that isn't there.
 - ``restricted``: a named case must already be restricted; with none, a new case
-  is opened restricted to the starter. The open case already holding the finding
+  is opened restricted to the starter and the insider lead readers (#4778). The open case already holding the finding
   is never used, so a restricted run's notes don't land where anyone can read them.
 - Otherwise, with none: the newest not-closed case holding the finding, else a new one.
 
@@ -57,15 +57,42 @@ def _check_named(case_id: str, restricted: bool) -> None:
 
 
 def _readers(restricter: Callable[[Any], Any]) -> Tuple[list, list]:
-    """The new case's lists: the defaults for this starter, so just the starter."""
+    """The new case's lists: the starter, plus the insider lead readers and teams
+    (#4778). A reader or team gone since the list was written is left off."""
+    from sqlalchemy import select
+
     from core.cases import case_readers
+    from core.storage.models import Team
     from core.storage.unit_of_work import unit_of_work
+    from core.workflows.insider_lead import configured_readers
 
     if _data().is_demo_mode():
         raise StartRefused(409, "Demo cases can't be restricted")
+    configured, team_ids = configured_readers()
     try:
         with unit_of_work() as session:
-            return case_readers.readers_for_new_case(session, None, restricter(session))
+            actor = restricter(session)
+            if not configured and not team_ids:
+                return case_readers.readers_for_new_case(session, None, actor)
+            names = case_readers._checked(
+                session,
+                [*case_readers.default_readers(session, None, actor), *configured],
+                actor,
+                drop=True,
+            )
+            teams = [
+                t.team_id
+                for t in session.scalars(
+                    select(Team).where(
+                        Team.team_id.in_(team_ids),
+                        Team.archived_at.is_(None),
+                        Team.is_default.is_(False),
+                    )
+                )
+            ]
+            if not names and not teams:
+                raise case_readers.ReadersRefused(case_readers.NAME_ONE)
+            return names, [t for t in team_ids if t in teams]
     except case_readers.ReadersRefused as exc:
         raise StartRefused(exc.status_code, exc.message) from None
 

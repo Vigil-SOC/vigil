@@ -23,7 +23,7 @@ from core.auth.auth_service import _is_service_account
 from core.auth.permissions import deny_unless, missing_permission
 from core.auth.service_account import is_medic as _is_medic
 from core.routing import Auth, RouterMeta
-from core.storage.models import McpCredential, Principal, User
+from core.storage.models import McpCredential, OAuthClient, Principal, User
 from core.storage.unit_of_work import unit_of_work
 from services.api.middleware.auth import get_current_active_user
 from services.api.routers.users import _require_privileges_cover_target
@@ -69,8 +69,29 @@ def _holder(user: User) -> dict:
     }
 
 
-def _view(credential: McpCredential, holder: User) -> dict:
-    return {**credential.to_dict(), "holder": _holder(holder)}
+def _view(
+    credential: McpCredential, holder: User, clients: Optional[dict] = None
+) -> dict:
+    """A token as the lists show it. An OAuth grant (#4789) is a connected app:
+    its client's name rides along, and it is revoked, never rotated."""
+    app = credential.oauth_client_id is not None
+    return {
+        **credential.to_dict(),
+        "connected_app": app,
+        "client_name": (clients or {}).get(credential.oauth_client_id) if app else None,
+        "holder": _holder(holder),
+    }
+
+
+def _client_names(session, rows) -> dict:
+    """client_id -> name for the grants among ``rows``, in one query."""
+    ids = {c.oauth_client_id for c, _ in rows if c.oauth_client_id}
+    if not ids:
+        return {}
+    found = session.query(OAuthClient.client_id, OAuthClient.name).filter(
+        OAuthClient.client_id.in_(ids)
+    )
+    return {cid: name for cid, name in found}
 
 
 def _tell(holder: User, title: str, message: str, priority: str = "normal") -> None:
@@ -187,8 +208,9 @@ def list_own(current_user: User = Depends(get_current_active_user)):
     lifetime that applies to a token of yours."""
     with unit_of_work() as session:
         rows = tokens.list_all(current_user.user_id, session)
+        clients = _client_names(session, rows)
     return {
-        "tokens": [_view(c, u) for c, u in rows],
+        "tokens": [_view(c, u, clients) for c, u in rows],
         "limits": _limits(current_user),
     }
 
@@ -209,9 +231,12 @@ def list_all(
         rows = tokens.list_all(holder, session)
         everyone = tokens.holders(session)
         whose = session.get(User, holder) if holder else None
+        clients = _client_names(session, rows)
     return {
         "limits": _limits(whose or current_user),
-        "tokens": [_view(c, u) for c, u in rows if not status or c.status() == status],
+        "tokens": [
+            _view(c, u, clients) for c, u in rows if not status or c.status() == status
+        ],
         "holders": [_holder(u) for u in everyone],
     }
 
@@ -295,6 +320,13 @@ def rotate(
         raise HTTPException(
             status_code=403,
             detail="Directory sync's token is minted from Single sign-on",
+        )
+    if credential.oauth_client_id and holder.user_id == current_user.user_id:
+        # Its tokens rotate through the app's refresh; a vgl_api_ successor
+        # would hand the app a token for the whole API.
+        raise HTTPException(
+            status_code=409,
+            detail="An app's connection isn't rotated; revoke it and connect again",
         )
     if not _may_mint_for(current_user, holder):
         if holder.user_id != current_user.user_id and not _manages(current_user):

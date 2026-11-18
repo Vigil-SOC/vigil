@@ -304,23 +304,15 @@ class ConfigAuditLog(Base):
 
 
 class SharedIOC(Base):
-    """Cross-investigation IOC index for deduplication and correlation."""
+    """The shared IOC index: the indicators a Case holds, which intake joins alerts by."""
 
     __tablename__ = "shared_iocs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # A row belongs to a Case (``case_id``), or is a legacy row of an
-    # Investigation (``investigation_id``, ``case_id`` NULL) that counts only
-    # while its Case has ``indicators_synced_at`` NULL.
-    case_id: Mapped[Optional[str]] = mapped_column(
+    case_id: Mapped[str] = mapped_column(
         String(50),
         ForeignKey("cases.case_id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    investigation_id: Mapped[Optional[str]] = mapped_column(
-        String(60),
-        ForeignKey("investigations.investigation_id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
     )
     ioc_type: Mapped[str] = mapped_column(String(30), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -331,20 +323,8 @@ class SharedIOC(Base):
     __table_args__ = (
         Index("idx_shared_ioc_value", "value"),
         Index("idx_shared_ioc_type", "ioc_type"),
-        Index("idx_shared_ioc_investigation", "investigation_id"),
-        Index(
-            "idx_shared_ioc_case",
-            "case_id",
-            postgresql_where=text("case_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_shared_ioc_case_key",
-            "case_id",
-            "ioc_type",
-            "value",
-            unique=True,
-            postgresql_where=text("case_id IS NOT NULL"),
-        ),
+        # Also serves reads by Case alone.
+        Index("uq_shared_ioc_case_key", "case_id", "ioc_type", "value", unique=True),
     )
 
 

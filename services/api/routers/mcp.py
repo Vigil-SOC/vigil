@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_
+from starlette.concurrency import run_in_threadpool
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
@@ -492,3 +493,109 @@ async def set_surface_oauth(
         current_user.username,
     )
     return _oauth_state(body.enabled, refusal, oauth_urls())
+
+
+# --- The redirect allowlist (#4789) -----------------------------------------
+#
+# Registration accepts loopback redirect URIs and the ones named here, matched
+# exactly. A refused one is on the trail (oauth.client_registration_refused);
+# the panel offers recent ones so an operator can allow one in a click.
+
+_REFUSED_EVENT = "oauth.client_registration_refused"
+_REFUSED_WINDOW_DAYS = 30
+_MAX_ALLOWED = 50
+
+
+class RedirectAllowlist(BaseModel):
+    uris: List[str]
+
+
+def _recently_refused(allowed: list[str]) -> list[dict]:
+    """Refused redirect URIs from the trail, newest first, one per URI, not yet allowed."""
+    from datetime import timedelta
+
+    from core.audit import trail
+    from core.storage.unit_of_work import unit_of_work
+    from core.time import utcnow
+
+    query = trail.make_query(
+        area="oauth", since=utcnow() - timedelta(days=_REFUSED_WINDOW_DAYS)
+    )
+    try:
+        with unit_of_work() as session:
+            entries = trail.read_all(session, query)
+    except Exception:  # noqa: BLE001 - the list still edits without the trail
+        logger.warning("Could not read refused redirect URIs from the trail")
+        return []
+    seen: dict[str, str] = {}
+    for e in reversed(entries):
+        p = e["payload"] if isinstance(e["payload"], dict) else {}
+        uri = p.get("redirect_uri")
+        if p.get("action") == _REFUSED_EVENT and isinstance(uri, str):
+            if uri not in allowed and uri not in seen:
+                seen[uri] = e["occurred_at"]
+    return [{"uri": u, "at": at} for u, at in list(seen.items())[:10]]
+
+
+def _allowlist_state() -> dict:
+    from core.integrations.mcp.surface import oauth_redirect_allowlist
+
+    uris = oauth_redirect_allowlist()
+    return {"uris": uris, "refused": _recently_refused(uris)}
+
+
+@router.get("/surface/oauth/redirects")
+async def get_redirect_allowlist(
+    current_user: User = Depends(get_current_active_user),
+):
+    """The redirect URIs registration allows beyond loopback, and recent refusals."""
+    require_integrations_admin(current_user)
+    return await run_in_threadpool(_allowlist_state)
+
+
+@router.put("/surface/oauth/redirects")
+async def set_redirect_allowlist(
+    body: RedirectAllowlist,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Replace the allowlist. Each entry is an absolute https URI without a
+    fragment (loopback needs no entry), stored as registration will compare it."""
+    require_integrations_admin(current_user)
+    from urllib.parse import urlsplit
+
+    from mcp.shared.auth import OAuthClientMetadata
+    from pydantic import ValidationError
+
+    from core.auth.oauth_server import MAX_URI
+    from core.integrations.mcp.surface import set_oauth_redirect_allowlist
+
+    uris: list[str] = []
+    for raw in (u.strip() for u in body.uris if u.strip()):
+        bad = HTTPException(
+            status_code=422,
+            detail=f"{raw[:200]} is not an absolute https URI without a fragment",
+        )
+        if len(raw) > MAX_URI or "#" in raw or urlsplit(raw).scheme != "https":
+            raise bad
+        try:
+            # Registration matches the URI as the SDK's model parses it (host
+            # lowercased, for one). Store that form, or it never matches.
+            uri = str(OAuthClientMetadata(redirect_uris=[raw]).redirect_uris[0])
+        except ValidationError:
+            raise bad from None
+        if not urlsplit(uri).hostname:
+            raise bad
+        if uri not in uris:
+            uris.append(uri)
+    if len(uris) > _MAX_ALLOWED:
+        raise HTTPException(
+            status_code=422, detail=f"At most {_MAX_ALLOWED} redirect URIs"
+        )
+    if not set_oauth_redirect_allowlist(uris, updated_by=str(current_user.user_id)):
+        raise HTTPException(status_code=500, detail="Could not save the setting")
+    logger.warning(
+        "MCP OAuth redirect allowlist set to %d URI(s) by %s",
+        len(uris),
+        current_user.username,
+    )
+    return await run_in_threadpool(_allowlist_state)

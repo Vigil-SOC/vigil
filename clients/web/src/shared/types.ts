@@ -23,12 +23,17 @@ export interface SeedDocument {
   text: string
   pages: number
   condensed: boolean
+  /** The original, so a run the dock starts with it can keep it on the case. */
+  file?: File
+  pasted?: boolean
 }
 
 /** What opens a chat turn: the question, and the file that goes with it. Empty text with a file only attaches it. */
 export interface ChatSeed {
   text: string
   document?: SeedDocument
+  /** A run started on this case: the dock opens a conversation on it, so the run shows there. */
+  caseId?: string
 }
 
 export interface ConsoleScreenGoOptions {

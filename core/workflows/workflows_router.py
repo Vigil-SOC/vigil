@@ -199,6 +199,50 @@ async def set_enabled(
     return {"id": workflow_id, "enabled": body.enabled}
 
 
+class InsiderLeadsBody(BaseModel):
+    sources: List[str] = Field(default_factory=list, max_length=200)
+    rule_names: List[str] = Field(default_factory=list, max_length=200)
+    readers: List[str] = Field(default_factory=list, max_length=200)
+    teams: List[str] = Field(default_factory=list, max_length=200)
+
+
+@router.get("/workflows/threat-hunt/insider-leads")
+async def get_insider_leads():
+    """Which findings are insider leads and who reads the cases they open:
+    ``{sources, rule_names, readers, teams}``. With no source or rule name,
+    automatic start is off."""
+    from core.workflows.insider_lead import leads
+
+    return leads()
+
+
+@router.put("/workflows/threat-hunt/insider-leads", dependencies=_SETTINGS_WRITE)
+async def set_insider_leads(
+    body: InsiderLeadsBody, current_user: User = Depends(get_current_user)
+):
+    """Replace the lead list. Adding anything is a person's own act, not a token's;
+    a list left on needs a reader or team, each checked as for a restricted case."""
+    from core.cases.case_readers import ReadersRefused, http_restricter
+    from core.storage.unit_of_work import unit_of_work
+    from core.workflows.insider_lead import LeadRefused, save_leads
+
+    try:
+        with unit_of_work() as session:
+            return save_leads(
+                session,
+                http_restricter(session, current_user),
+                str(current_user.user_id),
+                body.sources,
+                body.rule_names,
+                body.readers,
+                body.teams,
+            )
+    except ReadersRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    except LeadRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.detail) from None
+
+
 # -----------------------------------------------------------------------------
 # Custom workflow CRUD (database-backed)
 # -----------------------------------------------------------------------------

@@ -78,13 +78,33 @@ async def handle_list_tools():
     return [
         types.Tool(
             name="elastic_search_logs",
-            description="Search Elasticsearch logs with a custom query DSL body",
+            description=(
+                "Search Elasticsearch with a query clause, limited to the last "
+                "time_range by an @timestamp filter. Pass fields to return only "
+                "those fields of each hit, and aggs to aggregate (with max_results "
+                "0 for aggregations alone)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Elasticsearch query DSL as a JSON string",
+                        "description": "Elasticsearch query clause as JSON, e.g. "
+                        '{"term": {"user.name": "alice"}}. It is wrapped in a bool '
+                        "query with the @timestamp filter, so pass the clause, not a "
+                        "whole request body.",
+                    },
+                    "fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Fields to return for each hit (sent as _source "
+                        "includes; wildcards allowed). Default: the whole document; [] for "
+                        "none.",
+                    },
+                    "aggs": {
+                        "type": "object",
+                        "description": "Elasticsearch aggregations object, sent as the "
+                        "request's aggs; the result carries them under aggregations.",
                     },
                     "index": {
                         "type": "string",
@@ -97,6 +117,7 @@ async def handle_list_tools():
                     },
                     "max_results": {
                         "type": "integer",
+                        "description": "Hits to return, 0-500; 0 for aggregations only",
                         "default": 100,
                     },
                 },
@@ -172,15 +193,53 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return result({"error": f"Unknown tool: {name}"})
 
 
+def _json_arg(value):
+    """A JSON-string argument parsed, or an object/list passed through as is."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
 async def _search_logs(svc, args: dict):
-    query_str = args.get("query", '{"match_all": {}}')
     try:
-        query = json.loads(query_str) if isinstance(query_str, str) else query_str
+        query = _json_arg(args.get("query", {"match_all": {}}))
+        fields = args.get("fields")
+        # A bare field name is not JSON; anything else that is a string should be.
+        if isinstance(fields, str) and fields.lstrip()[:1] in ("[", "{"):
+            fields = json.loads(fields)
+        aggs = _json_arg(args.get("aggs"))
     except json.JSONDecodeError:
-        return result({"error": "Invalid JSON in query parameter"})
+        return result({"error": "Invalid JSON in query, fields or aggs"})
+
+    max_results = args.get("max_results")
+    # Models send whole request bodies; no query clause type is named "query",
+    # so an object keyed "query" is a body. Explicit arguments win over it.
+    if isinstance(query, dict) and "query" in query:
+        body = query
+        query = body["query"]
+        if fields is None:
+            fields = body.get("_source")
+        if aggs is None:
+            aggs = body.get("aggs", body.get("aggregations"))
+        if max_results is None:
+            max_results = body.get("size")
+    if isinstance(fields, dict):  # _source as {"includes": [...]}
+        fields = fields.get("includes")
+    if isinstance(fields, str):
+        fields = [f.strip() for f in fields.split(",") if f.strip()]
+    if fields is True or not isinstance(fields, (list, bool)):
+        fields = None  # whole document; False (or []) returns no fields
+    elif fields == []:
+        fields = False
+    if aggs is not None and not isinstance(aggs, dict):
+        return result({"error": "aggs must be a JSON object"})
+    if query is None or query == {}:
+        query = {"match_all": {}}
+
+    try:
+        size = max(0, min(int(100 if max_results is None else max_results), 500))
+    except (TypeError, ValueError):
+        return result({"error": "max_results must be an integer"})
 
     time_range = validate_time_range(args.get("time_range", "24h"))
-    # Wrap with time filter
     wrapped = {
         "bool": {
             "must": [query],
@@ -191,20 +250,23 @@ async def _search_logs(svc, args: dict):
     data = await svc.search(
         query=wrapped,
         index=args.get("index"),
-        size=min(args.get("max_results", 100), 500),
+        size=size,
+        source=fields,
+        aggs=aggs,
     )
     if data is None:
         return result({"error": "Search failed"})
 
     hits = data.get("hits", {})
-    return result(
-        {
-            "total": hits.get("total", {}).get("value", 0),
-            "results": [
-                {"_id": h["_id"], **h.get("_source", {})} for h in hits.get("hits", [])
-            ],
-        }
-    )
+    out = {
+        "total": hits.get("total", {}).get("value", 0),
+        "results": [
+            {"_id": h["_id"], **h.get("_source", {})} for h in hits.get("hits", [])
+        ],
+    }
+    if "aggregations" in data:
+        out["aggregations"] = data["aggregations"]
+    return result(out)
 
 
 async def _search_by_ioc(svc, args: dict):
