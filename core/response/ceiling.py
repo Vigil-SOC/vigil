@@ -218,6 +218,25 @@ def workflow_of(run_id: Optional[str]) -> Optional[str]:
         return None
 
 
+CLOSE_HELD = "autonomy does not let a model close cases on its own"
+
+
+def close_held(run_id: Optional[str]) -> Optional[str]:
+    """Why a model's close of a case is held, or None when it may close (#4819).
+
+    Closing is a reversible act: it passes only where the run's workflow, or
+    with no workflow (chat, an /mcp caller) the fleet, may act on its own.
+    A ceiling that can't be read holds the close.
+    """
+    try:
+        if effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id)):
+            return None
+        return CLOSE_HELD
+    except Exception as exc:  # noqa: BLE001 — no answer is not permission
+        logger.exception("autonomy not read; close for run %s held", run_id)
+        return f"the autonomy setting could not be read ({type(exc).__name__})"
+
+
 def ceiling_view(stored: Ceiling, settings: Optional[Settings] = None) -> CeilingView:
     return CeilingView(
         act_reversible=stored.act_reversible,

@@ -763,24 +763,6 @@ def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
 DISMISSALS = {"benign", "false_positive"}
 
 
-# Closing a case is a reversible act, so a run closes one only where its
-# workflow may act on its own; under Assist a person decides. A ceiling that
-# can't be read leaves the case open.
-def _may_close(run_id: str) -> bool:
-    from core.response.ceiling import (
-        REVERSIBLE,
-        effective_act,
-        read_ceiling,
-        workflow_of,
-    )
-
-    try:
-        return effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id))
-    except Exception:  # noqa: BLE001 — no answer is not permission
-        logger.exception("autonomy not read; case of %s left open", run_id)
-        return False
-
-
 def _already_closed(case_id: str) -> bool:
     """True when the case is gone or closed; False when it can't be read, so
     the close path decides with its own read."""
@@ -800,6 +782,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
     from core.cases.closure import ClosureCategory
+    from core.response.ceiling import close_held
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
@@ -810,13 +793,14 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     # with nothing said about leaving it open.
     if _already_closed(case_id):
         return
-    if not _may_close(run_id):
+    # Closing is a reversible act; under Assist a person decides.
+    if held := close_held(run_id):
         _add_activity(
             case_id,
             "agent_run_left_open",
             f"Left open for a person: the investigation concluded {disposition}, "
-            "and autonomy does not let it close cases on its own",
-            {"run_id": run_id, "disposition": disposition},
+            f"and {held}",
+            {"run_id": run_id, "disposition": disposition, "reason": held},
         )
         return
     try:
@@ -831,6 +815,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 closure_category=ClosureCategory.FALSE_POSITIVE,
                 closed_by=run_id,
                 closure_notes=update.summary or None,
+                by_model=True,
             )
         _add_activity(
             case_id,
