@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import threading
@@ -153,11 +154,22 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def begin(p: Provider, confirm: Optional[dict] = None) -> tuple[str, str]:
+# A voluntary request for what the judgement reads (epic #4751 decision 3): a
+# provider never fails a sign-in over it. Never an essential acr, never acr_values.
+CLAIMS = json.dumps(
+    {"id_token": {"amr": None, "acr": None, "auth_time": None}}, separators=(",", ":")
+)
+
+
+def begin(
+    p: Provider, confirm: Optional[dict] = None, max_age: Optional[int] = None
+) -> tuple[str, str]:
     """The provider's authorization address and the signed cookie that binds it.
 
     ``confirm``: Confirm it's you for a sign-in already open (#4285). It rides in
-    the cookie, and the provider is asked for a fresh sign-in.
+    the cookie, and the provider is asked for a fresh sign-in. Every trip asks
+    for amr, acr and auth_time; a sign-in also sends ``max_age`` (seconds), so
+    the provider repeats one older than that.
     """
     state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
     held = {
@@ -171,7 +183,13 @@ def begin(p: Provider, confirm: Optional[dict] = None) -> tuple[str, str]:
     cookie = key_ring.sign("sso", held)
     query = urlencode(
         {
-            **({"prompt": "login", "max_age": 0} if confirm else {}),
+            # Voluntary, so asked on every trip: a confirmation's token is judged too.
+            "claims": CLAIMS,
+            **(
+                {"prompt": "login", "max_age": 0}
+                if confirm
+                else ({"max_age": max_age} if max_age is not None else {})
+            ),
             "response_type": "code",
             "client_id": p.settings.client_id,
             "redirect_uri": redirect_uri(),
@@ -199,7 +217,9 @@ def binding(raw: Optional[str], state: Optional[str]) -> dict:
         )
     except (jwt.PyJWTError, key_ring.KeyRingError):
         raise Refused("bad_state_cookie") from None
-    if held.get("typ") == PROOF:  # a method-change proof is never a state cookie
+    if held.get(
+        "typ"
+    ):  # a method-change proof or a waiting sign-in is never a state cookie
         raise Refused("bad_state_cookie")
     if not state or not hmac.compare_digest(str(held.get("state", "")), state):
         raise Refused("state_mismatch")
@@ -268,6 +288,9 @@ def verify(p: Provider, id_token: str, nonce: str) -> dict[str, Any]:
         key = _jwks(p.jwks_uri).get_signing_key_from_jwt(id_token)
     except jwt.PyJWTError:
         raise Refused("id_token_key_unknown") from None
+    # The signature now decides MFA as well as who: no RSA key under 2048 bits.
+    if alg.startswith(("RS", "PS")) and getattr(key.key, "key_size", 0) < 2048:
+        raise Refused("id_token_key_weak")
     try:
         claims = jwt.decode(
             id_token,
@@ -307,6 +330,34 @@ def verify(p: Provider, id_token: str, nonce: str) -> dict[str, Any]:
     return claims
 
 
+# Registered phishing-resistance values (OpenID Connect EAP ACR Values 1.0).
+PHR = ("phr", "phrh")
+
+
+def judged(claims: dict, absolute: timedelta) -> tuple[Optional[str], Optional[int]]:
+    """How the verified ID token meets MFA (epic #4751 decisions 1 and 2): the
+    ``sign_ins`` value (PROVIDER_PHR, PROVIDER_MFA) or None, and its auth_time.
+
+    Only registered values count: ``acr`` phr/phrh, or ``mfa`` in ``amr``, with
+    an auth_time inside ``absolute``. A provider's own labels, a missing claim
+    and a missing or old auth_time count for nothing."""
+    from core.auth import sign_ins
+
+    at = claims.get("auth_time")
+    if not isinstance(at, (int, float)) or isinstance(at, bool):
+        return None, None
+    now = datetime.now(timezone.utc).timestamp()
+    at = int(at)
+    if at > now + LEEWAY or at < now - absolute.total_seconds():
+        return None, at
+    acr, amr = claims.get("acr"), claims.get("amr")
+    if isinstance(acr, str) and acr in PHR:
+        return sign_ins.PROVIDER_PHR, at
+    if isinstance(amr, list) and "mfa" in amr:
+        return sign_ins.PROVIDER_MFA, at
+    return None, at
+
+
 def groups_of(claims: dict, claim: str) -> Optional[list[str]]:
     """The groups claim as strings, or None when it is missing or unusable."""
     value = claims.get(claim)
@@ -321,13 +372,16 @@ def linked_principals(session: Session) -> set[str]:
     return {pid for (pid,) in session.query(SsoLink.principal_id).all()}
 
 
-def sso_only(session: Session, user) -> bool:
+def sso_only(
+    session: Session, user, current: Optional[sso_settings.SsoSettings] = None
+) -> bool:
     """Signs in only through the provider (epic #4751 decision 8): Require single
     sign-on in force, or no local password and linked to a provider. Never a
-    break-glass account, whose password is the way in when SSO is not."""
+    break-glass account, whose password is the way in when SSO is not.
+    ``current``: the settings, read already on ``session`` (an upgrade revision)."""
     if getattr(user, "break_glass_at", None) is not None:
         return False
-    if required():
+    if current.require_sso if current is not None else required():
         return True
     if user.password_hash:
         return False
@@ -375,6 +429,34 @@ def proof_holds(
         and held.get("sid") == sign_in_id
         and held.get("principal") == principal_id
     )
+
+
+# A sign-in waiting on the person's Vigil factor after the provider (#4757).
+PENDING = "sso_pending"
+
+
+def hold(pending: dict) -> str:
+    """The waiting sign-in, signed under ``sso`` for ``LIFE``: what finishing it
+    needs and nothing more (never the groups claim)."""
+    return key_ring.sign(
+        "sso", {**pending, "typ": PENDING, "exp": datetime.now(timezone.utc) + LIFE}
+    )
+
+
+def waiting(raw: Optional[str]) -> Optional[dict]:
+    """The waiting sign-in ``raw`` holds, while it lives; never a state cookie or a proof."""
+    if not raw:
+        return None
+    try:
+        held = jwt.decode(
+            raw,
+            key_ring.token_key("sso", raw),
+            algorithms=["HS256"],
+            options={"require": ["exp"]},
+        )
+    except (jwt.PyJWTError, key_ring.KeyRingError):
+        return None
+    return held if held.get("typ") == PENDING else None
 
 
 def linked(session: Session, issuer: str, subject: str) -> Optional[SsoLink]:

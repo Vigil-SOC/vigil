@@ -89,6 +89,11 @@ class SignIn(Base):
     auth_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default="password", server_default="password"
     )
+    # An SSO sign-in's way of meeting MFA (core/auth/sign_ins.py, epic #4751).
+    mfa_met: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Set when the end comes before started_at plus the absolute length: an SSO
+    # sign-in whose MFA came from an earlier sign-in at the provider.
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # The browser's user agent: the sign-in's tokens are honoured only from it.
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -109,6 +114,11 @@ class SignIn(Base):
             " 'sign_in_limit', 'too_many_confirmations', 'restore',"
             " 'recovery', 'mfa_reset')",
             name="sign_ins_end_reason_check",
+        ),
+        CheckConstraint(
+            "mfa_met IN ('provider_mfa', 'provider_phr', 'vigil_factor',"
+            " 'step_down', 'none')",
+            name="sign_ins_mfa_met_check",
         ),
         Index("idx_sign_ins_principal", "principal_id"),
     )
