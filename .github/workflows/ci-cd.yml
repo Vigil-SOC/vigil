@@ -483,9 +483,9 @@ jobs:
             ! printf '%s\n' "$published" | grep -qxF "$v" || { echo "::error::.env holds a published database password"; exit 1; }
           done
           [ "$o" != "$a" ] && [ "$o" != "$g" ] && [ "$a" != "$g" ] || { echo "::error::database passwords are not distinct"; exit 1; }
-          if printf '%s\n' "$published" | grep -qFf - env.example; then
-            echo "::error::env.example holds a published database password"; exit 1
-          fi
+          while IFS= read -r v; do
+            ! grep -qF "$v" env.example || { echo "::error::env.example holds a published database password"; exit 1; }
+          done <<< "$published"
 
   # The agent layer is a second Node package with its own manifest. Node 22
   # rather than NODE_VERSION: the eval's estate (eval/estate.ts) runs SQL on
@@ -686,7 +686,7 @@ jobs:
             > "$RUNNER_TEMP/shape-durable.yaml"
           # `${VAR:?}` in both Compose files refuses to render without these.
           for v in REDIS_PASSWORD POSTGRES_PASSWORD POSTGRES_APP_PASSWORD \
-              AGENT_INTERNAL_TOKEN BIFROST_ADMIN_PASSWORD JWT_SECRET_KEY; do
+              POSTGRES_AGENT_PASSWORD AGENT_INTERNAL_TOKEN BIFROST_ADMIN_PASSWORD JWT_SECRET_KEY; do
             export "$v=placeholder"
           done
           export VIGIL_VERSION=ci
