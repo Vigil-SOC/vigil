@@ -17,9 +17,12 @@ versions: older instrumentation writes `gen_ai.system` where newer writes
 How the index names these attributes is for you to find out -- Elastic may hold
 `gen_ai.tool.name` as `attributes.gen_ai.tool.name`, other SIEMs flatten or
 prefix it differently. Look at one span's field names before you count
-anything. Pass the search tool exactly what its parameters ask for: a tool that
-takes a query clause will not take a whole request body, a field list or an
-aggregation, so count and group over the rows it returns.
+anything. Pass the search tool exactly what its parameters ask for. Where it
+takes a field list, name each metadata field you need and nothing else -- a
+wildcard such as `attributes.gen_ai.*` or `*` matches the content attributes
+too; where it takes an aggregation, count and group there rather than over a
+capped page of rows. Where it takes neither, count and group over the rows it
+returns.
 
 ## What the fields mean
 

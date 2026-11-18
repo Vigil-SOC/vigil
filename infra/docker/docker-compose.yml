@@ -1357,6 +1357,7 @@ services:
     restart: unless-stopped
     networks:
       - deeptempo-network
+      - mcp-network   # the elastic MCP server runs in mcp-runner, which is on mcp-network only
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
