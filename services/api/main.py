@@ -51,6 +51,7 @@ from core.auth.auth_cookies import warn_if_cookie_insecure_in_production
 from core.auth.bootstrap_code import announce_setup_code
 from core.auth.key_ring import adopt_when_ready
 from core.auth.medic_notices import register as register_medic_notices
+from core.cases.indicator_notices import register as register_indicator_notices
 from core.platform.monitoring import (
     get_metrics_response,
     init_sentry,
@@ -242,6 +243,7 @@ token_unused.register()
 key_age.register()
 break_glass.register()
 register_medic_notices()
+register_indicator_notices()
 app.add_middleware(CSRFMiddleware)
 
 # A 401 on /scim/ never reaches the handler. The note counts it and does not
