@@ -1051,17 +1051,14 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
 @tool("Case IOCs", reads=True)
 @requires("cases.read")
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
-    """Get all IOCs for a case, optionally filtered by type."""
+    """Get all IOCs for a case, optionally filtered by type: recorded, then those its alerts name, each with what intake does with it (`intake`) and whether it is `linked` yet."""
     if (refused := _not_found(case_id)) is not None:
         return refused
     try:
         from core.cases.case_ioc_service import CaseIOCService
 
         with service_session() as session:
-            iocs = CaseIOCService().get_case_iocs(
-                case_id=case_id, ioc_type=ioc_type, session=session
-            )
-            payload = CaseIOCSchema.dump_many(iocs)
+            payload = CaseIOCService().list_iocs(case_id, ioc_type, session=session)
 
         return jdump(
             {
