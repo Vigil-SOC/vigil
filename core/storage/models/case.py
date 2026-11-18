@@ -121,6 +121,22 @@ class Case(Base):
         Index("idx_case_team_id", "team_id"),
         Index("idx_case_created_at", "created_at"),
         Index("idx_case_updated_at", "updated_at"),
+        # The shared IOC index's catch-up loop and its bell counts (#4734).
+        Index(
+            "idx_case_indicators_stale",
+            "indicators_stale_since",
+            postgresql_where=text("indicators_stale_since IS NOT NULL"),
+        ),
+        Index(
+            "idx_case_indicators_unsynced",
+            "case_id",
+            postgresql_where=text("indicators_synced_at IS NULL"),
+        ),
+        Index(
+            "idx_case_indicators_synced",
+            "indicators_synced_at",
+            postgresql_where=text("indicators_synced_at IS NOT NULL"),
+        ),
         Index(
             "idx_case_title_trgm",
             "title",
