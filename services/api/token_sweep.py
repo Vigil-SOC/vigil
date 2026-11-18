@@ -5,7 +5,8 @@ grace. The rule is core/auth/token_unused.py. One replica sweeps at a time (a
 transaction advisory lock held for the pass), and each token is re-checked under its
 row lock, so two replicas, or a restart, neither remind nor revoke twice. A recipient
 gets one reminder notice per pass listing its tokens. A policy that can't be read
-does nothing. Each completed pass stamps its time (``token_unused.stamp_pass``), which
+does nothing. Each pass also purges expired OAuth requests and clients unused for
+30 days (``oauth_server.purge``). Each completed pass stamps its time (``token_unused.stamp_pass``), which
 the Sessions section shows and the bell watches; a pass that found the lock held, or
 raised, stamps nothing.
 """
@@ -18,7 +19,7 @@ from datetime import datetime
 
 from sqlalchemy import text
 
-from core.auth import token_notices, token_unused
+from core.auth import oauth_server, token_notices, token_unused
 from core.platform.notices import send_notices
 from core.storage.models import McpCredential, User
 from core.storage.unit_of_work import unit_of_work
@@ -52,6 +53,12 @@ def sweep() -> None:
         ).scalar():
             return  # another replica is on it: not a completed pass here
         _pass(now)
+        try:
+            oauth_server.purge(now)
+        except (
+            Exception
+        ):  # noqa: BLE001 - tokens were swept; the purge retries next pass
+            logger.exception("OAuth purge failed")
         # Also when the rule is off or the policy unreadable; a pass that raised never gets here.
         token_unused.stamp_pass()
 

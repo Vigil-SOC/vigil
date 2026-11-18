@@ -3806,6 +3806,11 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column mcp_credentials.access_expires_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column mcp_credentials.created_at": {
   "default": "now()",
   "nullable": false,
@@ -3830,6 +3835,21 @@
   "default": null,
   "nullable": true,
   "type": "timestamp without time zone"
+ },
+ "column mcp_credentials.oauth_client_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
+ },
+ "column mcp_credentials.previous_refresh_hash": {
+  "default": null,
+  "nullable": true,
+  "type": "character(64)"
+ },
+ "column mcp_credentials.refresh_hash": {
+  "default": null,
+  "nullable": true,
+  "type": "character(64)"
  },
  "column mcp_credentials.reminded_at": {
   "default": null,
@@ -3955,6 +3975,101 @@
   "default": null,
   "nullable": true,
   "type": "text"
+ },
+ "column oauth_clients.auth_method": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(40)"
+ },
+ "column oauth_clients.client_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column oauth_clients.created_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column oauth_clients.last_used_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
+ "column oauth_clients.name": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(200)"
+ },
+ "column oauth_clients.redirect_uris": {
+  "default": null,
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column oauth_clients.source": {
+  "default": "'dynamic'::character varying",
+  "nullable": false,
+  "type": "character varying(20)"
+ },
+ "column oauth_pending.client_id": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(50)"
+ },
+ "column oauth_pending.code_challenge": {
+  "default": null,
+  "nullable": false,
+  "type": "character varying(128)"
+ },
+ "column oauth_pending.code_hash": {
+  "default": null,
+  "nullable": true,
+  "type": "character(64)"
+ },
+ "column oauth_pending.created_at": {
+  "default": "(now() AT TIME ZONE 'utc'::text)",
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column oauth_pending.expires_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp without time zone"
+ },
+ "column oauth_pending.redirect_uri": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column oauth_pending.redirect_uri_explicit": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column oauth_pending.request_hash": {
+  "default": null,
+  "nullable": false,
+  "type": "character(64)"
+ },
+ "column oauth_pending.resource": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column oauth_pending.scopes": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column oauth_pending.state": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column oauth_pending.user_id": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(50)"
  },
  "column principals.created_at": {
   "default": "now()",
@@ -4181,6 +4296,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column sign_ins.ends_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column sign_ins.expires_at": {
   "default": null,
   "nullable": true,
@@ -4190,6 +4310,11 @@
   "default": "now()",
   "nullable": false,
   "type": "timestamp without time zone"
+ },
+ "column sign_ins.mfa_met": {
+  "default": null,
+  "nullable": true,
+  "type": "character varying(20)"
  },
  "column sign_ins.principal_id": {
   "default": null,
@@ -5202,6 +5327,7 @@
  "constraint llm_interaction_logs.llm_interaction_logs_interaction_id_key": "UNIQUE (interaction_id)",
  "constraint llm_interaction_logs.llm_interaction_logs_pkey": "PRIMARY KEY (id)",
  "constraint llm_provider_configs.llm_provider_configs_pkey": "PRIMARY KEY (provider_id)",
+ "constraint mcp_credentials.mcp_credentials_oauth_client_id_fkey": "FOREIGN KEY (oauth_client_id) REFERENCES oauth_clients(client_id)",
  "constraint mcp_credentials.mcp_credentials_pkey": "PRIMARY KEY (credential_id)",
  "constraint mcp_credentials.mcp_credentials_token_hash_key": "UNIQUE (token_hash)",
  "constraint mcp_credentials.mcp_credentials_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE RESTRICT",
@@ -5222,6 +5348,11 @@
  "constraint medic_watch_state.medic_watch_state_pkey": "PRIMARY KEY (id)",
  "constraint medic_watch_state.medic_watch_state_polls": "CHECK ((confirming_polls >= 0))",
  "constraint medic_watch_state.medic_watch_state_summary_start": "CHECK (((summary_started_at IS NULL) OR (char_length(summary_started_at) <= 128)))",
+ "constraint oauth_clients.oauth_clients_pkey": "PRIMARY KEY (client_id)",
+ "constraint oauth_pending.oauth_pending_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE",
+ "constraint oauth_pending.oauth_pending_code_hash_key": "UNIQUE (code_hash)",
+ "constraint oauth_pending.oauth_pending_pkey": "PRIMARY KEY (request_hash)",
+ "constraint oauth_pending.oauth_pending_user_id_fkey": "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE",
  "constraint principals.principals_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['person'::character varying, 'service_account'::character varying, 'agent'::character varying, 'system'::character varying])::text[])))",
  "constraint principals.principals_pkey": "PRIMARY KEY (principal_id)",
  "constraint roles.roles_name_key": "UNIQUE (name)",
@@ -5233,6 +5364,7 @@
  "constraint shared_iocs.shared_iocs_pkey": "PRIMARY KEY (id)",
  "constraint siem_searches.siem_searches_pkey": "PRIMARY KEY (id)",
  "constraint sign_ins.sign_ins_end_reason_check": "CHECK (((end_reason)::text = ANY ((ARRAY['sign_out'::character varying, 'expiry'::character varying, 'revoked'::character varying, 'idle'::character varying, 'length_limit'::character varying, 'token_reuse'::character varying, 'upgrade'::character varying, 'account_changed'::character varying, 'deactivated'::character varying, 'erased'::character varying, 'ended_by_person'::character varying, 'ended_by_admin'::character varying, 'everyone_signed_out'::character varying, 'sign_in_limit'::character varying, 'too_many_confirmations'::character varying, 'restore'::character varying, 'recovery'::character varying, 'mfa_reset'::character varying])::text[])))",
+ "constraint sign_ins.sign_ins_mfa_met_check": "CHECK (((mfa_met)::text = ANY ((ARRAY['provider_mfa'::character varying, 'provider_phr'::character varying, 'vigil_factor'::character varying, 'step_down'::character varying, 'none'::character varying])::text[])))",
  "constraint sign_ins.sign_ins_pkey": "PRIMARY KEY (sign_in_id)",
  "constraint sign_ins.sign_ins_principal_id_fkey": "FOREIGN KEY (principal_id) REFERENCES principals(principal_id) ON DELETE RESTRICT",
  "constraint sketch_mappings.sketch_mappings_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
@@ -5620,8 +5752,11 @@
  "index idx_llm_interaction_vk": "CREATE INDEX idx_llm_interaction_vk ON public.llm_interaction_logs USING btree (virtual_key_id, created_at)",
  "index idx_llm_provider_active": "CREATE INDEX idx_llm_provider_active ON public.llm_provider_configs USING btree (is_active)",
  "index idx_llm_provider_type": "CREATE INDEX idx_llm_provider_type ON public.llm_provider_configs USING btree (provider_type)",
+ "index idx_mcp_credentials_oauth_client": "CREATE INDEX idx_mcp_credentials_oauth_client ON public.mcp_credentials USING btree (oauth_client_id) WHERE (oauth_client_id IS NOT NULL)",
+ "index idx_mcp_credentials_previous_refresh_hash": "CREATE INDEX idx_mcp_credentials_previous_refresh_hash ON public.mcp_credentials USING btree (previous_refresh_hash) WHERE (previous_refresh_hash IS NOT NULL)",
  "index idx_mcp_credentials_token_hash": "CREATE INDEX idx_mcp_credentials_token_hash ON public.mcp_credentials USING btree (token_hash)",
  "index idx_mcp_credentials_user": "CREATE INDEX idx_mcp_credentials_user ON public.mcp_credentials USING btree (user_id)",
+ "index idx_oauth_pending_expires": "CREATE INDEX idx_oauth_pending_expires ON public.oauth_pending USING btree (expires_at)",
  "index idx_role_name": "CREATE INDEX idx_role_name ON public.roles USING btree (name)",
  "index idx_security_keys_principal": "CREATE INDEX idx_security_keys_principal ON public.security_keys USING btree (principal_id)",
  "index idx_shared_ioc_case": "CREATE INDEX idx_shared_ioc_case ON public.shared_iocs USING btree (case_id) WHERE (case_id IS NOT NULL)",
@@ -5675,6 +5810,9 @@
  "index medic_incident_notice_pkey": "CREATE UNIQUE INDEX medic_incident_notice_pkey ON public.medic_incident_notice USING btree (incident_id, reopen_count, event)",
  "index medic_last_seen_pkey": "CREATE UNIQUE INDEX medic_last_seen_pkey ON public.medic_last_seen USING btree (id)",
  "index medic_watch_state_pkey": "CREATE UNIQUE INDEX medic_watch_state_pkey ON public.medic_watch_state USING btree (id)",
+ "index oauth_clients_pkey": "CREATE UNIQUE INDEX oauth_clients_pkey ON public.oauth_clients USING btree (client_id)",
+ "index oauth_pending_code_hash_key": "CREATE UNIQUE INDEX oauth_pending_code_hash_key ON public.oauth_pending USING btree (code_hash)",
+ "index oauth_pending_pkey": "CREATE UNIQUE INDEX oauth_pending_pkey ON public.oauth_pending USING btree (request_hash)",
  "index principals_pkey": "CREATE UNIQUE INDEX principals_pkey ON public.principals USING btree (principal_id)",
  "index roles_name_key": "CREATE UNIQUE INDEX roles_name_key ON public.roles USING btree (name)",
  "index roles_pkey": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (role_id)",
@@ -5705,6 +5843,7 @@
  "index uq_directory_pending_external": "CREATE UNIQUE INDEX uq_directory_pending_external ON public.directory_pending USING btree (external_id)",
  "index uq_entity_facts_key_source_case": "CREATE UNIQUE INDEX uq_entity_facts_key_source_case ON public.entity_facts USING btree (entity_key, source, COALESCE(case_id, ''::character varying))",
  "index uq_intake_triggers_queued_finding": "CREATE UNIQUE INDEX uq_intake_triggers_queued_finding ON public.intake_triggers USING btree (finding_id) WHERE (((state)::text = 'queued'::text) AND (finding_id IS NOT NULL))",
+ "index uq_mcp_credentials_refresh_hash": "CREATE UNIQUE INDEX uq_mcp_credentials_refresh_hash ON public.mcp_credentials USING btree (refresh_hash) WHERE (refresh_hash IS NOT NULL)",
  "index uq_security_keys_credential": "CREATE UNIQUE INDEX uq_security_keys_credential ON public.security_keys USING btree (credential_id)",
  "index uq_shared_ioc_case_key": "CREATE UNIQUE INDEX uq_shared_ioc_case_key ON public.shared_iocs USING btree (case_id, ioc_type, value) WHERE (case_id IS NOT NULL)",
  "index uq_sso_links_directory": "CREATE UNIQUE INDEX uq_sso_links_directory ON public.sso_links USING btree (issuer, directory_id) WHERE (directory_id IS NOT NULL)",
@@ -7764,6 +7903,50 @@
   "sequence": null
  },
  "relation medic_watch_state": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation oauth_clients": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation oauth_pending": {
   "acl": [
    "app:DELETE",
    "app:INSERT",

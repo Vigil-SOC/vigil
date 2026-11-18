@@ -85,6 +85,10 @@ COOKIE_MISSING_DETAIL = (
 # routers are mounted under VIGIL_CONTEXT_PATH, so the prefixed form is the one
 # a sub-path deploy actually serves.
 _ALWAYS_EXEMPT = ("/api/webhooks/", "/mcp", "/internal/")
+# The OAuth server's token, registration and revocation endpoints (#4787):
+# called by a program with no cookie, at the host root whatever the context
+# path, so matched exactly and never prefixed.
+_ROOT_EXEMPT = ("/token", "/register", "/revoke")
 
 
 def _is_ingestion_path(path: str) -> bool:
@@ -222,7 +226,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         )
 
     def _is_exempt(self, path: str) -> bool:
-        return any(path.startswith(prefix) for prefix in self.exempt_paths)
+        return path in _ROOT_EXEMPT or any(
+            path.startswith(prefix) for prefix in self.exempt_paths
+        )
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if not self.enabled:
