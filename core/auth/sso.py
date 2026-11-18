@@ -162,14 +162,18 @@ CLAIMS = json.dumps(
 
 
 def begin(
-    p: Provider, confirm: Optional[dict] = None, max_age: Optional[int] = None
+    p: Provider,
+    confirm: Optional[dict] = None,
+    max_age: Optional[int] = None,
+    back: Optional[str] = None,
 ) -> tuple[str, str]:
     """The provider's authorization address and the signed cookie that binds it.
 
     ``confirm``: Confirm it's you for a sign-in already open (#4285). It rides in
     the cookie, and the provider is asked for a fresh sign-in. Every trip asks
     for amr, acr and auth_time; a sign-in also sends ``max_age`` (seconds), so
-    the provider repeats one older than that.
+    the provider repeats one older than that. ``back``: the console path a
+    sign-in returns to (#4789), already checked by the caller.
     """
     state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
     held = {
@@ -180,6 +184,8 @@ def begin(
     }
     if confirm:
         held["confirm"] = confirm
+    elif back:
+        held["return"] = back
     cookie = key_ring.sign("sso", held)
     query = urlencode(
         {

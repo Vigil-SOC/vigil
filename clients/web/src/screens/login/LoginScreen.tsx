@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { parsePath, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth, type KeyAnswer, type LoginResult, type MfaOffer } from '../../contexts/AuthContext'
 import { basePath } from '../../config/basePath'
 import { authApi, bootstrapApi } from '../../services/api'
@@ -27,14 +27,28 @@ const SSO_ERRORS: Record<string, string> = {
 const SSO_STEP_NOTE = "Your identity provider didn't confirm a second factor for this sign-in, so Vigil asks for its own."
 // A plain navigation: the server answers with the provider's redirect.
 const SSO_START = `${basePath}/api/auth/sso/start`
+// A path the server returned, basePath included, as the router's location.
+const fromFull = (path: string) => {
+  const parsed = parsePath(basePath && (path === basePath || path.startsWith(basePath + '/')) ? path.slice(basePath.length) || '/' : path)
+  return { pathname: parsed.pathname ?? '/', search: parsed.search, hash: parsed.hash }
+}
 
 export default function LoginScreen() {
   const navigate = useNavigate()
   const location = useLocation()
   const { login, finishSso } = useAuth()
   // the address a signed-out person was on; sign-in returns there
-  const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
+  // (#4789) the SSO round trip can't keep router state: the callback hands it back as ?return=, a full path
+  const returned = new URLSearchParams(location.search).get('return')
+  const from =
+    (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from ??
+    (returned?.startsWith('/') && !returned.startsWith('//') ? fromFull(returned) : undefined)
   const goBack = () => navigate(from && from.pathname !== '/login' ? { pathname: from.pathname, search: from.search, hash: from.hash } : '/')
+  // SSO is a full-page trip: the server carries the address back through its state cookie
+  const ssoHref =
+    from && from.pathname !== '/login' && from.pathname !== '/'
+      ? `${SSO_START}?next=${encodeURIComponent(basePath + from.pathname + (from.search ?? ''))}`
+      : SSO_START
 
   const [usernameOrEmail, setUsernameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -486,7 +500,7 @@ export default function LoginScreen() {
         </form>
       ) : ssoLanding ? (
         <>
-          <a className="btn-signin" href={SSO_START}>
+          <a className="btn-signin" href={ssoHref}>
             <Icon name="key" size={17} />
             Sign in with SSO
           </a>
@@ -553,7 +567,7 @@ export default function LoginScreen() {
           <>
             {ssoEnabled && !requireSso && (
               <>
-                <a className="btn-sso" href={SSO_START}>
+                <a className="btn-sso" href={ssoHref}>
                   <Icon name="key" size={17} />
                   Sign in with SSO
                 </a>

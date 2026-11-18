@@ -68,6 +68,19 @@ function Dates({ t }: { t: ApiToken }) {
   )
 }
 
+/** The token's label; an OAuth grant is marked as a connected app, with its client's name (#4789). */
+function Label({ t }: { t: ApiToken }) {
+  const name = t.connected_app ? t.client_name || t.label : t.label
+  return (
+    <td style={{ whiteSpace: 'normal' }}>
+      <div className="flex flex-col items-start gap-1">
+        <span className="line-clamp-2 break-words" title={name}>{name}</span>
+        {t.connected_app && <span className="text-xs text-tx-3">Connected app</span>}
+      </div>
+    </td>
+  )
+}
+
 /** The one place a new token is shown. The server keeps only a hash of it. */
 function Reveal({ token, rule, onDone }: { token: string; rule: string | null; onDone: () => void }) {
   return (
@@ -172,7 +185,7 @@ export default function TokensCard({
   const revoke = (t: ApiToken) =>
     act(async () => {
       await tokensApi.revoke(t.credential_id)
-      notify('ok', 'Token revoked')
+      notify('ok', t.connected_app ? 'App disconnected' : 'Token revoked')
     }, 'Could not revoke that token')
 
   const options = lifetimeOptions(limits)
@@ -203,7 +216,7 @@ export default function TokensCard({
         desc={
           account
             ? `A token lets the integration call Vigil’s API as this service account, with what its role allows. Each lasts ${limits?.max_days == null ? 'the maximum set for service-account tokens' : `${limits.max_days} days, the maximum set for service-account tokens`}; rotate before it ends. Minting and rotating is a person’s act: a token can never mint another token.`
-            : 'A token lets a program call Vigil’s API and MCP server as you. What it may do is what your account may do, and it is recorded against your name. A token can never change an account or mint another token.'
+            : 'A token lets a program call Vigil’s API and MCP server as you. What it may do is what your account may do, and it is recorded against your name. A token can never change an account or mint another token. Apps you approve through OAuth show here as connected apps; revoke one to disconnect it.'
         }
         actions={
           <button className="btn ghost" onClick={reload}>
@@ -268,12 +281,11 @@ export default function TokensCard({
                 <tbody>
                   {own.map((t) => (
                     <tr key={t.credential_id}>
-                      <td style={{ whiteSpace: 'normal' }}>
-                        <span className="line-clamp-2 break-words" title={t.label}>{t.label}</span>
-                      </td>
+                      <Label t={t} />
                       <Dates t={t} />
                       <td className="col-act" style={{ textAlign: 'right' }}>
-                        {t.status === 'active' && (
+                        {/* an app's connection rotates through its own refresh: revoke only */}
+                        {t.status === 'active' && !t.connected_app && (
                           <div className="inline-flex gap-1.5 items-center">
                             <button
                               className="btn ghost"
@@ -288,7 +300,7 @@ export default function TokensCard({
                             <HoldButton label="Hold to revoke" name={`Revoke ${t.label}`} disabled={busy} onConfirm={() => revoke(t)} />
                           </div>
                         )}
-                        {t.status === 'rotated' && (
+                        {(t.status === 'rotated' || (t.status === 'active' && t.connected_app)) && (
                           <HoldButton label="Hold to revoke" name={`Revoke ${t.label}`} disabled={busy} onConfirm={() => revoke(t)} />
                         )}
                       </td>
@@ -381,9 +393,7 @@ export default function TokensCard({
                           {t.holder.service_account && <span className="text-xs text-tx-3">Service account</span>}
                         </div>
                       </td>
-                      <td style={{ whiteSpace: 'normal' }}>
-                        <span className="line-clamp-2 break-words" title={t.label}>{t.label}</span>
-                      </td>
+                      <Label t={t} />
                       <Dates t={t} />
                       <td className="col-act" style={{ textAlign: 'right' }}>
                         {(t.status === 'active' || t.status === 'rotated') && (

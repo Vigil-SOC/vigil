@@ -526,6 +526,16 @@ export const mcpApi = {
   setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
 
   setSurfaceOAuthEnabled: (enabled: boolean) => api.put('/mcp/surface/oauth', { enabled }),
+
+  // Redirect URIs registration allows beyond loopback, and ones it refused lately (#4789).
+  getRedirectAllowlist: () => api.get<RedirectAllowlist>('/mcp/surface/oauth/redirects'),
+  setRedirectAllowlist: (uris: string[]) => api.put<RedirectAllowlist>('/mcp/surface/oauth/redirects', { uris }),
+}
+
+export interface RedirectAllowlist {
+  uris: string[]
+  // from the trail, newest first, not yet allowed; `at` is ISO with its zone
+  refused: { uri: string; at: string }[]
 }
 
 export interface ApiTokenHolder {
@@ -545,6 +555,9 @@ export interface ApiToken {
   expires_at: string | null
   revoked_at: string | null
   status: ApiTokenStatus
+  // An OAuth grant: an app connected through the consent page. Revoked, never rotated.
+  connected_app: boolean
+  client_name: string | null
   holder: ApiTokenHolder
 }
 
@@ -2361,3 +2374,19 @@ export const keysApi = {
 }
 
 export default api
+
+// An app's request to connect (#4788): what the consent page shows, and the answer.
+export interface OAuthRequest {
+  client_id: string
+  client_name: string | null
+  redirect_host: string
+  resource: string
+  expires_at: string
+}
+
+export const oauthApi = {
+  read: (requestId: string) => api.get<OAuthRequest>(`/oauth/authorizations/${encodeURIComponent(requestId)}`),
+  // Approve asks "Confirm it's you" first; the answer is the client's redirect, to follow.
+  decide: (requestId: string, decision: 'approve' | 'deny') =>
+    api.post<{ redirect_to: string }>(`/oauth/authorizations/${encodeURIComponent(requestId)}`, { decision }),
+}

@@ -14,6 +14,7 @@ const ResetPassword = lazy(() => import('./screens/login/ResetPasswordScreen'))
 const ConfirmEmail = lazy(() => import('./screens/login/ConfirmEmailScreen'))
 const AcceptInvite = lazy(() => import('./screens/login/AcceptInviteScreen'))
 const SetupScreen = lazy(() => import('./screens/setup/SetupScreen'))
+const ConsentScreen = lazy(() => import('./screens/oauth/ConsentScreen'))
 
 function App() {
   return (
@@ -33,6 +34,14 @@ function App() {
           <Route path="/confirm-email" element={<ConfirmEmail />} />
           {/* Public — the invite link lands here; the person sets up their own account. */}
           <Route path="/accept-invite" element={<AcceptInvite />} />
+
+          {/* An MCP client's request to connect (#4789): /authorize sends the browser here.
+              Signed out, ProtectedRoute signs the person in and returns. Outside SetupGate:
+              a first visit must not be diverted to setup on its way to answering. */}
+          <Route
+            path="/oauth/authorize"
+            element={<ProtectedRoute><ConsentScreen /></ProtectedRoute>}
+          />
 
           {/* OUTSIDE SetupGate so it stays reachable while unconfigured (no redirect loop). */}
           <Route
