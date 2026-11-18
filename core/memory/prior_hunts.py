@@ -24,13 +24,16 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from sqlalchemy import String
 from sqlalchemy import Text as SAText
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, cast, select, text
 from sqlalchemy.dialects.postgresql import ARRAY as PGArray
 from sqlalchemy.orm import Session
 
 from core.agents.projections import THREAT_HUNT_WORKFLOW_ID
 from core.memory.entity_keys import normalise_keys
+from core.storage.models import Case, WorkflowRun
+from core.storage.models.episodic import EpisodicDistilMarker
 from core.storage.unit_of_work import unit_of_work
 from core.workflows.workflow_run_service import (
     IN_FLIGHT_STATUSES,
@@ -49,6 +52,7 @@ _TECHNIQUES_OVERLAP = "v.techniques && CAST(:techniques AS text[])"
 _ARRAY_PARAMS = (
     bindparam("keys", type_=PGArray(SAText)),
     bindparam("techniques", type_=PGArray(SAText)),
+    bindparam("hidden", type_=PGArray(SAText)),
 )
 
 
@@ -65,6 +69,7 @@ def _concluded_statement(predicate: str) -> Any:
                ON m.investigation_kind = v.investigation_kind
               AND m.investigation_id = v.investigation_id
         WHERE v.investigation_kind = 'hunt' AND ({predicate})
+          AND NOT (v.investigation_id = ANY(CAST(:hidden AS text[])))
         ORDER BY v.concluded_at DESC, v.id DESC
         LIMIT :cap
         """).bindparams(*_ARRAY_PARAMS)
@@ -98,11 +103,37 @@ def _iso(value: Any) -> Any:
     return value.replace("+00:00", "Z") if isinstance(value, str) else value
 
 
+def _hidden_hunts(session: Session) -> List[str]:
+    """Hunts whose run is on a case the caller can't read (#4717): the Distil
+    marker -> run -> trigger_context.case_id join gaps._unreadable_runs uses.
+    Excluded in the statement, so the cap counts only what is shown."""
+    from core.auth.permissions import case_read_clause
+
+    return list(
+        session.scalars(
+            select(EpisodicDistilMarker.investigation_id)
+            .join(
+                WorkflowRun,
+                WorkflowRun.run_id == cast(EpisodicDistilMarker.origin_run_id, String),
+            )
+            .join(Case, Case.case_id == WorkflowRun.trigger_context["case_id"].astext)
+            .where(
+                EpisodicDistilMarker.investigation_kind == "hunt", ~case_read_clause()
+            )
+        )
+    )
+
+
 def _concluded(
     session: Session, keys: Sequence[str], techniques: Sequence[str]
 ) -> List[Row]:
     statement = _CONCLUDED[(bool(keys), bool(techniques))]
-    params = {"keys": list(keys), "techniques": list(techniques), "cap": LIST_RUNS_MAX}
+    params = {
+        "keys": list(keys),
+        "techniques": list(techniques),
+        "hidden": _hidden_hunts(session),
+        "cap": LIST_RUNS_MAX,
+    }
     return [
         {
             "investigation_id": row["investigation_id"],
@@ -179,7 +210,10 @@ def _in_flight(
     hits: List[Row] = []
     for status in IN_FLIGHT_STATUSES:
         for run in runs.list_runs(
-            workflow_id=THREAT_HUNT_WORKFLOW_ID, status=status, limit=LIST_RUNS_MAX
+            workflow_id=THREAT_HUNT_WORKFLOW_ID,
+            status=status,
+            limit=LIST_RUNS_MAX,
+            readable=True,
         ):
             hit = _in_flight_match(run, keys, techniques)
             if hit is not None:

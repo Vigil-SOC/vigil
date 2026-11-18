@@ -683,9 +683,9 @@ def _loglm_flags(session: Any, technique: str) -> Dict[str, Any]:
 
 def _earlier_hunts(session: Any, technique: str) -> List[Dict[str, Any]]:
     """Concluded hunts on ``technique``, newest first, one per hunt with each
-    hypothesis outcome. A hunt whose run the caller can't read is left out."""
+    hypothesis outcome. A hunt whose run the caller can't read is left out by
+    ``list_prior_hunts`` itself."""
     from core.memory.prior_hunts import list_prior_hunts
-    from core.workflows.workflow_run_service import run_hidden
 
     hunts: Dict[str, Dict[str, Any]] = {}
     skipped: Set[str] = set()
@@ -694,12 +694,11 @@ def _earlier_hunts(session: Any, technique: str) -> List[Dict[str, Any]]:
             continue
         hunt = hunts.get(row["investigation_id"])
         if hunt is None:
-            run_id = row["origin_run_id"]
-            if len(hunts) == EARLIER_HUNTS or (run_id and run_hidden(session, run_id)):
+            if len(hunts) == EARLIER_HUNTS:
                 skipped.add(row["investigation_id"])
                 continue
             hunt = hunts[row["investigation_id"]] = {
-                "origin_run_id": run_id,
+                "origin_run_id": row["origin_run_id"],
                 "concluded_at": row["concluded_at"],
                 "outcomes": [],
             }

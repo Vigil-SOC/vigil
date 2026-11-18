@@ -144,14 +144,26 @@ def _statement(
 # Restricted cases (#4358): an entry keyed to a case that names any reader is
 # offered only to a read on that same case (``:own_case``). Not the read rule:
 # a built-in reader is no exception, and memory not keyed to a case is unaffected.
+# A hunt's entries follow the case its run was on (#4717): Distil marker ->
+# origin run -> trigger_context.case_id, the join gaps._unreadable_runs uses.
 # Applied to the total too, so the dropped count says nothing about such entries.
-_OFFERED = """NOT ({alias}.investigation_kind = 'case'
-    AND {alias}.investigation_id IS DISTINCT FROM CAST(:own_case AS text)
+_RESTRICTED_CASE = """(coalesce(cardinality(rc.reader_principal_ids), 0) > 0
+               OR coalesce(cardinality(rc.reader_team_ids), 0) > 0)"""
+_OFFERED = f"""NOT ({{alias}}.investigation_kind = 'case'
+    AND {{alias}}.investigation_id IS DISTINCT FROM CAST(:own_case AS text)
     AND EXISTS (
         SELECT 1 FROM cases AS rc
-        WHERE rc.case_id = {alias}.investigation_id
-          AND (coalesce(cardinality(rc.reader_principal_ids), 0) > 0
-               OR coalesce(cardinality(rc.reader_team_ids), 0) > 0)))"""
+        WHERE rc.case_id = {{alias}}.investigation_id
+          AND {_RESTRICTED_CASE}))
+    AND NOT ({{alias}}.investigation_kind = 'hunt'
+    AND EXISTS (
+        SELECT 1 FROM episodic_distil_markers AS hm
+        JOIN workflow_runs AS hr ON hr.run_id = CAST(hm.origin_run_id AS text)
+        JOIN cases AS rc ON rc.case_id = hr.trigger_context->>'case_id'
+        WHERE hm.investigation_kind = 'hunt'
+          AND hm.investigation_id = {{alias}}.investigation_id
+          AND rc.case_id IS DISTINCT FROM CAST(:own_case AS text)
+          AND {_RESTRICTED_CASE}))"""
 
 # Sightings carry the key on a column. Verdicts and Gaps name their subjects in
 # an array -- typically one to three entities, not the 38 to 76 their evidence
