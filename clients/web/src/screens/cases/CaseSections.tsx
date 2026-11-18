@@ -467,6 +467,14 @@ function threatLevel(i: CaseIOC) {
   if (t === 'low') return { label: 'Low Risk', cls: 'sev low' }
   return { label: 'Unknown', cls: 'status open' }
 }
+// What intake does with an indicator; the backend decides, this only words it.
+const INTAKE_LABEL: Record<string, string> = {
+  attach: 'Joins alerts',
+  same_title: 'Joins alerts of the same feed and title',
+  link: 'Links related Cases',
+  none: 'Not used for joining',
+}
+
 export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: () => void }) {
   const { data, phase, error, reload } = useResource<CaseIOC[]>(caseId, () =>
     casesApi.getIOCs(caseId).then((r) => r.data.iocs),
@@ -532,6 +540,7 @@ export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: ()
         </div>
       )}
       {writeError && <p role="alert" className="text-crit">{writeError}</p>}
+      {iocs.some((i) => i.linked === false) && <p className="muted">New alerts won’t join this Case on indicators marked “Not linked yet” until the index catches up.</p>}
       {phase === 'loading' && <MiniLoading icon="alert" title="Loading IOCs…" />}
       {phase === 'error' && <p className="muted">Couldn’t load IOCs: {error}</p>}
       {phase === 'ready' && iocs.length === 0 && <MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." />}
@@ -539,7 +548,7 @@ export function IOCsCard({ caseId, onWritten }: { caseId: string; onWritten?: ()
         <ul className="side-rows">
           {iocs.map((i) => {
             const value = i.value || ''
-            const meta = [(i.ioc_type || '').toUpperCase(), threatLevel(i).label, i.source || 'Manual', fmtDT(i.first_seen ?? undefined)].filter(Boolean).join(' · ')
+            const meta = [(i.ioc_type || '').toUpperCase(), threatLevel(i).label, i.is_false_positive ? '' : INTAKE_LABEL[i.intake || ''], i.linked === false ? 'Not linked yet' : '', i.source || 'Manual', fmtDT(i.first_seen ?? undefined)].filter(Boolean).join(' · ')
             return (
               <li key={i.ioc_id ?? value} title={i.context || undefined}>
                 <div className="side-row-main mono" title={value}>{value}</div>

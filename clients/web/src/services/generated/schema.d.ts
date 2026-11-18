@@ -2714,8 +2714,7 @@ export interface paths {
          * Get Iocs
          * @description Get all IOCs for case: the ones recorded, then those its linked alerts name.
          *
-         *     The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
-         *     one already recorded is not listed twice.
+         *     Each says what intake does with it and whether the index holds it yet.
          */
         get: operations["get_api_cases_case_id_iocs"];
         put?: never;
@@ -9025,8 +9024,7 @@ export interface paths {
          * Get Iocs
          * @description Get all IOCs for case: the ones recorded, then those its linked alerts name.
          *
-         *     The alerts' are read from their ``entity_context`` and carry no ``ioc_id``;
-         *     one already recorded is not listed twice.
+         *     Each says what intake does with it and whether the index holds it yet.
          */
         get: operations["get_api_v1_cases_case_id_iocs"];
         put?: never;
@@ -11131,6 +11129,8 @@ export interface components {
             enrichment_data?: unknown | null;
             /** First Seen */
             first_seen?: string | null;
+            /** Intake */
+            intake?: string | null;
             /** Ioc Id */
             ioc_id?: number | null;
             /** Ioc Type */
@@ -11141,6 +11141,8 @@ export interface components {
             is_false_positive?: boolean | null;
             /** Last Seen */
             last_seen?: string | null;
+            /** Linked */
+            linked?: boolean | null;
             /** Reputation Score */
             reputation_score?: number | null;
             /** Source */
