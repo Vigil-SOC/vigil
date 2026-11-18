@@ -1,0 +1,136 @@
+# .github/workflows/beta-cleanup.yml
+#
+# Weekly cleanup of the daily betas that beta.yml publishes to ghcr.io. Deletes
+# beta images (X.Y.Z-beta.DATE.RUN) older than 14 days from the four packages,
+# with everything that belongs to each: the index, its platform and buildx
+# attestation manifests, and its cosign signature (an index under the tag
+# sha256-<index digest>, plus the bundle manifests it lists).
+#
+# Never deletes the image the "beta" tag points to, a version carrying any
+# non-beta tag, or a manifest that a kept image also lists. Never selects by
+# "untagged": a multi-arch image is an index plus untagged manifests, so that
+# would break every image, stable ones included.
+#
+# GITHUB_TOKEN can delete versions only of packages where this repo has the
+# Admin role under the package's "Manage Actions access" settings (an org admin
+# sets that once per package). Manual runs default to a dry run that deletes
+# nothing; the scheduled run deletes.
+
+name: Beta cleanup
+
+on:
+  schedule:
+    - cron: "0 10 * * 0"   # Sundays, well after beta.yml's 06:00 run has finished
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print what would be deleted and delete nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A run racing another would walk versions the other is deleting.
+concurrency:
+  group: beta-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Clean up ${{ matrix.package }}
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # delete package versions
+    strategy:
+      fail-fast: false         # one package missing the Admin grant must not block the rest
+      matrix:
+        package: [vigil-backend, vigil-daemon, vigil-agent, vigil-mcp-runner]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PKG: ${{ matrix.package }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old betas
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/vigil-soc/$PKG
+          api=orgs/Vigil-SOC/packages/container/$PKG/versions
+          beta_re='^[0-9]+\.[0-9]+\.[0-9]+-beta\.'
+          echo "$PKG: dry run = $DRY_RUN"
+
+          versions=$(gh api --paginate "$api?per_page=100" | jq -s 'add // []')
+
+          # Digests of every manifest an index lists; none for a plain image. "not found" is an
+          # error unless missing-ok is passed: only a signature tag may be absent (unsigned image).
+          # A digest that can't be read would drop what it lists from the keep set.
+          children() {
+            local out
+            if out=$(docker buildx imagetools inspect --raw "$1" 2>&1); then
+              jq -r '.manifests[]?.digest' <<< "$out"
+            elif [ "${2:-}" != missing-ok ] || ! grep -qi 'not found' <<< "$out"; then
+              echo "::error::could not read $1: $out" >&2; return 1
+            fi
+          }
+
+          # Old betas: only beta tags (so never the "beta" tag or a stable one), created over 14 days ago.
+          selected=$(jq -r --arg re "$beta_re" '
+            (now - 14 * 86400) as $cut
+            | .[] | select((.created_at | fromdateiso8601) < $cut)
+            | select((.metadata.container.tags // []) as $t | ($t | length) > 0 and all($t[]; test($re)))
+            | .name' <<< "$versions")
+          [ -n "$selected" ] || { echo "$PKG: no beta older than 14 days; nothing to do"; exit 0; }
+
+          # Everything that goes with each selected beta, children before its index: "<digest> <role>".
+          doomed=$(mktemp)
+          for index in $selected; do
+            sig_tag=sha256-${index#sha256:}
+            sig=$(jq -r --arg t "$sig_tag" '.[] | select((.metadata.container.tags // []) | index($t)) | .name' <<< "$versions")
+            bundles=$(children "$repo:$sig_tag" missing-ok)   # assigned first so a failure stops the run
+            manifests=$(children "$repo@$index")
+            {
+              for d in $bundles; do echo "$d signature bundle"; done
+              [ -z "$sig" ] || echo "$sig signature index"
+              for d in $manifests; do echo "$d platform/attestation manifest"; done
+              echo "$index beta index"
+            } >> "$doomed"
+          done
+
+          # Keep set: every other tagged version and what it lists. Anything shared with it stays.
+          keep=$(mktemp)
+          kept=$(jq -r --arg doomed "$(awk '{print $1}' "$doomed")" '
+            ($doomed | split("\n")) as $gone
+            | .[] | .name as $n | select(((.metadata.container.tags // []) | length) > 0 and ($gone | index($n) | not)) | $n' <<< "$versions")
+          for d in $kept; do
+            echo "$d" >> "$keep"
+            children "$repo@$d" >> "$keep"
+          done
+
+          n=0
+          while read -r d role; do
+            grep -qxF "$d" "$keep" && { echo "keep    $d ($role, shared with a kept image)"; continue; }
+            id=$(jq -r --arg d "$d" '.[] | select(.name == $d) | .id' <<< "$versions")
+            [ -n "$id" ] || { echo "::warning::no version for $d ($role); skipping"; continue; }
+            n=$((n + 1))
+            if [ "$DRY_RUN" != false ]; then   # anything but an explicit false is a dry run
+              echo "would delete  $d  version $id  ($role)"
+            elif err=$(gh api -X DELETE "$api/$id" 2>&1); then
+              echo "deleted       $d  version $id  ($role)"
+            else
+              echo "$err"
+              if grep -q 'HTTP 403' <<< "$err"; then
+                echo "::error::403 deleting $PKG versions: this repo needs the Admin role under the package's \"Manage Actions access\" settings"
+              fi
+              exit 1
+            fi
+          done < <(awk '!seen[$1]++' "$doomed")   # first occurrence wins, so order is kept
+          echo "$PKG: $n version(s) of $(grep -c 'beta index' "$doomed" || true) old beta(s) $([ "$DRY_RUN" != false ] && echo 'would be deleted' || echo deleted)"
