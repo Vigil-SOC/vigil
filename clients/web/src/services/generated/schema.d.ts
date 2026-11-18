@@ -6666,6 +6666,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/skills/repo/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan Repo
+         * @description Scan the picked skills of a git repo at the commit the preview read, installing nothing.
+         *
+         *     Each skill the hold rule holds is filed as a Finding (data_source
+         *     ``skill-scan``); a rescan of the same content files no second one. The scan
+         *     runs to the end, Findings included, even if the client stops waiting. 409
+         *     when the repo has moved since the preview.
+         */
+        post: operations["post_api_skills_repo_scan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills/upload": {
         parameters: {
             query?: never;
@@ -15523,6 +15548,11 @@ export interface components {
             description: string;
             /** Folder */
             folder: string;
+            /**
+             * Installed
+             * @default false
+             */
+            installed: boolean;
             /** Name */
             name: string;
             /** Problem */
@@ -15554,6 +15584,48 @@ export interface components {
         SkillRepoRequest: {
             /** Source */
             source: string;
+        };
+        /** SkillRepoScan */
+        SkillRepoScan: {
+            /** Commit */
+            commit: string;
+            /** Label */
+            label: string;
+            /** Scan Mode */
+            scan_mode: string;
+            /** Skills */
+            skills: components["schemas"]["SkillRepoScanned"][];
+        };
+        /** SkillRepoScanned */
+        SkillRepoScanned: {
+            /** Error */
+            error?: string | null;
+            /** Finding Id */
+            finding_id?: string | null;
+            /**
+             * Finding New
+             * @default false
+             */
+            finding_new: boolean;
+            /** Folder */
+            folder: string;
+            /** Held */
+            held?: boolean | null;
+            /** Max Severity */
+            max_severity?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Reasons
+             * @default []
+             */
+            reasons: components["schemas"]["SkillScanFinding"][];
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Score */
+            score?: number | null;
+            /** Status */
+            status: string;
         };
         /** SkillResponse */
         SkillResponse: {
@@ -28737,6 +28809,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillRepoPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills_repo_scan: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRepoInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRepoScan"];
                 };
             };
             /** @description Validation Error */
