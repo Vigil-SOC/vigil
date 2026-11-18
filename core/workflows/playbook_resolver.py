@@ -153,6 +153,13 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
     "intel_entities": (Candidate("opencti", ("opencti_search_entities",)),),
     "intel_relationships": (Candidate("opencti", ("opencti_get_related",)),),
+    # One account read from the connected identity provider: state, department,
+    # manager. Reads only -- aad_disable_user is never a candidate, so never bound.
+    # Okta's names are fctr-id/okta-mcp-server's at the tag mcp-config.json pins.
+    "identity_lookup": (
+        Candidate("azure-ad", ("aad_get_user",)),
+        Candidate("okta", ("get_okta_user", "list_okta_users")),
+    ),
 }
 
 
@@ -193,6 +200,8 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
             "intel_relationships",
         )
     },
+    # One account from an external API; the row cap allows a short user search.
+    "identity_lookup": {"timeout_ms": 30_000, "max_rows": 20},
 }
 
 
@@ -558,6 +567,8 @@ HUNT_CAPABILITIES = (
     "intel_indicator",
     "intel_entities",
     "intel_relationships",
+    # The account a hunt is about, from the identity provider when one is connected.
+    "identity_lookup",
 )
 
 # Needs a hunt holds when the deployment answers them and goes without otherwise,
@@ -570,6 +581,9 @@ OPTIONAL_HUNT_CAPABILITIES = (
     "intel_indicator",
     "intel_entities",
     "intel_relationships",
+    # No identity provider is no blind spot on the estate: the account's existence
+    # goes to open questions instead (the insider-threat skill).
+    "identity_lookup",
 )
 
 # A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls

@@ -28,6 +28,7 @@ const UNBOUND_IN_WORDS: Readonly<Record<string, string>> = {
   intel_indicator: "No threat-intel platform is connected, so the hunt could not read an indicator's detail",
   intel_entities: "No threat-intel platform is connected, so the hunt could not look up actors, malware or campaigns",
   intel_relationships: "No threat-intel platform is connected, so the hunt could not follow what an actor or malware is linked to",
+  identity_lookup: "No identity provider is connected, so the hunt could not look the account up",
 };
 
 export function unboundInWords(capability: string): string {
