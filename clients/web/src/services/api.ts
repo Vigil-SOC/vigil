@@ -1589,6 +1589,12 @@ export const workflowApi = {
 export type Ceiling = Schema<'CeilingResponse'>
 export type ToolClass = Schema<'ToolClassEntry'>
 export type EffectClass = NonNullable<ToolClass['effect_class']>
+// What Vigil holds from Entra, Okta and Falcon (#4743): read only, findings.read.
+export type EntityFacts = Schema<'EntityFactsResponse'>
+export const entityFactsApi = {
+  get: (limit = 100) => api.get<EntityFacts>('/v1/entity-facts', { params: { limit } }),
+}
+
 // The rule-rollout limits (#4058): promotion cap, days in shadow, hits a day. The SIEM
 // Quiet/Noisy/Silent thresholds ride along read only; they are edited on the integration.
 export type RolloutLimits = Schema<'RolloutLimitsResponse'>

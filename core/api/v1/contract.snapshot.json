@@ -3415,6 +3415,215 @@
         "title": "EntityContext",
         "type": "object"
       },
+      "EntityFactFailure": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "reason"
+        ],
+        "title": "EntityFactFailure",
+        "type": "object"
+      },
+      "EntityFactRow": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "entity_key": {
+            "title": "Entity Key",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "fetched_at": {
+            "format": "date-time",
+            "title": "Fetched At",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "title": "Fields",
+            "type": "object"
+          },
+          "hit_count": {
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_key",
+          "source",
+          "fetched_at",
+          "expires_at",
+          "hit_count"
+        ],
+        "title": "EntityFactRow",
+        "type": "object"
+      },
+      "EntityFactSource": {
+        "properties": {
+          "fetched": {
+            "title": "Fetched",
+            "type": "integer"
+          },
+          "hit_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit Rate"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityFactFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "newest_fetched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Fetched At"
+          },
+          "oldest_fetched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Fetched At"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "served": {
+            "title": "Served",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "unavailable": {
+            "title": "Unavailable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "label",
+          "rows",
+          "served",
+          "fetched",
+          "unavailable"
+        ],
+        "title": "EntityFactSource",
+        "type": "object"
+      },
+      "EntityFactsResponse": {
+        "properties": {
+          "defaults": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Defaults",
+            "type": "object"
+          },
+          "limits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Limits",
+            "type": "object"
+          },
+          "now": {
+            "format": "date-time",
+            "title": "Now",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EntityFactRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/EntityFactSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "window_hours": {
+            "title": "Window Hours",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "now",
+          "window_hours",
+          "limits",
+          "defaults",
+          "sources",
+          "rows_total",
+          "rows"
+        ],
+        "title": "EntityFactsResponse",
+        "type": "object"
+      },
       "EvidenceAdd": {
         "description": "Add evidence to case.",
         "properties": {
@@ -4085,6 +4294,30 @@
           "iocs"
         ],
         "title": "IOCBulkAdd",
+        "type": "object"
+      },
+      "IOCMark": {
+        "description": "Mark or clear an indicator as a false positive on this case.\n\nNamed by type and value, not id: an indicator a linked alert names has none.",
+        "properties": {
+          "ioc_type": {
+            "title": "Ioc Type",
+            "type": "string"
+          },
+          "is_false_positive": {
+            "default": true,
+            "title": "Is False Positive",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ioc_type",
+          "value"
+        ],
+        "title": "IOCMark",
         "type": "object"
       },
       "MergeRequest": {
@@ -5135,6 +5368,7 @@
                 "type": "null"
               }
             ],
+            "description": "Per-run budgets and runtime limits. The dollar ceiling (budgets.max_cost_usd) is checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes.",
             "title": "Overrides"
           },
           "playbook": {
@@ -9324,6 +9558,74 @@
         ]
       }
     },
+    "/api/v1/cases/{case_id}/iocs/false-positive": {
+      "put": {
+        "operationId": "put_api_v1_cases_case_id_iocs_false-positive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IOCMark"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseIOCListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Ioc False Positive",
+        "tags": [
+          "cases"
+        ]
+      }
+    },
     "/api/v1/cases/{case_id}/merge": {
       "post": {
         "operationId": "post_api_v1_cases_case_id_merge",
@@ -9447,6 +9749,67 @@
         "summary": "Get Case Rules",
         "tags": [
           "cases"
+        ]
+      }
+    },
+    "/api/v1/entity-facts": {
+      "get": {
+        "operationId": "get_api_v1_entity-facts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityFactsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Entity Facts",
+        "tags": [
+          "entity-facts"
         ]
       }
     },

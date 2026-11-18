@@ -4784,6 +4784,26 @@
       color: var(--tx2);
    }
    .lim-foot a { color: var(--ac); text-decoration: none; }
+
+   /* Settings › Entity facts (#4743): read-only, on the limits rows' pattern */
+   .ef-sub {
+      margin: 0 0 4px;
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--tx0);
+   }
+   /* IDs, numbers and times stay on one line; names and kinds wrap (DESIGN.md §7) */
+   .ef-table th,
+   .ef-table td.mono,
+   .ef-table td.num { white-space: nowrap; }
+   .ef-table td.ef-src { min-width: 80px; }
+   .ef-table td.ef-failure { min-width: 110px; }
+   .ef-failure .mono { display: block; white-space: nowrap; }
+   .ef-table .num { text-align: right; }
+   .ef-table td.ef-key { white-space: normal; overflow-wrap: anywhere; min-width: 130px; }
+   .ef-table td.ef-fields { white-space: normal; color: var(--tx2); min-width: 110px; }
+   .ef-fail { color: var(--fair); font-weight: 600; }
+   .ef-val { justify-self: end; font-size: 13px; color: var(--tx0); }
    .lim-foot a:hover { text-decoration: underline; }
 
    /* Tool-class cards and their segment: tokens.json (meta 12px, label 12px/600) */

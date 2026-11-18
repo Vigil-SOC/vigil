@@ -127,6 +127,7 @@ the v1 functions, staying in-router with the literal siblings.
 | agents     | done          | 4 / 4      | operator manifests on `custom_agents` (#4023): list, get, PUT (create or replace, checked by agent-serve's `/plugins/check`), delete. Additive: not legacy-mounted, `/api/agents` is the console's catalogue |
 | analytics  | deferred      | —          | RULED: not frozen now (routes exist but shape will churn)     |
 | cases/metrics | done       | 6 / 7      | all 7 under `/api/v1/cases/metrics`; 6 frozen, 1 marked `x-vigil-beta` (excluded from the contract snapshot). Frozen: by-priority, by-status, breached, mttr, mttd, summary |
+| entity-facts | done        | 1 / 1      | what Vigil holds from Entra, Okta and Falcon (#4743): read only, `findings.read`; restricted-case rows filtered out of rows and counts. Not legacy-mounted: no older path |
 | verdicts   | deferred      | build      | no routes exist yet                          |
 | learning   | deferred      | build      | no routes exist yet                          |
 

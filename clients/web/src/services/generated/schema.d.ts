@@ -9184,6 +9184,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/entity-facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Entity Facts */
+        get: operations["get_api_v1_entity-facts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/findings": {
         parameters: {
             query?: never;
@@ -12591,6 +12608,87 @@ export interface components {
             source_evidence?: components["schemas"]["SourceEvidence"] | null;
         } & {
             [key: string]: unknown;
+        };
+        /** EntityFactFailure */
+        EntityFactFailure: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Reason */
+            reason: string;
+        };
+        /** EntityFactRow */
+        EntityFactRow: {
+            /** Case Id */
+            case_id?: string | null;
+            /** Entity Key */
+            entity_key: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Fetched At
+             * Format: date-time
+             */
+            fetched_at: string;
+            /** Fields */
+            fields?: {
+                [key: string]: unknown;
+            };
+            /** Hit Count */
+            hit_count: number;
+            /** Source */
+            source: string;
+        };
+        /** EntityFactSource */
+        EntityFactSource: {
+            /** Fetched */
+            fetched: number;
+            /** Hit Rate */
+            hit_rate?: number | null;
+            /** Label */
+            label: string;
+            last_failure?: components["schemas"]["EntityFactFailure"] | null;
+            /** Newest Fetched At */
+            newest_fetched_at?: string | null;
+            /** Oldest Fetched At */
+            oldest_fetched_at?: string | null;
+            /** Rows */
+            rows: number;
+            /** Served */
+            served: number;
+            /** Source */
+            source: string;
+            /** Unavailable */
+            unavailable: number;
+        };
+        /** EntityFactsResponse */
+        EntityFactsResponse: {
+            /** Defaults */
+            defaults: {
+                [key: string]: number;
+            };
+            /** Limits */
+            limits: {
+                [key: string]: number;
+            };
+            /**
+             * Now
+             * Format: date-time
+             */
+            now: string;
+            /** Rows */
+            rows: components["schemas"]["EntityFactRow"][];
+            /** Rows Total */
+            rows_total: number;
+            /** Sources */
+            sources: components["schemas"]["EntityFactSource"][];
+            /** Window Hours */
+            window_hours: number;
         };
         /** EraseIn */
         EraseIn: {
@@ -33291,6 +33389,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaseRulesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_v1_entity-facts": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityFactsResponse"];
                 };
             };
             /** @description Validation Error */
