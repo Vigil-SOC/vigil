@@ -2147,6 +2147,7 @@ def send_directive(
     )
     from core.auth.tool_principal import current_claims
     from core.storage.models import User
+    from core.workflows.workflow_run_service import run_hidden
 
     # Before anything else: a checkpoint is answered on the Approvals screen.
     if kind in DECISION_KINDS:
@@ -2170,6 +2171,9 @@ def send_directive(
             user_id = (
                 session.query(User.user_id).filter(User.username == username).scalar()
             )
+            # A run on a Case the caller can't read looks like no run at all.
+            if run_hidden(session, run_id):
+                return {"error": f"no such run: {run_id}"}
             try:
                 refuse_unpermitted(session, run_id, kind, fields, user_id, principal)
                 directive = enqueue_directive(
