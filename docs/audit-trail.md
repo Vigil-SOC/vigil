@@ -48,3 +48,18 @@ If the hold also fails, the application log is the only record of that entry. Vi
 Vigil has no emergency account, and no account with a set end date. An account made for temporary access stays active until someone deactivates or deletes it, or until the dormancy rule deactivates it.
 
 Dormancy is `dormancy_days` on the session policy. It defaults to 35 and can be turned off. While it is on, a person's account is deactivated after that many days with no newer activity. Activity is the latest of the last sign-in, the last use of a personal MCP token, the account's creation, and a floor. The floor is when the upgrade that added dormancy ran, for an account that already existed, or the account's last reactivation. A failed sign-in does not count as activity. A service account is not deactivated for being idle. The sweep warns the account's holder and the managers first, then deactivates once that warning has been out for the warning window (7 days, or less when the period is shorter). For 7 days after a restore settles, the sweep warns and deactivates nobody. The last person who can manage roles is not deactivated for dormancy; the managers are told instead. A password's maximum age, and a token's lifetime, end that password or that token. They do not end the account.
+
+## OAuth on the MCP surface
+
+With OAuth on (see [OAuth on the MCP surface](mcp-oauth.md)), the authorization server writes these entries. Each one is filtered as the `oauth` area in Settings › Audit.
+
+| Action | Shown as | Written when | Actor |
+|---|---|---|---|
+| `oauth.client_registered` | Registered an OAuth client (name) | A client registers at `/register`. Carries the `client_id`, the name and the redirect URIs. The caller's address sits beside the payload. | none (registration is anonymous) |
+| `oauth.client_registration_refused` | Refused an OAuth client's redirect URI …; allow it in mcp.oauth_redirect_allowlist | A registration names a redirect URI that is neither loopback nor on the allowlist. Carries the `redirect_uri` exactly as sent; allowing that string lets the client register. | none |
+| `oauth.consent_granted` | Approved an app's request to connect | A person approves on the consent page. | that person |
+| `oauth.consent_denied` | Denied an app's request to connect | A person denies on the consent page. | that person |
+| `oauth.grant_issued` | Connected an app | The client exchanges its code and the grant is created. Carries the grant's `credential_id`, the `client_id` and the expiry. | the person who approved |
+| `oauth.refresh_reuse` | Ended an app's connection: an old refresh token was presented again | A refresh token that was already rotated comes back. The grant ends and its holder is told. | system |
+
+A grant ended any other way is the ordinary token entry: `credential.revoked` (from the tokens list, or with reason "by the app" when the client calls `/revoke`), `credential.expired`, or the unused-token rule's revocation.

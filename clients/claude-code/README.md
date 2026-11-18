@@ -60,6 +60,24 @@ claude plugin install vigil-soc@vigil
 
 Claude Code then asks for two values: your Vigil's address (for example `http://localhost:6987`, without `/mcp`) and the credential. The credential is marked sensitive, so Claude Code keeps it in the platform's secure store. No file in the plugin holds an address or a secret. Change either later with `/plugin` → vigil-soc → configure, then run `/vigil-soc:status`.
 
+## Sign in with OAuth instead of a token
+
+If your Vigil has OAuth turned on for the surface ([OAuth on the MCP surface](../../docs/mcp-oauth.md)), Claude Code can connect from the URL alone: it registers, opens Vigil's consent page in your browser, and keeps the tokens it is given. There is no credential to mint or paste.
+
+The plugin's entry always sends the credential as an `Authorization` header, and Claude Code does not attempt OAuth for a server whose `Authorization` header is set, even to an empty value. So for OAuth:
+
+1. Install the plugin as above for its skills, and leave the credential unset. Without it, the plugin starts no server of its own.
+2. Add Vigil's server yourself, without a header, and sign in:
+
+   ```bash
+   claude mcp add --transport http vigil https://vigil.example.com/mcp
+   claude mcp login vigil   # or /mcp in a session → vigil → Authenticate
+   ```
+
+3. Approve "Connect Claude Code (vigil)?" on Vigil's consent page. `claude mcp list` then shows `vigil` as connected, and the skills use it.
+
+The connection appears in Vigil under your API tokens, marked "Connected app", and ends when you revoke it there. A personal token remains the way in for headless and scripted use.
+
 ## What it cannot do
 
 **Approve from the session.** Over `/mcp`, `approve_action` leaves the action pending, and `send_directive` with `approve`, `reject` or `benign` does not answer a run's checkpoint. Approving happens in Vigil's Approvals. The credential is a `vgl_api_` API token, though, and it also reaches Vigil's HTTP API as its holder: if that person holds `ai_decisions.approve`, `POST /api/v1/approvals/{id}/approve` with the token approves the action. Four-eyes still applies. A proposal from the session (`create_approval_action`) is recorded as that person's, so with four-eyes on, someone else must approve it. Rejecting works from the session.
