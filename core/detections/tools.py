@@ -307,15 +307,20 @@ class SecurityDetectionsTools:
     async def lint_detections(
         self,
         rule_yaml: Optional[str] = None,
-        source_path: Optional[str] = None,
+        **_kwargs: object,
     ) -> Dict:
-        """Reject Sigma rules keyed to a specific IP, host, user, or subnet.
+        """Reject a Sigma rule keyed to a specific IP, host, user, or subnet.
 
-        Pass a rule YAML string or a directory of ``.yml`` files. Sync lints
+        Lints one rule YAML string; any other argument is ignored. Sync lints
         every imported repo and local rule the same way (checks.lint) without
         blocking it, and a failing one is left out of coverage counts.
         """
-        return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
+        if not (rule_yaml or "").strip():
+            return {
+                "error": "Pass rule_yaml: the Sigma rule YAML to lint",
+                "passed": False,
+            }
+        return lint_sigma(rule_yaml=rule_yaml)
 
     async def check_detection_candidate(
         self,

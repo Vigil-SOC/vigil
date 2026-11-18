@@ -16,7 +16,6 @@ from __future__ import annotations
 import fnmatch
 import ipaddress
 import re
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import yaml
@@ -359,60 +358,11 @@ _SID = re.compile(r"^S-\d+(-\d+)+$", re.IGNORECASE)
 _PERSON_USER = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{1,64}$")
 
 
-def lint_sigma(
-    *,
-    rule_yaml: Optional[str] = None,
-    source_path: Optional[str] = None,
-) -> dict[str, Any]:
-    """Lint a Sigma YAML string, or every ``.yml`` under a source path."""
-    if (rule_yaml is None) == (source_path is None):
-        return {
-            "error": "Pass exactly one of rule_yaml or source_path",
-            "passed": False,
-        }
-    if source_path is not None:
-        return _lint_source(Path(source_path))
-    return _lint_yaml(rule_yaml or "")
-
-
-def _lint_source(root: Path) -> dict[str, Any]:
-    if not root.exists():
-        return {"error": f"Source path does not exist: {root}", "passed": False}
-
-    files = [root] if root.is_file() else sorted(root.rglob("*.yml"))
-    if root.is_file() and root.suffix.lower() != ".yml":
-        return {"error": "Source file must be a .yml Sigma rule", "passed": False}
-
-    results: list[dict[str, Any]] = []
-    scanned = 0
-    for path in files:
-        if path.is_dir() or path.suffix.lower() != ".yml":
-            continue
-        scanned += 1
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            results.append(
-                {
-                    "file": str(path),
-                    "passed": False,
-                    "error": str(exc),
-                }
-            )
-            continue
-        report = _lint_yaml(text)
-        report["file"] = str(path)
-        if not report.get("passed"):
-            results.append(report)
-
-    rejected = len(results)
-    return {
-        "passed": rejected == 0,
-        "rules_scanned": scanned,
-        "rules_rejected": rejected,
-        "results": results,
-        "rewrite_guidance": _REWRITE if rejected else None,
-    }
+def lint_sigma(*, rule_yaml: Optional[str] = None) -> dict[str, Any]:
+    """Lint one Sigma rule YAML string."""
+    if rule_yaml is None:
+        return {"error": "Pass rule_yaml: the Sigma rule YAML to lint", "passed": False}
+    return _lint_yaml(rule_yaml)
 
 
 def _lint_yaml(text: str) -> dict[str, Any]:
