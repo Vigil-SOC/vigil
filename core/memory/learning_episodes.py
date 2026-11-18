@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, exists, func, not_, or_, select, tuple_
+from sqlalchemy import String, and_, cast, exists, func, not_, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from core.agents.mcp_tools import MCPFailure
@@ -46,7 +46,7 @@ from core.detections.reconstruction import (
 )
 from core.detections.tools import get_security_detection_tools
 from core.memory.recall import attach_sources, gap_row, iso, verdict_row
-from core.storage.models import Case
+from core.storage.models import Case, WorkflowRun
 from core.storage.models.episodic import (
     EpisodicDistilMarker,
     EpisodicGap,
@@ -71,18 +71,31 @@ _COMPOSE_STATUSES: Tuple[str, ...] = ("completed", "failed")
 DEFAULT_LIMIT = 200
 
 # A restricted case's conclusions are offered only to runs on that case (#4358);
-# a window of what Vigil learned is no such run, so they are left out of it.
-_OPEN_CASE_ONLY = not_(
-    and_(
-        EpisodicDistilMarker.investigation_kind == "case",
-        exists().where(
-            Case.case_id == EpisodicDistilMarker.investigation_id,
-            or_(
-                func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
-                func.coalesce(func.cardinality(Case.reader_team_ids), 0) > 0,
+# a window of what Vigil learned is no such run, so they are left out of it. A
+# hunt run on such a case (its run's trigger_context.case_id) is too (#4717).
+_RESTRICTED = or_(
+    func.coalesce(func.cardinality(Case.reader_principal_ids), 0) > 0,
+    func.coalesce(func.cardinality(Case.reader_team_ids), 0) > 0,
+)
+_OPEN_CASE_ONLY = and_(
+    not_(
+        and_(
+            EpisodicDistilMarker.investigation_kind == "case",
+            exists().where(
+                Case.case_id == EpisodicDistilMarker.investigation_id, _RESTRICTED
             ),
-        ),
-    )
+        )
+    ),
+    not_(
+        and_(
+            EpisodicDistilMarker.investigation_kind == "hunt",
+            exists().where(
+                WorkflowRun.run_id == cast(EpisodicDistilMarker.origin_run_id, String),
+                Case.case_id == WorkflowRun.trigger_context["case_id"].astext,
+                _RESTRICTED,
+            ),
+        )
+    ),
 )
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")

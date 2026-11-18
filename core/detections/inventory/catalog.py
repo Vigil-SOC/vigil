@@ -226,6 +226,62 @@ def _change_row(c: Any) -> Dict[str, Any]:
     }
 
 
+# caught.py's label for a Verdict's evidence: "caught in Case <id> (proven, <trust>)"
+# or "caught in hunt <id> (...)"; a compose run's label names no Case.
+_CAUGHT_IN = re.compile(r"caught in (Case|hunt) (\S+) \([^)]*\)")
+_HIDDEN_CAUGHT = {
+    "case": "caught in a Case you cannot read",
+    "hunt": "caught in a hunt on a Case you cannot read",
+}
+
+
+def _caught_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Where a payload row holds a Caught reason: a caught change row itself, its
+    checks' Caught, or a deployed copy's own Caught."""
+    if row.get("check") == CAUGHT_CHECK:
+        return row
+    checks = row.get("checks")
+    held = (
+        checks.get(CAUGHT_CHECK) if isinstance(checks, dict) else row.get(CAUGHT_CHECK)
+    )
+    return held if isinstance(held, dict) else None
+
+
+def redact_caught(session: Any, rows: Iterable[Dict[str, Any]]) -> None:
+    """Each row's Caught reason as the reader may see it (#4718): one naming a Case,
+    or a hunt on a Case, the reader cannot read keeps its result, technique and day
+    but names neither. Rewrites the payload rows, never the stored checks."""
+    rows = list(rows)
+    runs: Dict[str, Tuple[str, str]] = {}
+    for row in rows:
+        reason = (_caught_of(row) or {}).get("reason")
+        if isinstance(reason, str) and (m := _CAUGHT_IN.search(reason)):
+            runs[reason] = (m.group(1).lower(), m.group(2))
+    if not runs:
+        return
+    from core.detections.gaps import _unreadable_runs
+
+    hidden = _unreadable_runs(
+        session,
+        [
+            {"investigation_kind": kind, "investigation_id": run_id}
+            for kind, run_id in set(runs.values())
+        ],
+    )
+    for row in rows:
+        held = _caught_of(row)
+        run = runs.get((held or {}).get("reason"))
+        if held is None or run not in hidden:
+            continue
+        new = _CAUGHT_IN.sub(_HIDDEN_CAUGHT[run[0]], held["reason"], count=1)
+        if held is row:
+            row["reason"] = new
+        elif isinstance(row.get("checks"), dict):
+            row["checks"] = {**row["checks"], CAUGHT_CHECK: {**held, "reason": new}}
+        else:
+            row[CAUGHT_CHECK] = {**held, "reason": new}
+
+
 def _latest_join():
     return and_(
         DetectionRuleVersion.rule_id == DetectionRule.id,
@@ -404,7 +460,9 @@ def recent_changes(rule_id: int, limit: int = RECENT_CHANGES) -> List[Dict[str, 
             .order_by(CHANGE.changed_at.desc(), CHANGE.id.desc())
             .limit(limit)
         ).all()
-        return [_change_row(c) for c in rows]
+        changes = [_change_row(c) for c in rows]
+        redact_caught(session, changes)
+        return changes
 
 
 def _tally(bucket: Dict[str, int], result: Optional[str], count: int) -> None:
@@ -628,6 +686,7 @@ def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
         )
         for detection in detections:
             detection["stage"] = stages.get(detection["rule_id"])
+        redact_caught(session, detections)
         deployed = _repo_deployed(session, declares)
         loglm = _loglm_flags(session, technique)
         earlier = _earlier_hunts(session, technique)
@@ -683,9 +742,9 @@ def _loglm_flags(session: Any, technique: str) -> Dict[str, Any]:
 
 def _earlier_hunts(session: Any, technique: str) -> List[Dict[str, Any]]:
     """Concluded hunts on ``technique``, newest first, one per hunt with each
-    hypothesis outcome. A hunt whose run the caller can't read is left out."""
+    hypothesis outcome. A hunt whose run the caller can't read is left out by
+    ``list_prior_hunts`` itself."""
     from core.memory.prior_hunts import list_prior_hunts
-    from core.workflows.workflow_run_service import run_hidden
 
     hunts: Dict[str, Dict[str, Any]] = {}
     skipped: Set[str] = set()
@@ -694,12 +753,11 @@ def _earlier_hunts(session: Any, technique: str) -> List[Dict[str, Any]]:
             continue
         hunt = hunts.get(row["investigation_id"])
         if hunt is None:
-            run_id = row["origin_run_id"]
-            if len(hunts) == EARLIER_HUNTS or (run_id and run_hidden(session, run_id)):
+            if len(hunts) == EARLIER_HUNTS:
                 skipped.add(row["investigation_id"])
                 continue
             hunt = hunts[row["investigation_id"]] = {
-                "origin_run_id": run_id,
+                "origin_run_id": row["origin_run_id"],
                 "concluded_at": row["concluded_at"],
                 "outcomes": [],
             }
@@ -902,6 +960,7 @@ def rules_not_passing(limit: int = 200) -> Dict[str, Any]:
             }
             for rule, checks in rows
         ]
+        redact_caught(session, rules)
     return {
         "rules": rules,
         "total": sum(t["not_passing"] for t in by_tool.values()),
@@ -1969,6 +2028,14 @@ def search(
             for hit in overlay:
                 hit["stages"] = history.get(hit["rule_id"], [])
                 hit["stage"] = hit["stages"][-1]["stage"] if hit["stages"] else None
+        copies = [
+            c
+            for hit in hits
+            for listed in (hit.get("deployed") or {}).values()
+            if isinstance(listed, list)
+            for c in listed
+        ]
+        redact_caught(session, hits + copies)
     if len(hits) == 1:
         hits[0]["recent_changes"] = recent_changes(hits[0]["rule_id"])
     return hits
@@ -2207,7 +2274,9 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
             return ref  # unknown without reading the inventory
     try:
         with get_db_manager().session_scope() as session:
-            return resolve_findings(session, {0: finding})[0]
+            found = resolve_findings(session, {0: finding})[0]
+            redact_caught(session, [found])
+            return found
     except Exception:  # a finding read must not fail on the inventory
         logger.exception("Could not resolve the rule of a finding")
         return _unknown("the rule inventory could not be read")
@@ -2414,6 +2483,7 @@ def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
         card["health"] = health
         card["worst"] = _worst(health, card["flags"], card["caught"])
         listed.append(card)
+    redact_caught(session, listed)
     listed.sort(
         key=lambda c: (WORST_ORDER.index(c["worst"]), c["rule_id"], -c["version"])
     )

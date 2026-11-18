@@ -48,7 +48,7 @@ from sqlalchemy import select
 
 from core.auth import trail_events
 from core.detections import proof_pdf
-from core.detections.inventory.catalog import OVERLAY, tool_of
+from core.detections.inventory.catalog import OVERLAY, redact_caught, tool_of
 from core.secrets_manager import get_secret, secret_writes_refused, set_secret
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
@@ -223,6 +223,8 @@ def build(
             ):
                 stages.setdefault(stage.rule_id, []).append(stage)
         rules = [_rule(rule, version, stages) for rule, version in found]
+        # Before it is signed: a Caught reason names only Cases the exporter can read.
+        redact_caught(session, rules)
     card: Dict[str, Any] = {
         "schema": SCHEMA,
         "kind": "rules" if rule_ids is not None else "coverage",
