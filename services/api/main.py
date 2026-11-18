@@ -112,13 +112,17 @@ async def lifespan(app: FastAPI):
     # start_gaps_run on /mcp queues through the daemon's intake, which tools/ can't import.
     serve_gaps_runs(start_gaps_run)
 
-    # The MCP session manager runs whether or not the surface is open: the
-    # toggle is a runtime one, so turning it on must not need a restart, and
-    # with the gate refusing every request the manager simply has nothing to do.
+    # Stateless: no MCP session lives in a process's memory, so a client's
+    # requests may land on any worker or replica. Nothing needs a session --
+    # McpSurfaceGate authenticates and binds the caller on every request.
     #
-    # Built here, not at import: each app carries its own session manager and a
-    # manager runs once, so a process that starts the app twice -- a test, a
-    # reloader -- needs a new one rather than the same one again.
+    # The manager still runs, open surface or not: each request's server task
+    # starts in its task group, and the toggle is a runtime one, so turning the
+    # surface on must not need a restart.
+    #
+    # Built here, not at import: each app carries its own manager and a manager
+    # runs once, so a process that starts the app twice -- a test, a reloader --
+    # needs a new one rather than the same one again.
     #
     # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
     # would put the real endpoint at /mcp/mcp. It is the mount that decides
@@ -137,6 +141,7 @@ async def lifespan(app: FastAPI):
     # deployment's DNS name, and getting a 421 whenever it drifted.
     _mcp_gate.app = vigil_mcp.streamable_http_app(
         streamable_http_path="/",
+        stateless_http=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
         ),
