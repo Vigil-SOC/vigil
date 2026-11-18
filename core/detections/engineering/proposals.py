@@ -38,6 +38,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from sqlalchemy import String, and_, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
 
+from core.audit import trail
 from core.auth.permissions import case_read_clause, may_read_case
 from core.detections import gap_run, gaps
 from core.detections.engineering import lint as lint_mod
@@ -831,9 +832,16 @@ def convert(
         return _view(session, proposal)
 
 
+REJECTED = "detections.proposal_rejected"
+
+
 def reject(
     proposal_id: str, actor: str, reason: str, kind: str = PERSON
 ) -> Dict[str, Any]:
+    """Rejects a proposal and writes ``detections.proposal_rejected`` in the same
+    transaction. ``actor`` is a username, or the agent id of a run no person started."""
+    from core.agents.attribution import principal_id_for_username
+
     if not reason.strip():
         raise Refused("Say why this proposal is rejected: it stays on the record.")
     with unit_of_work() as session:
@@ -852,6 +860,20 @@ def reject(
             evidence={"step": "reject"},
             reason=reason,
         )
+        if trail.in_use(session):
+            trail.append(
+                session,
+                {
+                    trail.ACTION: REJECTED,
+                    trail.ACTOR: principal_id_for_username(actor) or actor,
+                    trail.OBJECT: proposal_id,
+                    "proposal_id": proposal_id,
+                    "technique": proposal.technique,
+                    "reason": reason,
+                    "username": actor,
+                    "by": kind,
+                },
+            )
         return _view(session, proposal)
 
 
