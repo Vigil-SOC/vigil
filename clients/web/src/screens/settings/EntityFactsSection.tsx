@@ -83,8 +83,8 @@ export default function EntityFactsSection() {
                   <th className="num">Rows</th>
                   <th>Oldest</th>
                   <th>Newest</th>
-                  <th className="num">Hit rate · {window}</th>
-                  <th>Last failure · {window}</th>
+                  <th className="num">Hit rate</th>
+                  <th>Last failure</th>
                 </tr>
               </thead>
               <tbody>
@@ -92,7 +92,7 @@ export default function EntityFactsSection() {
                   const asked = s.served + s.fetched + s.unavailable
                   return (
                     <tr key={s.source}>
-                      <td><b>{s.label}</b> <span className="mono text-tx-3">{s.source}</span></td>
+                      <td className="ef-src"><b>{s.label}</b></td>
                       <td className="num mono">{s.rows.toLocaleString()}</td>
                       <td className="mono">{ago(s.oldest_fetched_at)}</td>
                       <td className="mono">{ago(s.newest_fetched_at)}</td>
@@ -100,9 +100,9 @@ export default function EntityFactsSection() {
                         {s.hit_rate == null ? '—' : `${Math.round(s.hit_rate * 100)}%`}
                         {asked > 0 && <span className="text-tx-3"> · {s.served}/{asked}</span>}
                       </td>
-                      <td>
+                      <td className="ef-failure">
                         {s.last_failure
-                          ? <><span className="ef-fail">{reason(s.last_failure.reason)}</span> <span className="mono text-tx-3">{utc(s.last_failure.at)}</span></>
+                          ? <><span className="ef-fail">{reason(s.last_failure.reason)}</span><span className="mono text-tx-3" title={utc(s.last_failure.at) ?? undefined}>{ago(s.last_failure.at)}</span></>
                           : <span className="text-tx-3">None</span>}
                       </td>
                     </tr>
@@ -112,7 +112,7 @@ export default function EntityFactsSection() {
             </table>
           </div>
           <p className="lim-foot">
-            Hit rate: lookups served from a held row, out of every lookup triage made in the {window}. A failure shows its kind only; the source’s error text is not kept.
+            Hit rate and last failure cover the {window}. Hit rate: lookups served from a held row, out of every lookup triage made. A failure shows its kind only; the source’s error text is not kept.
           </p>
 
           <div>
