@@ -35,7 +35,7 @@ ROUTER_META = RouterMeta(
 _GONE = "This request has expired or was already answered. Start again from the app."
 
 
-class Decision(BaseModel):
+class ConsentDecision(BaseModel):
     decision: Literal["approve", "deny"]
 
 
@@ -58,7 +58,7 @@ async def read(request_id: str, current_user: User = Depends(get_current_active_
 def decide(
     request: Request,
     request_id: str,
-    body: Decision,
+    body: ConsentDecision,
     current_user: User = Depends(get_current_active_user),
 ):
     """Approve or deny, as a person signed in to the console. Approving connects

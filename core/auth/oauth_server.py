@@ -386,8 +386,8 @@ class VigilAccessToken(AccessToken):
 
 def _issue(record: McpCredential, now: datetime) -> OAuthToken:
     """New access and refresh tokens on ``record``; the previous refresh hash kept."""
-    access = tokens.OAUTH_ACCESS_PREFIX + secrets.token_urlsafe(32)
-    refresh = tokens.OAUTH_REFRESH_PREFIX + secrets.token_urlsafe(32)
+    access = tokens.GRANT_ACCESS_PREFIX + secrets.token_urlsafe(32)
+    refresh = tokens.GRANT_REFRESH_PREFIX + secrets.token_urlsafe(32)
     record.token_hash = _hash(access)
     record.previous_refresh_hash = record.refresh_hash
     record.refresh_hash = _hash(refresh)
@@ -514,7 +514,7 @@ def _refresh_reused(session, record: McpCredential, holder: User) -> list[int]:
 
 
 def _load_refresh(client_id: str, token: str) -> Optional[VigilRefreshToken]:
-    if not token.startswith(tokens.OAUTH_REFRESH_PREFIX):
+    if not token.startswith(tokens.GRANT_REFRESH_PREFIX):
         return None
     digest = _hash(token)
     notices: list[int] = []
@@ -589,7 +589,7 @@ def _exchange_refresh(refresh: VigilRefreshToken) -> OAuthToken:
 
 
 def _load_access(token: str) -> Optional[VigilAccessToken]:
-    if not token.startswith(tokens.OAUTH_ACCESS_PREFIX):
+    if not token.startswith(tokens.GRANT_ACCESS_PREFIX):
         return None
     now = utcnow()
     with unit_of_work() as session:

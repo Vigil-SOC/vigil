@@ -43,10 +43,10 @@ logger = logging.getLogger(__name__)
 # reach the HTTP API is a property of its prefix.
 TOKEN_PREFIX = "vgl_api_"
 MCP_TOKEN_PREFIX = "vgl_mcp_"
-OAUTH_ACCESS_PREFIX = "vgl_oat_"
-OAUTH_REFRESH_PREFIX = "vgl_ort_"
+GRANT_ACCESS_PREFIX = "vgl_oat_"
+GRANT_REFRESH_PREFIX = "vgl_ort_"
 # Refused by name on the HTTP API: a working credential in the wrong place.
-_MCP_ONLY = (MCP_TOKEN_PREFIX, OAUTH_ACCESS_PREFIX, OAUTH_REFRESH_PREFIX)
+_MCP_ONLY = (MCP_TOKEN_PREFIX, GRANT_ACCESS_PREFIX, GRANT_REFRESH_PREFIX)
 
 # A person's token lasts this long unless they ask for less, and never longer than
 # the maximum the session policy sets (token_policy). There is no "never".
@@ -100,7 +100,7 @@ def looks_like_token(value: str) -> bool:
     """A bearer this table may answer for. A refresh token never is one."""
     return (
         looks_like_api_token(value) or looks_like_mcp_token(value)
-    ) and not value.startswith(OAUTH_REFRESH_PREFIX)
+    ) and not value.startswith(GRANT_REFRESH_PREFIX)
 
 
 class NotRotatable(Exception):
@@ -214,7 +214,7 @@ def authenticate(
                 return None
             # An OAuth access token lasts an hour inside its grant. Its end is
             # routine (the client refreshes), so it is not an expiry event.
-            if token.startswith(OAUTH_ACCESS_PREFIX) and not (
+            if token.startswith(GRANT_ACCESS_PREFIX) and not (
                 record.access_expires_at and record.access_expires_at > utcnow()
             ):
                 return None
