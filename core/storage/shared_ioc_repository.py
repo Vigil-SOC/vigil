@@ -29,7 +29,6 @@ from core.storage.models import (
     SharedIOC,
     case_findings,
 )
-
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
