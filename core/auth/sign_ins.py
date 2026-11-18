@@ -175,6 +175,8 @@ class SignInEntry(BaseModel):
     address: Optional[str] = None
     # 'password', 'mfa', or a step-down while security keys are unavailable
     auth_method: str
+    # How an SSO sign-in met MFA; null on other sign-ins and older SSO ones.
+    mfa_met: Optional[str] = None
     ended_at: OptDateTime = None
     end_reason: Optional[str] = None
     end_reason_text: Optional[str] = None
@@ -198,6 +200,7 @@ def shape(row: SignIn, current: Optional[str] = None) -> dict:
         "device": row.device,
         "address": row.address,
         "auth_method": row.auth_method,
+        "mfa_met": row.mfa_met,
         "ended_at": row.ended_at,
         "end_reason": row.end_reason,
         "end_reason_text": (

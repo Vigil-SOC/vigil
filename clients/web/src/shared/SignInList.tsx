@@ -10,7 +10,18 @@ const METHODS: Record<string, string> = {
   sso: 'Single sign-on',
   break_glass: 'Break-glass: password, second factor and a reason',
 }
-const method = (m: string) => METHODS[m] ?? 'Password'
+const MFA_MET: Record<string, string> = {
+  provider_mfa: 'MFA at provider (mfa)',
+  provider_phr: 'MFA at provider (phishing-resistant)',
+  vigil_factor: 'Vigil factor',
+  step_down: 'Step-down',
+  none: 'No MFA',
+}
+// An SSO row also says how it met MFA; a null predates the check.
+const method = (s: SignIn) =>
+  s.auth_method === 'sso'
+    ? `${METHODS.sso} · ${(s.mfa_met && MFA_MET[s.mfa_met]) || 'not recorded (before this check)'}`
+    : (METHODS[s.auth_method] ?? 'Password')
 
 /**
  * A person's sign-ins as a row stack: start, last action, browser and OS, device,
@@ -53,7 +64,7 @@ export default function SignInList({
                   : `Started ${stamp(s.started_at)} · last action ${stamp(s.last_action_at)}`}
               </div>
               <div className="text-xs text-tx-3 break-words">
-                {[s.address, method(s.auth_method)].filter(Boolean).join(' · ')}
+                {[s.address, method(s)].filter(Boolean).join(' · ')}
               </div>
             </div>
             {onEnd && !ended && !s.current && (
