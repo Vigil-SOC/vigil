@@ -98,7 +98,11 @@ from core.storage.models import (
     IntakeTrigger,
     Investigation,
 )
-from core.storage.shared_ioc_repository import CaseMatch, SharedIOCRepository
+from core.storage.shared_ioc_repository import (
+    CaseMatch,
+    SharedIOCRepository,
+    reconcile_case_safely,
+)
 from core.threat_intel.mitre_lookup import (
     iter_techniques,
     resolve_technique,
@@ -115,7 +119,6 @@ from services.daemon.plan_generator import (
     generate_initial_state,
     select_workflow,
 )
-from services.daemon.shared_intel import SharedIntelligence
 from services.daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
@@ -668,11 +671,21 @@ def _load_finding(finding_id: str) -> Optional[Dict]:
     return FindingSchema.dump(finding) if finding else None
 
 
+def _reindex_case(case_id: Optional[str]) -> None:
+    """Reconcile the Case's index rows in their own transaction; never raises."""
+    if not case_id:
+        return
+    try:
+        with get_db_manager().session_scope() as session:
+            reconcile_case_safely(session, case_id)
+    except Exception as e:
+        logger.error("Failed to index IOCs for case %s: %s", case_id, e)
+
+
 def _matching_cases(finding: Dict, *, open: bool) -> List[CaseMatch]:
     """Cases the finding belongs with, newest first. Raises on a failed read.
 
-    Not through ``SharedIntelligence._with_repo``: that turns an error into an
-    empty answer, and an empty answer opens a new Case.
+    A failed read must not become an empty answer: an empty answer opens a new Case.
     """
     with get_db_manager().session_scope() as session:
         return SharedIOCRepository(session).matching_cases(finding, open=open)
@@ -773,13 +786,14 @@ def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
     One notice per person while an earlier join notice on this Case is unread.
     A watcher who switched ``alert_joined`` off gets none, and a person who may
     not read the Case gets none (``notify``'s ``about_case``). A Case with
-    neither assignee nor watchers tells nobody.
+    neither assignee nor watchers tells the active people on its team instead.
     """
     from urllib.parse import quote
 
     from core.cases.case_notification_service import principal_of
     from core.platform.notices import notify, send_notices
     from core.storage.models import Case, CaseNotification, CaseWatcher
+    from core.teams import members_of
 
     title = finding.get("title") or finding.get("finding_id") or "alert"
     with get_db_manager().session_scope() as session:
@@ -787,15 +801,23 @@ def _notify_joined(case_id: str, finding: Dict, match: CaseMatch) -> None:
         if case is None:
             raise LookupError(f"case {case_id} is gone")
         names = [case.assignee] if case.assignee else []
-        for watcher in session.scalars(
-            select(CaseWatcher).where(CaseWatcher.case_id == case_id)
-        ):
+        watchers = list(
+            session.scalars(select(CaseWatcher).where(CaseWatcher.case_id == case_id))
+        )
+        for watcher in watchers:
             if (watcher.notification_preferences or {}).get("alert_joined", True):
                 names.append(watcher.user_id)
         # A person who is assignee and watcher is told once.
         principals = dict.fromkeys(
             p for name in names if (p := principal_of(session, name))
         )
+        if not case.assignee and not watchers:
+            # Nobody owns it: tell the team, active people only.
+            principals = dict.fromkeys(
+                u.principal_id
+                for u in members_of(session, case.team_id)
+                if u.is_active and not u.service_account
+            )
         sent = []
         for principal in principals:
             unread = session.scalar(
@@ -922,7 +944,6 @@ class Orchestrator:
         self._workflows = workflows or WorkflowsService()
 
         self.workdir = WorkdirManager(config.workdir_base)
-        self.shared_intel = SharedIntelligence()
 
         self._hourly_paused = False
 
@@ -1252,10 +1273,6 @@ class Orchestrator:
         # The merge stands whatever happens below: the finding is on the Case.
         for what, write in (
             (
-                "index its entities",
-                lambda: self.shared_intel.record_on_case(match.case_id, finding),
-            ),
-            (
                 "note it on the case",
                 lambda: _record_merge_activity(match.case_id, finding, match),
             ),
@@ -1550,7 +1567,7 @@ class Orchestrator:
             )
             return
 
-        self.shared_intel.register_investigation(inv_id, findings)
+        _reindex_case(case_id)
         self.stats["investigations_created"] += 1
         if _inv_created is not None:
             _inv_created.add(1)
@@ -2418,7 +2435,7 @@ class Orchestrator:
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
             _inv_completed.add(1)
-        self.shared_intel.close_investigation(inv_id, state.get("case_id"))
+        _reindex_case(state.get("case_id"))
 
         self.workdir.append_log(
             inv_id,
@@ -2919,8 +2936,6 @@ class Orchestrator:
             base.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.warning(f"Workdir cleanup failed after purge: {e}")
-
-        self.shared_intel = SharedIntelligence()
 
         logger.warning(
             f"Purged {deleted} investigations and reset workdir tree at {self.workdir.base_dir}"

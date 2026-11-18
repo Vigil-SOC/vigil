@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from core.cases.case_ioc_service import is_marked
 from core.integrations.cape_sandbox.report import extract_iocs
 from core.storage.models import CaseEvidence, CaseIOC, case_findings
+from core.storage.shared_ioc_repository import reconcile_case_safely
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -117,6 +118,7 @@ class SandboxCorrelationService:
                         score=normalised.get("score"),
                     ):
                         iocs_added += 1
+                reconcile_case_safely(session, case_id)
 
             return {
                 "evidence_ids": evidence_ids,

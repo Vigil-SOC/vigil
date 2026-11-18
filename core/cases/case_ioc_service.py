@@ -17,7 +17,11 @@ from core.cases.case_records_service import readable_case
 from core.cases.linked_entities import LINKED_SOURCE
 from core.exceptions import NotFoundError
 from core.storage.models import CaseIOC
-from core.storage.shared_ioc_repository import mark_key, marked_keys
+from core.storage.shared_ioc_repository import (
+    mark_key,
+    marked_keys,
+    reconcile_case_safely,
+)
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -94,6 +98,7 @@ class CaseIOCService:
                     context=context,
                 )
                 if created:
+                    reconcile_case_safely(session, case_id, [ioc_type])
                     # The type is hashed; the value sits beside it, erasable.
                     case_trail.append_or_legacy(
                         session,
@@ -157,6 +162,7 @@ class CaseIOCService:
                 session.add(row)
                 rows, stale = [row], [row]
             if stale:
+                reconcile_case_safely(session, case_id, [ioc_type])
                 case_trail.append_or_legacy(
                     session,
                     action=(
@@ -204,6 +210,7 @@ class CaseIOCService:
             if new:
                 created.append(ioc)
         if created:
+            reconcile_case_safely(session, case_id, [i.ioc_type for i in created])
             case_trail.append_or_legacy(
                 session,
                 action=case_trail.IOC_BULK,
