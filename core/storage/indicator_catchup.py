@@ -42,7 +42,9 @@ class CatchUp:
 
 def _pick(session, *where, order, limit: int) -> List[str]:
     return list(
-        session.scalars(select(Case.case_id).where(*where).order_by(*order).limit(limit))
+        session.scalars(
+            select(Case.case_id).where(*where).order_by(*order).limit(limit)
+        )
     )
 
 
@@ -104,8 +106,9 @@ def _mark_stale(case_id: str) -> None:
     try:
         with unit_of_work() as session:
             session.execute(
-                update(Case)
-                .where(Case.case_id == case_id, Case.indicators_stale_since.is_(None))
+                update(Case).where(
+                    Case.case_id == case_id, Case.indicators_stale_since.is_(None)
+                )
                 # Not an edit of the Case: leave updated_at alone.
                 .values(indicators_stale_since=utcnow(), updated_at=Case.updated_at)
             )

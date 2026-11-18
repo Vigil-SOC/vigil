@@ -7,7 +7,8 @@ two live counts.
 from core.upgrade.revision import run_sql
 
 revision = "0094_case_indicator_catchup_idx"
-down_revision = "0093_case_indicator_index"
+# Also joins 0093_merge_0092_heads, which sits beside 0093_case_indicator_index.
+down_revision = ("0093_case_indicator_index", "0093_merge_0092_heads")
 
 
 def upgrade() -> None:
