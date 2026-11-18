@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
 from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
-from core.audit import trail
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -45,6 +44,7 @@ from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import set_workflow_enabled
 from core.workflows.handoff_cases import stamp_handoff_cases
+from core.workflows.start_case import StartRefused, start_on_case
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import (
     IN_FLIGHT_STATUSES,
@@ -106,6 +106,9 @@ class WorkflowExecuteRequest(BaseModel):
     # Longer text is condensed by POST /workflows/threat-hunt/document first. It
     # is no target: a hunt still needs a hypothesis.
     document: Optional[str] = Field(default=None, max_length=MAX_DOCUMENT_CHARS)
+    # Run on a restricted case: the named one, which must be restricted, or a new
+    # one restricted to the starter -- never the open case holding the finding.
+    restricted: Optional[bool] = None
 
 
 class HuntCoverageRequest(BaseModel):
@@ -342,6 +345,19 @@ async def propose_feed_hunts(limit: int = 200):
     return propose_hunts_from_recent_indicators(limit=limit)
 
 
+@router.get("/workflows/threat-hunt/lead-proposal", dependencies=_CHAT)
+async def propose_lead_hunt(finding_id: str):
+    """An execute body hunting the data movement of each account a finding
+    names, on a restricted case. Read-only; 404 for an unknown finding, 400 for
+    one that names no account."""
+    from core.workflows.insider_lead import LeadRefused, lead_proposal
+
+    try:
+        return lead_proposal(finding_id)
+    except LeadRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.detail) from None
+
+
 # -----------------------------------------------------------------------------
 # Parameterized discovery/execution routes
 # -----------------------------------------------------------------------------
@@ -421,16 +437,12 @@ async def execute_workflow(
         )
 
     # Every run starts on a case, so a run that stops at a limit has one to answer on.
-    opened = None
-    if not parameters.get("case_id"):
-        parameters["case_id"], opened = _case_for_start(workflow_id, parameters)
-
-    try:
+    async def execute(params: Dict[str, Any]) -> Dict[str, Any]:
         # The row names the person. Daemon and handoff starts call the service
         # directly and pass their own marker; this door always has a session.
-        result = await service.execute_workflow(
+        return await service.execute_workflow(
             workflow_id,
-            parameters,
+            params,
             triggered_by=user.username,
             principal=tool_principal.mint(
                 user.username,
@@ -441,75 +453,23 @@ async def execute_workflow(
                 sid=tool_principal.sid_of(http_request),
             ),
         )
-    except Exception:
-        _drop_case(opened)
-        raise
 
-    # Once a run row exists the case stays: the failed run lives on it.
-    if not result.get("run_id"):
-        _drop_case(opened)
+    def restricter(session: Any) -> Any:
+        from core.cases.case_readers import http_restricter
+
+        return http_restricter(session, user)
+
+    try:
+        result = await start_on_case(workflow_id, parameters, restricter, execute)
+    except StartRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.detail) from None
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")
         raise HTTPException(
             status_code=409 if result.get("disabled") else 500, detail=error
         )
 
-    return {**result, "case_id": parameters["case_id"]}
-
-
-def _case_for_start(
-    workflow_id: str, parameters: Dict[str, Any]
-) -> Tuple[str, Optional[str]]:
-    """The case a start with none runs on, and the id of it if opened for this start.
-
-    The newest not-closed case holding the named alert, else a new one.
-    """
-    from core.cases.case_sla_service import case_title, open_case, open_case_holding
-    from core.storage.database_data_service import DatabaseDataService
-
-    finding_id = parameters.get("finding_id")
-    try:
-        if finding_id and (holding := open_case_holding(finding_id)):
-            return holding, None
-        data = DatabaseDataService()
-        finding = (data.get_finding(finding_id) if finding_id else None) or {}
-        text = (
-            parameters.get("hypothesis")
-            or parameters.get("context")
-            or finding.get("description")
-        )
-        opened = open_case(
-            data,
-            title=case_title(text or finding.get("title") or workflow_id, 60),
-            finding_ids=[finding_id] if finding_id else [],
-            priority="medium",
-            description=parameters.get("hypothesis") or parameters.get("context") or "",
-        )
-    except trail.Paused:
-        raise  # a 503 with Retry-After, as a comment is
-    except Exception:
-        logger.exception("could not open a case for a %s start", workflow_id)
-        opened = None
-    if not opened:
-        raise HTTPException(
-            status_code=500, detail="Could not open a case for this run"
-        )
-    return opened["case_id"], opened["case_id"]
-
-
-def _drop_case(case_id: Optional[str]) -> None:
-    """Delete the case opened for a start that never made a run."""
-    if not case_id:
-        return
-    from core.storage.database_data_service import DatabaseDataService
-
-    # A refused or paused trail append raises; the caller's own error stands.
-    try:
-        dropped = DatabaseDataService().delete_case(case_id)
-    except Exception:  # noqa: BLE001
-        dropped = False
-    if not dropped:
-        logger.error("could not delete case %s opened for a refused start", case_id)
+    return result
 
 
 # ---------------------------------------------------------------------------

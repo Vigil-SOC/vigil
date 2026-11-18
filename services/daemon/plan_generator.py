@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from core.documents.fence import fenced_document
+from core.documents.fence import FINDING_NOTE, fenced, fenced_document
 from core.threat_intel.mitre_lookup import iter_techniques, top_technique
 from core.time import utcnow
 from core.workflows.routing import FALLBACK_WORKFLOW
@@ -123,6 +123,8 @@ def generate_initial_context(
     if document:
         lines.extend(["## Attached Document", "", *fenced_document(document), ""])
     lines.extend(["## Trigger Findings", ""])
+    if findings:
+        lines.extend([FINDING_NOTE, ""])
 
     listed = findings[:BRIEF_FINDINGS]
     for f in listed:
@@ -130,7 +132,7 @@ def generate_initial_context(
         sev = f.get("severity", "unknown")
         desc = (f.get("description") or "No description")[:200]
         lines.append(f"### {fid} (Severity: {sev})")
-        lines.append(desc)
+        lines.append(fenced(f"{f['title']}\n{desc}" if f.get("title") else desc))
         lines.append("")
 
     # The trigger list is not the case: say when the case holds more than it.

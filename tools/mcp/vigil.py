@@ -1916,20 +1916,30 @@ def _person() -> tuple[Optional[str], str]:
 @requires("ai_chat.use")
 async def start_run(
     workflow_id: str,
-    case_id: str,
+    case_id: Optional[str] = None,
     context: Optional[str] = None,
     hypothesis: Optional[str] = None,
     finding_id: Optional[str] = None,
+    hypothesis_subjects: Optional[dict[str, list[str]]] = None,
+    restricted: bool = False,
+    approve_hypotheses: bool = False,
 ) -> str:
-    """Start a workflow or operator agent (``agent-run-<id>``) on a case. Returns
-    ``run_id``, ``case_id`` and ``status``; re-read the run with ``get_run``."""
+    """Start a workflow or operator agent (``agent-run-<id>``) on a case. With
+    ``restricted``, the case must be a restricted one, or omit ``case_id`` to open
+    a new case only you can read. ``hypothesis_subjects`` maps each hypothesis
+    line to the Entity Keys it is about; ``approve_hypotheses`` holds a hunt for
+    a person to approve its board. A ``propose_lead_hunt`` proposal passes as-is.
+    Returns ``run_id``, ``case_id`` and ``status``; re-read the run with
+    ``get_run``."""
+    from core.agents.tool_registry import _restricter
     from core.auth import tool_principal
+    from core.workflows.start_case import StartRefused, start_on_case
     from core.workflows.workflows_service import WorkflowsService
 
     if tool_principal.current_claims() is not None:
         return jdump(_OUTSIDE_ONLY)
-    if (refused := _not_found(case_id)) is not None:
-        return refused
+    if not case_id and not restricted:
+        return jdump({"error": "case_id is required unless restricted is set"})
 
     async def start() -> dict:
         principal, username = _person()
@@ -1940,30 +1950,54 @@ async def start_run(
                 "context": context,
                 "hypothesis": hypothesis,
                 "finding_id": finding_id,
+                "hypothesis_subjects": hypothesis_subjects,
+                "restricted": restricted,
+                "approve_hypotheses": approve_hypotheses,
             }.items()
             if v
         }
-        # No session to tie the run to, as a scheduled start has none.
-        result = await WorkflowsService().execute_workflow(
-            workflow_id,
-            params,
-            triggered_by=username,
-            principal=tool_principal.mint(
-                username,
-                person_id=principal,
-                origin="person",
-                ttl=tool_principal.RUN_TTL,
-            ),
-        )
+
+        async def execute(params: dict) -> dict:
+            # No session to tie the run to, as a scheduled start has none.
+            return await WorkflowsService().execute_workflow(
+                workflow_id,
+                params,
+                triggered_by=username,
+                principal=tool_principal.mint(
+                    username,
+                    person_id=principal,
+                    origin="person",
+                    ttl=tool_principal.RUN_TTL,
+                ),
+            )
+
+        try:
+            result = await start_on_case(workflow_id, params, _restricter, execute)
+        except StartRefused as refused:
+            return {"error": refused.detail}
         if not result.get("success"):
             return {"error": result.get("error", "the run was not started")}
         return {
             "run_id": result.get("run_id"),
-            "case_id": case_id,
+            "case_id": result.get("case_id"),
             "status": result.get("status"),
         }
 
     return await _acall(start)
+
+
+@tool("Propose an insider lead hunt", reads=True)
+@requires("ai_chat.use")
+def propose_lead_hunt(finding_id: str) -> str:
+    """For a finding that names an account: a ``start_run`` body (with
+    ``workflow_id`` threat-hunt) hunting each account's data movement on a new
+    restricted case. Starts nothing."""
+    from core.workflows.insider_lead import LeadRefused, lead_proposal
+
+    try:
+        return jdump(lead_proposal(finding_id))
+    except LeadRefused as refused:
+        return jdump({"error": refused.detail})
 
 
 @tool("List runs", reads=True)

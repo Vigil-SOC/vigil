@@ -17,7 +17,7 @@ from core.agents.attribution import (
 from core.agents.queue import new_run_id
 from core.auth import sign_in_runs, sign_ins, tool_principal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
-from core.documents.fence import fenced_document
+from core.documents.fence import FINDING_NOTE, fenced, fenced_document
 from core.findings.anomaly_score import format_anomaly_score
 from core.frontmatter import FrontmatterError, split_frontmatter
 from core.threat_intel.mitre_lookup import iter_techniques, rank_by_confidence
@@ -889,14 +889,23 @@ class WorkflowsService:
                         )
                         or "None"
                     )
+                    # Title and description are the source's words: fenced, so
+                    # nothing they say reads as the brief's.
+                    text = "\n".join(
+                        str(finding.get(k))
+                        for k in ("title", "description")
+                        if finding.get(k)
+                    )
                     parts.append(f"""**Target Finding:**
 - Finding ID: {finding.get('finding_id')}
 - Severity: {finding.get('severity')}
 - Data Source: {finding.get('data_source')}
 - Timestamp: {finding.get('timestamp')}
 - Anomaly Score: {format_anomaly_score(finding.get('anomaly_score'))}
-- Description: {finding.get('description', 'N/A')}
-- MITRE ATT&CK Techniques: {technique_str}""")
+- MITRE ATT&CK Techniques: {technique_str}
+- Title and description: {FINDING_NOTE}
+
+{fenced(text or 'N/A')}""")
                 else:
                     parts.append(
                         f"**Target Finding ID:** {finding_id} (details will be retrieved during execution)"

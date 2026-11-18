@@ -1505,6 +1505,8 @@ export const workflowApi = {
     hypothesis_subjects?: Record<string, string[]>
     iterations?: number
     approve_hypotheses?: boolean
+    /** Run on a restricted case: the named one, or a new one only the starter reads. */
+    restricted?: boolean
   }) => api.post<{ run_id?: string; case_id?: string }>(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
   readHuntDocument: (file: File) => {
@@ -1519,6 +1521,11 @@ export const workflowApi = {
   // with a `proposal` body execute() accepts as-is. Never starts anything.
   checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
     api.post('/workflows/threat-hunt/coverage', body, { timeout: LLM_TIMEOUT }),
+  // Read-only: a hunt on the data movement of each account the finding names, as an
+  // execute body on a restricted case. 400 with the reason when it names no account.
+  leadProposal: (findingId: string) =>
+    api.get<{ accounts: string[]; proposal: { hypothesis: string; hypothesis_subjects: Record<string, string[]>; approve_hypotheses?: boolean; restricted?: boolean; finding_id: string } }>(
+      '/workflows/threat-hunt/lead-proposal', { params: { finding_id: findingId } }),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
   // every prompt transcript
