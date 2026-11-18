@@ -72,7 +72,7 @@ system: |
   When nothing rules the benign explanation out, answer suspicious and say what
   would settle it.
 
-skills: [investigate-case]
+skills: [investigate-case, ai-agent-activity]
 
 # The hypothesis record is required: what the agent believes goes on it with
 # propose_hypothesis, what bears on each belief with link_evidence, and what it
