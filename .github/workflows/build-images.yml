@@ -1,0 +1,466 @@
+# .github/workflows/build-images.yml
+#
+# Reusable: builds the four Vigil images for both platforms, pushes them to
+# ghcr.io, and smoke-tests what it pushed. Called by release.yml (channel
+# "stable") and beta.yml (channel "beta"), so the two builds can't drift apart.
+#
+#   ghcr.io/vigil-soc/vigil-backend   (FastAPI API + bundled SPA)
+#   ghcr.io/vigil-soc/vigil-daemon    (headless SOC daemon)
+#   ghcr.io/vigil-soc/vigil-agent     (TypeScript agent: worker + serve)
+#   ghcr.io/vigil-soc/vigil-mcp-runner (MCP servers, each under its own uid)
+#
+# Tags (channel "stable"): <version>, <major>.<minor>, sha-<short sha>, latest, stable.
+#      (channel "beta"):   <version>, beta. Never latest, stable, X.Y or sha-.
+#
+# Images are NOT signed here: a keyless signature records the workflow file
+# that signed it, and the verify command in README.md and SECURITY.md checks
+# for release.yml. Callers sign the digests this workflow outputs.
+
+name: Build images
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Image version (no leading v), also passed to the build as VIGIL_VERSION"
+        type: string
+        required: true
+      channel:
+        description: "stable or beta; picks the tag set"
+        type: string
+        required: true
+      ref:
+        description: "Commit to build"
+        type: string
+        required: true
+    outputs:
+      version:
+        description: "The version the images were tagged with"
+        value: ${{ inputs.version }}
+      backend_digest:
+        description: "Multi-arch index digest of vigil-backend"
+        value: ${{ jobs.build-backend.outputs.digest }}
+      daemon_digest:
+        description: "Multi-arch index digest of vigil-daemon"
+        value: ${{ jobs.build-daemon.outputs.digest }}
+      agent_digest:
+        description: "Multi-arch index digest of vigil-agent"
+        value: ${{ jobs.build-agent.outputs.digest }}
+      mcp_runner_digest:
+        description: "Multi-arch index digest of vigil-mcp-runner"
+        value: ${{ jobs.build-mcp-runner.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validate the inputs and resolve what the tags and labels need, once.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Resolve commit and tags
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      short_sha: ${{ steps.p.outputs.short_sha }}
+      minor: ${{ steps.p.outputs.minor }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - id: p
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -eu
+          case "$CHANNEL" in stable|beta) ;; *) echo "::error::channel must be stable or beta, got '$CHANNEL'"; exit 1 ;; esac
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9]+)?$' \
+            || { echo "::error::version '$VERSION' is not X.Y.Z or X.Y.Z-beta.DATE.RUN"; exit 1; }
+          sha=$(git rev-parse HEAD)
+          {
+            echo "sha=$sha"
+            echo "short_sha=${sha:0:7}"
+            echo "minor=$(echo "$VERSION" | cut -d. -f1,2)"
+          } >> "$GITHUB_OUTPUT"
+
+  build-backend:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write          # push to ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/vigil-soc/vigil-backend
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=stable,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.title=vigil-backend
+            org.opencontainers.image.description=Vigil SOC — FastAPI backend + bundled SPA
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers in the registry — free for public repos
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-backend:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-backend:buildcache,mode=max
+          # Pass the version into the image
+          build-args: |
+            VIGIL_VERSION=${{ inputs.version }}
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+  build-daemon:
+    name: Build daemon image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/vigil-soc/vigil-daemon
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=stable,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.title=vigil-daemon
+            org.opencontainers.image.description=Vigil SOC — headless autonomous SOC daemon
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push daemon
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.daemon
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache,mode=max
+          build-args: |
+            VIGIL_VERSION=${{ inputs.version }}
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+  build-mcp-runner:
+    name: Build MCP runner image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/vigil-soc/vigil-mcp-runner
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=stable,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.title=vigil-mcp-runner
+            org.opencontainers.image.description=Vigil SOC — MCP server runner
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Read the Python pin
+        id: pin
+        run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push MCP runner
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.mcp-runner
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-mcp-runner:buildcache,mode=max
+          build-args: |
+            VIGIL_VERSION=${{ inputs.version }}
+            PYTHON_VERSION=${{ steps.pin.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+  build-agent:
+    name: Build agent image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}   # the index digest cosign signs
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/vigil-soc/vigil-agent
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=stable,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.title=vigil-agent
+            org.opencontainers.image.description=Vigil SOC — TypeScript agent layer (queue worker + chat/projection server)
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push agent
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.agent
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-agent:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-agent:buildcache,mode=max
+          build-args: |
+            VIGIL_VERSION=${{ inputs.version }}
+          platforms: linux/amd64,linux/arm64
+
+  smoke-test:
+    name: Smoke test images
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-daemon, build-agent, build-mcp-runner]
+    permissions:
+      packages: read
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Default CMD: uvicorn services.api.main:app on 6987. Fail if the
+      # process exits or GET /api/health never answers — the same URL as
+      # Dockerfile.backend's HEALTHCHECK. HTTP 200 means the server accepted
+      # a connection, not that storage is up; DEV_MODE=true is enough.
+      - name: Backend — starts and answers /api/health
+        run: |
+          set -eu
+          IMAGE=ghcr.io/vigil-soc/vigil-backend:${{ inputs.version }}
+          cid=$(docker run -d \
+            -e DEV_MODE=true \
+            -e DATABASE_URL=postgresql://x:x@localhost/x \
+            -e REDIS_URL=redis://localhost:6379 \
+            "$IMAGE")
+          ok=0
+          cleanup() {
+            if [ "$ok" != 1 ]; then
+              echo "::error::backend exited or did not answer GET /api/health on 6987"
+              docker logs "$cid" || true
+            fi
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          i=0
+          while [ "$i" -lt 90 ]; do
+            i=$((i + 1))
+            if [ -z "$(docker ps -q --filter "id=$cid")" ]; then
+              exit 1
+            fi
+            if docker exec "$cid" curl -fsS --max-time 2 http://localhost:6987/api/health >/dev/null 2>&1; then
+              ok=1
+              echo "backend ok"
+              exit 0
+            fi
+            if [ $((i % 15)) -eq 0 ]; then
+              echo "waiting for GET /api/health (${i}s)"
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Backend — SPA present
+        run: |
+          docker run --rm \
+            ghcr.io/vigil-soc/vigil-backend:${{ inputs.version }} \
+            test -f /app/clients/web/build/index.html \
+            || { echo "::error::SPA missing from image — web client not copied to /app/clients/web/build"; exit 1; }
+
+      # Default CMD: python services/daemon/main.py. MCP client construction
+      # happens in SOCDaemon._init_components() at runtime, so only a live
+      # process reaches the failure v0.5.0 hid. Probe GET /health on 9091 —
+      # the same URL as Dockerfile.daemon's HEALTHCHECK.
+      - name: Daemon — starts and answers /health
+        run: |
+          set -eu
+          IMAGE=ghcr.io/vigil-soc/vigil-daemon:${{ inputs.version }}
+          cid=$(docker run -d \
+            -e DEV_MODE=true \
+            "$IMAGE")
+          ok=0
+          cleanup() {
+            if [ "$ok" != 1 ]; then
+              echo "::error::daemon exited or did not answer GET /health on 9091"
+              docker logs "$cid" || true
+            fi
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          i=0
+          while [ "$i" -lt 90 ]; do
+            i=$((i + 1))
+            if [ -z "$(docker ps -q --filter "id=$cid")" ]; then
+              exit 1
+            fi
+            if docker exec "$cid" curl -fsS --max-time 2 http://localhost:9091/health >/dev/null 2>&1; then
+              ok=1
+              echo "daemon ok"
+              exit 0
+            fi
+            if [ $((i % 15)) -eq 0 ]; then
+              echo "waiting for GET /health (${i}s)"
+            fi
+            sleep 1
+          done
+          exit 1
+
+      # Both commands the chart runs, loaded but not started: the main blocks
+      # guard on process.argv[1], which --eval leaves undefined. Proves the
+      # emitted JavaScript resolves its imports inside the image — the one thing
+      # typecheck cannot tell us, since tsc reads .ts and node runs .js.
+      - name: Agent — entry points load
+        run: |
+          docker run --rm \
+            ghcr.io/vigil-soc/vigil-agent:${{ inputs.version }} \
+            node --input-type=module -e "
+              await import('/app/dist/worker.js');
+              await import('/app/dist/serve.js');
+              console.log('agent ok');
+            "

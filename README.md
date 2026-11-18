@@ -131,9 +131,17 @@ Security keys (WebAuthn) are tied to the hostname the console is reached at: set
 - **The SOC daemon** (alert polling, auto-triage) runs only with `./start.sh -d`; the foreground start says so. Setup's system checks show whether the daemon and the agent layer are running.
 - **Authentication is on by default.** No account or default password ships; the first visit creates the admin, using the setup code the API prints at startup while no account exists. `start.sh` creates the JWT signing secret at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env`; the backend announces the bypass on every startup.
 
-> **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`). Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
+> **Stable vs. development build:** `main` is the active development branch. For a tested build, check out a release tag (`git checkout v<version>`) or pull a published image. Releases are listed on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
 >
-> Released images are signed keyless by [`.github/workflows/release.yml`](.github/workflows/release.yml). To verify (the image tag drops the leading `v`; the certificate identity uses the git tag):
+> | Image tag | Points to | Who it's for |
+> |---|---|---|
+> | `1.2.1`, `1.2` | An exact version | Production (recommended) |
+> | `stable` (same as `latest`) | The newest stable release | Anyone who wants stable without pinning |
+> | `beta` | The newest daily build of `main` | Our own deployments, testers |
+>
+> Every `ghcr.io/vigil-soc/vigil-*` image (`backend`, `daemon`, `agent`, `mcp-runner`) is tagged this way. A beta also carries its own version, like `1.2.0-beta.20261115.42`; it never gets `latest` or `stable`. `beta` is a daily build of `main` that may include database changes, and it is one-way: a database that has run a beta can't go back to the previous stable release.
+>
+> Released images are signed keyless by [`.github/workflows/release.yml`](.github/workflows/release.yml); betas are signed by [`beta.yml`](.github/workflows/beta.yml), so this command rejects them. To verify a release (the image tag drops the leading `v`; the certificate identity uses the git tag):
 >
 > ```bash
 > cosign verify \
