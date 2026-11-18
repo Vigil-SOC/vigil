@@ -1,0 +1,81 @@
+name: Scale weekly
+
+# Four limits of one Vigil install, measured each week so there is a number for
+# where it stands today (tests/scale/run.py says how each is taken):
+#
+#   - open findings with the console still responsive
+#   - open cases at once
+#   - /api/v1 requests per second
+#   - alerts per minute at intake
+#
+# The real backend, soc-daemon, Postgres and Redis from the Compose file, on one
+# ubuntu-latest runner with the load beside them. Nothing that calls a model runs,
+# so the run costs nothing but the runner. The result is the job summary and the
+# scale-limits artifact (summary.md and results.json).
+#
+# Red only when the stack does not come up or a step cannot be measured. No number
+# turns it red: there are no targets yet, and a shared runner's numbers move from
+# week to week, so they are a trend to read. Not a pull request check.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC, after connectors-live.yml's 06:00.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Measure
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+
+      # Standard library only. Builds the two images, so most of the first
+      # minutes are the build.
+      - name: Measure
+        run: |
+          uv run --no-project --python 3.12 \
+            python -m tests.scale.run --out scale-out
+
+      - name: Summary
+        if: always()
+        run: test -f scale-out/summary.md && cat scale-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      # On a failed run this holds the backend's and the daemon's logs instead.
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-limits
+          path: scale-out
+          if-no-files-found: warn
+
+  notify:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [measure]
+    if: failure() && github.repository == 'Vigil-SOC/vigil'
+    # `secrets` is not available in `if`, so it comes through env to be tested.
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Notify Slack
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v4
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "⚠️ Weekly scale run failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
