@@ -22,11 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from core.auth import step_up, trail_events
 from core.auth.current_user import get_current_user
-from core.auth.permissions import (
-    permission_gate,
-    require_permission,
-    require_person_permission,
-)
+from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
 from core.detections import detection_skill, exceptions, proof_card
 from core.detections.detection_rules_service import (
@@ -527,13 +523,12 @@ def revert_rule(
 def switch_off_rule(
     rule_id: int,
     body: StageChangeRequest,
-    current_user: User = Depends(
-        require_person_permission("detections.write", refuse_machine=True)
-    ),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """Switches a shadow rule off and holds it there: a signed-in person's own
-    decision, refused to an API token, a service account and an agent's
-    credential. A rule that is not in shadow is refused with 409."""
+    """Switches a shadow rule off and holds it there. It only narrows, so an API
+    token or a service account with detections.write may do it too; a later
+    version still waits in shadow until a person releases the hold. A rule that
+    is not in shadow is refused with 409."""
     return _stage_change(stages.switch_off, rule_id, body, current_user)
 
 
