@@ -85,7 +85,11 @@ except Exception:
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
 from core.agents.operator_manifest import added_request, operator_request
-from core.agents.projections import read_projection, run_id_for
+from core.agents.projections import (
+    THREAT_HUNT_WORKFLOW_ID,
+    read_projection,
+    run_id_for,
+)
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
@@ -574,6 +578,56 @@ class CaseSpec:
     finding_ids: List[str]
     priority: str
     case_id: Optional[str] = None
+    # Who reads it, set when the case opens restricted; ``note`` joins its timeline.
+    readers: Optional[List[str]] = None
+    reader_teams: Optional[List[str]] = None
+    note: Optional[str] = None
+
+
+# What the lead list's findings run under: their own trigger type, so the shadow
+# run and the related-case links, which key on "finding", skip them.
+LEAD_TRIGGER = "insider_lead"
+
+
+@dataclass(frozen=True)
+class InsiderLead:
+    """A finding the lead list says to hunt on: what the hunt asks, who reads the case."""
+
+    accounts: List[str]
+    hypothesis: str
+    subjects: Dict[str, List[str]]
+    readers: List[str]
+    reader_teams: List[str]
+    why: str
+
+
+def _lead_readers() -> tuple[List[str], List[str]]:
+    """The list's readers and teams still there. No actor is re-checked: nobody acts."""
+    from core.auth import principals
+    from core.storage.models import Principal, Team
+    from core.workflows.insider_lead import configured_readers
+
+    names, team_ids = configured_readers()
+    with get_db_manager().session_scope() as session:
+        live = set(
+            session.scalars(
+                select(Principal.principal_id).where(
+                    Principal.principal_id.in_(names),
+                    Principal.deleted_at.is_(None),
+                    Principal.kind.in_((principals.PERSON, principals.SERVICE_ACCOUNT)),
+                )
+            )
+        )
+        teams = set(
+            session.scalars(
+                select(Team.team_id).where(
+                    Team.team_id.in_(team_ids),
+                    Team.archived_at.is_(None),
+                    Team.is_default.is_(False),
+                )
+            )
+        )
+    return [n for n in names if n in live], [t for t in team_ids if t in teams]
 
 
 def _new_case_id() -> str:
@@ -649,8 +703,17 @@ def _mint_case(session, spec: CaseSpec) -> str:
         description="",
         status="open",
         priority=spec.priority,
-        timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
+        timeline=[
+            {"timestamp": now.isoformat() + "Z", "event": "Case created"},
+            *(
+                [{"timestamp": now.isoformat() + "Z", "event": spec.note}]
+                if spec.note
+                else []
+            ),
+        ],
         finding_ids=spec.finding_ids,
+        readers=spec.readers,
+        reader_teams=spec.reader_teams,
     )
     return case.case_id
 
@@ -1178,9 +1241,144 @@ class Orchestrator:
                     row.get("id"), state="expired", reason="excluded_ip"
                 )
                 return None
-            if finding is not None and self._merge_if_overlaps(finding, row.get("id")):
-                return None
+            if finding is not None:
+                held, lead = self._lead_or_attach(finding, row.get("id"))
+                row["_lead"] = lead
+                # A lead is never merged into an open case: it opens its own.
+                if held or (
+                    lead is None and self._merge_if_overlaps(finding, row.get("id"))
+                ):
+                    return None
         return row
+
+    def _lead_or_attach(
+        self, finding: Dict, trigger_id: Optional[int]
+    ) -> tuple[bool, Optional[InsiderLead]]:
+        """Whether the lead list makes this finding a lead: ``(held, lead)``.
+
+        ``held`` is True when the row is not launching this tick (attached to a
+        hunt already running on the account, or a read failed and the row stays
+        queued). ``(False, None)`` is an ordinary finding. A lead matches the
+        list and names a ``user`` Entity Key, with ``threat-hunt`` on, the finding
+        on no open case, and a reader left to open the case to.
+        """
+        from core.workflows import insider_lead
+
+        finding_id = finding.get("finding_id", "unknown")
+        try:
+            if not insider_lead.matches(finding):
+                return False, None
+            if not is_enabled(THREAT_HUNT_WORKFLOW_ID):
+                logger.info(
+                    "Finding %s matches the lead list; %s is off",
+                    finding_id,
+                    THREAT_HUNT_WORKFLOW_ID,
+                )
+                return False, None
+            if not insider_lead.account_keys(finding):
+                logger.info("Finding %s %s", finding_id, insider_lead.NO_ACCOUNT)
+                return False, None
+            if open_case_holding(finding_id):
+                return False, None  # already held: the merge path says so
+            lead = insider_lead.lead_for(finding_id, finding)
+            keys = lead["accounts"]
+            if self._attach_if_hunting(finding, keys, trigger_id):
+                return True, None
+            readers, teams = _lead_readers()
+            if not readers and not teams:
+                logger.warning(
+                    "Finding %s matches the lead list but none of its readers is left; "
+                    "not opening an unrestricted case",
+                    finding_id,
+                )
+                return False, None
+            row = insider_lead.leads()
+            source = finding.get("data_source")
+            by = (
+                f"source {source}"
+                if source in row["sources"]
+                else f"rule name {finding.get('title')}"
+            )
+            proposal = lead["proposal"]
+            return False, InsiderLead(
+                accounts=keys,
+                hypothesis=proposal["hypothesis"],
+                subjects=proposal["hypothesis_subjects"],
+                readers=readers,
+                reader_teams=teams,
+                why=f"The insider lead list opened this: its {by} matched",
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to check finding %s against the lead list; leaving queued: %s",
+                finding_id,
+                e,
+            )
+            return True, None
+
+    def _attach_if_hunting(
+        self, finding: Dict, keys: List[str], trigger_id: Optional[int]
+    ) -> bool:
+        """Put a lead on the restricted case whose hunt is already running on one of
+        its accounts, and start nothing. True: the row is not launching (a failed
+        read or attach leaves it queued). Asked again at launch, so two leads on one
+        account in one drain start one hunt."""
+        from core.auth.permissions import builtin_reader, case_restricted
+        from core.memory.prior_hunts import list_prior_hunts
+        from core.storage.models import Case
+
+        finding_id = finding.get("finding_id", "unknown")
+        try:
+            # The built-in reader: a restricted run is what this must see.
+            with builtin_reader():
+                hunts = list_prior_hunts(keys)["in_flight"]
+                with get_db_manager().session_scope() as session:
+                    case_id = next(
+                        (
+                            h["case_id"]
+                            for h in hunts
+                            if h["matched_keys"]
+                            and h["case_id"]
+                            and (case := session.get(Case, h["case_id"])) is not None
+                            and case_restricted(case)
+                        ),
+                        None,
+                    )
+        except Exception as e:
+            logger.error(
+                "Failed to read hunts on %s for finding %s; leaving queued: %s",
+                keys,
+                finding_id,
+                e,
+            )
+            return True
+        if case_id is None:
+            return False
+        if not _attach_finding(case_id, finding_id):
+            logger.warning(
+                "Finding %s leads to the hunt on case %s but could not be attached; leaving queued",
+                finding_id,
+                case_id,
+            )
+            return True
+        logger.info("Finding %s attached to the hunt on case %s", finding_id, case_id)
+        why = f"Alert `{finding.get('title') or finding_id}` added: a hunt on {', '.join(keys)} is already running"
+        try:
+            _record_case_activity(
+                case_id,
+                "alert_added",
+                why,
+                {"finding_id": finding_id, "accounts": keys},
+            )
+        except Exception:
+            logger.exception(
+                "Finding %s joined case %s but could not note it", finding_id, case_id
+            )
+        self._count_dedup_prevented()
+        self._decide_trigger(
+            trigger_id, state="merged", reason=why, merged_into=case_id
+        )
+        return True
 
     def _open_case_matched(self, row: Dict) -> Optional[str]:
         """The newest open Case a queued detection matches, or None. Never raises."""
@@ -1330,8 +1528,19 @@ class Orchestrator:
                     "intake row %s has no finding to launch; leaving queued", trigger_id
                 )
                 return
+            if "_lead" in row:
+                lead = row["_lead"]
+            else:
+                held, lead = self._lead_or_attach(finding, trigger_id)
+                if held:
+                    return
+            # An earlier row this drain may have started the hunt on its account.
+            if lead is not None and self._attach_if_hunting(
+                finding, lead.accounts, trigger_id
+            ):
+                return
             await self._create_investigation_for_finding(
-                finding, shutdown_event, trigger_id=trigger_id
+                finding, shutdown_event, trigger_id=trigger_id, lead=lead
             )
         elif kind in ("schedule", "human_ask"):
             item = dict(row.get("payload") or {})
@@ -1354,14 +1563,39 @@ class Orchestrator:
         finding: Dict,
         shutdown_event: asyncio.Event,
         trigger_id: Optional[int] = None,
+        lead: Optional[InsiderLead] = None,
     ):
-        """Create an investigation for a finding, with dedup checks."""
+        """Create an investigation for a finding, with dedup checks. A ``lead`` (the
+        row's, checked before any merge) hunts on its account in a case of its own."""
         # Same band the ranker uses: empty or a name that is not a rating
         # is unknown, not an invented medium. A detection can arrive from
         # Gate 1 or from a live feed hit; neither path invents a medium.
         priority = intake_severity_band(
             "detection", finding_severity=finding.get("severity")
         )
+
+        if lead is not None:
+            finding_id = finding.get("finding_id")
+            await self._create_investigation(
+                workflow_id=THREAT_HUNT_WORKFLOW_ID,
+                findings=[finding],
+                trigger_type=LEAD_TRIGGER,
+                priority=priority,
+                mint_case=CaseSpec(
+                    title=_infer_title(finding, THREAT_HUNT_WORKFLOW_ID)[:200],
+                    finding_ids=[finding_id] if finding_id else [],
+                    priority=priority,
+                    readers=lead.readers,
+                    reader_teams=lead.reader_teams,
+                    note=lead.why,
+                ),
+                hypothesis=lead.hypothesis,
+                hypothesis_subjects=lead.subjects,
+                shutdown_event=shutdown_event,
+                trigger_id=trigger_id,
+                trigger_reason=lead.why,
+            )
+            return
 
         open_links: List[CaseMatch] = []
         if self._merge_if_overlaps(finding, trigger_id, open_links):
@@ -1448,6 +1682,7 @@ class Orchestrator:
         document: Optional[str] = None,
         gap_proposal_ids: Optional[List[str]] = None,
         open_links: Optional[List[CaseMatch]] = None,
+        trigger_reason: Optional[str] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -1559,6 +1794,7 @@ class Orchestrator:
             trigger_id=trigger_id,
             mint_case=mint_case,
             document=document,
+            reason=trigger_reason,
         )
         if not saved:
             logger.warning(
@@ -2669,6 +2905,7 @@ class Orchestrator:
         trigger_id: Optional[int] = None,
         mint_case: Optional[CaseSpec] = None,
         document: Optional[str] = None,
+        reason: Optional[str] = None,
     ) -> bool:
         """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
 
@@ -2722,6 +2959,7 @@ class Orchestrator:
                         investigation_id=inv_record["investigation_id"],
                         case_id=inv_record.get("case_id"),
                         decided_at=utcnow(),
+                        **({"reason": reason} if reason else {}),
                     )
                     .returning(IntakeTrigger.id)
                 ).scalar_one_or_none()

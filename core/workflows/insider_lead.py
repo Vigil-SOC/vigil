@@ -48,13 +48,9 @@ def account_keys(finding: Dict[str, Any]) -> List[str]:
     return [key for key in finding_entity_keys([finding]) if key.startswith("user:")]
 
 
-def lead_proposal(finding_id: str) -> Dict[str, Any]:
-    """The execute body for ``finding_id``; ``LeadRefused`` when there is none."""
-    from core.storage.database_data_service import get_database_data_service
-
-    finding = get_database_data_service().get_finding(finding_id)
-    if not finding:
-        raise LeadRefused(404, f"Finding {finding_id} not found")
+def lead_for(finding_id: str, finding: Dict[str, Any]) -> Dict[str, Any]:
+    """The execute body for an already-read finding; ``LeadRefused`` 400 when it
+    names no account."""
     keys = account_keys(finding)
     if not keys:
         raise LeadRefused(400, f"Finding {finding_id} {NO_ACCOUNT}")
@@ -76,6 +72,16 @@ def lead_proposal(finding_id: str) -> Dict[str, Any]:
             "restricted": True,
         },
     }
+
+
+def lead_proposal(finding_id: str) -> Dict[str, Any]:
+    """The execute body for ``finding_id``; ``LeadRefused`` when there is none."""
+    from core.storage.database_data_service import get_database_data_service
+
+    finding = get_database_data_service().get_finding(finding_id)
+    if not finding:
+        raise LeadRefused(404, f"Finding {finding_id} not found")
+    return lead_for(finding_id, finding)
 
 
 # ---------------------------------------------------------------------------
