@@ -2028,7 +2028,6 @@ export function CasePage({
             open={disagreeing}
             id={id}
             evidenceOpened={evidenceOpened}
-            initial={closure?.closure_category === 'false_positive' ? 'resolved' : 'false_positive'}
             title="Disagree · close it as"
             onClose={() => setDisagreeing(false)}
             onClosed={() => { setAssessed('Disagreed'); afterClose(); onChanged() }}
