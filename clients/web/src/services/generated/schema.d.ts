@@ -5996,6 +5996,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/oauth/authorizations/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read
+         * @description The client asking, the host it returns to, and the resource it wants.
+         */
+        get: operations["get_api_oauth_authorizations_request_id"];
+        put?: never;
+        /**
+         * Decide
+         * @description Approve or deny, as a person signed in to the console. Approving connects
+         *     the app as you, so it asks you to confirm it's you first.
+         */
+        post: operations["post_api_oauth_authorizations_request_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/disable": {
         parameters: {
             query?: never;
@@ -12390,6 +12415,14 @@ export interface components {
              * @enum {string}
              */
             source: "microsoft_defender" | "azure_sentinel";
+        };
+        /** ConsentDecision */
+        ConsentDecision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "deny";
         };
         /**
          * ContentBlock
@@ -27821,6 +27854,76 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["NoticesReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_oauth_authorizations_request_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_oauth_authorizations_request_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentDecision"];
             };
         };
         responses: {
