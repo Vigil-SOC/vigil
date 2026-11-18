@@ -1,0 +1,47 @@
+# Test-only override for the weekly scale run (tests/scale/). Never for installs.
+#
+# The stack it measures: the real backend, soc-daemon, Postgres, Redis and the
+# upgrade one-shot, as infra/docker/docker-compose.yml defines them. Nothing that
+# calls a model runs: no Bifrost, workers or agent processes, and the daemon's
+# triage, enrichment and response are off (the DAEMON_AUTO_* values stack.py sets).
+# stack.py starts each service with --no-deps, so the services these depend on
+# are never created.
+#
+# Names and host ports are reset so it runs beside a developer's deeptempo-*
+# stack, under its own project (vigil-scale). The API and the daemon's webhook
+# are published on loopback ports Docker picks; the load comes from the host.
+# Written out per service: merge keys drop !reset. Images are tagged
+# <project>-<name>:local so a build never replaces one a developer is running.
+services:
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+  redis:
+    container_name: !reset null
+    ports: !reset []
+  upgrade:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+
+  backend:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-backend:local
+    pull_policy: never
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.backend
+    ports: !override ["127.0.0.1::6987"]
+    restart: "no"
+
+  soc-daemon:
+    container_name: !reset null
+    image: ${COMPOSE_PROJECT_NAME:?}-daemon:local
+    pull_policy: never
+    ports: !override ["127.0.0.1::8081"]
+    restart: "no"
+    environment:
+      # docker-compose.yml gives the daemon no JWT_SECRET_KEY, and it exits at
+      # start without one (auth_service imports it) with DEV_MODE off.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      # The bearer the intake steps present on /ingest.
+      DAEMON_WEBHOOK_TOKEN: ${SCALE_WEBHOOK_TOKEN:?}
