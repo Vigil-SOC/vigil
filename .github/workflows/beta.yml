@@ -1,0 +1,127 @@
+# .github/workflows/beta.yml
+#
+# Daily beta of main: builds the four images (via build-images.yml), signs them
+# and publishes them to ghcr.io tagged <next minor>.0-beta.<date>.<run> plus a
+# moving "beta" tag. Images only: no git tag, no GitHub Release, and never
+# latest, stable, X.Y or sha- tags. Releases (release.yml) own those.
+#
+# Skips when the current beta was built from main's head already, or when CI
+# did not finish green on main's head. Signatures name this workflow, so the
+# release.yml verify command in README.md rejects a beta; verify one with
+# .../.github/workflows/beta.yml@refs/heads/main as the certificate identity.
+#
+# A beta may include database migrations, which have no downgrade.
+
+name: Beta
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # nightly.yml runs at 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two runs would race on the moving beta tag.
+concurrency:
+  group: beta
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Decide whether there is something to build, and under which version.
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check main's head
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read            # list the CI/CD Pipeline runs
+    outputs:
+      build: ${{ steps.c.outputs.build }}
+      sha: ${{ steps.c.outputs.sha }}
+      version: ${{ steps.c.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - id: c
+        run: |
+          set -eu
+          sha=$(gh api "repos/$REPO/commits/main" -q .sha)
+          echo "main head: $sha"
+
+          # Built already? The revision label of the current beta backend image.
+          # A missing beta tag means build; any other registry error fails the run.
+          if out=$(docker buildx imagetools inspect ghcr.io/vigil-soc/vigil-backend:beta --format '{{json .Image}}' 2>&1); then
+            built=$(echo "$out" | jq -r 'map(.config.Labels["org.opencontainers.image.revision"])[0] // empty')
+            if [ "$built" = "$sha" ]; then
+              echo "::notice::beta already built from $sha; nothing to do"
+              echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          elif ! echo "$out" | grep -qi 'not found'; then
+            echo "::error::could not read the beta image: $out"; exit 1
+          fi
+
+          # CI must have passed on main's head.
+          ci=$(gh run list --repo "$REPO" --workflow ci-cd.yml --event push --branch main --commit "$sha" \
+                 --json conclusion -q '[.[] | select(.conclusion == "success")] | length')
+          if [ "$ci" = 0 ]; then
+            echo "::notice::CI/CD Pipeline has not succeeded on $sha; skipping"
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          # Next minor, patch 0, plus the UTC date and run number (unique per run).
+          current=$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/VERSION?ref=$sha" | tr -d '[:space:]')
+          IFS=. read -r major minor _ <<< "$current"
+          version="${major}.$((minor + 1)).0-beta.$(date -u +%Y%m%d).${{ github.run_number }}"
+          echo "::notice::building $version from $sha"
+          { echo "build=true"; echo "sha=$sha"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Build, push and smoke-test the four images (shared with release.yml)
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build images
+    needs: [check]
+    if: needs.check.outputs.build == 'true'
+    permissions:
+      contents: read
+      packages: write          # push to ghcr.io
+    uses: ./.github/workflows/build-images.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+      channel: beta
+      ref: ${{ needs.check.outputs.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Sign keyless, the same way release.yml does. The certificate names beta.yml.
+  # ---------------------------------------------------------------------------
+  sign:
+    name: Sign images
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write          # push signatures to ghcr.io
+      id-token: write          # keyless cosign signing
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.3
+
+      # Sign the multi-arch index digests, not the tags: tags are mutable.
+      - name: Sign images (keyless)
+        env:
+          BACKEND: ghcr.io/vigil-soc/vigil-backend@${{ needs.build.outputs.backend_digest }}
+          DAEMON: ghcr.io/vigil-soc/vigil-daemon@${{ needs.build.outputs.daemon_digest }}
+          AGENT: ghcr.io/vigil-soc/vigil-agent@${{ needs.build.outputs.agent_digest }}
+          MCP_RUNNER: ghcr.io/vigil-soc/vigil-mcp-runner@${{ needs.build.outputs.mcp_runner_digest }}
+        run: cosign sign --yes "$BACKEND" "$DAEMON" "$AGENT" "$MCP_RUNNER"
