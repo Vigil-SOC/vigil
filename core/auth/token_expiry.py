@@ -89,12 +89,15 @@ def warning(user: User) -> list[dict[str, str]]:
             whose = (
                 "" if credential.user_id == user.user_id else " (a service account's)"
             )
-            out.append(
-                {
-                    "message": f'API token "{credential.label}"{whose} expires {when}',
-                    "link": LINK,
-                }
-            )
+            if credential.oauth_client_id:
+                # An OAuth grant can't be renewed; the person reconnects the app.
+                message = (
+                    f'Connected app "{credential.label}"{whose} expires {when}; '
+                    "reconnect it from the app to keep access"
+                )
+            else:
+                message = f'API token "{credential.label}"{whose} expires {when}'
+            out.append({"message": message, "link": LINK})
         return out
 
 
