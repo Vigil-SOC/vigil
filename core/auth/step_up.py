@@ -72,6 +72,46 @@ def open_window(session: Session, sign_in_id: Optional[str]) -> bool:
     return updated > 0
 
 
+def non_sso_now_refused(user: User, auth_method: Optional[str]) -> bool:
+    """Whether this open sign-in must end: a new one for the same account, made
+    without SSO, would be refused now.
+
+    That is login's rule. Require single sign-on is on, the sign-in did not come
+    through it, and the account is neither break-glass nor a service account.
+    """
+    if auth_method == sign_ins.SSO:
+        return False
+    if user.break_glass_at is not None:
+        return False
+    if user.service_account is True:
+        return False
+    return sso.required()
+
+
+def end_non_sso(session: Session, user: User, sign_in_id: Optional[str]) -> None:
+    """End this sign-in and 401 when ``non_sso_now_refused`` is true.
+
+    Before any password or code is read, and it counts no failure. Its own
+    transaction: the 401 rolls the request's back. No trail entry: turning
+    Require single sign-on on is already recorded.
+    """
+    if not sign_in_id:
+        return
+    method = (
+        session.query(SignIn.auth_method)
+        .filter(
+            SignIn.sign_in_id == sign_in_id,
+            SignIn.principal_id == user.principal_id,
+            SignIn.ended_at.is_(None),
+        )
+        .scalar()
+    )
+    if method is None or not non_sso_now_refused(user, method):
+        return
+    if sign_ins.end(sign_in_id, sign_ins.SSO_REQUIRED):
+        raise _ended(sign_ins.SSO_REQUIRED)
+
+
 def provider_only(session: Session, user: Optional[User]) -> bool:
     """No Vigil factor, and signs in only through the provider: the provider, and
     never the password, opens this person's window (#4285, #4756)."""
@@ -274,7 +314,10 @@ def confirm(
     ``method_change``: adding or changing a sign-in method. For a person who signs
     in only through the provider, ``sso_proof`` from confirming there stands in for
     the password, and a password is never taken (#4756).
+    A sign-in a new password sign-in would now be refused ends first, before any
+    of this, and counts nothing (#4841).
     """
+    end_non_sso(session, user, sign_in_id)
     needs_password = strong or not user.mfa_enabled
     needs_code = user.mfa_enabled and not signed_in
     via_proof = method_change and needs_password and sso.sso_only(session, user)

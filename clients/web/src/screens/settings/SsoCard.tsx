@@ -396,7 +396,11 @@ export default function SsoCard({ notify }: SectionProps) {
               />
               <div className="sso-sub">
                 <h4>Require single sign-on</h4>
-                <p>Passwords are refused for people, and no reset links are sent. Service accounts are unaffected.</p>
+                <p>
+                  Passwords are refused for people, and no reset links are sent. A sign-in already open that didn’t come
+                  through SSO ends no later than its next refresh or Confirm it’s you. Service accounts and break-glass
+                  sign-ins are unaffected.
+                </p>
               </div>
             </div>
             {saved.require_sso ? (
