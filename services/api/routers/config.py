@@ -36,6 +36,7 @@ from core.integrations.integration_secrets import (
     redact_secrets,
     secret_fields_for,
     split_secrets,
+    unstorable_secret_fields,
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
@@ -961,6 +962,20 @@ def set_integrations_config(
         # must not retarget it, and must not write a second trail entry for it.
         if integration_id == AUDIT_FEED_INTEGRATION_ID:
             continue
+        refused = [
+            field
+            for field in unstorable_secret_fields(integration_id)
+            if (raw_config or {}).get(field)
+        ]
+        if refused:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Integration '{integration_id}' cannot store a secret in "
+                    f"{', '.join(refused)}: a Custom Integration's id must start "
+                    "with 'custom-' and its field names use only a-z, 0-9 and _."
+                ),
+            )
         stored = config_service.get_integration_config(integration_id) or {}
         missing = credentials_to_resupply(
             integration_id, stored.get("config") or {}, raw_config or {}

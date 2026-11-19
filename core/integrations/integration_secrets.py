@@ -233,27 +233,69 @@ ENV_CREDENTIAL_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _custom_secret_fields(integration_id: str) -> Dict[str, str]:
-    """Password-typed fields of a Custom Integration, from its saved metadata.
+# A Custom Integration's secret is stored under ``<ID>_<FIELD>``, so both are
+# caller-chosen. Only a ``custom-`` id with a plain field name may hold one: its
+# key then starts ``CUSTOM_`` and cannot name a platform secret (JWT_SECRET_KEY,
+# AGENT_INTERNAL_TOKEN, a built-in integration's credential, ...).
+CUSTOM_INTEGRATION_PREFIX = "custom-"
+_CUSTOM_FIELD_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def custom_secret_allowed(integration_id: str, field_name: object) -> bool:
+    """Whether a Custom Integration field may be stored as a secret."""
+    return (
+        integration_id.startswith(CUSTOM_INTEGRATION_PREFIX)
+        and integration_id not in INTEGRATION_SECRET_FIELDS
+        and isinstance(field_name, str)
+        and bool(_CUSTOM_FIELD_RE.match(field_name))
+    )
+
+
+def _custom_password_fields(integration_id: str) -> List[str]:
+    """Password-typed field names of a Custom Integration, from its saved metadata.
 
     Custom Integrations are defined at runtime, so they are read here rather than
-    built into the registry at import. An unreadable file reads as no secrets.
+    built into the registry at import. An unreadable file reads as no fields.
     """
+    if integration_id in INTEGRATION_SECRET_FIELDS:
+        return []
     try:
         metadata = json.loads(
             vigil_path("custom_integrations", "metadata.json").read_text()
         )
     except (OSError, ValueError):
-        return {}
+        return []
     entry = metadata.get(integration_id) if isinstance(metadata, dict) else None
     fields = entry.get("fields") if isinstance(entry, dict) else None
-    return {
-        field["name"]: env_var_for(integration_id, field["name"])
-        for field in fields or []
+    return [
+        field["name"]
+        for field in (fields if isinstance(fields, list) else [])
         if isinstance(field, dict)
         and field.get("type") == "password"
         and isinstance(field.get("name"), str)
+    ]
+
+
+def _custom_secret_fields(integration_id: str) -> Dict[str, str]:
+    """Password-typed fields of a Custom Integration that may be stored."""
+    return {
+        name: env_var_for(integration_id, name)
+        for name in _custom_password_fields(integration_id)
+        if custom_secret_allowed(integration_id, name)
     }
+
+
+def unstorable_secret_fields(integration_id: str) -> List[str]:
+    """Password-typed Custom Integration fields whose store key is refused.
+
+    Metadata saved before the ``custom-`` rule (or written by hand) can still
+    declare them; their values are neither stored as secrets nor kept in plaintext.
+    """
+    return [
+        name
+        for name in _custom_password_fields(integration_id)
+        if not custom_secret_allowed(integration_id, name)
+    ]
 
 
 def secret_fields_for(integration_id: str) -> Mapping[str, str]:
@@ -277,12 +319,15 @@ def split_secrets(
     removed — safe to persist to the DB / JSON.
     """
     mapping = secret_fields_for(integration_id)
-    if not mapping:
+    refused = set(unstorable_secret_fields(integration_id))
+    if not mapping and not refused:
         return {}, dict(config)
 
     secrets: Dict[str, str] = {}
     non_secrets: Dict[str, object] = {}
     for field, value in config.items():
+        if field in refused:
+            continue  # never persisted in plaintext; the save route refuses a value
         env_key = mapping.get(field)
         if env_key is None:
             non_secrets[field] = value
@@ -300,10 +345,11 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
     credentials. The form will treat absent secret fields as "leave existing
     value untouched" on the next save.
     """
-    mapping = secret_fields_for(integration_id)
-    if not mapping:
-        return dict(config)
-    return {k: v for k, v in config.items() if k not in mapping}
+    hidden = {
+        *secret_fields_for(integration_id),
+        *unstorable_secret_fields(integration_id),
+    }
+    return {k: v for k, v in config.items() if k not in hidden}
 
 
 # Storage records integration changes but cannot import this module.
