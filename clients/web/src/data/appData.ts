@@ -96,7 +96,7 @@ export interface Skill {
   /** true while its content scan keeps it from agents */
   held: boolean
   /** the repo it was installed from and how many skills came with it; null when not from a repo */
-  library: { label: string; commit: string; skills: number } | null
+  library: { label: string; ref: string | null; path: string; commit: string; skills: number } | null
 }
 
 /** The usage line the card and the drawer subtitle share (#1560). */

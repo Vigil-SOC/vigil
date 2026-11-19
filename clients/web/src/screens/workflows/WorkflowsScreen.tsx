@@ -1,4 +1,4 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -15,6 +15,7 @@ import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
 import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
+import { SkillLibraryPanel } from './SkillLibraryPanel'
 import { SkillImportDialog } from './SkillImportDialog'
 import { skillsApi } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
@@ -4224,6 +4225,30 @@ function SkillUsage({ skill, align }: { skill: Skill; align: 'start' | 'end' }) 
   )
 }
 
+// Skills installed from one repo folder at one ref share a card; a lone one stays a plain card.
+type SkillCard = { kind: 'skill'; skill: Skill } | { kind: 'library'; key: string; skills: Skill[] }
+
+function groupSkillCards(rows: Skill[]): SkillCard[] {
+  const key = (s: Skill) => (s.library ? JSON.stringify([s.library.label, s.library.ref, s.library.path]) : null)
+  const groups = new Map<string, Skill[]>()
+  for (const s of rows) {
+    const k = key(s)
+    if (k) groups.set(k, [...(groups.get(k) ?? []), s])
+  }
+  const out: SkillCard[] = []
+  const placed = new Set<string>()
+  for (const s of rows) {
+    const k = key(s)
+    const members = k ? groups.get(k)! : []
+    if (!k || members.length < 2) out.push({ kind: 'skill', skill: s })
+    else if (!placed.has(k)) {
+      placed.add(k)
+      out.push({ kind: 'library', key: k, skills: members })
+    }
+  }
+  return out
+}
+
 function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: Feed<Workflow>; agents: ReturnType<typeof useAgents> }) {
   const { rows, phase, error, reload } = feed
   // Saving, importing and deleting answer 403 without it.
@@ -4231,6 +4256,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
   const [editName, setEditName] = useOpenItem('skill', 'skills')
   const [building, setBuilding] = useState(false)
   const [deleteSkill, setDeleteSkill] = useState<Skill | null>(null)
+  const [deleteLibrary, setDeleteLibrary] = useState<Skill | null>(null)
+  const [libraryKey, setLibraryKey] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   // One line under the bar: the import's error, or which skills a zip of several installed
@@ -4241,6 +4268,8 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
     ? workflowsOffered(workflows.rows, agents.grants)
     : null
   const offeredText = offered === null ? '…' : offered.join(', ')
+  const cards = useMemo(() => groupSkillCards(rows), [rows])
+  const openLibrary = cards.find((c): c is Extract<SkillCard, { kind: 'library' }> => c.kind === 'library' && c.key === libraryKey)
 
   const importFile = (file: File | undefined) => {
     if (!file) return
@@ -4287,29 +4316,63 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-x-5 gap-y-[26px] px-[22px] pt-4 pb-24 [grid-template-columns:repeat(4,minmax(0,1fr))]">
-          {rows.map((s, i) => (
-            <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
-              <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
-                <span className="sk-folder" aria-hidden="true">
-                  <span className="sk-tab" />
-                  <span className="sk-back" />
-                  <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
-                  <span className="sk-flap"><span className="sk-origin" title={s.held ? 'Held: agents cannot use this skill until its scan clears it or someone approves it. Open it for the scan.' : undefined}>{s.bundled ? 'Built in' : s.held ? 'Held' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
-                </span>
-                <span className="sk-text">
-                  <span className="sk-name" title={s.name}>{s.name}</span>
-                  <span className="sk-desc" title={s.desc}>{s.desc}</span>
-                </span>
-              </button>
-              <div className="sk-meta">
-                {/* the last of the four columns opens its popover leftwards to stay on screen */}
-                <SkillUsage skill={s} align={i % 4 === 3 ? 'end' : 'start'} />
-                {s.bundled
-                  ? <span className="sk-ro">Read-only</span>
-                  : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+          {cards.map((c, i) => {
+            // the last of the four columns opens its popover leftwards to stay on screen
+            const align = i % 4 === 3 ? 'end' : 'start'
+            if (c.kind === 'library') {
+              const first = c.skills[0]
+              const lib = first.library!
+              const heldCount = c.skills.filter((m) => m.held).length
+              // Agents are counted per skill, so the library shows the busiest skill's count, not a sum.
+              const usage: Skill = { ...first, reads7d: c.skills.reduce((n, m) => n + m.reads7d, 0), agents7d: Math.max(...c.skills.map((m) => m.agents7d)) }
+              const names = c.skills.map((m) => m.name).join(', ')
+              return (
+                <div className="sk-card sk-custom sk-lib" key={c.key}>
+                  <button type="button" className="sk-open" aria-label={`Open ${lib.label}`} onClick={() => setLibraryKey(c.key)}>
+                    <span className="sk-folder" aria-hidden="true">
+                      <span className="sk-ghost g1" />
+                      {c.skills.length >= 3 && <span className="sk-ghost g2" />}
+                      <span className="sk-tab" />
+                      <span className="sk-back" />
+                      <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
+                      <span className="sk-flap"><span className="sk-origin" title={heldCount > 0 ? 'Held: agents cannot use these skills until their scan clears them or someone approves them. Open the library to see which.' : undefined}>{heldCount > 0 ? `Held · ${heldCount}` : 'Yours'}</span><span className="sk-files">{c.skills.length} skills</span></span>
+                    </span>
+                    <span className="sk-text">
+                      <span className="sk-name" title={lib.label}>{lib.label}</span>
+                      <span className="sk-desc" title={names}>{names}</span>
+                    </span>
+                  </button>
+                  <div className="sk-meta">
+                    <SkillUsage skill={usage} align={align} />
+                    {canWrite && <button className="btn ghost" onClick={() => setDeleteLibrary(first)}>Delete</button>}
+                  </div>
+                </div>
+              )
+            }
+            const s = c.skill
+            return (
+              <div className={`sk-card${s.bundled ? '' : ' sk-custom'}`} key={s.id}>
+                <button type="button" className="sk-open" aria-label={`Edit ${s.name}`} onClick={() => setEditName(s.name)}>
+                  <span className="sk-folder" aria-hidden="true">
+                    <span className="sk-tab" />
+                    <span className="sk-back" />
+                    <span className="sk-paper"><span className="sk-paper-name">SKILL.md</span><i /><i /><i /></span>
+                    <span className="sk-flap"><span className="sk-origin" title={s.held ? 'Held: agents cannot use this skill until its scan clears it or someone approves it. Open it for the scan.' : undefined}>{s.bundled ? 'Built in' : s.held ? 'Held' : 'Yours'}</span><span className="sk-files">{s.fileCount} {s.fileCount === 1 ? 'file' : 'files'}</span></span>
+                  </span>
+                  <span className="sk-text">
+                    <span className="sk-name" title={s.name}>{s.name}</span>
+                    <span className="sk-desc" title={s.desc}>{s.desc}</span>
+                  </span>
+                </button>
+                <div className="sk-meta">
+                  <SkillUsage skill={s} align={align} />
+                  {s.bundled
+                    ? <span className="sk-ro">Read-only</span>
+                    : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {(editName || building) && (
@@ -4330,6 +4393,23 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
             reload()
             setImportNotice({ text: `Installed ${skills.length} skill${skills.length === 1 ? '' : 's'} from ${label}: ${skills.map((s) => s.name).join(', ')}`, error: false })
           }}
+        />
+      )}
+      {openLibrary && !editName && (
+        <SkillLibraryPanel
+          skills={openLibrary.skills}
+          canWrite={canWrite}
+          onClose={() => setLibraryKey(null)}
+          onOpenSkill={(name) => { setLibraryKey(null); setEditName(name) }}
+          onChanged={() => { setLibraryKey(null); reload() }}
+        />
+      )}
+      {deleteLibrary && (
+        <SkillDeleteModal
+          skill={deleteLibrary}
+          wholeLibrary
+          onClose={() => setDeleteLibrary(null)}
+          onDeleted={() => { setDeleteLibrary(null); reload() }}
         />
       )}
       {deleteSkill && (
