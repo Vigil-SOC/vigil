@@ -1,8 +1,9 @@
 """Join the two 0102 heads left on main into one.
 
-0102_merge_0101_heads and 0102_unwrap_scalar_ioc_text landed side by side,
-and the API refuses to start on more than one head. Neither is touched;
-this runs nothing. A database at either upgrades through this.
+0102_merge_0101_heads and 0102_unwrap_scalar_ioc_text landed side by side, and
+the API refuses to start on more than one head. Neither is touched; this runs
+nothing. A database at either upgrades through this, so the scalar-IOC rewrite
+still runs for a database that only has the merge.
 """
 
 revision = "0103_merge_0102_heads"
