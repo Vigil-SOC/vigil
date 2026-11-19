@@ -72,25 +72,27 @@ def open_window(session: Session, sign_in_id: Optional[str]) -> bool:
     return updated > 0
 
 
+def provider_only(session: Session, user: Optional[User]) -> bool:
+    """No Vigil factor, and signs in only through the provider: the provider, and
+    never the password, opens this person's window (#4285, #4756)."""
+    return user is not None and not user.mfa_enabled and sso.sso_only(session, user)
+
+
 def at_provider(session: Session, principal_id: str, sign_in_id: str) -> bool:
     """Whether this person confirms at the provider for this open sign-in of theirs:
-    no Vigil factor, and signs in only through the provider (#4285, #4756)."""
+    ``provider_only``, and the sign-in itself came through the provider. A password
+    sign-in left open when Require SSO was turned on is not one."""
     user = session.query(User).filter(User.principal_id == principal_id).first()
-    open_ = (
-        session.query(SignIn.sign_in_id)
+    method = (
+        session.query(SignIn.auth_method)
         .filter(
             SignIn.sign_in_id == sign_in_id,
             SignIn.principal_id == principal_id,
             SignIn.ended_at.is_(None),
         )
-        .first()
+        .scalar()
     )
-    return (
-        user is not None
-        and open_ is not None
-        and not user.mfa_enabled
-        and sso.sso_only(session, user)
-    )
+    return method == sign_ins.SSO and provider_only(session, user)
 
 
 def confirmed(
@@ -99,10 +101,12 @@ def confirmed(
     sign_in_id: Optional[str],
     source: Optional[str],
     strong: bool = False,
+    window: bool = True,
 ) -> bool:
     """A confirmation that held: open the window and put it on the trail. False,
-    and nothing recorded, when the sign-in has ended meanwhile."""
-    if sign_in_id and not open_window(session, sign_in_id):
+    and nothing recorded, when the sign-in has ended meanwhile. ``window=False``
+    only records it: the factor given cannot open the window."""
+    if window and sign_in_id and not open_window(session, sign_in_id):
         return False
     trail_events.record(
         session,
@@ -146,7 +150,9 @@ def check(request: Request, user_id: str, action: str) -> None:
         if method == sign_ins.BREAK_GLASS:
             return
         mfa = bool(user and user.mfa_enabled)
-        via_provider = user is not None and not mfa and sso.sso_only(session, user)
+        # Only a sign-in through the provider: an open password sign-in stays
+        # held to the two-step rule it had before Require SSO.
+        via_provider = method == sign_ins.SSO and provider_only(session, user)
     if not mfa and not via_provider:
         raise _refusal(
             MFA_FIRST,
@@ -301,7 +307,16 @@ def confirm(
 
     if problem is None:
         if settle:
-            confirmed(session, user.principal_id, sign_in_id, source, strong=strong)
+            # The password checks this one action, but never opens the window
+            # of a person who confirms at the provider.
+            confirmed(
+                session,
+                user.principal_id,
+                sign_in_id,
+                source,
+                strong=strong,
+                window=not provider_only(session, user),
+            )
         return
     _refuse(user, sign_in_id, source, problem)
 
