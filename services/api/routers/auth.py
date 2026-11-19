@@ -1611,6 +1611,11 @@ def _sso_username(session: Session, claims: dict) -> str:
     raise sso.Refused("no_free_username")
 
 
+_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_LOWER = _UPPER.lower()
+_ASCII_LOWER = str.maketrans(_UPPER, _LOWER)
+
+
 def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[User]:
     """The account this subject signs in as (None: create one), refused when it
     can't. A directory id on an unmanaged link is refreshed here; a refusal
@@ -1629,6 +1634,10 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         # (still the externalId) is still replaced, so turning sync off does not
         # strand that person on the email match.
         link = sso.linked_by_directory(session, s.issuer, claim)
+        # Only a link still waiting for its first sign-in: once a subject is
+        # bound, that subject alone reaches the account.
+        if link is not None and link.subject != link.directory_id:
+            link = None
         if link is not None:
             directory_sync.adopt_subject(session, link, s.issuer, claims["sub"])
             notes["linked_by"] = "directory"
@@ -1647,7 +1656,12 @@ def _sso_account(session: Session, s, claims: dict, notes: dict) -> Optional[Use
         claim_sign_in_names(session, email)
         matches = (
             session.query(User)
-            .filter(func.lower(User.email) == email.lower())
+            # ASCII case only, on both sides: Unicode case mapping folds other
+            # mailboxes onto this one (U+212A KELVIN SIGN lowers to "k").
+            .filter(
+                func.translate(User.email, _UPPER, _LOWER)
+                == email.translate(_ASCII_LOWER)
+            )
             .with_for_update()
             .all()
         )
