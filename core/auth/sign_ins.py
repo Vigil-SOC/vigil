@@ -88,6 +88,10 @@ TOO_MANY_CONFIRMATIONS = "too_many_confirmations"
 # A restore ended every open sign-in. Not in STOPS_RUNS: it stops the runs in
 # one pass and sends one notice (core/backup/restore.py), not one per person.
 RESTORE = "restore"
+# Require single sign-on was turned on while this person's sign-in was open and
+# had not come through it. Not in STOPS_RUNS: a settings change, like time, idle
+# and upgrade, so the sign-in's runs keep going.
+SSO_REQUIRED = "sso_required"
 
 # The end reasons that stop the sign-in's agent runs (and their children): a
 # compromise, someone else's act, or a change of who the account is. Time, idle,
@@ -131,6 +135,7 @@ REASON_WORDS = {
     SIGN_IN_LIMIT: "A newer sign-in took its place",
     TOO_MANY_CONFIRMATIONS: "Too many failed confirmations",
     RESTORE: "Ended by a restore",
+    SSO_REQUIRED: "Single sign-on is now required",
 }
 UNNAMED_REASON = "Ended by a security event"
 
