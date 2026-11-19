@@ -1,9 +1,9 @@
 """Edits to the lists a Case carries: activities, timeline, steps, techniques, findings.
 
-These are not rows of their own. They are JSON lists on the Case record,
-so adding one is a read, an append and a write rather than an insert, and the
-ordering and timestamp conventions are the only thing that makes a list of them
-readable later.
+Activities, timeline entries, resolution steps and techniques are JSON lists on
+the Case record, so adding one is a read, an append and a write rather than an
+insert. Findings are not: each link is its own row, inserted or deleted on its
+own, so an alert attached at the same moment is not written away.
 
 They live here because two callers perform them -- the `/api/v1` routes and
 Vigil's MCP tools -- and each had written the read-append-write out for itself,
@@ -166,66 +166,50 @@ def merge_mitre_techniques(
 def link_finding(
     service: DatabaseDataService, case_id: str, finding_id: str
 ) -> Optional[bool]:
-    """Attach a Finding to a Case. True if it was attached, False if already on.
+    """Attach a Finding to a Case. True if this call attached it, False if already on.
 
-    None when the Case does not exist. Linking a Finding twice is not an
-    error and does not attach it twice.
+    None when the Case does not exist or the write failed. Linking a Finding
+    twice is not an error and writes nothing. An id that names no finding is
+    not a missing case: nothing is written and this returns True, because the
+    route turns None into a 404 or a 500.
     """
-    finding_ids = _existing(service, case_id, "finding_ids")
-    if finding_ids is None:
-        return None
-    if finding_id in finding_ids:
-        return False
-
-    finding_ids.append(finding_id)
-    if not service.update_case(case_id, finding_ids=finding_ids):
+    result = service.add_finding_to_case(case_id, finding_id)
+    if result is False or result is None:
         logger.error("Could not link finding %s to case %s", finding_id, case_id)
         return None
-    return True
+    if result.case_missing:
+        return None
+    if result.finding_missing or result.attached:
+        return True
+    return False
 
 
 def link_findings(
     service: DatabaseDataService, case_id: str, new_finding_ids: List[str]
 ) -> Optional[Dict[str, List[str]]]:
-    """Attach multiple Findings to a Case in a single read-modify-write pass.
+    """Attach many Findings in one transaction and one trail entry.
 
-    Returns ``{"added": [...], "failed": [...]}`` where ``failed`` contains IDs
-    already present on the Case (or if the single batch update failed), or
-    ``None`` when the Case does not exist.
+    Returns ``{"added": [...], "failed": [...]}``. ``added`` is what this call
+    newly attached; ``failed`` is what was already on the Case. When the write
+    fails, ``failed`` is the whole list. ``None`` when the Case does not exist.
     """
-    finding_ids = _existing(service, case_id, "finding_ids")
-    if finding_ids is None:
+    result = service.add_findings_to_case(case_id, new_finding_ids)
+    if result is None:
         return None
-
-    seen = set(finding_ids)
-    added: List[str] = []
-    failed: List[str] = []
-    for fid in new_finding_ids:
-        if fid in seen:
-            failed.append(fid)
-        else:
-            seen.add(fid)
-            finding_ids.append(fid)
-            added.append(fid)
-
-    if added and not service.update_case(case_id, finding_ids=finding_ids):
-        logger.error("Could not link findings %s to case %s", added, case_id)
+    if result is False:
+        logger.error("Could not link findings %s to case %s", new_finding_ids, case_id)
         return {"added": [], "failed": list(new_finding_ids)}
-    return {"added": added, "failed": failed}
+    return result
 
 
 def unlink_finding(
     service: DatabaseDataService, case_id: str, finding_id: str
 ) -> Optional[bool]:
-    """Detach a Finding. True if it was detached, False if it was not attached."""
-    finding_ids = _existing(service, case_id, "finding_ids")
-    if finding_ids is None:
-        return None
-    if finding_id not in finding_ids:
-        return False
-
-    finding_ids.remove(finding_id)
-    if not service.update_case(case_id, finding_ids=finding_ids):
+    """Detach a Finding. True if this call detached it, False if it was not on."""
+    result = service.remove_finding_from_case(case_id, finding_id)
+    if result is False or result is None:
         logger.error("Could not unlink finding %s from case %s", finding_id, case_id)
         return None
-    return True
+    if result.case_missing:
+        return None
+    return bool(result.detached)
