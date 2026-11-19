@@ -436,6 +436,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
         {
             "replaced": " (replaced by a new link)",
             "sso": " (they signed in through SSO)",
+            "erased": " (the account was erased)",
         }.get(p.get("reason"), "")
     ),
     "invite.expired": "An invite expired unused",

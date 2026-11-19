@@ -18,14 +18,22 @@ import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from sqlalchemy import bindparam, event, text
 
 from core.audit import trail
-from core.auth import identity, key_ring, mcp_credential_service, principals, sign_ins
+from core.auth import (
+    identity,
+    key_ring,
+    mcp_credential_service,
+    principals,
+    sign_ins,
+    trail_events,
+)
 from core.config import get_settings
 from core.storage.connection import get_db_manager
+from core.time import utcnow
 
 MIN_DAYS = 365
 MAX_DAYS = 36500
@@ -55,6 +63,9 @@ ERASED_LABEL = "Erased account's token"
 _QUEUED = "erasure_file_ids"
 _REWRITE = "erasure_file_rewrite"
 _ARMED = "erasure_file_armed"
+# Open invite rows locked before the trail lock, by the leader's tick.
+# Absent: this erasure has not locked them yet. An empty tuple: it looked.
+_INVITE_ROWS = "erasure_invite_rows"
 
 # A row names a principal when its hashed payload carries that id. The columns
 # beside the hash are what erasure clears; the payload stays so the chain does.
@@ -68,6 +79,16 @@ _NAMES = """
     OR payload->>'assignee' = :id
     OR payload->>'previous_assignee' = :id
 """
+# Invite entries are written before the account exists, so they carry the link
+# id, not the principal. Erasure still has to clear them.
+_INVITE_ACTIONS = (
+    "invite.sent",
+    "invite.failed",
+    "invite.expired",
+    "invite.revoked",
+)
+_ACCEPTED_NOTICE = "{} accepted your invite and now has an account."
+_CANCELLED_SUFFIX = " now has an account."
 
 
 class RetentionError(ValueError):
@@ -410,6 +431,10 @@ def lock_due_accounts(session, now: datetime) -> None:
         ).bindparams(bindparam("ids", expanding=True)),
         {"ids": ids},
     )
+    # Invites too, before the tick takes the trail lock. Issuing one locks the
+    # open row and then appends; locking the row afterwards deadlocks with it.
+    traces = [_invite_trace(session, principal_id) for principal_id in ids]
+    session.info[_INVITE_ROWS] = _open_invites(session, traces, lock=True)
 
 
 def cover_through(session, seq: int) -> None:
@@ -451,6 +476,10 @@ def reapply(session, snapshot_ids: list[str], *, reserve: bool = True) -> None:
         raise RetentionError(f"the identifier key can't be read: {exc}") from exc
     for pid in union:
         _blank_label(session, pid)
+    # Before _revoke rewrites the addresses the scrub has to read. One pass,
+    # so every open invite is locked before the first trail append.
+    scrub_invites(session, union, notices=True)
+    for pid in union:
         # Dated now, the re-apply time. _revoke skips service and erased accounts.
         _revoke(session, pid, reserve=reserve)
     trail._lock(session)
@@ -557,12 +586,349 @@ def _announce(session, actor: str, principal_id: str, reason: str):
     return trail.append(session, payload)
 
 
+class _InviteTrace(NamedTuple):
+    emails: tuple[str, ...]
+    folded: tuple[str, ...]
+    usernames: tuple[str, ...]
+    link_ids: tuple[str, ...]
+
+
+def _invite_trace(session, principal_id: str) -> _InviteTrace:
+    """Addresses and usernames still stored for this person, and invite links
+    whose row names them. Read before the account is rewritten and before the
+    beside-columns are cleared. The rewritten ``erased-…`` address is skipped."""
+    emails: set[str] = set()
+    usernames: set[str] = set()
+    skipped = identity.fold(f"{ERASED_PREFIX}{principal_id}@{ERASED_DOMAIN}")
+    erased_user = erased_username(principal_id)
+
+    def add_email(value: Optional[str]) -> None:
+        if value and identity.fold(value) != skipped:
+            emails.add(value)
+
+    def add_username(value: Optional[str]) -> None:
+        if value and value != erased_user:
+            usernames.add(value)
+
+    if _table(session, "users"):
+        row = session.execute(
+            text("SELECT username, email FROM public.users WHERE principal_id = :id"),
+            {"id": principal_id},
+        ).first()
+        if row is not None:
+            add_username(row.username)
+            add_email(row.email)
+    link_ids: list[str] = []
+    if _table(session, "auth_links"):
+        link_ids = list(
+            session.execute(
+                text(
+                    "SELECT link_id FROM public.auth_links"
+                    " WHERE principal_id = :id AND kind = 'invite'"
+                ),
+                {"id": principal_id},
+            ).scalars()
+        )
+    _collect_personal(
+        session,
+        "audit_trail",
+        "personal",
+        principal_id,
+        link_ids,
+        add_email,
+        add_username,
+    )
+    _collect_personal(
+        session,
+        "audit_trail_held",
+        "beside->'personal'",
+        principal_id,
+        link_ids,
+        add_email,
+        add_username,
+    )
+    folded = tuple(sorted({identity.fold(email) for email in emails}))
+    return _InviteTrace(
+        tuple(sorted(emails)), folded, tuple(sorted(usernames)), tuple(link_ids)
+    )
+
+
+def _collect_personal(
+    session, table, personal, principal_id, link_ids, add_email, add_username
+) -> None:
+    """Emails and usernames from ``personal`` on rows that name the principal,
+    plus emails still on the invite entries of the person's links."""
+    if not _table(session, table):
+        return
+    # The principal, not the actor. An invite they sent, and an account they
+    # created, store the other person's address beside their own actor id.
+    for email, username in session.execute(
+        text(
+            f"SELECT {personal}->>'email', {personal}->>'username'"
+            f" FROM public.{table} WHERE payload->>'principal' = :id"
+        ),
+        {"id": principal_id},
+    ):
+        add_email(email)
+        add_username(username)
+    if not link_ids:
+        return
+    for email in session.execute(
+        text(
+            f"SELECT {personal}->>'email' FROM public.{table}"
+            " WHERE payload->>'action' = ANY(CAST(:actions AS text[]))"
+            " AND payload->>'link_id' = ANY(CAST(:links AS text[]))"
+        ),
+        {"actions": list(_INVITE_ACTIONS), "links": list(link_ids)},
+    ).scalars():
+        add_email(email)
+
+
+def _invite_match(
+    email_sql: str, link_ids: tuple[str, ...], folded: tuple[str, ...]
+) -> tuple[str, dict]:
+    """WHERE fragment for invite entries of these links or these addresses.
+    Address comparison is ``sql_fold``: ``lower(normalize(..., NFKC))``."""
+    parts: list[str] = []
+    params: dict[str, Any] = {"actions": list(_INVITE_ACTIONS)}
+    if link_ids:
+        parts.append("payload->>'link_id' = ANY(CAST(:links AS text[]))")
+        params["links"] = list(link_ids)
+    if folded:
+        parts.append(
+            f"lower(normalize({email_sql}, NFKC)) = ANY(CAST(:folded AS text[]))"
+        )
+        params["folded"] = list(folded)
+    if not parts:
+        return "", params
+    clause = (
+        "payload->>'action' = ANY(CAST(:actions AS text[])) AND ("
+        + " OR ".join(parts)
+        + ")"
+    )
+    return clause, params
+
+
+def _drop_invite_notices(session, trace: _InviteTrace) -> None:
+    """Delete the inviter's invite notices that name this person. Other kinds stay."""
+    if not _table(session, "case_notifications"):
+        return
+    parts: list[str] = []
+    params: dict[str, Any] = {}
+    accepted = [_ACCEPTED_NOTICE.format(name) for name in trace.usernames]
+    if accepted:
+        parts.append(
+            "notification_type = 'invite_accepted'"
+            " AND message = ANY(CAST(:accepted AS text[]))"
+        )
+        params["accepted"] = accepted
+    if trace.emails:
+        parts.append(
+            "notification_type = 'invite_cancelled'"
+            " AND message = ANY(CAST(:cancelled AS text[]))"
+        )
+        params["cancelled"] = [f"{email}{_CANCELLED_SUFFIX}" for email in trace.emails]
+    if trace.folded:
+        # The same address in another spelling: the message is the address
+        # plus this suffix, compared the way identifiers compare.
+        parts.append(
+            "notification_type = 'invite_cancelled'"
+            " AND length(message) > length(:suffix)"
+            " AND right(message, length(:suffix)) = :suffix"
+            " AND lower(normalize(left(message, length(message) - length(:suffix)),"
+            " NFKC)) = ANY(CAST(:folded AS text[]))"
+        )
+        params["suffix"] = _CANCELLED_SUFFIX
+        params["folded"] = list(trace.folded)
+    if not parts:
+        return
+    session.execute(
+        text(f"DELETE FROM public.case_notifications WHERE {' OR '.join(parts)}"),
+        params,
+    )
+
+
+def _open_invites(session, traces: list[_InviteTrace], *, lock: bool):
+    """Open invites for these addresses, expired ones included.
+
+    ``lock`` takes them in link-id order before any trail append. Issuing an
+    invite locks the open row and then appends, and the other order deadlocks.
+    Times are naive UTC, the same clock ``note_expired`` and ``revoke`` use.
+    """
+    folded = tuple(sorted({email for trace in traces for email in trace.folded}))
+    if not folded or not _table(session, "auth_links"):
+        return ()
+    locking = " FOR UPDATE" if lock else ""
+    return session.execute(
+        text(f"""
+            SELECT link_id, email, role_id,
+                   (expired_noted_at IS NULL AND expires_at <= :now) AS due
+            FROM public.auth_links
+            WHERE kind = 'invite' AND used_at IS NULL AND revoked_at IS NULL
+              AND email IS NOT NULL
+              AND lower(normalize(email, NFKC)) = ANY(CAST(:folded AS text[]))
+            ORDER BY link_id{locking}
+            """),
+        {"folded": list(folded), "now": utcnow()},
+    ).all()
+
+
+def _lock_and_close(session, traces: list[_InviteTrace]) -> tuple[str, ...]:
+    """Revoke open invites for these addresses, expired ones included.
+
+    The leader's tick locks the rows before it takes the trail lock and leaves
+    them on the session; locking again here would wait on an invite that is
+    itself waiting for that lock. The new entries still carry the address, as
+    ``note_expired`` and ``revoke`` write it; the caller blanks them once it
+    holds the trail lock. Returns the closed link ids.
+    """
+    info = getattr(session, "info", None)
+    if info is not None and _INVITE_ROWS in info:
+        rows = info[_INVITE_ROWS]
+    else:
+        rows = _open_invites(session, traces, lock=True)
+    closed: list[str] = []
+    now = utcnow()
+    for row in rows:
+        if row.due:
+            marked = session.execute(
+                text("""
+                    UPDATE public.auth_links SET expired_noted_at = :now
+                    WHERE link_id = :id AND expired_noted_at IS NULL
+                    RETURNING link_id
+                    """),
+                {"id": row.link_id, "now": now},
+            ).first()
+            if marked:
+                trail_events.record(
+                    session,
+                    "invite.expired",
+                    {"personal": {"email": row.email}},
+                    actor=trail.SYSTEM,
+                    link_id=row.link_id,
+                    role_id=row.role_id,
+                )
+        updated = session.execute(
+            text("""
+                UPDATE public.auth_links
+                SET revoked_at = :now, email = NULL
+                WHERE link_id = :id AND revoked_at IS NULL
+                RETURNING link_id
+                """),
+            {"id": row.link_id, "now": now},
+        ).first()
+        if updated:
+            trail_events.record(
+                session,
+                "invite.revoked",
+                {"personal": {"email": row.email}},
+                actor=trail.SYSTEM,
+                link_id=row.link_id,
+                reason="erased",
+            )
+            closed.append(row.link_id)
+    return tuple(closed)
+
+
+def _blank_invite_rows(session, trace: _InviteTrace) -> None:
+    """Null the address and source address on the invite entries of these links
+    and addresses. The payload is untouched, so the chain still verifies."""
+    clause, params = _invite_match("personal->>'email'", trace.link_ids, trace.folded)
+    if not clause:
+        return
+    if _table(session, "audit_trail"):
+        session.execute(
+            text(f"""
+                UPDATE public.audit_trail SET personal = NULL, source_ip = NULL
+                WHERE {clause}
+                  AND (personal IS NOT NULL OR source_ip IS NOT NULL)
+                """),
+            params,
+        )
+    held, held_params = _invite_match(
+        "beside->'personal'->>'email'", trace.link_ids, trace.folded
+    )
+    if held and _table(session, "audit_trail_held"):
+        session.execute(
+            text(f"""
+                UPDATE public.audit_trail_held
+                SET beside = beside - 'personal' - 'source_ip'
+                WHERE {held}
+                  AND (beside ? 'personal' OR beside ? 'source_ip')
+                """),
+            held_params,
+        )
+
+
+def _invite_dirty(session, trace: _InviteTrace) -> bool:
+    clause, params = _invite_match("personal->>'email'", trace.link_ids, trace.folded)
+    if clause and _table(session, "audit_trail"):
+        if session.execute(
+            text(
+                "SELECT 1 FROM public.audit_trail"
+                f" WHERE {clause} AND (personal IS NOT NULL OR source_ip IS NOT NULL)"
+                " LIMIT 1"
+            ),
+            params,
+        ).first():
+            return True
+    held, held_params = _invite_match(
+        "beside->'personal'->>'email'", trace.link_ids, trace.folded
+    )
+    if held and _table(session, "audit_trail_held"):
+        if session.execute(
+            text(
+                "SELECT 1 FROM public.audit_trail_held WHERE "
+                f"{held} AND (beside ? 'personal' OR beside ? 'source_ip') LIMIT 1"
+            ),
+            held_params,
+        ).first():
+            return True
+    return False
+
+
+def scrub_invites(session, principal_ids: list[str], *, notices: bool) -> None:
+    """Clear invite traces for these principals.
+
+    Closes an invite still open for an address they hold, then nulls the
+    address and source address on ``invite.sent``, ``invite.failed``,
+    ``invite.expired`` and ``invite.revoked``. ``notices`` deletes the
+    inviter's invite notices; an upgrade leaves them, because nothing left in
+    the database ties those rows to the person. Plain SQL on the caller's
+    connection: the upgrade runs it too. Running it again changes nothing.
+    """
+    traces = [_invite_trace(session, principal_id) for principal_id in principal_ids]
+    if notices:
+        for trace in traces:
+            _drop_invite_notices(session, trace)
+    closed = _lock_and_close(session, traces)
+    merged = _InviteTrace(
+        emails=tuple(sorted({email for trace in traces for email in trace.emails})),
+        folded=tuple(sorted({email for trace in traces for email in trace.folded})),
+        usernames=(),
+        link_ids=tuple(
+            sorted({*closed, *(link for trace in traces for link in trace.link_ids)})
+        ),
+    )
+    # Close writes the address into the new entries. Blank after that, and
+    # only once this transaction holds the trail lock: the leader takes the
+    # lock and then locks window rows.
+    if closed or _invite_dirty(session, merged):
+        trail._lock(session)
+        _blank_invite_rows(session, merged)
+
+
 def _perform(session, principal_id: str) -> None:
     # Lock order, everywhere: the feed row, then the trail lock, then window or
     # retention rows. The caller holds the feed row. The beside-columns wait
     # until this transaction holds the trail lock: the leader takes that lock
     # and then locks window rows, so updating those rows first deadlocks.
+    # Invite rows are locked before that, inside the scrub: issuing an invite
+    # locks the open invite and then appends.
     _blank_label(session, principal_id)
+    # Before _revoke rewrites the username and email, and before the
+    # beside-columns that still hold an address are cleared.
+    scrub_invites(session, [principal_id], notices=True)
     _revoke(session, principal_id)
     _drop_notices(session, principal_id)
     trail._lock(session)
