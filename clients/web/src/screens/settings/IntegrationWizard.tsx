@@ -137,8 +137,9 @@ export default function IntegrationWizard({
     try {
       const { data } = await configApi.testIntegration(integration.id)
       setProbe({ state: 'done', result: data })
-      // not_testable has no probe to record; every other answer was stored
-      if (data.reason !== 'not_testable') {
+      // not_testable has no probe to record. not_checked did not run the read,
+      // so it is not stored as a pass or a failure.
+      if (data.reason !== 'not_testable' && data.reason !== 'not_checked') {
         setTested({ at: new Date().toISOString(), success: data.success, error: data.success ? null : data.message ?? null })
         onTested?.()
       }
@@ -317,11 +318,14 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
   const { result } = probe
   if (result.reason === 'not_testable') return note('This integration has no server Vigil can test.')
   const servers = result.servers ?? []
+  const cred = result.credentials
+  const credState = cred?.success === true ? 'pass' : cred?.success === false ? 'fail' : 'skip'
   // A connector integration has no servers; its message says what was checked.
   return (
     <>
       {servers.length > 0 && note('Vigil connects to each server behind this integration with the saved settings, then reads from the service with the saved URL and credentials.')}
-      {servers.length === 0 && <Banner kind={result.success ? 'ok' : 'err'}>{result.message || 'Nothing was tested.'}</Banner>}
+      {servers.length === 0 && !cred && result.reason !== 'not_checked' && <Banner kind={result.success ? 'ok' : 'err'}>{result.message || 'Nothing was tested.'}</Banner>}
+      {servers.length === 0 && !cred && result.reason === 'not_checked' && note(result.message || 'Not checked.')}
       {servers.map((sv) => (
         <div key={sv.name} className={`int-probe ${sv.success ? 'pass' : 'fail'}`}>
           <span className="int-probe-ic"><Icon name={sv.success ? 'check2' : 'close'} size={15} /></span>
@@ -331,13 +335,13 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
           </span>
         </div>
       ))}
-      {result.credentials && (
-        <div className={`int-probe ${result.credentials.success ? 'pass' : 'fail'}`}>
-          <span className="int-probe-ic"><Icon name={result.credentials.success ? 'check2' : 'close'} size={15} /></span>
+      {cred && (
+        <div className={`int-probe ${credState}`}>
+          <span className="int-probe-ic"><Icon name={cred.success === true ? 'check2' : cred.success === false ? 'close' : 'info'} size={15} /></span>
           <span className="int-probe-name">Saved URL and credentials</span>
-          <span className="int-probe-detail" style={result.credentials.success ? { color: 'var(--tx2)' } : undefined}>
+          <span className="int-probe-detail" style={cred.success === false ? undefined : { color: 'var(--tx2)' }}>
             {/* A pass says what was read (Security Lake's regions, a workspace), so show it too. */}
-            {result.credentials.message || (result.credentials.success ? 'Accepted' : 'Failed')}
+            {cred.message || (cred.success === true ? 'Accepted' : cred.success === false ? 'Failed' : 'Not checked')}
           </span>
         </div>
       )}
