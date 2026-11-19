@@ -26,8 +26,9 @@ from core.deps import (
     provide_mcp_client,
 )
 from core.detections.detection_rules_service import DetectionRulesService
+from core.integrations import health as source_health
 from core.integrations._base.descriptor import iter_descriptors
-from core.integrations.credential_check import check_credentials
+from core.integrations.credential_check import check_credentials, has_check
 from core.integrations.darktrace.darktrace_webhook_router import darktrace_enabled
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
@@ -61,6 +62,7 @@ from core.storage.models import (
     EpisodicDistilMarker,
     User,
 )
+from core.storage.schemas.base import _iso_utc
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
@@ -870,6 +872,21 @@ def _secrets_set_map(integrations: dict) -> dict:
     return result
 
 
+def _last_tests(integrations: dict) -> dict:
+    """Each configured integration's last Test, from its Integration Health record."""
+    try:
+        records = source_health.read_all()
+    except Exception as e:  # noqa: BLE001 - the settings still load without it
+        logger.warning("Integration health read failed: %s", type(e).__name__)
+        return {}
+    out = {}
+    for iid in integrations:
+        test = source_health.last_test(records.get(iid), has_check(iid))
+        if test:
+            out[iid] = {**test, "at": _iso_utc(test["at"])}
+    return out
+
+
 @router.get("/integrations", dependencies=_INTEGRATIONS_READ)
 def get_integrations_config():
     """
@@ -908,11 +925,7 @@ def get_integrations_config():
             "integrations": redacted,
             "secrets_set": _secrets_set_map(redacted),
             # {id: {at, success, error}} from POST .../test; untested ids absent
-            "last_test": {
-                iid: info
-                for iid, info in (loaded.get("last_test") or {}).items()
-                if iid != AUDIT_FEED_INTEGRATION_ID
-            },
+            "last_test": _last_tests(redacted),
         }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
@@ -997,9 +1010,11 @@ def set_integrations_config(
 
         # Empty string ⇒ user didn't re-type the secret on edit; leave
         # the existing encrypted value untouched. Non-empty ⇒ overwrite.
+        credential_changed = False
         for env_key, value in secrets.items():
             if value == "":
                 continue
+            credential_changed = credential_changed or get_secret(env_key) != value
             if not set_secret(env_key, value):
                 field = field_by_env.get(env_key, env_key)
                 logger.error(
@@ -1018,6 +1033,7 @@ def set_integrations_config(
             config=non_secrets,
             enabled=enabled,
             change_reason="Updated via Settings UI",
+            credential_changed=credential_changed,
         )
         if not success:
             logger.error(f"Failed to save integration '{integration_id}'")
@@ -1123,11 +1139,7 @@ async def _probe_connector_integration(integration_id: str, current_user: User) 
     except extension_sessions.ExtensionSessionError as exc:
         success, message, error = False, str(exc), str(exc)
 
-    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
-        integration_id, success=success, error=error, tested_at=utcnow()
-    )
-    if not recorded:
-        logger.warning("Integration '%s' test result was not saved", integration_id)
+    source_health.record_test(integration_id, success=success, error=error)
     return {"success": success, "message": message}
 
 
@@ -1220,14 +1232,11 @@ async def test_integration(
             errors.append(outcome[1])
     error_summary = "; ".join(error for error in errors if error) or None
 
-    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
-        integration_id,
-        success=success,
-        error=error_summary,
-        tested_at=utcnow(),
+    # The attempt is Test's whole answer; the real check, when one ran, is kept
+    # apart as the last real check.
+    source_health.record_test(
+        integration_id, success=success, error=error_summary, check=outcome
     )
-    if not recorded:
-        logger.warning("Integration '%s' test result was not saved", integration_id)
 
     if success:
         message = f"Integration '{integration_id}' connected."

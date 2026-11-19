@@ -4820,7 +4820,9 @@ export interface paths {
          *
          *     Includes adapters that don't yet have a row (so the UI can show "configure
          *     me" entries without the daemon being up). Adapters whose integration is
-         *     not configured are still listed but flagged ``is_configured=false``. Each
+         *     not configured are still listed but flagged ``is_configured=false``. The
+         *     health fields (``last_poll_at`` .. ``dropped_total``) are read from each
+         *     source's Integration Health record. Each
          *     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
          *     from :func:`core.federation.lag.source_collection_lag`. Any failed store
          *     read answers 503 rather than a list that looks like a fresh install.
@@ -5249,6 +5251,23 @@ export interface paths {
          *     it creates no findings or Cases.
          */
         post: operations["post_api_ingest_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integration-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Integration Health */
+        get: operations["get_api_integration-health"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -26554,6 +26573,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IngestionJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_integration-health": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

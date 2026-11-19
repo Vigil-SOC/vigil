@@ -202,6 +202,7 @@ class ConfigService:
         integration_type: Optional[str] = None,
         description: Optional[str] = None,
         change_reason: Optional[str] = None,
+        credential_changed: bool = False,
     ) -> bool:
         """
         Set integration configuration.
@@ -214,6 +215,7 @@ class ConfigService:
             integration_type: Type/category of integration
             description: Optional description
             change_reason: Reason for change (for audit)
+            credential_changed: A secret held outside ``config`` was replaced
 
         Returns:
             True if successful
@@ -227,6 +229,7 @@ class ConfigService:
 
             old_value = None
             action = "create"
+            was_enabled = bool(integration and integration.enabled)
 
             if integration:
                 old_value = integration.config
@@ -252,6 +255,26 @@ class ConfigService:
                 )
                 session.add(integration)
 
+            # Switched on, or a changed endpoint or credential: its health starts
+            # again from "no attempt yet". A save that changes nothing keeps it.
+            if (
+                (enabled and not was_enabled)
+                or (action == "update" and old_value != config)
+                or credential_changed
+            ):
+                from core.storage import source_health
+
+                try:
+                    # A savepoint: a failed reset never fails the save.
+                    with session.begin_nested():
+                        source_health.reset(integration_id, session=session)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "Health reset for %s failed: %s",
+                        integration_id,
+                        type(e).__name__,
+                    )
+
             # Create audit log
             self._create_audit_log(
                 session,
@@ -267,7 +290,6 @@ class ConfigService:
             logger.info(f"Integration '{integration_id}' {action}d by {self.user_id}")
             return True
 
-    @default_on_error(False)
     def record_integration_test(
         self,
         integration_id: str,
@@ -276,30 +298,17 @@ class ConfigService:
         error: Optional[str],
         tested_at: datetime,
     ) -> bool:
-        """Stamp the last probe on an existing row.
+        """Stamp a test send on the integration's Integration Health record.
 
-        Does not rewrite ``config`` or ``enabled``. A missing row is left
-        missing — creating one would invent a configuration.
+        ``integration_configs.last_test_*`` is no longer written. Best-effort:
+        a failed health write is logged by the health store.
         """
-        with get_session() as session:
-            integration = (
-                session.query(IntegrationConfig)
-                .filter_by(integration_id=integration_id)
-                .first()
-            )
-            if integration is None:
-                return False
-            integration.last_test_at = tested_at
-            integration.last_test_success = success
-            integration.last_error = error
-            integration.updated_by = self.user_id
-            logger.info(
-                "Integration '%s' test recorded success=%s by %s",
-                integration_id,
-                success,
-                self.user_id,
-            )
-            return True
+        from core.storage import source_health
+
+        source_health.record_test(
+            integration_id, success=success, error=error, when=tested_at
+        )
+        return True
 
     @default_on_error(list)
     def list_integrations(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
