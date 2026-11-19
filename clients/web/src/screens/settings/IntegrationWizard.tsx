@@ -137,8 +137,8 @@ export default function IntegrationWizard({
     try {
       const { data } = await configApi.testIntegration(integration.id)
       setProbe({ state: 'done', result: data })
-      // not_testable has no probe to record; every other answer was stored
-      if (data.reason !== 'not_testable') {
+      // not_testable and not_checked store nothing, so they are not a last test
+      if (data.reason !== 'not_testable' && data.reason !== 'not_checked') {
         setTested({ at: new Date().toISOString(), success: data.success, error: data.success ? null : data.message ?? null })
         onTested?.()
       }
@@ -316,6 +316,7 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
   }
   const { result } = probe
   if (result.reason === 'not_testable') return note('This integration has no server Vigil can test.')
+  if (result.reason === 'not_checked') return note(result.message || 'not checked: no read-only call exists')
   const servers = result.servers ?? []
   // A connector integration has no servers; its message says what was checked.
   return (

@@ -634,9 +634,11 @@ export const consoleApi = {
 }
 
 export interface IntegrationTestResult {
-  success: boolean
+  /** null is "not checked": neither a pass nor a fail, and nothing was stored */
+  success: boolean | null
   message?: string
   // "not_testable": a catalog-only entry with no MCP server behind it
+  // "not_checked": no read-only call, or no credential saved
   reason?: string
   servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
   /** the read-only check of the saved URL and credentials, for integrations that have one */

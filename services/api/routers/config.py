@@ -28,7 +28,13 @@ from core.deps import (
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations import health as source_health
 from core.integrations._base.descriptor import iter_descriptors
-from core.integrations.credential_check import check_credentials, has_check
+from core.integrations.credential_check import (
+    NOT_CHECKED_REASON,
+    NotChecked,
+    check_credentials,
+    has_check,
+    not_checked,
+)
 from core.integrations.darktrace.darktrace_webhook_router import darktrace_enabled
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
@@ -1178,6 +1184,9 @@ async def test_integration(
     are also read with their saved URL and credentials, whether or not their
     servers started (``credentials`` in the answer): a server starts whatever
     it is pointed at, and the adapter that pulls alerts does not go through it.
+    A fixed read-only call is made the same way after the probe. An integration
+    with no such call, or no credential saved, answers "not checked" and
+    nothing is stored.
     """
     server_names = list(bridge.server_names_for(integration_id))
     integrations = bridge.load_integration_config().get("integrations", {})
@@ -1196,6 +1205,15 @@ async def test_integration(
     # as {} after split_secrets and is still configured.
     if integration_id not in integrations:
         raise HTTPException(status_code=400, detail="Integration not configured")
+
+    # Decided from the table (and whether a credential is saved). Not a pass
+    # or a fail, and not stored: the judge reads the same fact.
+    if not_checked(integration_id):
+        return {
+            "success": None,
+            "reason": "not_checked",
+            "message": f"not checked: {NOT_CHECKED_REASON}",
+        }
 
     if mcp_client is None:
         return {
@@ -1240,6 +1258,12 @@ async def test_integration(
     # that may need other config or a browser sign-in.
     credentials = None
     outcome = await check_credentials(integration_id)
+    if isinstance(outcome, NotChecked):
+        return {
+            "success": None,
+            "reason": "not_checked",
+            "message": f"not checked: {outcome.reason}",
+        }
     if outcome is not None:
         credentials = {"success": outcome[0], "message": outcome[1]}
         if not outcome[0]:

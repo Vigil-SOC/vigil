@@ -7,13 +7,17 @@ makes one small read, and nothing else: the server's own info endpoint, or a
 list of at most one alert. Nothing is written to the external system.
 
 Each source that federation pulls alerts from has a check, built on the client
-and credentials its adapter uses. For any other id ``check_credentials``
-returns ``None``, and the test stays what the MCP probe said.
+and credentials its adapter uses. The integrations in ``_FIXED`` are checked
+with one fixed read-only tool call through ``execute_mcp_tool``. ``_NO_READONLY``
+and a fixed-call integration with no credential saved are not checked: Test
+says so and stores nothing, and the judge does not withhold readiness.
+Anything else returns ``None``, and the test stays what the MCP probe said.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple
@@ -22,14 +26,26 @@ import httpx
 
 from core.integrations._base.config import missing, resolve
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
+from core.integrations.atomic_red_team.descriptor import ATOMIC_RED_TEAM
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
+from core.integrations.azure_ad.descriptor import AZURE_AD
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+from core.integrations.carbon_black.descriptor import CARBON_BLACK
+from core.integrations.cloudflare.descriptor import CLOUDFLARE
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC
+from core.integrations.jira.descriptor import JIRA
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
+from core.integrations.microsoft_teams.descriptor import MICROSOFT_TEAMS
+from core.integrations.okta.descriptor import OKTA
 from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.integrations.opensearch.descriptor import OPENSEARCH
+from core.integrations.pagerduty.descriptor import PAGERDUTY
+from core.integrations.palo_alto.descriptor import PALO_ALTO
+from core.integrations.sentinelone.descriptor import SENTINELONE
+from core.integrations.slack.descriptor import SLACK
 from core.integrations.splunk.descriptor import SPLUNK
+from core.integrations.vstrike.descriptor import VSTRIKE
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 
 logger = logging.getLogger(__name__)
@@ -442,14 +458,135 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     CROWDSTRIKE.id: _crowdstrike,
 }
 
+# (server, tool, args). The tool is the name that server lists, unprefixed.
+# Each one is read-only and takes no entity, or a list of one. 192.0.2.1 is
+# TEST-NET-1 (RFC 5737): a lookup, not a host. Taken from a live tools/list of
+# the pinned server, except Jira: its remote server does not list tools until
+# the OAuth sign-in, and atlassianUserInfo is that server's read of the
+# signed-in account (its "myself"). Teams and Atomic Red Team are not here:
+# the only tool each lists writes (teams_send_alert, atomic_red_team_execute).
+_FIXED: Dict[str, Tuple[str, str, Mapping[str, Any]]] = {
+    SENTINELONE.id: ("sentinelone", "list_alerts", {"first": 1}),
+    CARBON_BLACK.id: ("carbon-black", "cb_get_alerts", {"limit": 1}),
+    OKTA.id: ("okta", "list_okta_users", {"max_results": 1}),
+    AZURE_AD.id: ("azure-ad", "aad_get_sign_ins", {"limit": 1}),
+    PALO_ALTO.id: ("palo-alto", "pan_get_threats", {"limit": 1}),
+    CLOUDFLARE.id: ("cloudflare", "cf_lookup_ip_threat", {"ip": "192.0.2.1"}),
+    JIRA.id: ("jira", "atlassianUserInfo", {}),
+    SLACK.id: ("slack", "slack_auth_test", {}),
+    PAGERDUTY.id: ("pagerduty", "list_incidents", {"limit": 1}),
+    VSTRIKE.id: ("vstrike", "vstrike_storyline_list", {}),
+}
 
-async def check_credentials(integration_id: str) -> Optional[Outcome]:
-    """``(ok, message)`` for the saved settings, or ``None`` when no check exists."""
-    check = _CHECKS.get(integration_id)
-    if check is None:
+# No read-only call exists. Test says so; the judge does not withhold readiness.
+_NO_READONLY = frozenset({MICROSOFT_TEAMS.id, ATOMIC_RED_TEAM.id})
+
+NOT_CHECKED_REASON = "no read-only call exists"
+
+
+class NotChecked:
+    """The check did not run. Test says so and stores nothing."""
+
+    reason = NOT_CHECKED_REASON
+
+
+NOT_CHECKED = NotChecked()
+
+
+def _clip(text: str) -> str:
+    return " ".join(str(text).split())[:200]
+
+
+def _detail(text: str) -> str:
+    """One line safe to show. A tool's JSON ``error`` is the line, not the blob."""
+    raw = str(text).strip()
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return _clip(raw)
+    if isinstance(parsed, dict) and parsed.get("error"):
+        return _clip(parsed["error"])
+    return _clip(raw)
+
+
+def _no_credential(integration_id: str) -> bool:
+    """True when this integration has nothing to authenticate a fixed call with.
+
+    Jira's server signs in through Atlassian's OAuth, not the stored api_token,
+    so an empty token is not "no credential".
+    """
+    from core.integrations._base.descriptor import get_descriptor
+
+    if integration_id == JIRA.id:
+        return False
+    desc = get_descriptor(integration_id)
+    if desc is None:
+        return False
+    if not desc.secret_fields:
+        return True
+    try:
+        config = resolve(desc)
+    except Exception as exc:  # noqa: BLE001 - a failed read is not "no credential"
+        logger.warning(
+            "Could not read credentials for %s (%s)",
+            integration_id,
+            type(exc).__name__,
+        )
+        return False
+    return all(not config.get(name) for name in desc.secret_fields)
+
+
+def not_checked(integration_id: str) -> bool:
+    """True when the outcome is "not checked" and nothing is stored for it."""
+    if integration_id in _NO_READONLY:
+        return True
+    return integration_id in _FIXED and _no_credential(integration_id)
+
+
+async def _fixed_call(integration_id: str) -> Outcome:
+    """One read through the connected server. A server that is not up fails."""
+    import time
+    from types import SimpleNamespace
+
+    from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, row_error
+    from core.integrations.entity_facts import _connect
+
+    server, tool, args = _FIXED[integration_id]
+    registry, reason = await _connect(
+        SimpleNamespace(server=server), time.monotonic() + CHECK_TIMEOUT
+    )
+    if registry is None:
+        return False, _clip(f"{server}: {_detail(reason[1] or 'not connected')}")
+    flat = f"{server}_{tool}"
+    if flat not in set(registry.get_tool_names()):
+        return False, f"{server} does not offer {tool}"
+    try:
+        rows, handled = await execute_mcp_tool(
+            flat, dict(args), CHECK_TIMEOUT, registry
+        )
+    except MCPFailure as exc:
+        return False, _clip(f"{server}: {_detail(exc.detail or exc.kind)}")
+    if not handled:
+        return False, f"{server} is not connected"
+    error = row_error(rows)
+    if error:
+        return False, _clip(f"{server}: {_detail(error)}")
+    return True, f"Read {tool}"
+
+
+async def check_credentials(integration_id: str) -> Optional[Outcome] | NotChecked:
+    """``(ok, message)`` for the saved settings, ``NotChecked`` when there is
+    nothing to read, or ``None`` when no check exists."""
+    if not_checked(integration_id):
+        return NOT_CHECKED
+    if integration_id in _FIXED:
+        call = _fixed_call(integration_id)
+    elif (check := _CHECKS.get(integration_id)) is not None:
+        call = check()
+    else:
         return None
     try:
-        return await asyncio.wait_for(check(), CHECK_TIMEOUT)
+        return await asyncio.wait_for(call, CHECK_TIMEOUT)
     except asyncio.TimeoutError:
         logger.warning("Credential check for %s timed out", integration_id)
         return False, f"No answer within {CHECK_TIMEOUT:g} s"
@@ -465,4 +602,4 @@ async def check_credentials(integration_id: str) -> Optional[Outcome]:
 
 def has_check(integration_id: str) -> bool:
     """True when Test makes a real read for this integration."""
-    return integration_id in _CHECKS
+    return integration_id in _CHECKS or integration_id in _FIXED

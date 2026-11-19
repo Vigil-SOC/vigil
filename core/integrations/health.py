@@ -111,6 +111,7 @@ def judge(
     kind: str,
     switched_on: bool,
     has_check: bool = True,
+    unchecked: bool = False,
     legacy: bool = False,
     interval_seconds: Optional[int] = None,
     now: Optional[datetime] = None,
@@ -121,6 +122,9 @@ def judge(
     ``detection_source``. ``interval_seconds`` is set only while scheduled
     collection polls the source; a record older than that interval allows
     (backoff included) is no longer believed and reads "unknown".
+    ``unchecked`` is an integration whose table entry has no read-only call,
+    or a fixed call with no credential saved: that reads "not checked" and
+    does not withhold readiness. Nothing is stored for it.
     """
     from core.federation.lag import overdue
 
@@ -136,6 +140,8 @@ def judge(
 
     if kind == "receiver" and not rec.get("last_success_at"):
         return _state(REQUIRES_TEST, "nothing accepted yet")
+    if kind == "integration" and unchecked and not check_ok:
+        return _state(NOT_CHECKED, "no read-only call exists")
     if kind == "integration" and not has_check and not check_ok:
         return _state(REQUIRES_TEST, "Vigil has no real check for this integration")
     if interval_seconds and attempt:
@@ -232,7 +238,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     from core.audit.feed import INTEGRATION_ID, WEBHOOK_INTEGRATION_ID
     from core.detections.detection_rules_service import read_saved_sources
     from core.federation import store as fed_store
-    from core.integrations.credential_check import has_check
+    from core.integrations.credential_check import has_check, not_checked
 
     now = now or utcnow()
     records = read_all()
@@ -267,6 +273,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
             "pulled" if fed_id else "integration",
             bool(row.get("enabled")),
             has_check=has_check(iid),
+            unchecked=not_checked(iid),
             legacy=bool(fed_id) and not scheduled,
             interval_seconds=(
                 int(fed_row["interval_seconds"]) if fed_row and scheduled else None

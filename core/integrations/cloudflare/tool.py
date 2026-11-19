@@ -389,8 +389,9 @@ def _lookup_ip_threat(
     )
     data = resp.json() if resp.content else {}
     rules = data.get("result") or []
-    return {
-        "success": resp.status_code == 200 and data.get("success", False),
+    ok = resp.status_code == 200 and data.get("success", False)
+    looked_up = {
+        "success": ok,
         "ip": ip,
         "matching_rules": [
             {
@@ -405,6 +406,9 @@ def _lookup_ip_threat(
         "rule_count": len(rules),
         "zone_id": zone_id,
     }
+    if not ok:
+        looked_up["error"] = f"Cloudflare answered HTTP {resp.status_code}"
+    return looked_up
 
 
 def _lookup_domain_threat(

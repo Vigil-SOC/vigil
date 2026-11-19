@@ -71,6 +71,44 @@ def rows_from(result: Dict[str, Any]) -> List[Any]:
     return rows
 
 
+def row_error(rows: Optional[List[Any]]) -> Optional[str]:
+    """The failure a tool's rows are carrying, or None when they are data.
+
+    An ``error`` key, or a text-only reply that is an error message. Okta's
+    server reports a failed call that way (``### Error executing tool``)
+    rather than an ``error`` field, and that text is not a successful read.
+    """
+    rows = rows or []
+    for row in rows:
+        if isinstance(row, dict) and row.get("error"):
+            error = row["error"]
+            detail = str(error)
+            if isinstance(error, str) and error.isidentifier():
+                message = next(
+                    (
+                        r.get("message")
+                        for r in rows
+                        if isinstance(r, dict) and r.get("message")
+                    ),
+                    "",
+                )
+                detail = str(message or error)
+            return detail
+    texts: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {"text"}:
+            return None
+        if row.get("text"):
+            texts.append(str(row["text"]))
+    if not texts:
+        return None
+    blob = " ".join(texts)
+    lowered = blob.lower()
+    if "error executing tool" in lowered or lowered.startswith("error"):
+        return blob
+    return None
+
+
 def _failure_kind(text: str) -> str:
     lowered = text.lower()
     if "timed out" in lowered or "timeout" in lowered:

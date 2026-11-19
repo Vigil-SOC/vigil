@@ -3409,6 +3409,9 @@ export interface paths {
          *     are also read with their saved URL and credentials, whether or not their
          *     servers started (``credentials`` in the answer): a server starts whatever
          *     it is pointed at, and the adapter that pulls alerts does not go through it.
+         *     A fixed read-only call is made the same way after the probe. An integration
+         *     with no such call, or no credential saved, answers "not checked" and
+         *     nothing is stored.
          */
         post: operations["post_api_config_integrations_integration_id_test"];
         delete?: never;
