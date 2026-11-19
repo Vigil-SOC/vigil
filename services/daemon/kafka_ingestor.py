@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
+from core.federation.error_kind import classify_failure
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig, apply_kafka_settings
 from core.ingestion.kafka_consumer_service import KafkaConsumerService, idle_stats
@@ -84,7 +85,10 @@ class KafkaIngestor:
                 logger.info("Kafka ingestor: starting consumer task")
                 self._consumer_shutdown = asyncio.Event()
                 self._service = KafkaConsumerService(
-                    self.config, self._output_queue, self._dedup
+                    self.config,
+                    self._output_queue,
+                    self._dedup,
+                    failure_kind=classify_failure,
                 )
                 self._task = asyncio.create_task(
                     self._service.run(self._consumer_shutdown)

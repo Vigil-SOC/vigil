@@ -21,11 +21,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.kafka_config import KafkaConfig
+from core.storage.push_health import KAFKA_SOURCE, note_failure, note_success
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,14 @@ class KafkaConsumerService:
         config: KafkaConfig,
         output_queue: asyncio.Queue,
         dedup: Optional[RedisDedupSet] = None,
+        failure_kind: Optional[Callable[[BaseException], str]] = None,
     ):
         self.config = config
         self._output_queue = output_queue
         self._dedup = dedup or RedisDedupSet("kafka")
+        # core.federation.error_kind.classify_failure, passed in: ingestion
+        # does not import federation. Absent, a failure is recorded as unknown.
+        self._failure_kind = failure_kind
         self._consumer = None
         self._running = False
         # Offsets this consumer committed (or seeded from the broker once per
@@ -122,25 +127,31 @@ class KafkaConsumerService:
             self.stats["connected"] = False
             self.stats["partitions"] = []
             self._record_error(f"startup failed: {e}")
+            await self._health_fail(f"startup failed: {e}", e)
             logger.error("Kafka consumer failed to start: %s", e)
             return
 
+        await self._health_ok()
         try:
             while not shutdown_event.is_set():
                 try:
                     # getmany so we can check shutdown frequently
                     batches = await self._consumer.getmany(timeout_ms=1000)
-                    results = [
-                        await self._process_partition(tp, msgs)
-                        for tp, msgs in batches.items()
-                    ]
-                    await self._refresh_partitions()
-                    if not all(results):
-                        await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
+                    if batches:
+                        results = [
+                            await self._process_partition(tp, msgs)
+                            for tp, msgs in batches.items()
+                        ]
+                        await self._refresh_partitions()
+                        if not all(results):
+                            await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
+                    else:
+                        await self._health_ok()
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     self._record_error(f"poll error: {e}")
+                    await self._health_fail(f"poll error: {e}", e)
                     logger.error("Kafka consumer poll error: %s", e)
                     # Brief backoff before retry
                     await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
@@ -176,6 +187,7 @@ class KafkaConsumerService:
             raise
         except Exception as e:
             self._record_error(f"poll error: {e}")
+            await self._health_fail(f"poll error: {e}", e)
             reason = str(e)
         logger.error("Kafka: rewinding %s to offset %s: %s", tp, msgs[0].offset, reason)
         self._consumer.seek(tp, msgs[0].offset)
@@ -231,7 +243,14 @@ class KafkaConsumerService:
         must stay. The dedup set is checked once and marked once per batch
         rather than twice per message; only stored ids are marked.
         """
-        findings = [f for f in (self._decode(topic, m) for m in msgs) if f]
+        findings = []
+        dropped = 0
+        for msg in msgs:
+            finding = self._decode(topic, msg)
+            if finding is None:
+                dropped += 1
+            else:
+                findings.append(finding)
         seen = await self._dedup.are_processed(f["finding_id"] for f in findings)
         pending: Pending = []
         try:
@@ -264,6 +283,10 @@ class KafkaConsumerService:
             # Also on cancellation: mark what was stored before the stop.
             stored = stored_keys(pending)
             await self._dedup.mark_many(stored)
+        # Only once the offset can move. A rewind replays the same records, and
+        # counting them here would add the drops again on the retry.
+        if all_stored:
+            await self._health_ok(received=len(pending), dropped=dropped)
         return all_stored
 
     def _decode(self, topic: str, msg) -> Optional[Dict[str, Any]]:
@@ -300,3 +323,18 @@ class KafkaConsumerService:
     def _record_error(self, msg: str) -> None:
         self.stats["last_error"] = msg
         self.stats["last_error_at"] = utcnow().isoformat()
+
+    async def _health_ok(self, *, received: int = 0, dropped: int = 0) -> None:
+        await asyncio.to_thread(
+            note_success, KAFKA_SOURCE, received=received, dropped=dropped
+        )
+
+    async def _health_fail(self, message: str, exc: BaseException) -> None:
+        kind = "unknown"
+        if self._failure_kind is not None:
+            try:
+                kind = self._failure_kind(exc) or "unknown"
+            except Exception:
+                logger.debug("Kafka failure kind failed", exc_info=True)
+                kind = "unknown"
+        await asyncio.to_thread(note_failure, KAFKA_SOURCE, message, kind)
