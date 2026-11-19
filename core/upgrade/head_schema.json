@@ -4606,6 +4606,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column source_health.labels": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
  "column source_health.last_attempt_at": {
   "default": null,
   "nullable": true,
