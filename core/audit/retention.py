@@ -89,34 +89,6 @@ _INVITE_ACTIONS = (
 )
 _ACCEPTED_NOTICE = "{} accepted your invite and now has an account."
 _CANCELLED_SUFFIX = " now has an account."
-# Bell notices about a person, addressed to someone else. The subject slot is
-# the title, except runs_stopped, whose title is shared. account_recovery
-# titles are the person's own title with the leading "Your" replaced by
-# "{username}'s". The host script's sentences differ from the console's; both
-# titles are listed. A reason, a run label, or the actor in the message is not
-# the slot, so those stay when the notice is about someone else.
-_SUBJECT_TITLES: dict[str, tuple[str, ...]] = {
-    "mfa_change": ("{username} signed in with a recovery code",),
-    "break_glass_used": ("Break-glass sign-in: {username}",),
-    "sign_in_limit_repeat": ("{username}'s sign-ins were ended twice in an hour",),
-    "password_leak": ("{username} reported a suspected password leak",),
-    "account_recovery": (
-        "{username}'s account was unlocked",
-        "{username}'s password reset link",
-        "{username}'s two-step sign-in was reset",
-        "{username}'s account was reactivated",
-        "{username}'s account was marked break-glass",
-        "{username}'s account is no longer break-glass",
-        "{username}'s account was restored",
-    ),
-    "dormancy_warning": ("{username} will be deactivated for inactivity",),
-    "dormancy_held": ("{username} is idle and was kept: the last role manager",),
-    "deactivated_work": ("{username} was deactivated and owns open work",),
-    "account_locked": ("Account locked: {username}",),
-}
-# runs_stopped opens with this. The rest is run labels and counts, which are
-# not stored anywhere they could be rebuilt from.
-_RUNS_STOPPED_OPENING = "A sign-in of {username} ended ("
 
 
 class RetentionError(ValueError):
@@ -1016,24 +988,6 @@ def _drop_notices(session, principal_id: str) -> None:
         )
 
 
-def _fill_username(template: str, username: str) -> str:
-    return template.replace("{username}", username, 1)
-
-
-def names_subject(kind: str, username: str, title: str, message: str) -> bool:
-    """True when this bell notice's subject slot is ``username``.
-
-    The same slots ``_drop_subject_notices`` deletes on. A shared title, a
-    reason, a run label or an actor named only in the message does not match.
-    """
-    if kind == "runs_stopped":
-        return message.startswith(_fill_username(_RUNS_STOPPED_OPENING, username))
-    templates = _SUBJECT_TITLES.get(kind)
-    if not templates:
-        return False
-    return title in {_fill_username(item, username) for item in templates}
-
-
 def _current_username(session, principal_id: str) -> Optional[str]:
     if not _table(session, "users"):
         return None
@@ -1088,10 +1042,18 @@ def _user_created_has(session, username: str, principal_id: str, *, own: bool) -
 
 
 def _subject_clause(username: str) -> tuple[str, dict]:
+    # The slots live with the bell. Importing them here, not from notices into
+    # a domain, keeps the platform from reaching everything this module imports.
+    from core.platform.notices import (
+        RUNS_STOPPED_OPENING,
+        SUBJECT_TITLES,
+        fill_subject,
+    )
+
     parts: list[str] = []
     params: dict[str, Any] = {}
-    for kind, templates in _SUBJECT_TITLES.items():
-        filled = [_fill_username(item, username) for item in templates]
+    for kind, templates in SUBJECT_TITLES.items():
+        filled = [fill_subject(item, username) for item in templates]
         params[f"kind_{kind}"] = kind
         if len(filled) == 1:
             params[f"title_{kind}"] = filled[0]
@@ -1104,7 +1066,7 @@ def _subject_clause(username: str) -> tuple[str, dict]:
                 f"(n.notification_type = :kind_{kind}"
                 f" AND n.title = ANY(CAST(:titles_{kind} AS text[])))"
             )
-    params["runs_prefix"] = _fill_username(_RUNS_STOPPED_OPENING, username)
+    params["runs_prefix"] = fill_subject(RUNS_STOPPED_OPENING, username)
     parts.append(
         "(n.notification_type = 'runs_stopped'"
         " AND left(n.message, char_length(:runs_prefix)) = :runs_prefix)"
@@ -1145,26 +1107,6 @@ def _drop_subject_notices(session, principal_id: str, username: Optional[str]) -
             """),
         params,
     )
-
-
-def subject_captured_before_erasure(
-    session, principal_id: str, kind: str, title: str, message: str
-) -> bool:
-    """True when this insert would keep a username read before erasure.
-
-    Locks the user row ``_revoke`` updates, in the inserting transaction. The
-    notice is skipped. One that already names the erased placeholder was read
-    after the rewrite, and it is inserted.
-    """
-    if not principal_id or not _table(session, "users"):
-        return False
-    row = session.execute(
-        text("SELECT username FROM public.users WHERE principal_id = :id FOR UPDATE"),
-        {"id": principal_id},
-    ).first()
-    if row is None or not is_erased(row.username, principal_id):
-        return False
-    return not names_subject(kind, row.username, title, message)
 
 
 def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:

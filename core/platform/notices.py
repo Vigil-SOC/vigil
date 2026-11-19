@@ -54,6 +54,51 @@ EARLIER = 5
 Condition = Callable[[User], List[Dict[str, str]]]
 CONDITIONS: List[Condition] = []
 
+# Subject slot of a bell notice about a person, addressed to someone else.
+# Erasure deletes on these and nothing else. The title is the slot, except
+# runs_stopped, whose title is shared. account_recovery titles are the
+# person's own title with the leading "Your" replaced by "{username}'s",
+# console and host script both. A reason, a run label, or the actor named
+# only in the message is not the slot.
+SUBJECT_TITLES: Dict[str, tuple] = {
+    "mfa_change": ("{username} signed in with a recovery code",),
+    "break_glass_used": ("Break-glass sign-in: {username}",),
+    "sign_in_limit_repeat": ("{username}'s sign-ins were ended twice in an hour",),
+    "password_leak": ("{username} reported a suspected password leak",),
+    "account_recovery": (
+        "{username}'s account was unlocked",
+        "{username}'s password reset link",
+        "{username}'s two-step sign-in was reset",
+        "{username}'s account was reactivated",
+        "{username}'s account was marked break-glass",
+        "{username}'s account is no longer break-glass",
+        "{username}'s account was restored",
+    ),
+    "dormancy_warning": ("{username} will be deactivated for inactivity",),
+    "dormancy_held": ("{username} is idle and was kept: the last role manager",),
+    "deactivated_work": ("{username} was deactivated and owns open work",),
+    "account_locked": ("Account locked: {username}",),
+}
+# What runs_stopped's message opens with. The rest is run labels and counts.
+RUNS_STOPPED_OPENING = "A sign-in of {username} ended ("
+# retention.erased_username. Kept here so this module does not import retention:
+# that import would pull the platform into every domain retention reaches.
+_ERASED_PREFIX = "erased-"
+
+
+def fill_subject(template: str, username: str) -> str:
+    return template.replace("{username}", username, 1)
+
+
+def names_subject(kind: str, username: str, title: str, message: str) -> bool:
+    """True when this bell notice's subject slot is ``username``."""
+    if kind == "runs_stopped":
+        return message.startswith(fill_subject(RUNS_STOPPED_OPENING, username))
+    templates = SUBJECT_TITLES.get(kind)
+    if not templates:
+        return False
+    return title in {fill_subject(item, username) for item in templates}
+
 
 def notify(
     principal_id: str,
@@ -129,14 +174,20 @@ def _erased_subject(
 ) -> bool:
     """The account ``about`` was erased after its username was read into this notice.
 
-    Imported here: retention pulls the auth package, and that package imports
-    ``notify`` from this module while it is still loading.
+    Locks the user row erasure updates, in this insert's transaction. A notice
+    that already names the erased placeholder was read after the rewrite.
     """
     if about is None:
         return False
-    from core.audit.retention import subject_captured_before_erasure
-
-    return subject_captured_before_erasure(session, about, kind, title, message)
+    username = (
+        session.query(User.username)
+        .filter(User.principal_id == about)
+        .with_for_update()
+        .scalar()
+    )
+    if username != f"{_ERASED_PREFIX}{about}":
+        return False
+    return not names_subject(kind, username, title, message)
 
 
 def _reads(session: Session, principal_id: str, case_id: Optional[str]) -> bool:
