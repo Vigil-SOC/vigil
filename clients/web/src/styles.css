@@ -7993,6 +7993,45 @@
    font-size: 12px;
 }
 
+/* A library of skills reads as a stack: layers behind the folder, lighter then darker. */
+.soc-console .sk-lib {
+   --sk-g1: color-mix(in oklab, var(--sk-back) 74%, white);
+   --sk-g2: color-mix(in oklab, var(--sk-back) 60%, black);
+}
+
+.soc-console.vg-light .sk-lib {
+   --sk-g1: color-mix(in oklab, var(--sk-back) 55%, white);
+   --sk-g2: color-mix(in oklab, var(--sk-back) 78%, black);
+}
+
+.soc-console .sk-lib .sk-folder {
+   /* the top layer rises above the folder; the sideways clip stays so the tilted flap can't bleed */
+   overflow-y: visible;
+}
+
+.soc-console .sk-ghost {
+   position: absolute;
+   bottom: 0;
+   border-radius: 0 14px 14px 14px;
+   background: var(--sk-back);
+   border: 1px solid color-mix(in oklab, var(--sk-tone) 45%, var(--ln1));
+   box-shadow: 0 -4px 10px -6px var(--shadow);
+}
+
+.soc-console .sk-ghost.g1 {
+   top: 12px;
+   left: 10px;
+   right: 10px;
+   background: var(--sk-g1);
+}
+
+.soc-console .sk-ghost.g2 {
+   top: -2px;
+   left: 20px;
+   right: 20px;
+   background: var(--sk-g2);
+}
+
 @media (prefers-reduced-motion: reduce) {
    .soc-console .sk-paper,
    .soc-console .sk-flap,

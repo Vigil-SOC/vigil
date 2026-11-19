@@ -448,16 +448,19 @@ export function SkillDeleteModal({
   skill,
   onClose,
   onDeleted,
+  wholeLibrary = false,
 }: {
   skill: Skill
   onClose: () => void
   onDeleted: () => void
+  /** Delete the skill's whole library with no choice offered: the library card's own delete. */
+  wholeLibrary?: boolean
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Only a skill that came with others from a repo offers the whole library.
   const library = skill.library && skill.library.skills > 1 ? skill.library : null
-  const [whole, setWhole] = useState(false)
+  const [whole, setWhole] = useState(wholeLibrary && library !== null)
 
   const del = () => {
     setBusy(true)
@@ -468,9 +471,11 @@ export function SkillDeleteModal({
   }
 
   return (
-    <Popup open onClose={onClose} title="Delete skill" width={library ? 560 : 460}>
+    <Popup open onClose={onClose} title={wholeLibrary && library ? 'Delete library' : 'Delete skill'} width={library ? 560 : 460}>
       <div className="flex flex-col gap-3.5">
-        {library ? (
+        {library && wholeLibrary ? (
+          <p className="text-[13px] text-tx-2 leading-[1.5]">Delete all <strong>{library.skills} skills</strong> from <strong>{library.label}</strong>? Vigil stops tracking the repo.</p>
+        ) : library ? (
           <>
             <p className="text-[13px] text-tx-2 leading-[1.5]"><strong>{skill.name}</strong> came from <strong>{library.label}</strong>.</p>
             <fieldset className="sk-pick">

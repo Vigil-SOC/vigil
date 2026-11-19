@@ -406,6 +406,6 @@ export function mapApiSkill(s: ApiSkill): Skill {
     reads7d: s.reads_7d ?? 0,
     agents7d: s.agents_7d ?? 0,
     held: s.scan?.held ?? false,
-    library: s.source ? { label: s.source.label, commit: s.source.commit, skills: s.source.skills } : null,
+    library: s.source ? { label: s.source.label, ref: s.source.ref ?? null, path: s.source.path, commit: s.source.commit, skills: s.source.skills } : null,
   }
 }
