@@ -184,6 +184,36 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.1.4 (2026-11-19)
+
+## What's Changed
+* Serve /mcp stateless, so a client's requests work across API workers and replicas by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4811
+* Ask Vigil follows the run on its case: a live run block drawn by Watch run's step cards, started from the dock with /hunt or /investigate (#4790) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4812
+* A hunt can search the Compose Elastic profile, project metadata fields and aggregate (#4795) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4813
+* A finding on the insider lead list opens a restricted threat-hunt case on its account by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4816
+* OAuth: approve a request, issue and rotate tokens, and /mcp accepts them (#4788) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4817
+* Retire the legacy per-Investigation subject of the shared IOC index (#4815) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4821
+* OAuth consent page, connected apps in the tokens list, and the redirect allowlist field (#4789) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4823
+* A weekly run measures four scale limits of one install by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4822
+* Document OAuth on the MCP surface, and how the plugin signs in (#4777) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4827
+* Console close forms ask what was decided and preselect nothing (#4820) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4829
+* Every close a model chooses passes the autonomy setting; the close trail says who closed and as what by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4830
+* Publish a daily beta of main's images, and add a stable tag to releases by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/4828
+* Release minors by hand from main; fix releases from a release/x.y.x branch by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/4832
+* Copy fixes labeled backport onto the release branch, and keep database changes out of it by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/4833
+* Delete beta images older than 14 days from ghcr, without touching stable ones by @nestor-deeptempo in https://github.com/Vigil-SOC/vigil/pull/4834
+* /revoke works for public clients; an expiring grant's notice names the connected app by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4835
+* Helm: keep Bifrost's admin password out of the agent pods by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4836
+* Require SSO: an open password sign-in can't open Confirm it's you to mint a token by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4837
+* Hold an unattended run's act when its workflow can't be read by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4838
+* State why user and email Entity Keys are case-folded by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4846
+* End open non-SSO sign-ins when Require single sign-on is turned on by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4844
+* Look file hashes up through lookup_indicators (#4840) by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4843
+* Skills from one repo show as one stacked library card on the Skills tab by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4859
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.3...v1.1.4
+
 ## 1.1.3 (2026-11-18)
 
 ## What's Changed
