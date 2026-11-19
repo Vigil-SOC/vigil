@@ -487,6 +487,12 @@ def _continue_sign_in(
     ):
         sign_ins.end(sid, sign_ins.TOKEN_REUSE, session)
         return "Refresh token has already been used"
+    # A new sign-in made this way would be refused. After the reuse check, so a
+    # replay still ends as token reuse. Joins this transaction, which commits
+    # with the 401.
+    if step_up.non_sso_now_refused(user, row.auth_method):
+        sign_ins.end(sid, sign_ins.SSO_REQUIRED, session)
+        return _Ended(sign_ins.SSO_REQUIRED)
 
     access_token = AuthService.generate_jwt_token(user, "access", sid=sid)
     refresh_token = AuthService.generate_jwt_token(
@@ -2243,6 +2249,9 @@ def confirm_it_is_you(
     """Confirm it's you: opens the window the privileged changes read. A wrong
     answer is a 400; the third in a row ends the sign-in (401, never a lock)."""
     sid = _session_sid(request)
+    # Before the provider-only answer: a password sign-in left open when Require
+    # single sign-on was turned on ends here, for a person with or without MFA.
+    step_up.end_non_sso(session, current_user, sid)
     # One who confirms at the provider opens the window only there, never with
     # the password.
     if step_up.provider_only(session, current_user):
