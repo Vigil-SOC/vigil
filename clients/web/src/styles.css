@@ -3894,6 +3894,11 @@
    .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
    .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
    .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+   /* the drawer is portaled, so this is a viewport query: four columns at phone
+      width wrap each label one letter at a time */
+   @media (max-width: 560px) {
+      .int-steps { grid-template-columns: 1fr; }
+   }
    .int-step {
       display: flex;
       align-items: center;
@@ -4114,6 +4119,13 @@
    .cb-step.done .cb-step-n { background: var(--good-bg); color: var(--good); }
 
    .cb-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+
+   /* reflow: one column, and each step takes the row so its label is not clipped */
+   @container main (max-width: 699px) {
+      .cb-steps { flex-direction: column; }
+      .cb-cols { grid-template-columns: minmax(0, 1fr); }
+      .cb-file { max-width: 100%; }
+   }
 
    .cb-form {
       display: flex;
@@ -8105,7 +8117,7 @@
       line-height: 1.45;
       color: var(--tx2);
    }
-   /* the card opens nowhere: the reason wraps in full (DESIGN.md §7) */
+   /* wraps in full: a long reason is not clipped to a line (DESIGN.md §7) */
    .int-card-reason {
       align-self: stretch;
       margin: 0;
