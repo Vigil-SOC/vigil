@@ -481,7 +481,7 @@ def reapply(session, snapshot_ids: list[str], *, reserve: bool = True) -> None:
     scrub_invites(session, union, notices=True)
     for pid in union:
         # Dated now, the re-apply time. _revoke skips service and erased accounts.
-        _revoke(session, pid, reserve=reserve)
+        _revoke_and_drop(session, pid, reserve=reserve)
     trail._lock(session)
     for pid in union:
         _blank_beside(session, pid)
@@ -929,14 +929,7 @@ def _perform(session, principal_id: str) -> None:
     # Before _revoke rewrites the username and email, and before the
     # beside-columns that still hold an address are cleared.
     scrub_invites(session, [principal_id], notices=True)
-    # Before _revoke rewrites it. Only this name: an earlier one the invite
-    # scrub collected is not dated, so those notices stay.
-    username = _current_username(session, principal_id)
-    _revoke(session, principal_id)
-    _drop_notices(session, principal_id)
-    # The user row is locked by the update above, through the end of this
-    # transaction. A notice inserted after that lock sees the placeholder.
-    _drop_subject_notices(session, principal_id, username)
+    _revoke_and_drop(session, principal_id)
     trail._lock(session)
     _blank_beside(session, principal_id)
     _queue_append(session, [principal_id])
@@ -977,6 +970,22 @@ def _blank_beside(session, principal_id: str) -> None:
             ),
             {"id": principal_id},
         )
+
+
+def _revoke_and_drop(session, principal_id: str, *, reserve: bool = True) -> None:
+    """Revoke the account, then delete the notices erasure removes.
+
+    The username is read before ``_revoke`` rewrites it. Erasure and the
+    restore re-apply both call this, so a notice step added here runs on both.
+    Only the current name: an earlier one the invite scrub collected is not
+    dated, so those notices stay. The user row stays locked by the update
+    through the end of this transaction. A notice inserted after that lock
+    sees the placeholder.
+    """
+    username = _current_username(session, principal_id)
+    _revoke(session, principal_id, reserve=reserve)
+    _drop_notices(session, principal_id)
+    _drop_subject_notices(session, principal_id, username)
 
 
 def _drop_notices(session, principal_id: str) -> None:
