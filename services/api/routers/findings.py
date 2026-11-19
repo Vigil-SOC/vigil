@@ -19,10 +19,10 @@ from core.cases import case_trail
 from core.cases.closure import ClosedByKind, FalsePositiveCause
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import get_config_service
+from core.storage.intake_queue import insert_intake_trigger, intake_severity_band
 from core.storage.models import Finding, User
 from core.time import utcnow
 from services.api.middleware.auth import get_current_user
-from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
 router = APIRouter()
 _FINDINGS_WRITE = [permission_gate("findings.write")]

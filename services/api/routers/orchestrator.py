@@ -396,7 +396,8 @@ def wake_investigation(
             detail=f"Cannot restart investigation in status '{inv.get('status')}'",
         )
 
-    from services.daemon.orchestrator import gaps_run_of, insert_intake_trigger
+    from core.storage.intake_queue import insert_intake_trigger
+    from services.daemon.orchestrator import gaps_run_of
 
     case_id = inv.get("case_id")
     payload = {
@@ -490,7 +491,7 @@ def create_investigation(
     user: User = Depends(get_current_user),
 ):
     """Manually create a new investigation."""
-    from services.daemon.orchestrator import insert_intake_trigger
+    from core.storage.intake_queue import insert_intake_trigger
 
     payload = {
         "workflow_id": request.workflow_id,
@@ -559,10 +560,7 @@ def scan_existing_findings(request: ScanFindingsRequest):
                 continue
             to_investigate.append({"finding_id": fid, "severity": f.severity})
 
-    from services.daemon.orchestrator import (
-        insert_intake_trigger,
-        intake_severity_band,
-    )
+    from core.storage.intake_queue import insert_intake_trigger, intake_severity_band
 
     queued = 0
     for finding_data in to_investigate:

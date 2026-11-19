@@ -411,6 +411,7 @@ def add_finding_to_case(case_id: str, finding_id: str) -> str:
 @tool("Remove finding from case", destructive=True)
 @requires("cases.write")
 def remove_finding_from_case(case_id: str, finding_id: str) -> str:
+    """Removing an alert that intake merged into this Case sends it back to intake."""
     try:
         from core.cases import case_journal_service
 

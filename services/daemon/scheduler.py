@@ -258,7 +258,7 @@ class TaskScheduler:
         self.stats["threat_hunts"] += 1
 
         hypothesis = self._hunt_hypothesis()
-        from services.daemon.orchestrator import insert_intake_trigger
+        from core.storage.intake_queue import insert_intake_trigger
 
         insert_intake_trigger(
             kind="schedule",
