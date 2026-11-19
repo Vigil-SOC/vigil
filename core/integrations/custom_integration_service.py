@@ -52,6 +52,27 @@ def _validate_integration_id(integration_id: str) -> str:
     return integration_id
 
 
+def _validate_secret_fields(integration_id: str, metadata: Dict[str, Any]) -> None:
+    """Refuse password fields whose secrets-store key could name a platform secret.
+
+    The key is ``<ID>_<FIELD>``; only a ``custom-`` id with plain field names
+    keeps it inside the ``CUSTOM_`` namespace.
+    """
+    from core.integrations.integration_secrets import custom_secret_allowed
+
+    fields = metadata.get("fields") if isinstance(metadata, dict) else None
+    for field in fields if isinstance(fields, list) else []:
+        if (
+            isinstance(field, dict)
+            and field.get("type") == "password"
+            and not custom_secret_allowed(integration_id, field.get("name"))
+        ):
+            raise InvalidIntegrationIdError(
+                "a Custom Integration with a password field needs an id starting "
+                "with 'custom-' and field names of a-z, 0-9 and _"
+            )
+
+
 def _write_atomic(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w") as f:
@@ -253,10 +274,10 @@ Please analyze this documentation and generate:
 Please respond with a JSON object containing:
 ```json
 {{
-  "id": "integration-id",
+  "id": "custom-integration-id",
   "name": "Integration Name",
   "metadata": {{
-    "id": "integration-id",
+    "id": "custom-integration-id",
     "name": "Integration Name",
     "category": "{category}",
     "description": "Description",
@@ -472,6 +493,12 @@ Only generate the JSON response when you have enough information to create a com
 
             # Ensure metadata has the category
             data["metadata"]["category"] = category
+            # A Custom Integration's id is always custom-: its secrets are stored
+            # under <ID>_<FIELD>, which must stay out of the platform's names.
+            raw_id = str(data["id"])
+            if not raw_id.startswith("custom-"):
+                data["id"] = self._generate_id(raw_id)
+                data["metadata"]["id"] = data["id"]
 
             # Optional: names and descriptions of the tools the code exposes
             tools = data.get("tools")
@@ -518,6 +545,7 @@ Only generate the JSON response when you have enough information to create a com
         filesystem path.
         """
         server_file = self._server_path_for(integration_id)
+        _validate_secret_fields(integration_id, metadata)
         if len(server_code.encode("utf-8")) > _MAX_SERVER_CODE_BYTES:
             raise ServerCodeTooLargeError(
                 f"server_code exceeds {_MAX_SERVER_CODE_BYTES} byte limit"
