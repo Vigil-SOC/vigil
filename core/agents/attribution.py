@@ -74,10 +74,9 @@ def phase_actors(phases: Any) -> dict[str, str]:
 def autonomy_label(run_id: Optional[str] = None) -> str:
     """Act when the run's workflow may take a reversible tool, otherwise Assist."""
     try:
-        stored = read_ceiling()
+        acts = effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id))
     except Exception:  # noqa: BLE001
         return "Assist"
-    acts = effective_act(stored, REVERSIBLE, workflow_of(run_id))
     return "Act" if acts else "Assist"
 
 
