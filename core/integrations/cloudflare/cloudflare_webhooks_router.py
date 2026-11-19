@@ -20,13 +20,13 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from core.config import get_settings
 from core.integrations.cloudflare.ingestion import CloudyIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
-from core.storage.push_health import CLOUDFLARE_SOURCE
+from core.storage.push_health import CLOUDFLARE_SOURCE, note_dropped
 from core.webhook_receiver import ingest, read_signed_json, reject
 from core.webhook_rejections import DISABLED, rejection_counts
 
@@ -90,12 +90,22 @@ def _cloudy_labels(payload: Dict[str, Any]) -> tuple:
 
 def _ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     service = CloudyIngestionService()
+    labels = _cloudy_labels(payload)
+    try:
+        finding = service.transform_event(payload)
+    except Exception as exc:
+        logger.warning("Cloudy transform failed: %s", type(exc).__name__)
+        note_dropped(CLOUDFLARE_SOURCE, labels=labels)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to transform Cloudy event payload",
+        )
     return ingest(
         service,
-        service.transform_event(payload),
+        finding,
         "Cloudy event",
         source_id=CLOUDFLARE_SOURCE,
-        labels=_cloudy_labels(payload),
+        labels=labels,
     )
 
 

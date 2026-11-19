@@ -137,16 +137,13 @@ class KafkaConsumerService:
                 try:
                     # getmany so we can check shutdown frequently
                     batches = await self._consumer.getmany(timeout_ms=1000)
-                    if batches:
-                        results = [
-                            await self._process_partition(tp, msgs)
-                            for tp, msgs in batches.items()
-                        ]
-                        await self._refresh_partitions()
-                        if not all(results):
-                            await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
-                    else:
-                        await self._health_ok()
+                    results = [
+                        await self._process_partition(tp, msgs)
+                        for tp, msgs in batches.items()
+                    ]
+                    await self._refresh_partitions()
+                    if batches and not all(results):
+                        await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -176,11 +173,15 @@ class KafkaConsumerService:
         to the uncommitted offset (stored ids are dedup-marked and skipped) and
         return False, so the other partitions in the poll are still processed."""
         try:
-            if await self._handle_batch(tp.topic, msgs):
+            stored_ok, received, dropped = await self._handle_batch(tp.topic, msgs)
+            if stored_ok:
                 if msgs:
                     offset = msgs[-1].offset + 1
                     await self._consumer.commit({tp: offset})
                     self._committed[tp] = offset
+                    # After the commit, so a rewind cannot count the same
+                    # records again.
+                    await self._health_ok(received=received, dropped=dropped)
                 return True
             reason = "findings not stored"
         except asyncio.CancelledError:
@@ -233,15 +234,17 @@ class KafkaConsumerService:
 
     async def _handle_message(self, topic: str, msg) -> bool:
         """Decode, dedupe, and enqueue a single Kafka message."""
-        return await self._handle_batch(topic, [msg])
+        stored_ok, _, _ = await self._handle_batch(topic, [msg])
+        return stored_ok
 
-    async def _handle_batch(self, topic: str, msgs) -> bool:
+    async def _handle_batch(self, topic: str, msgs) -> tuple:
         """Decode, dedupe, and enqueue one partition's messages, in order.
 
-        True once every new finding is reported stored, so the caller may
-        commit the offset; False means at least one was not and the offset
-        must stay. The dedup set is checked once and marked once per batch
-        rather than twice per message; only stored ids are marked.
+        ``(ok, received, dropped)``. ``ok`` is true once every new finding is
+        reported stored, so the caller may commit; false means the offset must
+        stay. Received and dropped are counted only when ``ok``, because a
+        rewind replays the same records. The dedup set is checked once and
+        marked once per batch; only stored ids are marked.
         """
         findings = []
         dropped = 0
@@ -283,11 +286,8 @@ class KafkaConsumerService:
             # Also on cancellation: mark what was stored before the stop.
             stored = stored_keys(pending)
             await self._dedup.mark_many(stored)
-        # Only once the offset can move. A rewind replays the same records, and
-        # counting them here would add the drops again on the retry.
-        if all_stored:
-            await self._health_ok(received=len(pending), dropped=dropped)
-        return all_stored
+        received = len(pending) if all_stored else 0
+        return all_stored, received, dropped if all_stored else 0
 
     def _decode(self, topic: str, msg) -> Optional[Dict[str, Any]]:
         """The message as a finding dict with an id, or None (stats updated)."""

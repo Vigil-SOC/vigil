@@ -20,13 +20,13 @@ import asyncio
 import logging
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from core.config import get_settings
 from core.integrations.darktrace.ingestion import DarktraceIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
-from core.storage.push_health import DARKTRACE_SOURCE
+from core.storage.push_health import DARKTRACE_SOURCE, note_dropped
 from core.webhook_receiver import ingest, read_signed_json, reject
 from core.webhook_rejections import DISABLED, rejection_counts
 
@@ -120,9 +120,22 @@ def _ingest(
     alert_type: str,
 ) -> Dict:
     service = DarktraceIngestionService(console_url=_get_console_url())
+    try:
+        finding = transform(service, payload)
+    except Exception as exc:
+        # A shape the transformer does not accept is an unreadable record,
+        # the same as a transform that returns nothing.
+        logger.warning(
+            "Darktrace %s transform failed: %s", alert_type, type(exc).__name__
+        )
+        note_dropped(DARKTRACE_SOURCE, labels=(alert_type,))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unable to transform Darktrace {alert_type} payload",
+        )
     return ingest(
         service,
-        transform(service, payload),
+        finding,
         f"Darktrace {alert_type}",
         source_id=DARKTRACE_SOURCE,
         labels=(alert_type,),
