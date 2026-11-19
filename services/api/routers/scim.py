@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.audit.retention import is_erased
+from core.audit.retention import ERASED_PREFIX, is_erased
 from core.auth import (
     directory_groups,
     directory_sync,
@@ -214,6 +214,18 @@ def _display(data: dict) -> Optional[str]:
     return None
 
 
+def _username(user_name: str) -> str:
+    """The Vigil username for a SCIM ``userName``: the local part of an email.
+    A reserved prefix gets ``sso-`` in front, as at first single sign-on, so a
+    push can't make an account read as erased or as a Medic account."""
+    username = user_name.split("@", 1)[0].strip() if "@" in user_name else user_name
+    if username.lower().startswith(("medic-", ERASED_PREFIX)):
+        username = f"sso-{username}"
+    if not username or len(username) > 100:
+        raise ScimFailure(400, "userName is not a usable username", "invalidValue")
+    return username
+
+
 def _names(user_name: str, data: dict) -> tuple[str, str, Optional[str]]:
     """Username, email and display name from a SCIM user.
 
@@ -222,9 +234,7 @@ def _names(user_name: str, data: dict) -> tuple[str, str, Optional[str]]:
     """
     user_name = user_name.strip()
     email = _work_email(data) or (user_name if "@" in user_name else "")
-    username = user_name.split("@", 1)[0].strip() if "@" in user_name else user_name
-    if not username or len(username) > 100:
-        raise ScimFailure(400, "userName is not a usable username", "invalidValue")
+    username = _username(user_name)
     email = email.strip()
     if "@" not in email or len(email) > 200:
         raise ScimFailure(400, "A work email is required", "invalidValue")
@@ -806,9 +816,7 @@ def _fields_to_names(
     if isinstance(fields.get("userName"), str) and fields["userName"].strip():
         user_name = fields["userName"].strip()
         email = user_name if "@" in user_name else None
-        username = user_name.split("@", 1)[0].strip() if "@" in user_name else user_name
-        if not username or len(username) > 100:
-            raise ScimFailure(400, "userName is not a usable username", "invalidValue")
+        username = _username(user_name)
     if isinstance(fields.get("email"), str) and "@" in fields["email"]:
         email = fields["email"].strip()
     if isinstance(fields.get("emails"), list):
