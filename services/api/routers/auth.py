@@ -791,6 +791,7 @@ def _recovery_step_down(session: Session, user: User, source: Optional[str]) -> 
                     "code because keys are unavailable on this install.",
                     USERS_LINK,
                     priority="high",
+                    about=principal,
                 )
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a recovery notice for %s", name)
@@ -830,6 +831,7 @@ def _break_glass_used(
                     message,
                     USERS_LINK,
                     priority="high",
+                    about=principal,
                 )
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a break-glass notice for %s", name)
@@ -1036,6 +1038,7 @@ def _tell_of_eviction(
                     "someone else signing in with their credentials.",
                     USERS_LINK,
                     priority="high",
+                    about=principal,
                 )
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a sign-in limit notice for %s", name)
@@ -2894,7 +2897,15 @@ def _tell_managers_of_leak(session: Session, user: User) -> None:
     def send() -> None:
         for to in managers(principal):
             try:
-                notify(to, "password_leak", title, message, USERS_LINK, priority="high")
+                notify(
+                    to,
+                    "password_leak",
+                    title,
+                    message,
+                    USERS_LINK,
+                    priority="high",
+                    about=principal,
+                )
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a password-leak notice for %s", name)
 
