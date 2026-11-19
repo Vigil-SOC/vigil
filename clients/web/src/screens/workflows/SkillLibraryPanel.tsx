@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { OverlayPortal } from '../../shared/ui'
 import type { Skill } from '../../data/appData'
 import { SkillDeleteModal } from './SkillDrawer'
@@ -24,6 +24,16 @@ export function SkillLibraryPanel({
   const first = skills[0]
   const lib = first.library!
   const held = skills.filter((s) => s.held).length
+
+  // The update and delete popups take their own Escape; the panel closes only when neither is open.
+  useEffect(() => {
+    if (updating || deleting) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, updating, deleting])
 
   return (
     <OverlayPortal>
