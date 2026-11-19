@@ -47,6 +47,13 @@ PURPOSE = "Pushes accounts from the identity provider."
 EMAIL = f"{USERNAME}@service.invalid"
 
 _CLAIM = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
+# Profile claims a person can change, or that more than one person can hold. A
+# sign-in carrying one would reach whoever's externalId it names.
+_MUTABLE_CLAIMS = frozenset({
+    "email", "emails", "preferred_username", "upn", "unique_name", "name",
+    "nickname", "given_name", "family_name", "middle_name", "username",
+    "login", "mail", "phone_number", "profile", "website", "samaccountname",
+})  # fmt: skip
 
 
 class SyncRefused(Exception):
@@ -65,11 +72,25 @@ def claim_name(value: str) -> str:
         raise SyncRefused(
             "The claim name must be a single token, such as sub or oid", status=400
         )
+    if not is_safe_claim(name):
+        raise SyncRefused(
+            f"{name} can be changed by the person or shared, so it cannot identify"
+            " a pushed account. Use sub, or an immutable id such as oid.",
+            status=400,
+        )
     return name
 
 
+def is_safe_claim(name: str) -> bool:
+    return name.lower() not in _MUTABLE_CLAIMS
+
+
 def claim_value(claims: dict, name: str) -> Optional[str]:
-    """The configured claim when the token carries it as one non-empty string."""
+    """The configured claim when the token carries it as one non-empty string.
+
+    A mutable claim saved before those were refused is never read."""
+    if not is_safe_claim(name):
+        return None
     value = claims.get(name)
     if not isinstance(value, str):
         return None
