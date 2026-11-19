@@ -251,6 +251,9 @@ DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap")
 # key and the join still returns rows, just the wrong ones. These types keep case
 # whole; `process` and `url` keep it in part (an absolute POSIX path, and a URL's
 # path, query and fragment), in `_fold` in core/memory/entity_keys.py (#4542).
+# `user` and `email` are case-folded on purpose, including keys a person types.
+# Adding either here, in both halves, passes the parity check and splits account
+# history. Why, and what that costs, is the Entity Key entry in CONTEXT.md.
 KEY_CASE_SENSITIVE_TYPES: Tuple[str, ...] = ("arn", "aws_key")
 
 # The entity types a key may name. Owned by ENTITY_TYPES in

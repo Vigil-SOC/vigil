@@ -47,12 +47,15 @@ export function trimEdges(text: string): string {
   return text.slice(start, end);
 }
 
-// Case folds for the types where it carries no meaning, so one host is one node.
-// An ARN's resource part and an AWS key id are case-significant, and a lowercased
-// key would merge them. Two keep case in part (#4542): a process that is an
-// absolute POSIX path, and a url's path, query and fragment -- only its scheme
-// and authority fold. Plain string ops, mirroring `_fold` in
-// core/memory/entity_keys.py; `new URL()` re-serialises and the two would drift.
+// Case-fold so one host is one node. An ARN's resource part and an AWS key id
+// are case-significant, and a lowercased key would merge them. Two keep case in
+// part (#4542): a process that is an absolute POSIX path, and a url's path,
+// query and fragment -- only its scheme and authority are case-folded. `user`
+// and `email` are case-folded on purpose, including keys a person types.
+// Keeping their case here, in both halves, passes the parity check and splits
+// account history. Why, and what that costs, is the Entity Key entry in
+// CONTEXT.md. Plain string ops, mirroring `_fold` in core/memory/entity_keys.py;
+// `new URL()` re-serialises and the two would drift.
 const CASE_SENSITIVE: ReadonlySet<string> = new Set(KEY_CASE_SENSITIVE_TYPES);
 
 function normalize(type: EntityType, value: string): string {
