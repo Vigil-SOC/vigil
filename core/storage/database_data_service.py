@@ -577,15 +577,10 @@ class DatabaseDataService:
                 return []
         return []
 
-    def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
-        """Add a finding to an existing case.
+    def add_finding_to_case(self, case_id: str, finding_id: str):
+        """Link one finding. See ``DatabaseService.add_finding_to_case``.
 
-        Args:
-            case_id: The case ID
-            finding_id: The finding ID to add
-
-        Returns:
-            True if successful, False otherwise
+        False when the write failed or no database is available.
         """
         if self._demo_mode and self._demo_service:
             return self._demo_service.add_finding_to_case(case_id, finding_id)
@@ -597,6 +592,42 @@ class DatabaseDataService:
                 raise
             except Exception as e:
                 logger.error(f"Error adding finding to case in DB: {e}")
+                return False
+        return False
+
+    def add_findings_to_case(self, case_id: str, finding_ids: List[str]):
+        """Link many findings in one transaction. None when the case is missing.
+
+        False when the write failed.
+        """
+        if self._demo_mode and self._demo_service:
+            return self._demo_service.add_findings_to_case(case_id, finding_ids)
+
+        if self._db_available:
+            try:
+                return self._db_service.add_findings_to_case(case_id, finding_ids)
+            except case_trail_hook.RAISED:
+                raise
+            except Exception as e:
+                logger.error(f"Error adding findings to case in DB: {e}")
+                return False
+        return None
+
+    def remove_finding_from_case(self, case_id: str, finding_id: str):
+        """Unlink one finding. See ``DatabaseService.remove_finding_from_case``.
+
+        False when the write failed or no database is available.
+        """
+        if self._demo_mode and self._demo_service:
+            return self._demo_service.remove_finding_from_case(case_id, finding_id)
+
+        if self._db_available:
+            try:
+                return self._db_service.remove_finding_from_case(case_id, finding_id)
+            except case_trail_hook.RAISED:
+                raise
+            except Exception as e:
+                logger.error(f"Error removing finding from case in DB: {e}")
                 return False
         return False
 

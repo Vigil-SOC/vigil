@@ -2,11 +2,19 @@
 
 import logging
 import random
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from core.storage.service import FindingLinkResult, FindingUnlinkResult
+
 logger = logging.getLogger(__name__)
+
+# The in-memory case list is one object shared by every request. Linking and
+# unlinking take this lock so one call cannot replace a list another call just
+# appended to.
+_link_lock = threading.Lock()
 
 MITRE_TECHNIQUES = {
     "T1566.001": "Spearphishing Attachment",
@@ -274,17 +282,70 @@ class DemoDataService:
                 return True
         return False
 
-    def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
-        """Add a finding to an existing case."""
-        for c in DemoDataService._cases:
-            if c.get("case_id") == case_id:
-                if "finding_ids" not in c:
-                    c["finding_ids"] = []
-                if finding_id not in c["finding_ids"]:
-                    c["finding_ids"].append(finding_id)
-                    c["updated_at"] = datetime.now(timezone.utc).isoformat()
-                return True
-        return False
+    def _touch(self, case: Dict) -> None:
+        case["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    def add_finding_to_case(self, case_id: str, finding_id: str):
+        """Link one finding. An id already on the case is left as it is.
+
+        An id that names no demo finding is not written, same as a database
+        link of an unknown id.
+        """
+        with _link_lock:
+            for case in DemoDataService._cases:
+                if case.get("case_id") != case_id:
+                    continue
+                ids = case.setdefault("finding_ids", [])
+                if finding_id in ids:
+                    return FindingLinkResult(ok=True, attached=False)
+                if self.get_finding(finding_id) is None:
+                    return FindingLinkResult(ok=False, finding_missing=True)
+                ids.append(finding_id)
+                self._touch(case)
+                return FindingLinkResult(ok=True, attached=True)
+            return FindingLinkResult(ok=False, case_missing=True)
+
+    def add_findings_to_case(self, case_id: str, finding_ids: List[str]):
+        """Link many findings. None when the case is missing.
+
+        Ids that name no demo finding are reported in ``added`` and not stored.
+        """
+        with _link_lock:
+            for case in DemoDataService._cases:
+                if case.get("case_id") != case_id:
+                    continue
+                ids = case.setdefault("finding_ids", [])
+                seen = set(ids)
+                added: List[str] = []
+                failed: List[str] = []
+                stored = False
+                for fid in finding_ids:
+                    if fid in seen:
+                        failed.append(fid)
+                        continue
+                    seen.add(fid)
+                    added.append(fid)
+                    if self.get_finding(fid) is not None:
+                        ids.append(fid)
+                        stored = True
+                if stored:
+                    self._touch(case)
+                return {"added": added, "failed": failed}
+            return None
+
+    def remove_finding_from_case(self, case_id: str, finding_id: str):
+        """Unlink one finding. Detached only when it was on the case."""
+        with _link_lock:
+            for case in DemoDataService._cases:
+                if case.get("case_id") != case_id:
+                    continue
+                ids = case.setdefault("finding_ids", [])
+                if finding_id not in ids:
+                    return FindingUnlinkResult(ok=True, detached=False)
+                ids.remove(finding_id)
+                self._touch(case)
+                return FindingUnlinkResult(ok=True, detached=True)
+            return FindingUnlinkResult(ok=False, case_missing=True)
 
     def delete_case(self, case_id: str) -> bool:
         for i, c in enumerate(DemoDataService._cases):

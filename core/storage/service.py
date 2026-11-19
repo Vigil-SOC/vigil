@@ -9,7 +9,7 @@ import logging
 import re
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 
 from sqlalchemy import String, Text, and_
 from sqlalchemy import case as sql_case
@@ -49,6 +49,40 @@ _UNSET = object()
 # Retrying a batch row by row against them would only repeat the failure (and
 # any pool timeout) once per row.
 _CONNECTION_ERRORS = (OperationalError, InterfaceError, PoolTimeoutError)
+
+
+class FindingLinkResult(NamedTuple):
+    """What ``add_finding_to_case`` did.
+
+    ``ok`` is true when the case and the finding both exist, so the finding is
+    on the case afterwards. Intake reads that as success. ``attached`` is true
+    only when this call inserted the link. A missing case and a missing finding
+    are separate: linking an unknown id is not a missing case.
+    """
+
+    ok: bool
+    attached: bool = False
+    case_missing: bool = False
+    finding_missing: bool = False
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+class FindingUnlinkResult(NamedTuple):
+    """What ``remove_finding_from_case`` did.
+
+    ``ok`` is true when the case and the finding both exist, whether or not
+    they were linked. ``detached`` is true only when this call deleted the link.
+    """
+
+    ok: bool
+    detached: bool = False
+    case_missing: bool = False
+    finding_missing: bool = False
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 
 def _record_removals(session, case_id: str, *, added, removed) -> None:
@@ -1330,21 +1364,9 @@ class DatabaseService:
                 logger.warning(f"Case not found: {case_id}")
                 return False
 
-            # ``finding_ids`` maps to the ``findings`` relationship, not a
-            # column, so the generic setattr loop below would drop it.
-            findings: tuple = ((), ())
-            if "finding_ids" in updates:
-                was = {f.finding_id for f in case.findings}
-                CaseRepository(session).set_findings(
-                    case, updates.pop("finding_ids") or []
-                )
-                now = {f.finding_id for f in case.findings}
-                findings = (sorted(now - was), sorted(was - now))
-                _record_removals(session, case_id, added=now - was, removed=was - now)
-                if now != was:
-                    reconcile_case_safely(session, case_id)
-
-            # Update remaining mapped fields
+            # Finding links are their own rows (add_finding_to_case), not a
+            # column this update can assign.
+            updates.pop("finding_ids", None)
             before, after = {}, {}
             for key, value in updates.items():
                 if hasattr(case, key):
@@ -1354,7 +1376,7 @@ class DatabaseService:
             case.updated_at = utcnow()
             session.flush()
             if writer := case_trail_hook.writer(session):
-                writer.append_update(session, case_id, before, after, findings=findings)
+                writer.append_update(session, case_id, before, after)
             logger.info(f"Updated case: {case_id}")
             return True
 
@@ -1383,12 +1405,83 @@ class DatabaseService:
             logger.info(f"Deleted case: {case_id}")
             return True
 
+    def _readable_case(self, session, case_id: str) -> Optional[Case]:
+        """The case when this caller may read it, locked, without its findings.
+
+        The lock is taken before the ``case_findings`` insert. That insert
+        share-locks this row for the foreign key, and the later ``updated_at``
+        write needs it exclusively: two links of one case deadlock if each
+        holds the share and then asks for the exclusive.
+        """
+        case = session.scalars(
+            select(Case)
+            .where(Case.case_id == case_id)
+            .options(noload(Case.findings))
+            .with_for_update()
+        ).first()
+        if not case or not case_read_hook.may_read(case):
+            return None
+        return case
+
+    def _note_finding_links(
+        self,
+        session,
+        case: Case,
+        *,
+        linked: Sequence[str] = (),
+        unlinked: Sequence[str] = (),
+    ) -> None:
+        """Record one link change: the rows, the removal set, and one trail entry.
+
+        The association change and the trail commit together. ``linked`` and
+        ``unlinked`` are the ids this call actually inserted or deleted.
+        """
+        case.updated_at = utcnow()
+        _record_removals(
+            session, case.case_id, added=set(linked), removed=set(unlinked)
+        )
+        reconcile_case_safely(session, case.case_id)
+        session.expire(case, ["findings"])
+        if not (writer := case_trail_hook.writer(session)):
+            return
+        if linked:
+            writer.append_case(
+                session, writer.FINDINGS_LINK, case.case_id, linked=list(linked)
+            )
+        elif unlinked:
+            writer.append_case(
+                session, writer.UNLINK, case.case_id, unlinked=list(unlinked)
+            )
+
+    def _insert_finding_links(
+        self, session, case_id: str, finding_ids: Sequence[str]
+    ) -> List[str]:
+        """Insert links that are not already there. Returns the ids this call inserted."""
+        if not finding_ids:
+            return []
+        now = utcnow()
+        inserted = session.execute(
+            pg_insert(case_findings)
+            .values(
+                [
+                    {"case_id": case_id, "finding_id": fid, "added_at": now}
+                    for fid in finding_ids
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["case_id", "finding_id"])
+            .returning(case_findings.c.finding_id)
+        ).scalars()
+        return list(inserted.all())
+
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def add_finding_to_case(
         self, case_id: str, finding_id: str, *, session=None
-    ) -> bool:
+    ) -> FindingLinkResult | bool:
         """
-        Add a finding to a case.
+        Link one finding to a case.
+
+        One insert, so a link of a different finding that commits at the same
+        moment stays. A second insert of the same pair writes nothing.
 
         Args:
             case_id: Case ID
@@ -1397,35 +1490,85 @@ class DatabaseService:
                 commit together; None owns one here.
 
         Returns:
-            True if successful, False otherwise
+            A ``FindingLinkResult``. False only when the write itself failed.
         """
         with self._scope(session) as session:
-            case = session.get(Case, case_id)
-            finding = session.get(Finding, finding_id)
+            case = self._readable_case(session, case_id)
+            if case is None:
+                logger.warning(f"Case not found: {case_id}")
+                return FindingLinkResult(ok=False, case_missing=True)
+            if session.get(Finding, finding_id) is None:
+                logger.warning(f"Finding not found: {finding_id}")
+                return FindingLinkResult(ok=False, finding_missing=True)
 
-            if not case or not finding or not case_read_hook.may_read(case):
-                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
-                return False
+            inserted = self._insert_finding_links(session, case_id, [finding_id])
+            if not inserted:
+                return FindingLinkResult(ok=True, attached=False)
 
-            if finding not in case.findings:
-                case.findings.append(finding)
-                case.updated_at = utcnow()
-                _record_removals(session, case_id, added={finding_id}, removed=())
-                reconcile_case_safely(session, case_id)
-                if writer := case_trail_hook.writer(session):
-                    writer.append_case(
-                        session, writer.FINDINGS_LINK, case_id, linked=[finding_id]
-                    )
-                logger.info(f"Added finding {finding_id} to case {case_id}")
+            self._note_finding_links(session, case, linked=inserted)
+            logger.info(f"Added finding {finding_id} to case {case_id}")
+            return FindingLinkResult(ok=True, attached=True)
 
-            return True
+    @default_on_error(False, passthrough=case_trail_hook.RAISED)
+    def add_findings_to_case(
+        self, case_id: str, finding_ids: Sequence[str], *, session=None
+    ) -> Optional[Dict[str, List[str]]] | bool:
+        """Link many findings in one transaction and one trail entry.
+
+        ``added`` is the ids this call newly attached, in request order, plus
+        any id that names no finding (nothing is written for those). ``failed``
+        is the ids already on the case, and later copies of an id in the
+        request. None when the case is missing. False when the write failed.
+        """
+        with self._scope(session) as session:
+            case = self._readable_case(session, case_id)
+            if case is None:
+                logger.warning(f"Case not found: {case_id}")
+                return None
+
+            requested = [fid for fid in finding_ids if isinstance(fid, str)]
+            real: set = set()
+            if requested:
+                real = set(
+                    session.scalars(
+                        select(Finding.finding_id).where(
+                            Finding.finding_id.in_(set(requested))
+                        )
+                    ).all()
+                )
+            first: List[str] = []
+            seen: set = set()
+            for fid in requested:
+                if fid not in seen:
+                    seen.add(fid)
+                    if fid in real:
+                        first.append(fid)
+            inserted = set(self._insert_finding_links(session, case_id, first))
+
+            added: List[str] = []
+            failed: List[str] = []
+            seen.clear()
+            for fid in requested:
+                if fid in seen or (fid in real and fid not in inserted):
+                    failed.append(fid)
+                else:
+                    added.append(fid)
+                seen.add(fid)
+
+            if inserted:
+                self._note_finding_links(session, case, linked=sorted(inserted))
+                logger.info(f"Added findings {sorted(inserted)} to case {case_id}")
+            return {"added": added, "failed": failed}
 
     @default_on_error(False, passthrough=case_trail_hook.RAISED)
     def remove_finding_from_case(
         self, case_id: str, finding_id: str, *, session=None
-    ) -> bool:
+    ) -> FindingUnlinkResult | bool:
         """
         Remove a finding from a case.
+
+        One delete, so a link of a different finding that commits at the same
+        moment stays. Deleting a pair that is not linked writes nothing.
 
         Args:
             case_id: Case ID
@@ -1433,25 +1576,28 @@ class DatabaseService:
             session: The caller's session; None owns one here.
 
         Returns:
-            True if successful, False otherwise
+            A ``FindingUnlinkResult``. False only when the write itself failed.
         """
         with self._scope(session) as session:
-            case = session.get(Case, case_id)
-            finding = session.get(Finding, finding_id)
+            case = self._readable_case(session, case_id)
+            if case is None:
+                logger.warning(f"Case not found: {case_id}")
+                return FindingUnlinkResult(ok=False, case_missing=True)
+            if session.get(Finding, finding_id) is None:
+                logger.warning(f"Finding not found: {finding_id}")
+                return FindingUnlinkResult(ok=False, finding_missing=True)
 
-            if not case or not finding or not case_read_hook.may_read(case):
-                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
-                return False
+            deleted = session.execute(
+                delete(case_findings)
+                .where(
+                    case_findings.c.case_id == case_id,
+                    case_findings.c.finding_id == finding_id,
+                )
+                .returning(case_findings.c.finding_id)
+            ).scalar_one_or_none()
+            if deleted is None:
+                return FindingUnlinkResult(ok=True, detached=False)
 
-            if finding in case.findings:
-                case.findings.remove(finding)
-                case.updated_at = utcnow()
-                _record_removals(session, case_id, added=(), removed={finding_id})
-                reconcile_case_safely(session, case_id)
-                if writer := case_trail_hook.writer(session):
-                    writer.append_case(
-                        session, writer.UNLINK, case_id, unlinked=[finding_id]
-                    )
-                logger.info(f"Removed finding {finding_id} from case {case_id}")
-
-            return True
+            self._note_finding_links(session, case, unlinked=[finding_id])
+            logger.info(f"Removed finding {finding_id} from case {case_id}")
+            return FindingUnlinkResult(ok=True, detached=True)
