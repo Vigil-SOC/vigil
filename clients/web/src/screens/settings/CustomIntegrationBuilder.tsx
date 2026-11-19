@@ -149,7 +149,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
     setError(null)
     try {
       await write(generated)
-      notify('ok', `Custom integration "${generated.integration_id}" saved but not enabled. Configure it under Integrations to turn it on.`)
+      notify('ok', `Custom integration "${generated.integration_id}" saved. Setting it up under Integrations does not start it, and its tools will not reach chat or agents.`)
       onSaved(generated.integration_id)
       reset()
     } catch (e) {
@@ -168,7 +168,8 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
         <h3 className="cb-title">Build a custom integration</h3>
         <p className="cb-sub">
           For a tool Vigil does not support yet. Paste its API documentation; Vigil drafts the connector and you review and
-          edit it. Nothing is enabled until you configure it under Integrations.
+          edit it. Saving it does not start it, and setting it up under Integrations does not either. Its tools will not
+          reach chat or agents.
         </p>
       </div>
 
@@ -309,7 +310,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
               {savedCode !== null && (
                 <p className="cb-sub">
                   {savedCode === serverCode
-                    ? 'Saved, not enabled. Configure it under Integrations to turn it on.'
+                    ? 'Saved. Setting it up under Integrations does not start it, and its tools will not reach chat or agents.'
                     : 'You changed the code since it was saved. Save writes it again.'}
                 </p>
               )}
@@ -322,7 +323,7 @@ export default function CustomIntegrationBuilder({ notify, onWrote, onSaved }: P
                   label="About Validate"
                   align="start"
                   source="The generated code: it must compile and define the MCP server entry points."
-                  limit="A static check that never calls the target API. Validate also saves the integration; it stays off until you configure it under Integrations."
+                  limit="A static check that never calls the target API. Validate also saves the integration. Setting it up under Integrations does not start it, and its tools will not reach chat or agents."
                 />
                 <button type="button" className="btn primary int-act" onClick={save} disabled={loading}>
                   {busy === 'save' ? 'Saving…' : 'Save'}
