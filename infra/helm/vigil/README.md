@@ -22,8 +22,8 @@ install and upgrade.
 
 `secrets.vigilAgentPassword` is the `vigil_agent` role. agent-serve and
 agent-worker log in as that role, which holds only the agent ledger, run leases
-and directives, and receive only this password; `POSTGRES_APP_PASSWORD` is
-blanked in their environment. The upgrade Jobs set it beside `vigil_app`'s.
+and directives, and receive this password by name. They do not load the
+application Secret. The upgrade Jobs set it beside `vigil_app`'s.
 
 None has a default, except that an unset `secrets.vigilAgentPassword` is
 generated once and kept across upgrades with `lookup` (set it under

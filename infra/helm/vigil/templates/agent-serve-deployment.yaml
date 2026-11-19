@@ -51,8 +51,10 @@ spec:
           imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "agentServe") }}
           {{- /* The image's CMD is the worker; this is the other entry point. */}}
           command: ["node", "dist/serve.js"]
+          {{- /* ConfigMap whole. The app Secret is named below, not loaded whole. */}}
           envFrom:
-            {{- include "vigil.envFrom" . | nindent 12 }}
+            - configMapRef:
+                name: {{ include "vigil.configmap.fullname" . }}
           env:
             {{- include "vigil.agentPostgresEnv" . | nindent 12 }}
             - name: AGENT_HTTP_PORT
@@ -62,6 +64,7 @@ spec:
                    block is shared, and one it does not read costs nothing. */}}
             {{- include "vigil.agentEnv" . | nindent 12 }}
             {{- include "vigil.caBundleEnv" . | nindent 12 }}
+            {{- include "vigil.agentSecretEnv" (dict "context" . "extraEnv" .Values.agentServe.extraEnv) | nindent 12 }}
             {{- with .Values.agentServe.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

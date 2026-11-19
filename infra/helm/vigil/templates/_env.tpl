@@ -165,11 +165,8 @@ gateway for every component.
 {{- end -}}
 
 {{/*
-The agent pods' own secret entries. POSTGRES_PASSWORD is vigil_agent's, and
-POSTGRES_APP_PASSWORD, which vigil.envFrom brings in with the rest of the
-chart's Secret, is blanked: env wins over envFrom, so the agent containers
-hold no vigil_app login. BIFROST_ADMIN_PASSWORD is blanked the same way, for a
-Secret that carries it (secrets.bifrostAdminPassword, or a supplied one).
+The agent pods' database password. POSTGRES_PASSWORD is vigil_agent's, read
+from the app Secret by name. These pods do not load that Secret whole.
 */}}
 {{- define "vigil.agentPostgresEnv" -}}
 - name: POSTGRES_PASSWORD
@@ -177,10 +174,33 @@ Secret that carries it (secrets.bifrostAdminPassword, or a supplied one).
     secretKeyRef:
       name: {{ include "vigil.postgres.appPasswordSecret" . }}
       key: {{ include "vigil.postgres.agentPasswordSecretKey" . }}
-- name: POSTGRES_APP_PASSWORD
-  value: ""
-- name: BIFROST_ADMIN_PASSWORD
-  value: ""
+{{- end -}}
+
+{{/*
+The other app-Secret keys the agent layer reads. Each ref is optional: a
+missing key leaves the variable unset, and the chart's defaults render none of
+the three. An empty string is not the same — the harness sends BIFROST_API_KEY
+as given and substitutes a placeholder only when the variable is absent.
+extraEnv is the caller's list; a name it already sets is left to that entry.
+*/}}
+{{- define "vigil.agentSecretEnv" -}}
+{{- $ctx := .context -}}
+{{- $names := list -}}
+{{- range .extraEnv | default list }}
+{{- if and (kindIs "map" .) (kindIs "string" .name) }}
+{{- $names = append $names .name -}}
+{{- end }}
+{{- end }}
+{{- $secret := include "vigil.secret.fullname" $ctx -}}
+{{- range $key := list "AGENT_INTERNAL_TOKEN" "AGENT_INTERNAL_TOKEN_PREVIOUS" "BIFROST_API_KEY" }}
+{{- if not (has $key $names) }}- name: {{ $key }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $key }}
+      optional: true
+{{ end }}{{/* The newline above stays: trimming this end glues the next entry on. */}}
+{{- end }}
 {{- end -}}
 
 {{/*

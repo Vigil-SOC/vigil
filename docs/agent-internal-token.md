@@ -21,7 +21,7 @@ Four processes send or accept this bearer:
 
 The daemon sends through `core/agents/projections.py`. On Helm it runs only when `daemon.enabled` (the default), as one pod. On the host it runs only under `./start.sh -d`.
 
-`vigil.envFrom` injects every key of the app Secret into each workload that uses it, including `llm-worker`. `llm-worker` does not use this bearer, and Compose does not pass the variable to it. Restart the four processes above, not every workload that can see the Secret.
+`vigil.envFrom` injects every key of the app Secret into each workload that uses it, including `llm-worker`. agent-serve and agent-worker do not load that Secret whole. They receive `AGENT_INTERNAL_TOKEN`, `AGENT_INTERNAL_TOKEN_PREVIOUS` and `BIFROST_API_KEY` from it by name, and their own database password. `llm-worker` does not use this bearer, and Compose does not pass the variable to it. Restart the four processes above, not every workload that can see the Secret.
 
 Senders send `AGENT_INTERNAL_TOKEN` only. The backend (`authorise` in `core/agents/internal_auth.py`) and agent-serve (`authorised` in `services/agent/serve.ts`) also accept `AGENT_INTERNAL_TOKEN_PREVIOUS` when that value is set and different from the current one. An empty previous, or one equal to the current value, is not a second credential. Previous is ignored while the current value is empty: an empty current stays "not configured".
 
@@ -43,7 +43,7 @@ To undo step 1, clear previous (or set it equal to current) and restart. Current
 
 ## Helm, when you supply the Secret
 
-This is `secrets.existingSecret` or an ExternalSecret. The chart already injects every key of that Secret, so the rotation is edits to the Secret plus restarts. For an `existingSecret`, edit that Secret's keys. For an ExternalSecret, change the outside store and sync it first, below. It is not a `helm upgrade` while `upgrade.enabled` is true (the default): that upgrade's weight-0 hook scales the release to 0 before it applies ([upgrading](upgrading.md#helm)).
+This is `secrets.existingSecret` or an ExternalSecret. The holders read `AGENT_INTERNAL_TOKEN` and `AGENT_INTERNAL_TOKEN_PREVIOUS` from that Secret, so the rotation is edits to the Secret plus restarts. For an `existingSecret`, edit that Secret's keys. For an ExternalSecret, change the outside store and sync it first, below. It is not a `helm upgrade` while `upgrade.enabled` is true (the default): that upgrade's weight-0 hook scales the release to 0 before it applies ([upgrading](upgrading.md#helm)).
 
 ### ExternalSecret
 
