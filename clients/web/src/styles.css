@@ -8092,8 +8092,9 @@
       font-weight: 700;
       color: var(--tx0);
    }
-   .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); }
+   .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); white-space: nowrap; }
    .int-card-state.on { color: var(--good); }
+   .int-card-state.stopped { color: var(--fair); }
    .int-card-line {
       align-self: stretch;
       margin: 0;
@@ -8103,6 +8104,15 @@
       font-size: 12px;
       line-height: 1.45;
       color: var(--tx2);
+   }
+   /* the card opens nowhere: the reason wraps in full (DESIGN.md §7) */
+   .int-card-reason {
+      align-self: stretch;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+      overflow-wrap: anywhere;
    }
    .int-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; }
 
