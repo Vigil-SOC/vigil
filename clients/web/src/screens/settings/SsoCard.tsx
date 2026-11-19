@@ -547,8 +547,9 @@ export default function SsoCard({ notify }: SectionProps) {
           <div className="settings-banner warn" role="status">
             <Icon name="alert" size={14} />
             <span>
-              A push could not deactivate the last person who can manage roles:{' '}
-              {sync.last_manager_refusals.join(', ')}.
+              A push could not deactivate the last person who can manage roles, and they are
+              still active: {sync.last_manager_refusals.join(', ')}. Deactivate them in Team &amp;
+              access once someone else can manage roles.
             </span>
           </div>
         )}
@@ -557,7 +558,8 @@ export default function SsoCard({ notify }: SectionProps) {
             <Icon name="alert" size={14} />
             <span>
               A group change left the role in place for the last person who can manage roles:{' '}
-              {sync.role_refusals.join(', ')}.
+              {sync.role_refusals.join(', ')}. Save the group mapping again once someone else can
+              manage roles.
             </span>
           </div>
         )}

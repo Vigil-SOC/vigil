@@ -392,19 +392,35 @@ def failed_authentications(session: Session) -> int:
 
 
 def last_manager_ids(session: Session) -> list[str]:
-    """User ids a push refused as the last role manager, newest first, once each."""
+    """User ids a push refused as the last role manager, newest first, once each.
+
+    A refusal stays open until the account is inactive (checked by the caller), a
+    later push for it sets ``active: true``, or it was enabled again after being
+    deactivated. Another person gaining roles.manage does not settle it: nothing
+    applies the refused deactivation then.
+    """
     if not _trail_ready(session):
         return []
     rows = session.execute(text("""
-            SELECT payload->>'user_id' FROM public.audit_trail
-            WHERE payload->>'action' = 'directory.last_manager'
-            ORDER BY seq DESC LIMIT 200
+            SELECT r.user_id FROM (
+                SELECT DISTINCT ON (payload->>'user_id')
+                       payload->>'user_id' AS user_id,
+                       payload->>'principal' AS principal, seq
+                FROM public.audit_trail
+                WHERE payload->>'action' = 'directory.last_manager'
+                ORDER BY payload->>'user_id', seq DESC
+            ) r
+            WHERE r.user_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM public.audit_trail p
+                WHERE p.payload->>'principal' = r.principal
+                  AND (p.payload->>'action' = 'user.enabled'
+                       OR (p.payload->>'action' = 'directory.pushed'
+                           AND p.payload->>'active' = 'true'))
+                  AND p.seq > r.seq
+            )
+            ORDER BY r.seq DESC LIMIT 200
         """)).all()
-    seen: list[str] = []
-    for (user_id,) in rows:
-        if user_id and user_id not in seen:
-            seen.append(user_id)
-    return seen
+    return [user_id for (user_id,) in rows]
 
 
 def sync_token(session: Session) -> Optional[McpCredential]:
