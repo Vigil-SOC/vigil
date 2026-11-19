@@ -177,10 +177,43 @@ _Avoid_: not given, reason, disposition
 
 **Entity Key**:
 The `type:value` string an **Episodic Memory** row is written and queried on --
-`ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, sparing the
-types where case is significant, so a stored key and a queried key cannot be
-normalised two ways. A `shared_iocs` key is the same shape on a different
-vocabulary and is not one of these.
+`ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, so a stored
+key and a queried key cannot be normalised two ways. `arn` and `aws_key` keep
+case whole. `process` keeps it for an absolute POSIX path, and `url` keeps it
+in its path, query and fragment. `user` and `email` are case-folded by design,
+on every path a key enters by, including keys a person types.
+
+Whether two spellings are one account depends on the system that owns it, and
+a key sees only a type and a value. Most account systems Vigil sees match names
+without case: Windows and Active Directory, Entra ID, AWS IAM, Okta, Google
+Workspace and most SaaS, and LDAP. Linux and Unix local accounts are
+case-sensitive; their names are lower case by convention, so two that differ
+only in case are rare. A bare name such as `deploy` looks the same in a Windows
+logon event and in an sshd log, and the key cannot tell them apart. Keeping
+case would silently split the history of most accounts. Case-folding merges
+that rare pair. The key is a matching index. The finding keeps its spelling, so
+an investigation still rests on the original. Recall, entity facts and the hunt
+graph inform an investigation and never decide it. The insider-lead path is
+where the case-fold steers an action, and there it narrows: a lead joins a hunt
+already running instead of starting a second one, and the attach is recorded on
+that case's activity. The parity check compares the two halves and holds no
+expected keys, so the same change made in both passes it. No operator has
+reported a wrong recall from merged case-variant accounts.
+
+Two accounts on a case-sensitive system (Linux or Unix local accounts) that
+differ only in case share one history. A Sighting shows its source system, not
+the spelling. A Verdict, Gap or note shows the spelling only where its prose
+does. A lead on one such account joins a hunt already running on the other
+instead of starting its own, and the attach is recorded on that case's
+activity. A hunt opened from a lead names the account in lower case. The
+finding on its case keeps the original spelling. An email's local part can be
+case-sensitive by its standard (RFC 5321), but providers and email-style
+identity systems match it without case, so `email` is case-folded the same way
+as `user`. The case-fold is lower-casing. The parity check compares ASCII
+inputs; non-ASCII names follow each runtime's own case tables.
+
+A `shared_iocs` key is the same shape on a different vocabulary and is not one
+of these.
 _Avoid_: IOC key, indicator, entity id
 
 **Recall**:
@@ -607,7 +640,8 @@ _Avoid_: page, tab, view
   still exist. A hunt run by current code can be a regression snapshot, never a
   Golden.
 - **`type:value` keys are minted by two rules that disagree.** An **Entity Key**
-  (`core/memory/entity_keys.py`) keeps case for `arn` and `aws_key`; a
+  (`core/memory/entity_keys.py`) keeps case whole for `arn` and `aws_key`, and
+  in part for `process` and `url`; a
   `shared_iocs` key (`core/storage/shared_ioc_repository.py`) folds everything,
   and spells a host `hostname` where memory spells it `host`. Both defang, by the
   one rule in `core/storage/defang.py`. Handing one subsystem's

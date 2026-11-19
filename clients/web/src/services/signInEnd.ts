@@ -61,6 +61,7 @@ const REASON_TEXT: Record<string, string> = {
   too_many_confirmations: 'You were signed out because confirming it was you failed three times in a row.',
   restore: 'You were signed out because a restore ended every sign-in.',
   sign_out: 'You signed out from another tab or device.',
+  sso_required: 'You were signed out because your organization now signs in with SSO.',
 }
 
 export function endReasonText(reason: string | null): string {

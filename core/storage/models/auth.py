@@ -112,7 +112,7 @@ class SignIn(Base):
             " 'token_reuse', 'upgrade', 'account_changed', 'deactivated', 'erased',"
             " 'ended_by_person', 'ended_by_admin', 'everyone_signed_out',"
             " 'sign_in_limit', 'too_many_confirmations', 'restore',"
-            " 'recovery', 'mfa_reset')",
+            " 'recovery', 'mfa_reset', 'sso_required')",
             name="sign_ins_end_reason_check",
         ),
         CheckConstraint(
