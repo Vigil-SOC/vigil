@@ -3399,16 +3399,18 @@ export interface paths {
          * @description Probe the MCP servers behind an integration, or its connector URL.
          *
          *     A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
-         *     over HTTP instead. Other catalog entries have no descriptor, so they are not
-         *     testable. A stored
+         *     over HTTP instead. A catalog entry with no server and no credential check
+         *     is not testable. One with a check and no server (Cloudforce One) skips the
+         *     probe and runs the check. A stored
          *     config of ``{}`` is still configured — secret-only rows keep the secret
          *     outside this dict. The integration's enabled flag does not block the
          *     probe: enabled MCP servers are contacted, and if none are enabled every
          *     declared server is probed with a temporary session. The alert sources
          *     (Splunk, Elastic, OpenSearch, Sentinel, Security Hub, Defender, CrowdStrike)
-         *     are also read with their saved URL and credentials, whether or not their
-         *     servers started (``credentials`` in the answer): a server starts whatever
-         *     it is pointed at, and the adapter that pulls alerts does not go through it.
+         *     and the lookup and sandbox integrations are also read with their saved
+         *     credentials (``credentials`` in the answer): a server starts whatever it
+         *     is pointed at. A lookup whose tool server is off is ``not_checked``, not
+         *     a failure.
          */
         post: operations["post_api_config_integrations_integration_id_test"];
         delete?: never;

@@ -138,6 +138,21 @@ def record_failed(source_id: str, error: str, kind: str = "unknown") -> None:
     _write(source_id, apply)
 
 
+def record_lookup(source_id: str) -> None:
+    """A real MCP read succeeded.
+
+    Not a Test and not a collection: ``last_check_*`` stays Test's answer, and
+    the run of collection failures ends because the source just answered.
+    """
+
+    def apply(row, now):
+        _attempt(row, now, True, None, None)
+        row.last_success_at = now
+        row.consecutive_failures = 0
+
+    _write(source_id, apply)
+
+
 def record_test(
     source_id: str,
     *,
