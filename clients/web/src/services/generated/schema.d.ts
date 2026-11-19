@@ -2690,6 +2690,8 @@ export interface paths {
          * Remove Finding From Case
          * @description Remove a finding from a case.
          *
+         *     Removing an alert that intake merged into this Case sends it back to intake.
+         *
          *     Args:
          *         case_id: The case ID
          *         finding_id: The finding ID to remove
@@ -9049,6 +9051,8 @@ export interface paths {
         /**
          * Remove Finding From Case
          * @description Remove a finding from a case.
+         *
+         *     Removing an alert that intake merged into this Case sends it back to intake.
          *
          *     Args:
          *         case_id: The case ID

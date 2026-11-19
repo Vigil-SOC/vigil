@@ -28,6 +28,7 @@ from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings
 from core.storage.case_insert import insert_case
+from core.storage.intake_queue import SEVERITY_BANDS, intake_severity_band
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
 
@@ -230,8 +231,7 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
     return lifted
 
 
-_SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
-_BAND_RANK = {name: i for i, name in enumerate(_SEVERITY_BANDS)}
+_BAND_RANK = {name: i for i, name in enumerate(SEVERITY_BANDS)}
 
 
 def _as_naive_utc(value: Any) -> Optional[datetime]:
@@ -256,20 +256,6 @@ def intake_age_seconds(row: Dict, now: datetime) -> float:
     if created is None:
         return 0.0
     return (now - created).total_seconds()
-
-
-def intake_severity_band(
-    kind: Optional[str],
-    *,
-    finding_severity: Optional[str] = None,
-    priority: Optional[str] = None,
-) -> str:
-    """Map a row onto a ranked band. Detection reads the finding; others the row."""
-    raw = finding_severity if kind == "detection" else priority
-    if raw is None or not str(raw).strip():
-        return "unknown"
-    name = str(raw).strip().lower()
-    return name if name in _BAND_RANK else "unknown"
 
 
 def intake_rank_inputs(
@@ -498,38 +484,6 @@ def _record_start(
         raise
     except Exception:  # noqa: BLE001 - a database without the trail keeps today's path
         logger.warning("run %s started without a trail entry", run_id)
-
-
-def insert_intake_trigger(
-    *,
-    kind: str,
-    priority: str = "medium",
-    finding_id: Optional[str] = None,
-    payload: Optional[Dict[str, Any]] = None,
-) -> Optional[int]:
-    """Insert a queued trigger. ``None`` when a queued row for this finding already exists."""
-    from sqlalchemy.exc import IntegrityError
-
-    from core.storage.connection import get_db_manager
-    from core.storage.models import IntakeTrigger
-
-    try:
-        with get_db_manager().session_scope() as session:
-            row = IntakeTrigger(
-                kind=kind,
-                state="queued",
-                finding_id=finding_id,
-                priority=priority or "medium",
-                payload=payload or {},
-            )
-            session.add(row)
-            session.flush()
-            return row.id
-    except IntegrityError:
-        logger.info(
-            "intake already has a queued row for finding %s", finding_id or "(none)"
-        )
-        return None
 
 
 def _note_gap_run(proposal_ids: List[str], run_id: str) -> None:
@@ -1329,6 +1283,9 @@ class Orchestrator:
 
         finding_id = finding.get("finding_id", "unknown")
         try:
+            # A Case this lead was taken off is not one to rejoin. A failed
+            # read leaves it queued: attaching would also clear the removal.
+            removed = _removed_from(finding_id) if finding.get("finding_id") else set()
             # The built-in reader: a restricted run is what this must see.
             with builtin_reader():
                 hunts = list_prior_hunts(keys)["in_flight"]
@@ -1339,6 +1296,7 @@ class Orchestrator:
                             for h in hunts
                             if h["matched_keys"]
                             and h["case_id"]
+                            and h["case_id"] not in removed
                             and (case := session.get(Case, h["case_id"])) is not None
                             and case_restricted(case)
                         ),
@@ -1387,6 +1345,10 @@ class Orchestrator:
         try:
             finding = self._hydrate_detection_finding(row)
             matches = _matching_cases(finding, open=True) if finding else []
+            # A Case the alert was taken off is not what an expiry may name.
+            if finding and finding.get("finding_id") and matches:
+                removed = _removed_from(finding["finding_id"])
+                matches = [m for m in matches if m.case_id not in removed]
         except Exception:
             logger.warning(
                 "Failed to match expiring row %s", row.get("id"), exc_info=True
@@ -3011,9 +2973,32 @@ class Orchestrator:
             from sqlalchemy import update
 
             from core.storage.connection import get_db_manager
-            from core.storage.models import IntakeTrigger
+            from core.storage.models import IntakeTrigger, case_findings
 
             with get_db_manager().session_scope() as session:
+                row = session.get(IntakeTrigger, trigger_id)
+                if row is None or row.state != "queued":
+                    return
+                # Record a merge only while this transaction still sees the
+                # alert on that Case. The removal locks the same link row, so
+                # one of the two commits first (#4850).
+                if state == "merged" and merged_into and row.finding_id:
+                    held = session.execute(
+                        select(case_findings.c.finding_id)
+                        .where(
+                            case_findings.c.case_id == merged_into,
+                            case_findings.c.finding_id == row.finding_id,
+                        )
+                        .with_for_update()
+                    ).first()
+                    if held is None:
+                        logger.info(
+                            "intake row %s stays queued: finding %s is not on case %s",
+                            trigger_id,
+                            row.finding_id,
+                            merged_into,
+                        )
+                        return
                 session.execute(
                     update(IntakeTrigger)
                     .where(

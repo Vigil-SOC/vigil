@@ -26,6 +26,7 @@ from core.storage import case_read_hook, case_trail_hook
 from core.storage.case_insert import insert_case
 from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
 from core.storage.connection import get_db_manager
+from core.storage.intake_return import return_removed_findings
 from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
@@ -1351,6 +1352,10 @@ class DatabaseService:
                     before[key], after[key] = getattr(case, key), value
                     setattr(case, key, value)
 
+            # After other field writes, so an activities= update does not drop the note.
+            if findings[1]:
+                return_removed_findings(session, case, findings[1])
+
             case.updated_at = utcnow()
             session.flush()
             if writer := case_trail_hook.writer(session):
@@ -1445,9 +1450,10 @@ class DatabaseService:
 
             if finding in case.findings:
                 case.findings.remove(finding)
-                case.updated_at = utcnow()
                 _record_removals(session, case_id, added=(), removed={finding_id})
                 reconcile_case_safely(session, case_id)
+                return_removed_findings(session, case, [finding_id])
+                case.updated_at = utcnow()
                 if writer := case_trail_hook.writer(session):
                     writer.append_case(
                         session, writer.UNLINK, case_id, unlinked=[finding_id]

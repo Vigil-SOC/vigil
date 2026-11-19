@@ -1465,11 +1465,11 @@ REASONING: one sentence summing up the verdict
             )
         )
 
-        from services.daemon.orchestrator import (
+        from core.storage.intake_queue import (
             insert_intake_trigger,
-            insert_not_offered,
             intake_severity_band,
         )
+        from services.daemon.orchestrator import insert_not_offered
 
         # Every severity the install investigates is offered too, unless triage
         # said to dismiss it. Severity then ranks it in the queue; it does not decide whether it is looked at.

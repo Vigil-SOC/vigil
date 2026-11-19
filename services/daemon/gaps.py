@@ -137,7 +137,7 @@ async def start_gaps_run(person: Optional[Dict[str, str]] = None) -> GapsRunOutc
 
 
 async def _raise_and_queue(person: Optional[Dict[str, str]]) -> GapsRunOutcome:
-    from services.daemon.orchestrator import insert_intake_trigger
+    from core.storage.intake_queue import insert_intake_trigger
 
     started = datetime.now(timezone.utc)
     window_start = started - timedelta(days=gap_run.WINDOW_DAYS)

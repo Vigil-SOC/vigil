@@ -19,12 +19,12 @@ from sqlalchemy import and_, or_
 from core.config import get_integration_config, get_settings, is_integration_enabled
 from core.memory.hunt_coverage import build_proposal
 from core.storage.connection import get_db_manager
+from core.storage.intake_queue import insert_intake_trigger
 from core.storage.models import IntakeTrigger
 from core.threat_intel import threat_feed_service as feed
 from core.time import utcnow
 from core.workflows.enablement import is_enabled
 from core.workflows.routing import SCHEDULED_WORKFLOW
-from services.daemon import orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ class ThreatFeedPoller:
         # to be the same string.
         body = build_proposal(keys, [])
         try:
-            orchestrator.insert_intake_trigger(
+            insert_intake_trigger(
                 kind="schedule",
                 priority="low",
                 payload={
