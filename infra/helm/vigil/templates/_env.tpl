@@ -148,12 +148,19 @@ helper. Prefer the Secret when both are set.
 
 {{/*
 vigil.env for agent-serve and agent-worker: the same, but logging in as
-vigil_agent, which holds only the agent tables (0081_agent_role).
+vigil_agent, which holds only the agent tables (0081_agent_role), and without
+Bifrost's admin password: the agent calls only /v1, and /api/* reconfigures the
+gateway for every component.
 */}}
 {{- define "vigil.agentEnv" -}}
 {{- $env := include "vigil.env" . -}}
 {{- $agent := replace "- name: POSTGRES_USER\n  value: \"vigil_app\"" "- name: POSTGRES_USER\n  value: \"vigil_agent\"" $env -}}
 {{- if eq $env $agent }}{{ fail "vigil.env no longer sets POSTGRES_USER to vigil_app; update vigil.agentEnv" }}{{ end -}}
+{{- if .Values.bifrost.enabled }}
+{{- $auth := printf "\n%s" (include "vigil.bifrost.auth.env" .) -}}
+{{- if not (contains $auth $agent) }}{{ fail "vigil.env no longer carries vigil.bifrost.auth.env; update vigil.agentEnv" }}{{ end -}}
+{{- $agent = replace $auth "" $agent -}}
+{{- end -}}
 {{- $agent -}}
 {{- end -}}
 
@@ -161,7 +168,8 @@ vigil_agent, which holds only the agent tables (0081_agent_role).
 The agent pods' own secret entries. POSTGRES_PASSWORD is vigil_agent's, and
 POSTGRES_APP_PASSWORD, which vigil.envFrom brings in with the rest of the
 chart's Secret, is blanked: env wins over envFrom, so the agent containers
-hold no vigil_app login.
+hold no vigil_app login. BIFROST_ADMIN_PASSWORD is blanked the same way, for a
+Secret that carries it (secrets.bifrostAdminPassword, or a supplied one).
 */}}
 {{- define "vigil.agentPostgresEnv" -}}
 - name: POSTGRES_PASSWORD
@@ -170,6 +178,8 @@ hold no vigil_app login.
       name: {{ include "vigil.postgres.appPasswordSecret" . }}
       key: {{ include "vigil.postgres.agentPasswordSecretKey" . }}
 - name: POSTGRES_APP_PASSWORD
+  value: ""
+- name: BIFROST_ADMIN_PASSWORD
   value: ""
 {{- end -}}
 
