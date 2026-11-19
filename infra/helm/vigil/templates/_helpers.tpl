@@ -169,8 +169,8 @@ read-only on the runner. Nothing when detectionRules.volume is unset.
 {{- end -}}
 
 {{/*
-Owner password only. Not the app Secret: that one is envFrom'd into every
-workload, and the owner password must not ride along.
+Owner password only. Not the app Secret: that one is envFrom'd into the
+backend, the daemon and llm-worker, and the owner password must not ride along.
 */}}
 {{- define "vigil.postgres.ownerSecret" -}}
 {{- printf "%s-postgres" (include "vigil.fullname" .) | trunc 63 | trimSuffix "-" -}}
