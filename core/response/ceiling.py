@@ -205,17 +205,26 @@ def effective_act(
 
 
 def workflow_of(run_id: Optional[str]) -> Optional[str]:
-    """The workflow behind a run. None follows the fleet, a failed read too."""
+    """The workflow behind a run, or None (no workflow: the fleet applies).
+
+    Raises when the read fails: an unknown workflow may be on Assist, so the
+    caller holds rather than falling back to the fleet flags.
+    """
     if not run_id:
         return None
+    with unit_of_work() as session:
+        return session.execute(
+            select(WorkflowRun.workflow_id).where(WorkflowRun.run_id == run_id)
+        ).scalar()
+
+
+def _workflow_held(run_id: Optional[str]) -> tuple[Optional[str], bool]:
+    """``(workflow, read)``; ``read`` is False when the lookup failed."""
     try:
-        with unit_of_work() as session:
-            return session.execute(
-                select(WorkflowRun.workflow_id).where(WorkflowRun.run_id == run_id)
-            ).scalar()
-    except Exception as exc:  # noqa: BLE001
-        logger.error("workflow of run %s not read; fleet flags apply: %s", run_id, exc)
-        return None
+        return workflow_of(run_id), True
+    except Exception as exc:  # noqa: BLE001 — no answer is not permission
+        logger.error("workflow of run %s not read; act held: %s", run_id, exc)
+        return None, False
 
 
 CLOSE_HELD = "autonomy does not let a model close cases on its own"
@@ -811,14 +820,19 @@ def unattended_refusal(
         return STOPPED
     if own:
         refusal = _own_reversible(tool, args)
-        if refusal is None or effective_act(stored, REVERSIBLE, workflow_of(run_id)):
+        if refusal is None:
             return None
-        return refusal
+        workflow, read = _workflow_held(run_id)
+        if read and effective_act(stored, REVERSIBLE, workflow):
+            return None
+        return refusal if read else "the run's workflow could not be read"
     effect = classes[tool]
-    if effect in (REVERSIBLE, IRREVERSIBLE) and effective_act(
-        stored, effect, workflow_of(run_id)
-    ):
-        return None
+    if effect in (REVERSIBLE, IRREVERSIBLE):
+        workflow, read = _workflow_held(run_id)
+        if not read:
+            return "the run's workflow could not be read"
+        if effective_act(stored, effect, workflow):
+            return None
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
         "does not let a run no person started take it"
