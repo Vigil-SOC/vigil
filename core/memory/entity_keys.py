@@ -5,12 +5,15 @@ a type and a value; the key they join on is minted here, so a stored key and a
 queried key cannot be normalised by two rules that drift.
 
 The rule is ``defang`` (``core.storage.defang``) then case-fold, mirroring
-``services/agent/plugins/hunt/entities.ts``. The exception is the half that
-breaks silently: an ARN's resource part and an AWS key id are case-significant,
-so folding them makes two principals one key — and the join still returns rows,
-just the wrong ones. Two types keep case in part (#4542): a ``process`` that is
-an absolute POSIX path keeps it whole, and a ``url`` folds only its scheme and
-authority, since its path, query and fragment are case-significant.
+``services/agent/plugins/hunt/entities.ts``. ``user`` and ``email`` are
+case-folded on purpose, including keys a person types; the reason, and what
+that costs, is the Entity Key entry in CONTEXT.md. The exception is the half
+that breaks silently: an ARN's resource part and an AWS key id are
+case-significant, so folding them makes two principals one key — and the join
+still returns rows, just the wrong ones. Two types keep case in part (#4542):
+a ``process`` that is an absolute POSIX path keeps it whole, and a ``url``
+case-folds only its scheme and authority, since its path, query and fragment
+are case-significant.
 
 ``scripts/check_entity_key_agreement.py`` runs this and the harness on the same
 inputs in CI and fails when they disagree; change a rule in both halves.
@@ -37,6 +40,9 @@ def _fold(kind: str, text: str) -> str:
 
     Plain string operations, as in entities.ts: a URL parser re-serialises
     (trailing slash, percent-encoding, port) and the two languages would drift.
+    ``user`` and ``email`` are case-folded on purpose. Keeping their case here,
+    in both halves, passes the parity check and splits account history. Why,
+    and what that costs, is the Entity Key entry in CONTEXT.md.
     """
     if kind in KEY_CASE_SENSITIVE_TYPES:
         return text

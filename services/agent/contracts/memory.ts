@@ -64,6 +64,9 @@ export type GapDisposition = (typeof GAP_DISPOSITIONS)[number];
 // the join still returns rows, just the wrong ones. These types keep case whole;
 // `process` and `url` keep it in part (an absolute POSIX path, and a URL's path,
 // query and fragment) -- see `normalize` in plugins/hunt/entities.ts (#4542).
+// `user` and `email` are case-folded on purpose, including keys a person types.
+// Adding either here, in both halves, passes the parity check and splits account
+// history. Why, and what that costs, is the Entity Key entry in CONTEXT.md.
 export const KEY_CASE_SENSITIVE_TYPES = ["arn", "aws_key"] as const;
 
 // Both ends inclusive. Separate from a conclusion date, because a sweep that
