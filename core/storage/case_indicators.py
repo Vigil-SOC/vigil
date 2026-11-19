@@ -12,7 +12,7 @@ from typing import Any, Iterable, List, Mapping, Optional, Set, Tuple
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.storage.entity_context import context_candidates
+from core.storage.entity_context import CONTEXT_LISTS, context_candidates
 from core.storage.models import CaseIOC, Finding, case_findings
 
 # Role-less: where an IP or hash sits in a context is all they say about it.
@@ -20,6 +20,14 @@ EXTRA_LISTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("ip", ("source_ips", "ips", "ip_addresses")),
     ("hash", ("hashes",)),
 )
+
+# List-field names only. A lone string under one of these is still one value;
+# a scalar (``src_ip``, ``dst_ip``, ``hostname``, ``user``) stays as stored so
+# ``context_candidates`` stringifies the value itself, not ``str`` of a list.
+_LIST_FIELDS = frozenset(
+    name for _, names, _ in CONTEXT_LISTS for name in names
+) | frozenset(name for _, names in EXTRA_LISTS for name in names)
+
 
 # What intake can do with a key, by its type. A source IP or a hash attaches an
 # alert; a destination IP, or an IP whose role was never recorded, only links;
@@ -52,13 +60,17 @@ def context_indicators(context: Any) -> List[Tuple[str, str]]:
     """The ``(ioc_type, value)`` pairs one ``entity_context`` names.
 
     An IP's type is its role (``src_ip``, ``dst_ip``) where the field says one.
-    Sources write a list field as a lone value or with junk in it, so each is
-    cleaned to strings before ``context_candidates`` reads it.
+    A list field is cleaned to strings first: a source writes one as a lone
+    value or with junk in it. Scalar fields are left as stored.
     """
     if not isinstance(context, Mapping):
         return []
     cleaned = {
-        name: _items(raw) if isinstance(raw, (list, tuple, str, int)) else raw
+        name: (
+            _items(raw)
+            if name in _LIST_FIELDS and isinstance(raw, (list, tuple, str, int))
+            else raw
+        )
         for name, raw in context.items()
     }
     found = [
