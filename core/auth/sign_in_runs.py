@@ -144,6 +144,7 @@ def _tell(
                 message,
                 link="/settings",
                 priority="high",
+                about=person,
             )
         except Exception:  # noqa: BLE001 - the runs are already stopped
             logger.exception("could not tell %s that runs were stopped", principal)

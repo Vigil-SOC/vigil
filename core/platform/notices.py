@@ -67,6 +67,7 @@ def notify(
     *,
     session: Optional[Session] = None,
     about_case: Optional[str] = None,
+    about: Optional[str] = None,
 ) -> Optional[int]:
     """Writes a notice for ``principal_id`` and returns its id.
 
@@ -79,9 +80,14 @@ def notify(
     is what the email says when it should say more than the stored
     ``message`` (which erasure can later need to blank). A notice
     ``about_case`` goes only to a reader of that case: anyone else gets nothing
-    and None comes back (#4357)."""
+    and None comes back (#4357). ``about`` is the principal whose username was
+    read into this notice before the caller's commit. Once that account is the
+    erased placeholder, the insert is skipped, unless the text already names
+    the placeholder."""
     if session is not None:
-        if not _reads(session, principal_id, about_case):
+        if not _reads(session, principal_id, about_case) or _erased_subject(
+            session, about, kind, title, message
+        ):
             return None
         return _insert(
             session,
@@ -95,7 +101,9 @@ def notify(
             mail_body,
         )
     with get_db_manager().session_scope() as owned:
-        if not _reads(owned, principal_id, about_case):
+        if not _reads(owned, principal_id, about_case) or _erased_subject(
+            owned, about, kind, title, message
+        ):
             return None
         notice_id = _insert(
             owned,
@@ -110,6 +118,25 @@ def notify(
         )
     send_notices([notice_id])
     return notice_id
+
+
+def _erased_subject(
+    session: Session,
+    about: Optional[str],
+    kind: str,
+    title: str,
+    message: str,
+) -> bool:
+    """The account ``about`` was erased after its username was read into this notice.
+
+    Imported here: retention pulls the auth package, and that package imports
+    ``notify`` from this module while it is still loading.
+    """
+    if about is None:
+        return False
+    from core.audit.retention import subject_captured_before_erasure
+
+    return subject_captured_before_erasure(session, about, kind, title, message)
 
 
 def _reads(session: Session, principal_id: str, case_id: Optional[str]) -> bool:

@@ -145,6 +145,7 @@ def _tell(
             to_managers,
             USERS_LINK,
             priority="high",
+            about=principal,
         )
 
 

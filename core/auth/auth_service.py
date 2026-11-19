@@ -554,6 +554,7 @@ class AuthService:
                 f"{username} was locked at {at} after {failures} failed sign-ins "
                 f"{where}. {ends} Open sign-ins were not ended. Unlock it in "
                 "Settings once you have confirmed it is them.",
+                principal_id,
             )
             for principal in to_managers
         ]
@@ -563,9 +564,10 @@ class AuthService:
                 "account_locked",
                 "Your account was locked",
                 person_text,
+                None,
             )
         )
-        for principal, kind, title, message in notices:
+        for principal, kind, title, message, about in notices:
             try:
                 notify(
                     principal,
@@ -576,6 +578,7 @@ class AuthService:
                         "/settings?section=users" if principal != principal_id else None
                     ),
                     priority="high",
+                    about=about,
                 )
             except Exception:  # noqa: BLE001 - one missed notice must not hide the rest
                 logger.exception("could not send a lock notice")
