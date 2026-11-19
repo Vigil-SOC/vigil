@@ -1855,6 +1855,7 @@ def _tell_of_recovery(
                     to_managers,
                     USERS_LINK,
                     priority="high",
+                    about=about,
                 )
             except Exception:  # noqa: BLE001 - the others are still told
                 logger.exception("could not send a recovery notice to %s", to)

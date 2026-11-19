@@ -1133,6 +1133,8 @@ def remove_finding_from_case(case_id: str, finding_id: str):
     """
     Remove a finding from a case.
 
+    Removing an alert that intake merged into this Case sends it back to intake.
+
     Args:
         case_id: The case ID
         finding_id: The finding ID to remove

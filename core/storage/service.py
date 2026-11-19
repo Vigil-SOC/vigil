@@ -26,6 +26,7 @@ from core.storage import case_read_hook, case_trail_hook
 from core.storage.case_insert import insert_case
 from core.storage.case_repository import CASE_FINDING_IDS_ONLY, CaseRepository
 from core.storage.connection import get_db_manager
+from core.storage.intake_return import return_removed_findings
 from core.storage.ip_exclusion_repository import exclusion_view_filter
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
@@ -1441,6 +1442,10 @@ class DatabaseService:
             session, case.case_id, added=set(linked), removed=set(unlinked)
         )
         reconcile_case_safely(session, case.case_id)
+        # After the removal is recorded. An activities= write cannot follow:
+        # this path does not assign that column, and the note is the send-back.
+        if unlinked:
+            return_removed_findings(session, case, unlinked)
         session.expire(case, ["findings"])
         if not (writer := case_trail_hook.writer(session)):
             return

@@ -192,7 +192,7 @@ def tell_managers(
                 text = message(principal) if callable(message) else message
                 if text is None:
                     continue
-                notify(principal, kind, title, text, **notice)
+                notify(principal, kind, title, text, about=about, **notice)
             except Exception:  # noqa: BLE001 - the others are still told
                 logger.exception("could not send a %s notice to %s", kind, principal)
 

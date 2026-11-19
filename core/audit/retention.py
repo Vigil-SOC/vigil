@@ -929,8 +929,14 @@ def _perform(session, principal_id: str) -> None:
     # Before _revoke rewrites the username and email, and before the
     # beside-columns that still hold an address are cleared.
     scrub_invites(session, [principal_id], notices=True)
+    # Before _revoke rewrites it. Only this name: an earlier one the invite
+    # scrub collected is not dated, so those notices stay.
+    username = _current_username(session, principal_id)
     _revoke(session, principal_id)
     _drop_notices(session, principal_id)
+    # The user row is locked by the update above, through the end of this
+    # transaction. A notice inserted after that lock sees the placeholder.
+    _drop_subject_notices(session, principal_id, username)
     trail._lock(session)
     _blank_beside(session, principal_id)
     _queue_append(session, [principal_id])
@@ -980,6 +986,127 @@ def _drop_notices(session, principal_id: str) -> None:
             text("DELETE FROM public.case_notifications WHERE user_id = :id"),
             {"id": principal_id},
         )
+
+
+def _current_username(session, principal_id: str) -> Optional[str]:
+    if not _table(session, "users"):
+        return None
+    return session.execute(
+        text("SELECT username FROM public.users WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).scalar()
+
+
+def _user_created_has(session, username: str, principal_id: str, *, own: bool) -> bool:
+    """True when a ``user.created`` entry records ``username``.
+
+    ``own`` is this principal. Otherwise any other principal. A held entry
+    counts: it is still the creation record. The directory-sync account's
+    entry carries no username, so it never matches.
+    """
+    principal = (
+        "payload->>'principal' = :id"
+        if own
+        else "payload->>'principal' IS NOT NULL AND payload->>'principal' <> :id"
+    )
+    params = {"id": principal_id, "username": username, "action": "user.created"}
+    if (
+        _table(session, "audit_trail")
+        and session.execute(
+            text(f"""
+            SELECT 1 FROM public.audit_trail
+            WHERE payload->>'action' = :action
+              AND personal->>'username' = :username
+              AND {principal}
+            LIMIT 1
+            """),
+            params,
+        ).first()
+    ):
+        return True
+    if (
+        _table(session, "audit_trail_held")
+        and session.execute(
+            text(f"""
+            SELECT 1 FROM public.audit_trail_held
+            WHERE payload->>'action' = :action
+              AND beside->'personal'->>'username' = :username
+              AND {principal}
+            LIMIT 1
+            """),
+            params,
+        ).first()
+    ):
+        return True
+    return False
+
+
+def _subject_clause(username: str) -> tuple[str, dict]:
+    # The slots live with the bell. Importing them here, not from notices into
+    # a domain, keeps the platform from reaching everything this module imports.
+    from core.platform.notices import (
+        RUNS_STOPPED_OPENING,
+        SUBJECT_TITLES,
+        fill_subject,
+    )
+
+    parts: list[str] = []
+    params: dict[str, Any] = {}
+    for kind, templates in SUBJECT_TITLES.items():
+        filled = [fill_subject(item, username) for item in templates]
+        params[f"kind_{kind}"] = kind
+        if len(filled) == 1:
+            params[f"title_{kind}"] = filled[0]
+            parts.append(
+                f"(n.notification_type = :kind_{kind} AND n.title = :title_{kind})"
+            )
+        else:
+            params[f"titles_{kind}"] = filled
+            parts.append(
+                f"(n.notification_type = :kind_{kind}"
+                f" AND n.title = ANY(CAST(:titles_{kind} AS text[])))"
+            )
+    params["runs_prefix"] = fill_subject(RUNS_STOPPED_OPENING, username)
+    parts.append(
+        "(n.notification_type = 'runs_stopped'"
+        " AND left(n.message, char_length(:runs_prefix)) = :runs_prefix)"
+    )
+    return " OR ".join(parts), params
+
+
+def _drop_subject_notices(session, principal_id: str, username: Optional[str]) -> None:
+    """Delete bell notices about this person under their current username.
+
+    Rows written before the account existed stay. When this account's
+    ``user.created`` entry still has the name, it is dated from the account.
+    When a directory gave them the name, the notices stay if another account's
+    creation entry has it: the rename is not on the trail, so the scrub cannot
+    tell whose notice it is. Nothing here is an upgrade, and nothing calls the
+    key ring.
+    """
+    if (
+        not username
+        or is_erased(username, principal_id)
+        or not _table(session, "case_notifications")
+        or not _table(session, "users")
+    ):
+        return
+    if not _user_created_has(session, username, principal_id, own=True):
+        if _user_created_has(session, username, principal_id, own=False):
+            return
+    clause, params = _subject_clause(username)
+    params["id"] = principal_id
+    session.execute(
+        text(f"""
+            DELETE FROM public.case_notifications AS n
+            USING public.users AS u
+            WHERE u.principal_id = :id
+              AND n.case_id IS NULL
+              AND n.created_at >= u.created_at
+              AND ({clause})
+            """),
+        params,
+    )
 
 
 def _leave_mapped_teams(session, principal_id: str, user_id: str) -> None:

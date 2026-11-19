@@ -165,7 +165,14 @@ def _warn(session: Session, user: User, due, last) -> None:
     def send() -> None:
         for to in [principal, *managers(principal)]:
             try:
-                notify(to, "dormancy_warning", title, message, link="/settings")
+                notify(
+                    to,
+                    "dormancy_warning",
+                    title,
+                    message,
+                    link="/settings",
+                    about=principal,
+                )
             except Exception:  # noqa: BLE001 - the rest are still told
                 logger.exception("could not send a dormancy warning for %s", name)
 
