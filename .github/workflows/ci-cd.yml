@@ -742,6 +742,197 @@ jobs:
           raise SystemExit(1 if bad else 0)
           PY
 
+      - name: Agent pods take only the app-Secret keys they read
+        # #4839. agent-serve and agent-worker keep the ConfigMap and name the
+        # keys the agent layer reads. The whole app Secret stays on the backend.
+        # Chart-rendered, operator-supplied and ExternalSecret are the three
+        # ways that Secret comes about; defaults omit the three optional keys.
+        run: |
+          chart="$RUNNER_TEMP/chart"
+          # secret.yaml renders nothing when an existing Secret or ExternalSecret
+          # supplies the object, and Helm then rejects --show-only for it.
+          render() {
+            helm template ci "$chart" \
+              --set secrets.postgresPassword=test \
+              --set secrets.vigilAppPassword=vigil-app-test \
+              --set secrets.vigilAgentPassword=vigil-agent-test \
+              --show-only templates/agent-serve-deployment.yaml \
+              --show-only templates/agent-worker-deployment.yaml \
+              --show-only templates/backend-deployment.yaml \
+              "$@"
+          }
+          render --show-only templates/secret.yaml \
+            --set secrets.agentInternalToken=internal-token \
+            --set secrets.splunkPassword=splunk \
+            --set secrets.virustotalApiKey=vt \
+            --set secrets.awsAccessKeyId=aws-id \
+            --set secrets.awsSecretAccessKey=aws-secret \
+            --set secrets.anthropicApiKey=anthropic \
+            > "$RUNNER_TEMP/agent-env-chart.yaml"
+          render --set secrets.existingSecret=operator-app-env \
+            > "$RUNNER_TEMP/agent-env-operator.yaml"
+          render \
+            --set secrets.externalSecret.enabled=true \
+            --set secrets.externalSecret.secretStoreRef.name=repro-store \
+            --set secrets.externalSecret.secretStoreRef.kind=SecretStore \
+            --set-json 'secrets.externalSecret.dataFrom=[{"extract":{"key":"vigil/prod/all"}}]' \
+            > "$RUNNER_TEMP/agent-env-eso.yaml"
+          render --show-only templates/secret.yaml \
+            > "$RUNNER_TEMP/agent-env-default.yaml"
+          render \
+            --set-json 'agentServe.extraEnv=[{"name":"AGENT_INTERNAL_TOKEN","value":"from-extra"}]' \
+            > "$RUNNER_TEMP/agent-env-override.yaml"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          bad = []
+          optional_keys = (
+              "AGENT_INTERNAL_TOKEN",
+              "AGENT_INTERNAL_TOKEN_PREVIOUS",
+              "BIFROST_API_KEY",
+          )
+          allowed = {"POSTGRES_AGENT_PASSWORD", *optional_keys}
+          agents = ("agent-serve", "agent-worker")
+
+          def load(name):
+              return [d for d in yaml.safe_load_all((tmp / name).read_text()) if d]
+
+          def containers(docs):
+              found = {}
+              for doc in docs:
+                  if doc.get("kind") != "Deployment":
+                      continue
+                  for container in doc["spec"]["template"]["spec"]["containers"]:
+                      found[container["name"]] = container
+              return found
+
+          def from_sources(container):
+              maps, secrets = [], []
+              for src in container.get("envFrom") or []:
+                  if "configMapRef" in src:
+                      maps.append(src["configMapRef"].get("name"))
+                  if "secretRef" in src:
+                      secrets.append(src["secretRef"].get("name"))
+              return maps, secrets
+
+          def check(label, docs, optional_for, present=(), absent=()):
+              found = containers(docs)
+              for name in ("backend", *agents):
+                  if name not in found:
+                      bad.append(f"{label}: missing {name}")
+                      return
+              bmaps, bsecrets = from_sources(found["backend"])
+              if len(bsecrets) != 1 or not bsecrets[0]:
+                  bad.append(f"{label}: backend does not load one app Secret")
+                  return
+              app_secret = bsecrets[0]
+              config = bmaps[0] if bmaps else None
+              if present or absent:
+                  rendered = [
+                      d
+                      for d in docs
+                      if d.get("kind") == "Secret" and d["metadata"]["name"] == app_secret
+                  ]
+                  if len(rendered) != 1:
+                      bad.append(f"{label}: app Secret was not rendered")
+                  else:
+                      data = rendered[0].get("stringData") or {}
+                      for key in present:
+                          if key not in data:
+                              bad.append(f"{label}: app Secret is missing {key}")
+                      for key in absent:
+                          if key in data:
+                              bad.append(f"{label}: app Secret rendered {key}")
+              for name in agents:
+                  container = found[name]
+                  maps, secrets = from_sources(container)
+                  if app_secret in secrets:
+                      bad.append(f"{label}: {name} loads the app Secret whole")
+                  if config not in maps:
+                      bad.append(f"{label}: {name} does not load the config map")
+                  seen = {}
+                  for entry in container.get("env") or []:
+                      ename = entry.get("name")
+                      seen[ename] = seen.get(ename, 0) + 1
+                      # A blank value overrides nothing it did not read.
+                      if entry.get("value") == "":
+                          continue
+                      ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
+                      if ref.get("name") != app_secret:
+                          continue
+                      key = ref.get("key")
+                      if key not in allowed:
+                          bad.append(f"{label}: {name} takes {key} from the app Secret")
+                      if key in optional_keys and ref.get("optional") is not True:
+                          bad.append(f"{label}: {name} {key} is not optional")
+                  for ename, count in seen.items():
+                      if count > 1:
+                          bad.append(f"{label}: {name} lists {ename} {count} times")
+                  for key in optional_for[name]:
+                      matches = [
+                          e for e in container.get("env") or [] if e.get("name") == key
+                      ]
+                      ref = ((matches[0].get("valueFrom") if matches else {}) or {}).get(
+                          "secretKeyRef"
+                      ) or {}
+                      if (
+                          len(matches) != 1
+                          or ref.get("name") != app_secret
+                          or ref.get("key") != key
+                          or ref.get("optional") is not True
+                      ):
+                          bad.append(f"{label}: {name} does not optionally read {key}")
+
+          both = {name: optional_keys for name in agents}
+          chart_keys = (
+              "SPLUNK_PASSWORD",
+              "VIRUSTOTAL_API_KEY",
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+              "ANTHROPIC_API_KEY",
+              "AGENT_INTERNAL_TOKEN",
+          )
+          check(
+              "chart",
+              load("agent-env-chart.yaml"),
+              both,
+              present=chart_keys,
+          )
+          check("operator", load("agent-env-operator.yaml"), both)
+          check("eso", load("agent-env-eso.yaml"), both)
+          check(
+              "default",
+              load("agent-env-default.yaml"),
+              both,
+              absent=optional_keys,
+          )
+          overridden = {
+              "agent-serve": (
+                  "AGENT_INTERNAL_TOKEN_PREVIOUS",
+                  "BIFROST_API_KEY",
+              ),
+              "agent-worker": optional_keys,
+          }
+          override_docs = load("agent-env-override.yaml")
+          check("override", override_docs, overridden)
+          serve = containers(override_docs)["agent-serve"]
+          tokens = [e for e in serve.get("env") or [] if e.get("name") == "AGENT_INTERNAL_TOKEN"]
+          if (
+              len(tokens) != 1
+              or tokens[0].get("value") != "from-extra"
+              or "valueFrom" in tokens[0]
+          ):
+              bad.append("override: agent-serve AGENT_INTERNAL_TOKEN is not the extra value once")
+
+          for line in bad:
+              print(f"::error::{line}")
+          raise SystemExit(1 if bad else 0)
+          PY
+
       - name: Run the install hook as the chart user
         # The rendered command is `python /opt/vigil-upgrade/helm_upgrade.py
         # install` in the backend image. That image is this checkout, so the
