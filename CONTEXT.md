@@ -57,6 +57,24 @@ A vendor slice carries both: `ingestion.py` subclasses `SIEMIngestionService`,
 and `adapter.py` wraps that service to satisfy the Federation contract.
 _Avoid_: polling, sync, multi-tenancy (it is not Vigil-to-Vigil federation)
 
+**Integration Health**:
+One stored record per source (`source_health`, `core/storage/source_health.py`)
+and the one state judged from it (`core/integrations/health.py` `judge`, served
+at `GET /api/integration-health`). A source is an integration, keyed by its
+integration id, or one of Vigil's own inputs under an id that can't collide with
+one: `kafka`, `webhook:daemon`, `webhook:darktrace`, `webhook:cloudflare`,
+`detection_source:<id>`. The record holds the last attempt with its outcome and
+error kind, consecutive failures, dropped records (cumulative and the current
+hour), last data received, the last real check, and a reset mark. Scheduled
+collection, Test and detection-source syncs write it; switching an integration
+on or changing its endpoint or credential resets it to "no attempt yet". The
+states are healthy, no attempt yet, unhealthy (3 failures in a row, or dropped
+records in the last hour), failing once, requires a test, not checked (with a
+reason), switched off, and unknown since a time, for a record its writer has
+stopped refreshing. Federation's health fields and the integrations API's
+`last_test` are read from it. Medic does not use the judge.
+_Avoid_: status (a detection source's file field), last test (only one writer)
+
 **Workflow** (`workflows`):
 The user-facing product noun — a named, multi-agent procedure an analyst runs
 from the Workflows screen. Authored as a **Playbook**, executed by **Compose**.

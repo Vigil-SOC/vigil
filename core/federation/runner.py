@@ -319,7 +319,9 @@ class FederationRunner:
                 source_id,
                 prior_failures,
             )
-        store.record_success(source_id, cursor=result.cursor or {}, dropped=dropped)
+        store.record_success(
+            source_id, cursor=result.cursor or {}, dropped=dropped, received=new_count
+        )
 
     async def _enqueue(
         self,

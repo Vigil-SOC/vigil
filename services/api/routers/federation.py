@@ -20,6 +20,7 @@ from core.federation import store as fed_store
 from core.federation.contract import FederationAdapter
 from core.federation.lag import source_collection_lag
 from core.federation.runner import request_poll_now
+from core.integrations import health as source_health
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
@@ -124,7 +125,9 @@ async def list_sources() -> Dict[str, Any]:
 
     Includes adapters that don't yet have a row (so the UI can show "configure
     me" entries without the daemon being up). Adapters whose integration is
-    not configured are still listed but flagged ``is_configured=false``. Each
+    not configured are still listed but flagged ``is_configured=false``. The
+    health fields (``last_poll_at`` .. ``dropped_total``) are read from each
+    source's Integration Health record. Each
     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
     from :func:`core.federation.lag.source_collection_lag`. Any failed store
     read answers 503 rather than a list that looks like a fresh install.
@@ -133,6 +136,7 @@ async def list_sources() -> Dict[str, Any]:
         rows = fed_store.read_sources()
         lag_rows = source_collection_lag()
         global_settings = fed_store.read_global_settings()
+        records = source_health.read_all()
     except Exception as exc:
         raise _read_failed(exc) from exc
     rows_by_id = {row["source_id"]: row for row in rows}
@@ -152,12 +156,10 @@ async def list_sources() -> Dict[str, Any]:
                 "max_items": 100,
                 "min_severity": None,
                 "cursor": {},
-                "last_poll_at": None,
-                "last_success_at": None,
-                "last_error": None,
-                "last_error_kind": None,
-                "consecutive_errors": 0,
-                "dropped_total": 0,
+                # Health is kept per source whether or not it is seeded.
+                **fed_store.health_fields(
+                    records.get(source_health.health_id(adapter.name))
+                ),
             }
         # Rows the lag read doesn't cover (unseeded) have never collected.
         lag = lag_by_id.get(adapter.name, {})

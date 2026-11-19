@@ -7,11 +7,9 @@ use the same code path (no re-implementation drift).
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.exceptions import default_on_error
-from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -74,26 +72,83 @@ def is_globally_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def read_sources() -> List[Dict[str, Any]]:
-    """All federation_sources rows as dicts; a store error raises."""
+# The health fields a source row has always served, read from its Integration
+# Health record (core/integrations/health.py). The row's own columns are no
+# longer written.
+_NO_HEALTH = {
+    "last_poll_at": None,
+    "last_success_at": None,
+    "last_error": None,
+    "last_error_kind": None,
+    "consecutive_errors": 0,
+    "dropped_total": 0,
+}
+
+
+def health_fields(record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A health record in the federation row's field names and meanings."""
+    from core.storage.schemas.base import _iso_utc
+
+    if not record:
+        return dict(_NO_HEALTH)
+
+    def iso(value):
+        return _iso_utc(value) if value else None
+
+    return {
+        "last_poll_at": iso(record.get("last_attempt_at")),
+        "last_success_at": iso(record.get("last_success_at")),
+        "last_error": record.get("last_error"),
+        "last_error_kind": record.get("last_error_kind"),
+        "consecutive_errors": record.get("consecutive_failures") or 0,
+        "dropped_total": record.get("dropped_total") or 0,
+    }
+
+
+def _with_health(
+    rows: List[Dict[str, Any]], records: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    from core.integrations.health import health_id
+
+    return [
+        {**row, **health_fields(records.get(health_id(row["source_id"])))}
+        for row in rows
+    ]
+
+
+def read_sources(with_health: bool = True) -> List[Dict[str, Any]]:
+    """All federation_sources rows as dicts, health from the record; a store error raises."""
+    from core.integrations import health
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
 
     with get_db_manager().session_scope() as session:
-        rows = session.query(FederationSource).all()
-        return FederationSourceSchema.dump_many(rows)
+        rows = FederationSourceSchema.dump_many(session.query(FederationSource).all())
+    return _with_health(rows, health.read_all()) if with_health else rows
 
 
 def read_source(source_id: str) -> Optional[Dict[str, Any]]:
-    """Like :func:`get_source`, but a store error raises instead of reading as no row."""
+    """Like :func:`get_source`, but a federation_sources error raises instead of
+    reading as no row. A failed health read serves the row with no health."""
+    from core.integrations import health
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
 
     with get_db_manager().session_scope() as session:
         row = session.get(FederationSource, source_id)
-        return FederationSourceSchema.dump(row) if row else None
+        if row is None:
+            return None
+        dumped = FederationSourceSchema.dump(row)
+    try:
+        record = health.read(health.health_id(source_id))
+    except Exception as e:  # noqa: BLE001
+        # Health is beside collection: the runner keeps polling (no backoff
+        # count) and a PATCH that was saved still answers with its row.
+        logger.warning("Health read for %s failed: %s", source_id, type(e).__name__)
+        record = None
+    return {**dumped, **health_fields(record)}
 
 
 @default_on_error(None, level="warning")
@@ -118,7 +173,8 @@ def upsert_source(source_id: str, defaults: Dict[str, Any]) -> Optional[Dict[str
             row = FederationSource(source_id=source_id, **defaults)
             session.add(row)
             session.flush()
-        return FederationSourceSchema.dump(row)
+        dumped = FederationSourceSchema.dump(row)
+    return read_source(source_id) or dumped
 
 
 @default_on_error(None, level="warning")
@@ -136,47 +192,20 @@ def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, 
             if hasattr(row, k):
                 setattr(row, k, v)
         session.flush()
-        return FederationSourceSchema.dump(row)
+        dumped = FederationSourceSchema.dump(row)
+    return read_source(source_id) or dumped
 
 
 def record_success(
     source_id: str,
     *,
     cursor: Dict[str, Any],
-    when: Optional[datetime] = None,
     dropped: int = 0,
+    received: int = 0,
 ) -> None:
-    """Advance the cursor and add this tick's ``dropped`` to the running total."""
-    when = when or utcnow()
-    try:
-        from core.storage.connection import get_db_manager
-        from core.storage.models import FederationSource
+    """Advance the cursor, then record the poll on the source's health record.
 
-        with get_db_manager().session_scope() as session:
-            # Row lock so concurrent writers add to the total instead of racing it.
-            row = (
-                session.query(FederationSource)
-                .filter_by(source_id=source_id)
-                .with_for_update()
-                .one_or_none()
-            )
-            if row is None:
-                return
-            row.last_poll_at = when
-            row.last_success_at = when
-            row.last_error = None
-            row.last_error_kind = None
-            row.consecutive_errors = 0
-            row.cursor = cursor or {}
-            row.dropped_total = (row.dropped_total or 0) + max(dropped, 0)
-    except Exception as e:
-        logger.warning("record_success(%s) failed: %s", source_id, e)
-
-
-def record_failure(source_id: str, error: str, kind: str = "unknown") -> None:
-    """Increment consecutive_errors. We never auto-disable (per design).
-
-    ``kind`` is one of ``error_kind.KINDS``; the runner passes the classifier's answer.
+    Two transactions: a failed health write must not hold the cursor back.
     """
     try:
         from core.storage.connection import get_db_manager
@@ -186,9 +215,22 @@ def record_failure(source_id: str, error: str, kind: str = "unknown") -> None:
             row = session.get(FederationSource, source_id)
             if row is None:
                 return
-            row.last_poll_at = utcnow()
-            row.last_error = (error or "")[:2000]
-            row.last_error_kind = kind
-            row.consecutive_errors = (row.consecutive_errors or 0) + 1
+            row.cursor = cursor or {}
     except Exception as e:
-        logger.warning("record_failure(%s) failed: %s", source_id, e)
+        logger.warning("record_success(%s) failed: %s", source_id, e)
+        return
+    from core.integrations import health
+
+    health.record_collected(
+        health.health_id(source_id), dropped=max(dropped, 0), received=received
+    )
+
+
+def record_failure(source_id: str, error: str, kind: str = "unknown") -> None:
+    """One more consecutive failure on the health record. We never auto-disable.
+
+    ``kind`` is one of ``error_kind.KINDS``; the runner passes the classifier's answer.
+    """
+    from core.integrations import health
+
+    health.record_failed(health.health_id(source_id), error or "", kind)

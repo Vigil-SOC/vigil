@@ -461,3 +461,8 @@ async def check_credentials(integration_id: str) -> Optional[Outcome]:
             type(exc).__name__,
         )
         return False, f"Could not check the connection ({type(exc).__name__})"
+
+
+def has_check(integration_id: str) -> bool:
+    """True when Test makes a real read for this integration."""
+    return integration_id in _CHECKS

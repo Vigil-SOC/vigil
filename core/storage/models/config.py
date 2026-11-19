@@ -262,6 +262,54 @@ class FederationSource(Base):
     )
 
 
+class SourceHealth(Base):
+    """Integration Health: one record per source, from scheduled collection,
+    Test and detection-source syncs (core/integrations/health.py writes it).
+
+    Keyed by integration id, or a prefixed id for Vigil's own inputs (``kafka``,
+    ``webhook:<name>``, ``detection_source:<id>``). No secret, no vendor payload.
+    """
+
+    __tablename__ = "source_health"
+
+    source_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # Last attempt of any kind (poll, Test, sync); null is "no attempt yet".
+    last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_attempt_ok: Mapped[Optional[bool]] = mapped_column(Boolean)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    last_error_kind: Mapped[Optional[str]] = mapped_column(Text)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Dropped or unreadable records: cumulative, plus the current hour's window.
+    dropped_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    dropped_window_start: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    dropped_window: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_dropped_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_data_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Last real check (credential_check), apart from attempts that only probe.
+    last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_check_ok: Mapped[Optional[bool]] = mapped_column(Boolean)
+    last_check_error: Mapped[Optional[str]] = mapped_column(Text)
+    # Switched on, or credential or endpoint changed: back to "no attempt yet".
+    reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "last_error_kind IN ('auth','network','config','quota','upstream','unknown')",
+            name="source_health_last_error_kind_check",
+        ),
+    )
+
+
 class ConfigAuditLog(Base):
     """
     Configuration Audit Log - Tracks all configuration changes for compliance.

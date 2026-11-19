@@ -218,6 +218,66 @@ def read_deploy_target(fmt: str) -> Optional[Dict[str, Any]]:
         return _deploy_target_of(json.load(f).get("sources", []), fmt)
 
 
+def read_saved_sources() -> List[Dict[str, Any]]:
+    """The repository sources as last saved, without a rescan (not the overlay,
+    which is Vigil's own directory); raises when the file is unreadable."""
+    path = vigil_path(_CONFIG_FILENAME)
+    if not path.exists():
+        return []
+    with open(path, "r") as f:
+        sources = json.load(f).get("sources", [])
+    return [s for s in sources if s.get("id") != OVERLAY_ID]
+
+
+_MISSING_DIR = "Rules directory missing or outside the source"
+
+
+def _seed_health(sources: List[Dict[str, Any]]) -> None:
+    """A record for each ready or failed source that has none yet (a source
+    settled before Integration Health existed); existing records stay."""
+    from core.integrations import health
+
+    health.seed(
+        {
+            f"{health.DETECTION_PREFIX}{s['id']}": (
+                s["status"] == "ready",
+                _MISSING_DIR,
+                "config",
+            )
+            for s in sources
+            if s.get("id") != OVERLAY_ID and s.get("status") in ("ready", "error")
+        }
+    )
+
+
+def _record_health(
+    source: Dict[str, Any], error: Optional[BaseException] = None
+) -> None:
+    """Write a source's status to its Integration Health record: ready is a
+    success, error a failure, not_cloned no attempt yet."""
+    if source.get("id") == OVERLAY_ID:
+        return
+    from core.federation.error_kind import classify_failure
+    from core.integrations import health
+
+    source_id = f"{health.DETECTION_PREFIX}{source['id']}"
+    status = source.get("status")
+    if status == "ready":
+        health.record_collected(source_id)
+    elif status == "error":
+        if error is None:
+            health.record_failed(source_id, _MISSING_DIR, "config")
+        else:
+            # The class name only: a git error can quote the URL.
+            health.record_failed(
+                source_id,
+                f"Sync failed ({type(error).__name__})",
+                classify_failure(error),
+            )
+    elif status == "not_cloned":
+        health.reset(source_id)
+
+
 class DetectionRulesService:
     """Service for managing detection rule sources."""
 
@@ -289,12 +349,16 @@ class DetectionRulesService:
             )
             if status == "ready" and source.get("status") != "ready":
                 source["last_updated"] = datetime.now().isoformat()
+            moved = status != source.get("status")
             source["status"], source["rule_count"] = status, count
+            if moved:
+                _record_health(source)
             changed = True
         # Only write when something moved: this runs on every construction, and
         # the service is built in more than one process.
         if changed:
             self._save_config()
+        _seed_health(self.sources)
 
     def _seed_defaults(self):
         """Seed default sources based on existing repos on disk."""
@@ -653,6 +717,7 @@ class DetectionRulesService:
 
         self.sources.append(source)
         self._save_config()
+        _record_health(source)
         logger.info(f"Added source: {name} ({source['rule_count']} rules)")
         return source
 
@@ -744,12 +809,17 @@ class DetectionRulesService:
 
         if source["type"] == "git":
             clone_dir = Path(source["local_path"])
-            if not clone_dir.exists():
-                # Not cloned yet, clone it
-                self._git_clone(source["git_url"], source["local_path"])
-            else:
-                # Git pull
-                self._git_pull(source["local_path"])
+            try:
+                if not clone_dir.exists():
+                    # Not cloned yet, clone it
+                    self._git_clone(source["git_url"], source["local_path"])
+                else:
+                    # Git pull
+                    self._git_pull(source["local_path"])
+            except Exception as e:
+                # The saved status is left alone; the failed sync is health.
+                _record_health({**source, "status": "error"}, e)
+                raise
 
         # Rescan rule count
         source["rule_count"] = self._count_rules(
@@ -758,6 +828,7 @@ class DetectionRulesService:
         source["last_updated"] = datetime.now().isoformat()
         source["status"] = "ready"
         self._save_config()
+        _record_health(source)
         logger.info(f"Updated source: {source['name']} ({source['rule_count']} rules)")
         return source
 

@@ -180,13 +180,13 @@ SPLUNK_BASELINE = "false|false|0|false"
 
 
 def _splunk_state(s: Stack) -> str:
-    """global | source enabled | consecutive_errors | splunk integration enabled."""
+    """global | source enabled | consecutive failures | splunk integration enabled."""
     src = "SELECT {} FROM federation_sources WHERE source_id = 'splunk'"
     return s.sql(
         "SELECT concat_ws('|', "
         "coalesce((SELECT value->>'enabled' FROM system_config WHERE key = 'federation.settings'), 'false'), "
         f"coalesce(({src.format('enabled::text')}), 'false'), "
-        f"coalesce(({src.format('consecutive_errors::text')}), '0'), "
+        "coalesce((SELECT consecutive_failures::text FROM source_health WHERE source_id = 'splunk'), '0'), "
         "coalesce((SELECT enabled::text FROM integration_configs WHERE integration_id = 'splunk'), 'false'))"
     )
 
@@ -224,7 +224,7 @@ def i1g_inject(s: Stack) -> None:
 def i1g_revert(s: Stack) -> None:
     if "I-1.g" in s.active or _splunk_state(s) != SPLUNK_BASELINE:
         _federation_splunk(s, False)
-        s.sql("UPDATE federation_sources SET consecutive_errors = 0, last_error = NULL, last_error_kind = NULL WHERE source_id = 'splunk'")
+        s.sql("UPDATE source_health SET consecutive_failures = 0, last_error = NULL, last_error_kind = NULL WHERE source_id = 'splunk'")
     s.active.discard("I-1.g")
 
 
