@@ -10,14 +10,17 @@ and isn't read. Emits only the keys a rule reads (epic decision 1):
 | 200 with any other body             | error `parse`                                   |
 | anything `classify` calls an error  | that error                                      |
 
-`last_error` is never read: its text can quote a remote system.
+`sources.due_at` is `last_success_at` plus that row's `interval_seconds`, so a
+rule can judge the source against its own poll interval. Absent when either is
+missing, including a source that has never succeeded. `last_error` is never
+read: its text can quote a remote system.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -60,6 +63,16 @@ def _timestamp(raw: object) -> str | None:
 EPOCH = "federation_sources:db"
 
 
+def _due_at(row: Mapping[str, Any]) -> str | None:
+    """When this source's next poll is due: last success plus its interval."""
+    success = _timestamp(row.get("last_success_at"))
+    interval = _int(row.get("interval_seconds"))
+    if success is None or interval is None:
+        return None
+    due = datetime.fromisoformat(success) + timedelta(seconds=interval)
+    return _timestamp(due.isoformat())
+
+
 def _source(row: Mapping[str, Any], source_id: str) -> list[Value]:
     labels = {"source": source_id}
     return [
@@ -67,6 +80,7 @@ def _source(row: Mapping[str, Any], source_id: str) -> list[Value]:
         Value.timestamp(
             "sources.last_success_at", _timestamp(row.get("last_success_at")), labels
         ),
+        Value.timestamp("sources.due_at", _due_at(row), labels),
         Value.gauge(
             "sources.consecutive_errors", _int(row.get("consecutive_errors")), labels
         ),
