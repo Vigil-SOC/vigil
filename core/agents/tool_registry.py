@@ -1137,6 +1137,10 @@ def _decided(action: Any, verb: str) -> Args:
     return {"error": f"Action not found or cannot be {verb}"}
 
 
+# The tool names a hash the way an analyst does. Feed rows store hash_*.
+_TOOL_HASH_TYPES = {"md5": "hash_md5", "sha1": "hash_sha1", "sha256": "hash_sha256"}
+
+
 # The local indicator database, fed by the threat-feed poller. A miss is returned
 # as a row: an indicator no feed knows is a finding, not an empty answer.
 def _indicator_lookup(args: Args) -> Any:
@@ -1149,7 +1153,10 @@ def _indicator_lookup(args: Args) -> Any:
         )
 
     indicator_type = args.get("indicator_type", "ip")
-    hits = lookup_indicators(indicator_type, [str(v) for v in values])
+    hits = lookup_indicators(
+        _TOOL_HASH_TYPES.get(indicator_type, indicator_type),
+        [str(v) for v in values],
+    )
     return [
         {
             **(hits.get(value) or {}),
