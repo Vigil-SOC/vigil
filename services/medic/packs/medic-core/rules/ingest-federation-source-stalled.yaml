@@ -3,11 +3,14 @@
 # (I-4.e). No new success, no new failure. Gated on the global federation switch
 # (global.enabled): with it off the legacy poller owns the source and
 # last_success_at stalls by design.
+# Stalled once the last success is past both the hour floor and this source's
+# own due time (last success plus its interval) by a few minutes: one poll's
+# run plus the sensor's minute. A shorter interval is unchanged from the floor.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.federation-source-stalled
 title: Federation source has stopped being polled
-revision: 1
+revision: 2
 fault: {class: ingest, mode: I-4, causes: [I-4.c, I-4.d, I-4.e]}
 lane: 3
 detection: absence
@@ -16,6 +19,7 @@ signals:
   enabled:      {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
   errors:       {sample: {signal: federation_sources, key: sources.consecutive_errors, by: [source]}}
   last_success: {sample: {signal: federation_sources, key: sources.last_success_at, by: [source]}}
+  due:          {sample: {signal: federation_sources, key: sources.due_at, by: [source]}}
 group_by: [source]
 when:
   all:
@@ -23,7 +27,9 @@ when:
     - {fn: latest, signal: enabled, op: "==", value: true}
     - {fn: latest, signal: errors, op: "==", value: 0}
     - any:
-        - {fn: age, signal: last_success, op: ">", value: {param: stall_after}}
+        - all:
+            - {fn: age, signal: last_success, op: ">", value: {param: stall_after}}
+            - {fn: age, signal: due, op: ">", value: 300}
         - {fn: absent_for, signal: last_success, window: {param: never_polled_for}}
 for: 10m
 keep_firing_for: 10m
@@ -31,7 +37,7 @@ params:
   stall_after: {type: number, default: 3600, min: 900, max: 86400}
   never_polled_for: {type: duration, default: 1h, min: 15m, max: 24h}
 advice:
-  summary: This enabled source has had neither a successful nor a failed poll for an hour, so Vigil has stopped polling it.
+  summary: This enabled source has had neither a successful nor a failed poll for longer than its poll interval allows, so Vigil has stopped polling it.
   fix: >-
     Restart soc-daemon; polling should resume within one interval. If it stops
     again, or never starts, report it as a Vigil defect with this incident and
