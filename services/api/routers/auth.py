@@ -2191,24 +2191,29 @@ def _confirm_it_is_you(
         source=source,
         settle=False,
     )
-    _settle_end_confirmation(user, sid, source)
+    _settle_end_confirmation(
+        user, sid, source, not step_up.provider_only(session, user)
+    )
 
 
 def _settle_end_confirmation(
-    user: User, sid: Optional[str], source: Optional[str]
+    user: User, sid: Optional[str], source: Optional[str], window: bool = True
 ) -> None:
-    """Append ``auth.confirmed`` and open the window together, or hold it shut."""
+    """Append ``auth.confirmed`` and open the window together, or hold it shut.
+    ``window=False``: append it only (the password never opens the window of a
+    person who confirms at the provider)."""
     beside = {"source_ip": source}
     fields = dict(actor=user.principal_id, principal=user.principal_id, sign_in=sid)
     try:
         with unit_of_work() as own:
-            if sid and not step_up.open_window(own, sid):
+            if window and sid and not step_up.open_window(own, sid):
                 return
             trail_events.record(own, "auth.confirmed", beside, **fields)
         return
     except Exception:  # noqa: BLE001 - the sign-ins still end; the entry is held
         logger.exception("auth.confirmed was not written with the window")
-    if trail_events.safety("auth.confirmed", beside, **fields) is not None and sid:
+    held = trail_events.safety("auth.confirmed", beside, **fields)
+    if held is not None and window and sid:
         with unit_of_work() as own:
             step_up.open_window(own, sid)
 
@@ -2238,6 +2243,10 @@ def confirm_it_is_you(
     """Confirm it's you: opens the window the privileged changes read. A wrong
     answer is a 400; the third in a row ends the sign-in (401, never a lock)."""
     sid = _session_sid(request)
+    # One who confirms at the provider opens the window only there, never with
+    # the password.
+    if step_up.provider_only(session, current_user):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, step_up.CONFIRM_AT_PROVIDER)
     step_up.confirm(
         current_user,
         session,
