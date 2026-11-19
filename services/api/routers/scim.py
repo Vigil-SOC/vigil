@@ -426,8 +426,14 @@ def _touch(user: User) -> None:
 
 
 def _pushed(
-    session: Session, caller: User, external_id: Optional[str], user: User, op: str
+    session: Session,
+    caller: User,
+    external_id: Optional[str],
+    user: User,
+    op: str,
+    active: Optional[bool] = None,
 ) -> None:
+    """``active`` true when the push set ``active: true``: it settles a refused deactivation."""
     trail_events.record(
         session,
         "directory.pushed",
@@ -435,6 +441,7 @@ def _pushed(
         principal=user.principal_id,
         external_id=external_id,
         op=op,
+        active=True if active is True else None,
     )
 
 
@@ -1135,7 +1142,14 @@ async def create_user(
                 user,
                 [("replace", _group_refs(data.get("groups")))],
             )
-        _pushed(session, caller, external_id, user, "create")
+        _pushed(
+            session,
+            caller,
+            external_id,
+            user,
+            "create",
+            active="active" in data and active is True,
+        )
         return _json(
             _representation(request, user, link),
             201 if created else 200,
@@ -1204,7 +1218,7 @@ async def patch_user(
         )
         if changed or groups_changed:
             _touch(user)
-        _pushed(session, caller, link.directory_id, user, "patch")
+        _pushed(session, caller, link.directory_id, user, "patch", fields.get("active"))
         return _json(_representation(request, user, link), etag=user.scim_version)
     except ScimFailure as exc:
         return _fail(session, exc)

@@ -43,7 +43,7 @@ from core.storage.schemas.base import OptDateTime
 from core.time import utcnow
 from services.api import group_mapping
 from services.api.routers.auth import _session_sid
-from services.api.routers.users import _can_assign_role, _leaves_no_manager
+from services.api.routers.users import _can_assign_role
 
 router = APIRouter()
 
@@ -391,12 +391,11 @@ def _sync_caller(user: User, session) -> None:
 
 def _sync_out(session, token: Optional[str] = None) -> SyncOut:
     settings = sso_settings.read_row(session)[0].settings
+    # Listed until applied: the floor lifting does not deactivate the account.
     refusals = []
     for user_id in directory_sync.last_manager_ids(session):
         held = session.get(User, user_id)
-        if held is None or not held.is_active:
-            continue
-        if _leaves_no_manager(session, users={held.user_id: (held.role_id, False)}):
+        if held is not None and held.is_active:
             refusals.append(held.username)
     return SyncOut(
         sync_enabled=settings.sync_enabled,
@@ -416,7 +415,7 @@ def _sync_out(session, token: Optional[str] = None) -> SyncOut:
             BrokenLine(**line) for line in group_mapping.broken_lines(session, settings)
         ],
         mapping_note=group_mapping.mapping_note(session, settings),
-        role_refusals=group_mapping.role_refusals(session),
+        role_refusals=group_mapping.role_refusals(session, settings),
         scim_path=f"{context_path_prefix()}/scim/v2",
         token=token,
     )

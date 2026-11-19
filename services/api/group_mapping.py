@@ -114,8 +114,12 @@ def skipped_joins(session: Session) -> int:
     return int(row[0] if row else 0)
 
 
-def role_refusals(session: Session) -> list[str]:
-    """Usernames a mapping left in place because they are still the last role manager."""
+def role_refusals(session: Session, settings: sso_settings.SsoSettings) -> list[str]:
+    """Usernames a mapping left on a role it would still change.
+
+    Listed until the role the mapping gives them is the role they hold, not only
+    while they are the last role manager: the floor lifting applies nothing.
+    """
     if not trail_events.ready(session):
         return []
     rows = session.execute(text("""
@@ -129,14 +133,19 @@ def role_refusals(session: Session) -> list[str]:
         if not user_id or user_id in seen:
             continue
         seen.append(user_id)
-    names = []
-    for user_id in seen:
-        user = session.get(User, user_id)
-        if user is None or not user.is_active:
-            continue
-        if _leaves_no_manager(session, users={user.user_id: (user.role_id, False)}):
-            names.append(user.username)
-    return names
+    held = [u for u in (session.get(User, i) for i in seen) if u and u.is_active]
+    managed = {
+        u.user_id
+        for u in _managed(session, settings.issuer, {u.principal_id for u in held})
+    }
+    groups = directory_groups.external_ids_for(session, [u.principal_id for u in held])
+    return [
+        user.username
+        for user in held
+        if user.user_id in managed
+        and _mapped_role(settings, groups.get(user.principal_id, set()))[1]
+        != user.role_id
+    ]
 
 
 def names_default_team(session: Session, lines: list[sso_settings.TeamLine]) -> bool:
@@ -250,6 +259,16 @@ def _memberships(session: Session, principal_ids: list[str]) -> dict[str, set[st
     return found
 
 
+def _mapped_role(
+    settings: sso_settings.SsoSettings, external_ids: set[str]
+) -> tuple[Optional[str], str]:
+    """The first mapped group the person is in, and the role it gives."""
+    for line in settings.group_roles:
+        if line.group in external_ids:
+            return line.group, line.role_id
+    return None, settings.default_role_id
+
+
 def _one_role(
     session: Session,
     settings: sso_settings.SsoSettings,
@@ -261,13 +280,7 @@ def _one_role(
     write: bool,
     effect: Effect,
 ) -> None:
-    matched: Optional[str] = None
-    role_id = settings.default_role_id
-    for line in settings.group_roles:
-        if line.group in external_ids:
-            matched = line.group
-            role_id = line.role_id
-            break
+    matched, role_id = _mapped_role(settings, external_ids)
     if role_id == user.role_id:
         return
     role = session.get(Role, role_id)
