@@ -8,7 +8,7 @@ Vigil is an open source, agentic AI SOC released under Apache 2.0. Your playbook
 
 Vigil runs on its own: a local clone, Docker, and any supported LLM provider (a local Ollama model works). [LogLM](https://www.deeptempo.ai/platform), DeepTempo's cybersecurity foundation model for [behavioral anomaly detection](https://www.deeptempo.ai/learning-center/behavioral-anomaly-detection), is an optional MCP integration you enable in Settings, not a prerequisite. Docs and community: [vigilsoc.org](https://vigilsoc.org).
 
-**Vigil is GA.** Stable releases and a daily beta of `main` are published on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest). We believe it is the first AI SOC built for a human *on* the loop rather than *in* it.
+**Vigil 1.x is released.** Releases are on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest), and a daily beta of `main` is published as container images (see [Quick Start](#quick-start)). We believe it is the first AI SOC built for a human *on* the loop rather than *in* it.
 
 The project draws on the founders' experience building [StackStorm](https://github.com/StackStorm/st2) and supporting teams, including Netflix, that used it to reach high levels of automation carefully. One lesson carries through: the system can only demote its own autonomy, and only humans can promote it. Vigil checks projected cost and confidence before acting, and asks a human when either looks off.
 
@@ -111,14 +111,6 @@ Enable and configure integrations under **Settings → Integrations**, or genera
 **Vigil's own MCP server.** Vigil serves its SOC operations (findings, cases, approvals, hunts) at `/mcp`, the same tools its agents use. The finding, case, and approval tools that mirror frozen `/api/v1` operations are frozen: their names and input schemas are pinned in [`tools/mcp/frozen_tools.snapshot.json`](tools/mcp/frozen_tools.snapshot.json). The rest are served under the `0.x` terms in [`SECURITY.md`](SECURITY.md#supported-versions). To work Vigil from a Claude Code session, install [the Claude Code client](clients/claude-code/README.md): `claude plugin marketplace add Vigil-SOC/vigil@v<your Vigil version> --sparse .claude-plugin clients/claude-code`, then `claude plugin install vigil-soc@vigil`.
 
 **Detection rules.** The detection-engineering integration ([security-detections-mcp](https://www.npmjs.com/package/security-detections-mcp)) indexes community rule sets (Sigma, Splunk ESCU, Elastic, KQL) for search, coverage analysis, and gap identification. Vigil does not ship the rules; fetch them with `./scripts/setup_detection_repos.sh` (or `SETUP_DETECTION_REPOS=1 ./setup_dev.sh`).
-
----
-
-## What Vigil is not
-
-- **Not a SIEM or log store.** Vigil works on findings from your existing tools, connected over MCP. It does not ingest or retain raw telemetry.
-- **Not a detection-rule pack.** Community rule sets (Sigma, Splunk ESCU, Elastic, KQL) are fetched separately and indexed for search, coverage analysis, and gap identification. Vigil does not ship the rules and does not execute them.
-- **Not autonomous response.** Response actions are proposed as approval requests and wait for an analyst. No confidence score auto-approves an action.
 
 ---
 
