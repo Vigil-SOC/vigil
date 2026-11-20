@@ -17,53 +17,38 @@ One export is one zip, made from one set of data and one signature:
   getting the key from Vigil itself (GET /api/detection-rules/proof-card/key),
   not from the copy in the zip.
 
-``verify`` (and scripts/vigil_verify.py, which needs only ``cryptography``)
-checks a JSON file against its signature and a public key.
-
-The signing key is the instance's own: an Ed25519 key kept in Vigil's secrets
-store under ``KEY_SECRET``, made on first use. Where secrets can't be
-written (an ephemeral State Directory), set it in the environment instead.
+The signing key is the instance's own (core.auth.signing_key), whose ``verify``
+(and scripts/vigil_verify.py, which needs only ``cryptography``) checks a JSON
+file against its signature and a public key.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import io
-import json
 import os
 import re
-import threading
 import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy import select
 
 from core.auth import trail_events
+from core.auth.signing_key import canonical, sign
 from core.detections import proof_pdf
 from core.detections.inventory.catalog import OVERLAY, redact_caught, tool_of
-from core.secrets_manager import get_secret, secret_writes_refused, set_secret
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleStage, DetectionRuleVersion
 from core.storage.unit_of_work import unit_of_work
 
 SCHEMA = "proof-card/v1"
-KEY_SECRET = "VIGIL_PROOF_SIGNING_KEY"
 # The card's exported_from when VIGIL_INSTANCE_NAME is unset: never the host name,
 # which would sign a machine's name into every card.
 DEFAULT_INSTANCE = "Vigil"
-# Trail actions: an export, and the signing key being made.
+# The trail action for an export.
 EXPORTED = "detections.proof_card_exported"
-KEY_CREATED = "detections.proof_key_created"
-# What a request that made the key was: an export, or a read of the public key.
-MADE_BY = ("export", "key_read")
 # An ATT&CK technique or sub-technique id. A declared technique that isn't one (a
 # template a SIEM never filled, say) stays on its rule but out of the coverage table.
 ATTACK_ID = re.compile(r"^T\d{4}(\.\d{3})?$")
@@ -94,13 +79,6 @@ STATES = ("proven", "fires", "never_fired", "cant_fire")
 MAX_RULES = 2000
 # The widest technique column the PDF's coverage table prints.
 TECH_W = 24
-
-_key_lock = threading.Lock()
-
-
-class ProofKeyUnavailable(RuntimeError):
-    """No signing key, and none can be stored here."""
-
 
 # The card ------------------------------------------------------------------
 
@@ -277,95 +255,7 @@ def instance_name() -> str:
     return os.environ.get("VIGIL_INSTANCE_NAME") or DEFAULT_INSTANCE  # noqa: ENV001
 
 
-def canonical(card: Dict[str, Any]) -> bytes:
-    """The card's signed bytes: sorted keys, no spaces, UTF-8."""
-    return json.dumps(
-        card, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
-    ).encode()
-
-
-# The key ---------------------------------------------------------------------
-
-
-def _private_key(
-    actor: Optional[str] = None, made_by: str = "export"
-) -> Ed25519PrivateKey:
-    """The instance's key; made and stored on first use, which the trail records
-    as the system's act on behalf of ``actor``, whose request needed it, and
-    ``made_by`` that request (one of MADE_BY). The person is named by id in
-    ``on_behalf_of``, which the trail resolves to their name when it is read
-    (and blanks if they are erased); no name is written into the entry."""
-    with _key_lock:
-        stored = get_secret(KEY_SECRET)
-        if stored:
-            return Ed25519PrivateKey.from_private_bytes(base64.b64decode(stored))
-        if secret_writes_refused():
-            raise ProofKeyUnavailable(
-                f"No proof signing key: this Vigil can't store one. Set {KEY_SECRET} "
-                "(a base64 Ed25519 private key) in its environment."
-            )
-        key = Ed25519PrivateKey.generate()
-        raw = key.private_bytes(
-            serialization.Encoding.Raw,
-            serialization.PrivateFormat.Raw,
-            serialization.NoEncryption(),
-        )
-        if not set_secret(KEY_SECRET, base64.b64encode(raw).decode()):
-            raise ProofKeyUnavailable("Could not store a new proof signing key.")
-        # The key exists now: recorded, or held to be recorded late. Vigil makes
-        # it, whoever's request needed it first; that person is triggered_by.
-        trail_events.safety(
-            KEY_CREATED,
-            actor="system",
-            on_behalf_of=actor,
-            triggered_by=actor,
-            made_by=made_by,
-            key_id=key_id(key.public_key()),
-        )
-        return key
-
-
-def public_pem(public: Ed25519PublicKey) -> str:
-    return public.public_bytes(
-        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-    ).decode()
-
-
-def key_id(public: Ed25519PublicKey) -> str:
-    """A short name for a public key: the first 16 hex of its raw bytes' SHA-256."""
-    raw = public.public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
-    return hashlib.sha256(raw).hexdigest()[:16]
-
-
-def public_key(actor: Optional[str] = None) -> Dict[str, str]:
-    public = _private_key(actor, "key_read").public_key()
-    return {"key_id": key_id(public), "public_key_pem": public_pem(public)}
-
-
-def verify(data: bytes, signature_b64: str, pem: str) -> bool:
-    """Whether ``signature_b64`` is the key's Ed25519 signature over ``data``."""
-    public = serialization.load_pem_public_key(pem.encode())
-    if not isinstance(public, Ed25519PublicKey):
-        return False
-    try:
-        public.verify(base64.b64decode(signature_b64), data)
-    except (InvalidSignature, ValueError):
-        return False
-    return True
-
-
 # The export ------------------------------------------------------------------
-
-
-def sign(
-    data: bytes, key: Optional[Ed25519PrivateKey] = None, actor: Optional[str] = None
-) -> Tuple[str, str, str]:
-    """(signature base64, key id, public key PEM) for ``data``."""
-    key = key or _private_key(actor)
-    public = key.public_key()
-    return base64.b64encode(key.sign(data)).decode(), key_id(public), public_pem(public)
 
 
 def bundle(card: Dict[str, Any], key: Optional[Ed25519PrivateKey] = None) -> bytes:

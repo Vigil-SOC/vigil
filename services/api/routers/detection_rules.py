@@ -21,7 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from core.auth import step_up, tool_principal, trail_events
+from core.auth import signing_key, step_up, tool_principal, trail_events
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
@@ -588,7 +588,7 @@ def export_proof_card(
     each export, and the key's making, as this user."""
     try:
         card, data = proof_card.export(body.rule_ids, actor=user.user_id)
-    except proof_card.ProofKeyUnavailable as e:
+    except signing_key.SigningKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     stamp = card["exported_at"][:19].replace(":", "").replace("-", "")
     return Response(
@@ -605,8 +605,8 @@ def get_proof_card_key(user: User = Depends(get_current_active_user)):
     """The public key proof cards are signed with, and its id; made on first
     use, which the trail records as this user."""
     try:
-        return proof_card.public_key(actor=user.user_id)
-    except proof_card.ProofKeyUnavailable as e:
+        return signing_key.public_key(actor=user.user_id)
+    except signing_key.SigningKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
@@ -645,7 +645,7 @@ def export_detection_skill(rule_id: int, user: User = Depends(get_current_active
         raise HTTPException(status_code=404, detail=str(e))
     except detection_skill.Refused as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except proof_card.ProofKeyUnavailable as e:
+    except signing_key.SigningKeyUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     stamp = manifest["exported_at"][:19].replace(":", "").replace("-", "")
     return Response(
