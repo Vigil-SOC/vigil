@@ -472,6 +472,12 @@
       "finding_id": {
         "title": "Finding Id",
         "type": "string"
+      },
+      "records_offset": {
+        "default": 0,
+        "minimum": 0,
+        "title": "Records Offset",
+        "type": "integer"
       }
     },
     "required": [

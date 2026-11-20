@@ -311,7 +311,10 @@ def get_findings_stats(**_args: Any) -> Args:
 # What an agent reads of one finding (#3276): the small fields and the stored
 # triage first, entity_context last, its flow preview cut to a sample, so the
 # rendered result fits result_cap. The REST endpoints still serve it whole.
+# records_offset pages through the stored records, SAMPLE_RECORDS at a time, a
+# page stopping early once its compact JSON passes RECORDS_CHARS (#4916).
 SAMPLE_RECORDS = 5
+RECORDS_CHARS = 8_000
 SAMPLE_RAW_TEXT = 2_000
 SAMPLE_PORT_RANGES = 16
 _HEAD = (
@@ -366,18 +369,22 @@ def _attach_noise(shaped: Args, finding_id: str) -> None:
             shaped[key] = _iso_utc(getattr(row, key))
 
 
-def get_finding(*, finding_id: str) -> Any:
+def get_finding(*, finding_id: str, records_offset: Any = 0) -> Any:
     finding = _data().get_finding(finding_id)
     if not isinstance(finding, dict):
         return finding
-    shaped = _for_agent(finding)
+    try:
+        records_offset = max(int(records_offset or 0), 0)
+    except (TypeError, ValueError):
+        records_offset = 0
+    shaped = _for_agent(finding, records_offset)
     shaped["detection_rule"] = rule_for_finding(finding)
     if _data().is_using_database():
         _attach_noise(shaped, finding_id)
     return shaped
 
 
-def _for_agent(finding: Args) -> Args:
+def _for_agent(finding: Args, records_offset: int = 0) -> Args:
     enrichment = finding.get("ai_enrichment")
     enrichment = dict(enrichment) if isinstance(enrichment, dict) else enrichment
     shaped: Args = {key: finding.get(key) for key in _HEAD if key in finding}
@@ -392,7 +399,9 @@ def _for_agent(finding: Args) -> Args:
     if enrichment:
         shaped["ai_enrichment"] = enrichment
     if "entity_context" in finding:
-        shaped["entity_context"] = _sampled_context(finding["entity_context"])
+        shaped["entity_context"] = _sampled_context(
+            finding["entity_context"], records_offset
+        )
     return shaped
 
 
@@ -416,7 +425,23 @@ def _triage(enrichment: Args) -> Optional[Args]:
     return triage or None
 
 
-def _sampled_context(context: Any) -> Any:
+def _records_page(records: list, offset: int) -> Tuple[list, str]:
+    page, used = [], 0
+    for record in records[offset : offset + SAMPLE_RECORDS]:
+        used += len(_compact_json(record)) + 1
+        if page and used > RECORDS_CHARS:
+            break
+        page.append(record)
+    total, end = len(records), offset + len(page)
+    if not page:
+        return page, f"none: records_offset {offset} is past the {total} stored"
+    shown = f"records {offset + 1}-{end} of the {total} stored; "
+    if end < total:
+        return page, shown + f"has_more, next_offset {end}: pass records_offset={end}"
+    return page, shown + "none remain"
+
+
+def _sampled_context(context: Any, records_offset: int = 0) -> Any:
     if not isinstance(context, dict):
         return context
     context = dict(context)
@@ -424,14 +449,16 @@ def _sampled_context(context: Any) -> Any:
     if isinstance(evidence, dict):
         evidence = dict(evidence)
         records = evidence.get("records")
-        if isinstance(records, list) and len(records) > SAMPLE_RECORDS:
-            evidence["records"] = records[:SAMPLE_RECORDS]
-            evidence["records_shown"] = (
-                f"{SAMPLE_RECORDS} of the {len(records)} stored; "
-                "netflow_digest counts every flow"
-                if "netflow_digest" in context
-                else f"{SAMPLE_RECORDS} of the {len(records)} stored"
-            )
+        if isinstance(records, list):
+            page, shown = _records_page(records, records_offset)
+            # Labelled only when the page is not every record.
+            if len(page) < len(records):
+                evidence["records"] = page
+                evidence["records_shown"] = (
+                    f"{shown}; netflow_digest counts every flow"
+                    if "netflow_digest" in context
+                    else shown
+                )
         raw = evidence.get("raw_text")
         if isinstance(raw, str) and len(raw) > SAMPLE_RAW_TEXT:
             evidence["raw_text"] = raw[:SAMPLE_RAW_TEXT]
