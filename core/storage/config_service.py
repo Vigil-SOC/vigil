@@ -109,9 +109,14 @@ class ConfigService:
         description: Optional[str] = None,
         config_type: str = "general",
         change_reason: Optional[str] = None,
+        *,
+        gated: bool = True,
     ) -> bool:
         """
         Set a system configuration value.
+
+        ``gated=False`` is for a change that only stops autonomy: it must land
+        during a restore's write pause too.
 
         Args:
             key: Configuration key
@@ -155,6 +160,7 @@ class ConfigService:
                 old_value=old_value,
                 new_value=value,
                 change_reason=change_reason,
+                gated=gated,
             )
 
             session.commit()
@@ -354,6 +360,8 @@ class ConfigService:
         old_value: Optional[Dict[str, Any]],
         new_value: Optional[Dict[str, Any]],
         change_reason: Optional[str] = None,
+        *,
+        gated: bool = True,
     ):
         """Record one config change on the caller's session.
 
@@ -370,6 +378,7 @@ class ConfigService:
             new_value=new_value,
             changed_by=self.user_id,
             change_reason=change_reason,
+            gated=gated,
         )
 
     def record_audit(
@@ -447,12 +456,14 @@ def write_config_audit(
     new_value: Optional[Dict[str, Any]],
     changed_by: str,
     change_reason: Optional[str] = None,
+    gated: bool = True,
 ) -> None:
     """Append a trail entry, or insert ``config_audit_log`` when the trail is absent.
 
     One or the other, never both. The trail path does not catch ``append``:
     a failure rolls the caller's transaction back. Secret copies are redacted
-    before they reach a trail column.
+    before they reach a trail column. ``gated=False`` is a safety write that
+    still lands during a restore's write pause.
     """
     if _trail_ready(session):
         trail.append(
@@ -467,6 +478,7 @@ def write_config_audit(
                 "old_value": redacted_config_copy(config_type, config_key, old_value),
                 "new_value": redacted_config_copy(config_type, config_key, new_value),
             },
+            gated=gated,
         )
         return
     session.add(

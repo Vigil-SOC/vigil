@@ -412,7 +412,8 @@ def stop_ceiling(user_id: str) -> Ceiling:
 
         stamp_held_approvals(session)
 
-    return _locked_update(change, user_id, after=hold)
+    # A stop only tightens, so it lands during a restore's write pause too.
+    return _locked_update(change, user_id, after=hold, gated=False)
 
 
 def resume_ceiling(*, user_id: str, caller_is_service: bool) -> Ceiling:
@@ -527,15 +528,18 @@ def _locked_update(
     change: Callable[[Ceiling], tuple[Ceiling, str]],
     actor: str,
     after: Optional[Callable[[Any], None]] = None,
+    *,
+    gated: bool = True,
 ) -> Ceiling:
     """Read, change and write the row in one transaction with it locked.
 
     ``change`` sees the row as it is now, so no other write is lost, and the
     write leaves the same ``config.change`` entry as ``set_system_config``.
     ``after`` runs in that transaction, before the write is skipped as a no-op.
+    ``gated=False`` is for a change that only lowers autonomy.
     """
     try:
-        return _write_locked(change, actor, after)
+        return _write_locked(change, actor, after, gated)
     except CeilingRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -546,6 +550,7 @@ def _write_locked(
     change: Callable[[Ceiling], tuple[Ceiling, str]],
     actor: str,
     after: Optional[Callable[[Any], None]] = None,
+    gated: bool = True,
 ):
     with unit_of_work() as session:
         row = session.execute(
@@ -582,6 +587,7 @@ def _write_locked(
             old_value=old,
             new_value=value,
             change_reason=reason,
+            gated=gated,
         )
         return updated
 
@@ -651,7 +657,8 @@ def drop_below_floor() -> None:
             reason = "; ".join(parts) if parts else "Agreement fell below the floor"
             return replace(current, workflows=MappingProxyType(workflows)), reason
 
-        _locked_update(change, _SYSTEM)
+        # A demotion only lowers autonomy: not held by a restore's write pause.
+        _locked_update(change, _SYSTEM, gated=False)
         moved = sorted(set(below) | set(false_close))
         if moved:
             logger.warning("workflows dropped to Assist: %s", ", ".join(moved))
