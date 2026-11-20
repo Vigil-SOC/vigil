@@ -308,6 +308,9 @@ export interface ReviewPayload {
   // Set when the plugin requires a record: whether it links a cited, served result
   // to a hypothesis. A guarded answer with no such link does not stand.
   grounded?: boolean;
+  // Set when the guard counts sources: the distinct capabilities among the cited,
+  // served, non-empty results. Fewer than the guard asks and the answer does not stand.
+  sources?: { counted: string[]; required: number };
   // The child run the reviewer ran as.
   child_run_id?: string;
 }

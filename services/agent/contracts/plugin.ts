@@ -69,6 +69,12 @@ export interface GuardSpec {
   // Put before each proposed action's reason when the guard holds the answer, so a
   // person sees the containment was asked for on a verdict that did not stand.
   proposals_note?: string;
+  // A guarded answer stands only over cited, served, non-empty results from at least
+  // this many distinct capabilities, counted by the code rather than the reviewer.
+  // Capabilities in `uncounted` (the subject's own record, earlier conclusions) never
+  // count: text the subject wrote cannot be its own second source.
+  min_sources?: number;
+  uncounted?: string[];
 }
 
 export interface PluginManifest {

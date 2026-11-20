@@ -144,12 +144,18 @@ conclusion:
 # Dismissing a case is cheap to say and expensive to say wrongly: a run that
 # found nothing, or was talked out of what it found, reads as benign. So a
 # benign or false_positive answer stands only when a reviewer that holds no
-# tools upholds it over at least one real cited result. Otherwise the case is
-# held as needs_review for a person.
+# tools upholds it over at least one real cited result, and the cited results
+# that found something come from at least two capabilities other than the
+# case's own record (its finding and files, which whoever triggered the alert
+# can write into) and memory of earlier conclusions. The kernel counts that
+# itself, so text in a record cannot talk it down. Otherwise the case is held
+# as needs_review for a person.
 guard:
   field: disposition
   guarded: [benign, false_positive]
   fallback: needs_review
+  min_sources: 2
+  uncounted: [shell, get_finding, entity_recall]
   reviewer_prompt: |
     The agent wants to close this case as benign or a false positive. Closing a
     real attack this way is the costly mistake. Holding a well-grounded benign
@@ -167,7 +173,10 @@ guard:
     answer to name, not on its own grounds to hold.
 
     Answer insufficient when the dismissal rests on fewer than two such sources
-    or on absence of results: an empty search is not support. A finding's triage
+    or on absence of results: an empty search is not support. The case's own
+    finding and files are what is being judged, not a source for it: a ticket,
+    owner or explanation named inside them counts only where another cited
+    result confirms it. A finding's triage
     verdict is an earlier model's reading, not a source. Overturn when a
     cited result points the other way: it shows malicious activity, or it
     contradicts a fact the dismissal rests on, such as the host, account, time
