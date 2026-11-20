@@ -3894,9 +3894,10 @@
    .int-drawer-head { display: flex; align-items: flex-start; gap: 12px; }
    .int-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.2px; color: var(--tx0); }
    .int-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-   /* Four labels in one row break mid-word once the drawer is a phone width. */
-   @media (max-width: 699px) {
-      .int-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+   /* the drawer is portaled, so this is a viewport query: four columns at phone
+      width wrap each label one letter at a time */
+   @media (max-width: 560px) {
+      .int-steps { grid-template-columns: 1fr; }
    }
    .int-step {
       display: flex;
@@ -4120,6 +4121,13 @@
    .cb-step.done .cb-step-n { background: var(--good-bg); color: var(--good); }
 
    .cb-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+
+   /* reflow: one column, and each step takes the row so its label is not clipped */
+   @container main (max-width: 699px) {
+      .cb-steps { flex-direction: column; }
+      .cb-cols { grid-template-columns: minmax(0, 1fr); }
+      .cb-file { max-width: 100%; }
+   }
 
    .cb-form {
       display: flex;
@@ -8098,8 +8106,9 @@
       font-weight: 700;
       color: var(--tx0);
    }
-   .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); }
+   .int-card-state { flex-shrink: 0; font-size: 11px; font-weight: 650; color: var(--tx2); white-space: nowrap; }
    .int-card-state.on { color: var(--good); }
+   .int-card-state.stopped { color: var(--fair); }
    .int-card-line {
       align-self: stretch;
       margin: 0;
@@ -8109,6 +8118,15 @@
       font-size: 12px;
       line-height: 1.45;
       color: var(--tx2);
+   }
+   /* wraps in full: a long reason is not clipped to a line (DESIGN.md §7) */
+   .int-card-reason {
+      align-self: stretch;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+      overflow-wrap: anywhere;
    }
    .int-card-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; }
 
