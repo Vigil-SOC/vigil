@@ -1831,6 +1831,36 @@ export const auditFeedApi = {
   test: () => api.post<{ ok: boolean }>('/audit/feed/test'),
 }
 
+/** States from core/integrations/health.py judge. The client does not derive one. */
+export type IntegrationHealthState =
+  | 'healthy'
+  | 'no_attempt'
+  | 'unhealthy'
+  | 'failing_once'
+  | 'requires_test'
+  | 'not_checked'
+  | 'switched_off'
+  | 'unknown'
+
+/** One source from GET /api/integration-health. `record` is not read: state, reason and since are the judgement. */
+export interface IntegrationHealthSource {
+  source_id: string
+  kind: string
+  switched_on: boolean
+  state: IntegrationHealthState
+  reason: string | null
+  since: string | null
+}
+
+export interface IntegrationHealthResponse {
+  checked_at: string
+  sources: IntegrationHealthSource[]
+}
+
+export const integrationHealthApi = {
+  get: () => api.get<IntegrationHealthResponse>('/integration-health'),
+}
+
 export const federationApi = {
   setSettings: (enabled: boolean) =>
     api.put<{ enabled: boolean }>('/federation/settings', { enabled }),

@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { getAllIntegrations } from '../../config/integrations'
 import { CATALOG_TO_SOURCE } from '../../config/sourceBadges'
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Select, TextInput, Toggle } from '../../shared/ui'
-import type { FederationSourceView } from '../../services/api'
+import type { FederationSourceView, IntegrationHealthSource } from '../../services/api'
+import { healthId, healthLevel, healthPhrase } from './integrationHealth'
+import { useIntegrationsState } from './IntegrationsState'
 import { useFederation } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -93,22 +95,34 @@ function EveryInput({
   )
 }
 
-function LastPoll({ s, name }: { s: FederationSourceView; name: string }) {
-  const level = !s.enabled || s.quiet === undefined ? null : s.quiet ? 'poor' : 'good'
+function LastPoll({
+  s,
+  name,
+  source,
+  failed,
+}: {
+  s: FederationSourceView
+  name: string
+  source?: IntegrationHealthSource
+  failed: boolean
+}) {
+  // Off, unread, or a state that is not Good or Poor: no badge. Lag stays either way.
+  const level = !s.enabled || failed || !source ? null : healthLevel(source.state)
   const every = formatEvery(s.interval_seconds)
+  const phrase = !failed && !level && s.enabled && source ? healthPhrase(source) : ''
+  const lag = s.lag_seconds == null
+    ? 'Lag is not measured yet: no poll has succeeded.'
+    : `Lag is ${formatDuration(s.lag_seconds)} since the last successful poll.`
   return (
     <span className="inline-flex items-center gap-2">
-      <LevelBadge variant="pill" level={level} />
+      {failed ? <span className="int-neutral">Could not read</span> : <LevelBadge variant="pill" level={level} />}
       <span className={level ? undefined : 'muted'}>{formatRelative(s.last_poll_at)}</span>
+      {phrase && <span className="muted">{phrase}</span>}
       <InfoTip
         label={`How ${name} collection is measured`}
         source={`${name} poll results. Cursor: ${formatCursor(s.cursor)}.`}
-        calculation={
-          s.lag_seconds == null
-            ? 'Lag is not measured yet: no poll has succeeded.'
-            : `Lag is ${formatDuration(s.lag_seconds)} since the last successful poll. Good while that stays within the poll interval, Poor once it is exceeded.`
-        }
-        limit={`Expected every ${every}. A failed poll does not reset the lag. No level shows while the source is off.`}
+        calculation={`${lag} The badge reads Integration Health: Good when the source was last confirmed working, Poor when it is unhealthy or failing.`}
+        limit={`Expected every ${every}. A failed poll does not reset the lag. No level shows while the source is off, or when Integration Health has no Good or Poor state for it.`}
       />
     </span>
   )
@@ -117,6 +131,12 @@ function LastPoll({ s, name }: { s: FederationSourceView; name: string }) {
 export default function FederationSection({ notify }: SectionProps) {
   const { sources, globalEnabled, phase, error, reload, setGlobal, patchSource, pollNow } =
     useFederation()
+  const { health } = useIntegrationsState()
+  const healthById = useMemo(() => {
+    const byId = new Map<string, IntegrationHealthSource>()
+    for (const source of health.sources ?? []) byId.set(source.source_id, source)
+    return byId
+  }, [health.sources])
 
   if (phase === 'loading') {
     return <div className="text-sm text-tx-3 py-16 text-center">Loading alert collection…</div>
@@ -252,7 +272,7 @@ export default function FederationSection({ notify }: SectionProps) {
                           />
                         </div>
                       </td>
-                      <td><LastPoll s={s} name={name} /></td>
+                      <td><LastPoll s={s} name={name} source={healthById.get(healthId(s.source_id))} failed={health.failed} /></td>
                       <td className="col-low">
                         {(s.consecutive_errors || 0) > 0 ? (
                           <span style={{ color: 'var(--fair)' }} title={s.last_error || ''}>

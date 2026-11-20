@@ -1,12 +1,13 @@
 import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react'
 import { buildRows, keepConnected, needsAttention, type ServerRow } from './integrationHealth'
-import { useIntegrationsConfig, useMcpServers, type Phase } from './useSettings'
+import { useIntegrationHealth, useIntegrationsConfig, useMcpServers, type Phase } from './useSettings'
 
 interface IntegrationsState {
   mcp: ReturnType<typeof useMcpServers>
-  /** ready only once both fetches landed, so health never shows half-loaded */
+  /** ready once the server lists and the health read have settled */
   phase: Phase
   int: ReturnType<typeof useIntegrationsConfig>
+  health: ReturnType<typeof useIntegrationHealth>
   rows: ServerRow[]
   /** the Need attention tile, the banner and the Settings nav badge */
   attention: ServerRow[]
@@ -19,10 +20,16 @@ const Ctx = createContext<IntegrationsState | null>(null)
 export function IntegrationsStateProvider({ children }: { children: ReactNode }) {
   const mcp = useMcpServers()
   const int = useIntegrationsConfig()
+  const health = useIntegrationHealth()
   const { servers, statuses, enabled, errors, missingCredentials, setups } = mcp
   const { config } = int
   const kept = useRef(new Set<string>())
-  const phase: Phase = mcp.phase === 'error' ? 'error' : mcp.phase === 'ready' && int.phase === 'ready' ? 'ready' : 'loading'
+  const phase: Phase =
+    mcp.phase === 'error'
+      ? 'error'
+      : mcp.phase === 'ready' && int.phase === 'ready' && health.phase !== 'loading'
+        ? 'ready'
+        : 'loading'
   const rows = useMemo(
     () =>
       phase !== 'ready' ? [] : keepConnected(buildRows({
@@ -34,12 +41,12 @@ export function IntegrationsStateProvider({ children }: { children: ReactNode })
         setups,
         enabledIntegrations: config.enabled_integrations,
         integrations: config.integrations,
-        lastTest: config.last_test,
+        health: health.failed ? null : health.sources,
       }), kept.current),
-    [phase, servers, statuses, enabled, errors, missingCredentials, setups, config],
+    [phase, servers, statuses, enabled, errors, missingCredentials, setups, config, health.failed, health.sources],
   )
   const attention = useMemo(() => rows.filter(needsAttention), [rows])
-  return <Ctx.Provider value={{ mcp, int, phase, rows, attention }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ mcp, int, health, phase, rows, attention }}>{children}</Ctx.Provider>
 }
 
 export function useIntegrationsState(): IntegrationsState {

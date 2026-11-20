@@ -3825,7 +3825,7 @@
    }
 
    .int-table-wrap .int-table {
-      --int-tracks: 602px;
+      --int-tracks: 678px;
       min-width: calc(var(--int-tracks) + var(--col-main-min));
       border: 0;
       border-radius: 0;
@@ -3833,19 +3833,19 @@
    }
 
    .int-table-wrap th:nth-child(2) { width: 96px; }
-   .int-table-wrap th:nth-child(3) { width: 92px; }
+   .int-table-wrap th:nth-child(3) { width: 168px; }
    .int-table-wrap th:nth-child(4) { width: 130px; }
    .int-table-wrap th:nth-child(5) { width: 120px; }
    .int-table-wrap th:nth-child(6) { width: 52px; }
    .int-table-wrap th:nth-child(7) { width: 112px; }
 
    @container main (min-width: 1400px) {
-      .int-table-wrap .int-table { --int-tracks: 792px; }
+      .int-table-wrap .int-table { --int-tracks: 868px; }
       .int-table-wrap th:nth-child(4) { width: 240px; }
       .int-table-wrap th:nth-child(5) { width: 200px; }
    }
 
-   /* Last verified and the agents description (222px) step aside while Ask Vigil is docked.
+   /* Last verified and the agents description step aside while Ask Vigil is docked.
       It scrolls only below the full tier, where it can't fit: a scroll box clips the ⓘ popover. */
    @container main (max-width: 1399px) {
       .int-table-wrap { overflow-x: auto; }
