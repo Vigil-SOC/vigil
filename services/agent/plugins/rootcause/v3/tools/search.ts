@@ -18,7 +18,11 @@ const FETCH = 200; // fetched, for rare values; only ROWS are shown
 const RAW_CHARS = 2000;
 const RESULT_CHARS = 20_000;
 const LIST_ITEMS = 50;
-export const WRITES = /\|\s*(delete|collect|outputlookup|outputcsv|sendemail|tscollect|mcollect|meventcollect|script|run|sendalert)\b/i;
+// Commands that write, send data out, run code or build searches from field values (map); kept
+// in step with core/integrations/splunk/client.py. A command starts a pipe stage or a subsearch.
+export const WRITES = /[|[]\s*(delete|collect|summaryindex|mcollect|meventcollect|tscollect|outputlookup|outputcsv|outputtext|outputtelemetry|sendemail|sendalert|script|run|runshellscript|dump|map|fit|dbxoutput|dbxquery)\b/i;
+// Splunk drops ```comments``` before parsing, so a comment can't hide a command.
+const writes = (spl: string) => WRITES.test(spl.replace(/```[\s\S]*?```/g, " "));
 
 const hidden = (k: string) => /^_(bkt|cd|si|serial|indextime|sourcetype|eventtype_color|kv|subsecond)$/.test(k) || k === "linecount" || k === "splunk_server";
 const capStr = (v: string) => (v.length > RAW_CHARS ? v.slice(0, RAW_CHARS) + ` …[+${v.length - RAW_CHARS} chars truncated]` : v);
@@ -142,7 +146,7 @@ export class LiveSearch implements SearchBackend {
   }
 
   async search({ spl, earliest, latest }: QueryInput, timeoutMs?: number): Promise<string> {
-    if (WRITES.test(spl)) return "refused: read-only, write commands are blocked";
+    if (writes(spl)) return "refused: read-only, write commands are blocked";
     const e = Date.parse(earliest ?? this.range[0]), l = Date.parse(latest ?? this.range[1]);
     if (Number.isNaN(e) || Number.isNaN(l)) return "refused: earliest and latest must be ISO 8601 times";
     try {
