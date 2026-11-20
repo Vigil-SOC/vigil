@@ -2,12 +2,12 @@
 
 The ``source_health`` row (``core/storage/source_health.py``) is the only
 stored copy of a source's health. Its writers are scheduled collection (``core/federation/store.py``), Test
-(``services/api/routers/config.py``), detection-source syncs
-(``core/detections/detection_rules_service.py``) and the integration save path
-(a reset). Every writer is best-effort: a failed health write is logged and
-never fails the poll, test or save it describes. ``judge`` is the only place a
-state is computed; a record its writer stopped refreshing reads "unknown since
-<time>" there, never healthy.
+(``services/api/routers/config.py``), a successful MCP read (``core/agents/mcp_tools.py``),
+detection-source syncs (``core/detections/detection_rules_service.py``) and the
+integration save path (a reset). Every writer is best-effort: a failed health
+write is logged and never fails the poll, test, tool call or save it describes.
+``judge`` is the only place a state is computed; a record its writer stopped
+refreshing reads "unknown since <time>" there, never healthy.
 
 Keys are integration ids, plus prefixed ids for Vigil's own inputs that cannot
 collide with one: ``kafka``, ``webhook:<name>`` and
@@ -25,6 +25,7 @@ from core.storage.source_health import (  # noqa: F401 - the writers, re-exporte
     read_all,
     record_collected,
     record_failed,
+    record_lookup,
     record_test,
     reset,
     seed,
@@ -111,7 +112,7 @@ def judge(
     kind: str,
     switched_on: bool,
     has_check: bool = True,
-    unchecked: bool = False,
+    unchecked: Optional[str] = None,
     legacy: bool = False,
     interval_seconds: Optional[int] = None,
     now: Optional[datetime] = None,
@@ -122,9 +123,9 @@ def judge(
     ``detection_source``. ``interval_seconds`` is set only while scheduled
     collection polls the source; a record older than that interval allows
     (backoff included) is no longer believed and reads "unknown".
-    ``unchecked`` is an integration whose table entry has no read-only call,
-    or a fixed call with no credential saved: that reads "not checked" and
-    does not withhold readiness. Nothing is stored for it.
+    ``unchecked`` is the reason an integration is not checked (no read-only
+    call, or a fixed call with no credential saved). That state does not
+    withhold readiness, and nothing is stored for it.
     """
     from core.federation.lag import overdue
 
@@ -134,14 +135,14 @@ def judge(
         return _state(SWITCHED_OFF)
     if legacy:
         return _state(NOT_CHECKED, LEGACY_REASON)
+    if kind == "integration" and unchecked:
+        return _state(NOT_CHECKED, unchecked)
     attempt = rec.get("last_attempt_at")
     failures = int(rec.get("consecutive_failures") or 0)
     check_ok = bool(rec.get("last_check_at") and rec.get("last_check_ok"))
 
     if kind == "receiver" and not rec.get("last_success_at"):
         return _state(REQUIRES_TEST, "nothing accepted yet")
-    if kind == "integration" and unchecked and not check_ok:
-        return _state(NOT_CHECKED, "no read-only call exists")
     if kind == "integration" and not has_check and not check_ok:
         return _state(REQUIRES_TEST, "Vigil has no real check for this integration")
     if interval_seconds and attempt:
@@ -238,7 +239,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     from core.audit.feed import INTEGRATION_ID, WEBHOOK_INTEGRATION_ID
     from core.detections.detection_rules_service import read_saved_sources
     from core.federation import store as fed_store
-    from core.integrations.credential_check import has_check, not_checked
+    from core.integrations.credential_check import has_check, not_checked_reason
 
     now = now or utcnow()
     records = read_all()
@@ -273,7 +274,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
             "pulled" if fed_id else "integration",
             bool(row.get("enabled")),
             has_check=has_check(iid),
-            unchecked=not_checked(iid),
+            unchecked=not_checked_reason(iid),
             legacy=bool(fed_id) and not scheduled,
             interval_seconds=(
                 int(fed_row["interval_seconds"]) if fed_row and scheduled else None

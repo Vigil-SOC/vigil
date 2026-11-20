@@ -3,55 +3,86 @@
 The MCP probe behind "Test" only shows that a server answered. A server starts
 and lists its tools whatever it is pointed at, so a wrong password or an
 unreachable URL still read as Good. This logs in with the saved settings and
-makes one small read, and nothing else: the server's own info endpoint, or a
-list of at most one alert. Nothing is written to the external system.
+makes one small read, and nothing else: the server's own info endpoint, a
+list of at most one alert, or one fixed read-only MCP call. Nothing is written
+to the external system.
 
-Each source that federation pulls alerts from has a check, built on the client
-and credentials its adapter uses. The integrations in ``_FIXED`` are checked
-with one fixed read-only tool call through ``execute_mcp_tool``. ``_NO_READONLY``
-and a fixed-call integration with no credential saved are not checked: Test
-says so and stores nothing, and the judge does not withhold readiness.
-Anything else returns ``None``, and the test stays what the MCP probe said.
+Each source that federation pulls alerts from has a direct check, built on the
+client and credentials its adapter uses. Anything else with a read-only call
+is one row in ``_READ_ONLY``: a fixed tool and fixed arguments, called through
+``execute_mcp_tool``. An id in ``_NO_READ_ONLY``, or a fixed call with no
+credential saved, is not checked: Test says so and stores nothing, and the
+judge does not withhold readiness. Anything left returns ``None``, and the
+test stays what the MCP probe said.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple
+import time
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Union
 
 import httpx
 
-from core.integrations._base.config import missing, resolve
+from core.integrations._base.config import missing, resolve, resolve_fields
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
-from core.integrations.atomic_red_team.descriptor import ATOMIC_RED_TEAM
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
-from core.integrations.azure_ad.descriptor import AZURE_AD
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
-from core.integrations.carbon_black.descriptor import CARBON_BLACK
-from core.integrations.cloudflare.descriptor import CLOUDFLARE
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC
-from core.integrations.jira.descriptor import JIRA
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
-from core.integrations.microsoft_teams.descriptor import MICROSOFT_TEAMS
-from core.integrations.okta.descriptor import OKTA
 from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.integrations.opensearch.descriptor import OPENSEARCH
-from core.integrations.pagerduty.descriptor import PAGERDUTY
-from core.integrations.palo_alto.descriptor import PALO_ALTO
-from core.integrations.sentinelone.descriptor import SENTINELONE
-from core.integrations.slack.descriptor import SLACK
 from core.integrations.splunk.descriptor import SPLUNK
-from core.integrations.vstrike.descriptor import VSTRIKE
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 
 logger = logging.getLogger(__name__)
 
 # (success, one line safe to show: never a secret)
 Outcome = Tuple[bool, str]
+
+
+@dataclass(frozen=True)
+class NotChecked:
+    """The check did not run. ``reason`` is one fixed line, safe to show."""
+
+    reason: str
+
+
+Check = Union[Outcome, NotChecked]
+
+# No network call exists, so Test and the health judge say so instead of
+# "no real check". #4872 adds ids here; the reason is the judge's text.
+_NO_READ_ONLY: Dict[str, str] = {
+    "url-analysis": "no read-only call exists",
+    # The only tool each lists writes (teams_send_alert, atomic_red_team_execute).
+    "microsoft-teams": "no read-only call exists",
+    "atomic-red-team": "no read-only call exists",
+}
+
+# A fixed call with no saved credential is the same outcome. Jira signs in
+# through Atlassian's OAuth, not the stored api_token.
+_NO_CREDENTIAL_UNCHECKED = frozenset(
+    {
+        "sentinelone",
+        "carbon-black",
+        "okta",
+        "azure-ad",
+        "palo-alto",
+        "cloudflare",
+        "slack",
+        "pagerduty",
+        "vstrike",
+    }
+)
+
+# A public address and an empty file. Lookups of these prove the credential
+# without asking about a customer indicator.
+_BENIGN_IP = "8.8.8.8"
+_BENIGN_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 # The UI's Test request gives up after 15 s and the MCP probe runs first, so
 # the answer is not waited for longer than this. A sync client keeps running in
@@ -445,6 +476,74 @@ async def _crowdstrike() -> Outcome:
         service.session.close()
 
 
+async def _cloudforce_one() -> Outcome:
+    # No descriptor and no MCP server: the poller reads the same fields. The
+    # token is a secret, so it is not in the stored config dict.
+    config = resolve_fields(
+        "cloudforce_one", ("api_token", "taxii_server_url", "collection_ids")
+    )
+    collection_ids = [
+        part.strip()
+        for part in str(config.get("collection_ids") or "").split(",")
+        if part.strip()
+    ]
+    absent = missing(config, "api_token", "taxii_server_url")
+    if not collection_ids:
+        absent = (*absent, "collection_ids")
+    if absent:
+        return _absent(absent)
+
+    def discover() -> Outcome:
+        from taxii2client.v21 import Server
+
+        from core.threat_intel.threat_feed_service import _BearerAuth
+
+        # Discovery only. Fetching the collection pages every object.
+        # Each API root opens its own session, so the short timeout has to be
+        # put on that session before its collections are listed.
+        server = Server(
+            str(config["taxii_server_url"]),
+            auth=_BearerAuth(str(config["api_token"])),
+        )
+
+        def limit(session: Any) -> None:
+            request = session.request
+
+            def limited(method: str, url: str, **kwargs: Any) -> Any:
+                kwargs.setdefault("timeout", _REQUEST_TIMEOUT)
+                return request(method, url, **kwargs)
+
+            session.request = limited
+
+        roots: list = []
+        try:
+            limit(server._conn.session)
+            roots = list(server.api_roots)
+            wanted = collection_ids[0]
+            for root in roots:
+                limit(root._conn.session)
+                for collection in root.collections:
+                    if collection.id == wanted:
+                        return True, "Cloudforce One accepted the call"
+            return False, "Cloudforce One collection was not found"
+        finally:
+            server.close()
+            for root in roots:
+                root.close()
+
+    try:
+        return await asyncio.to_thread(discover)
+    except Exception as exc:  # noqa: BLE001
+        # The class name only: the HTTP error names the URL it was given.
+        logger.warning(
+            "Credential check for cloudforce_one failed (%s)", type(exc).__name__
+        )
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403):
+            return False, "Cloudforce One rejected the call"
+        return False, "Cloudforce One could not be reached"
+
+
 _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     SPLUNK.id: _splunk,
     ELASTIC.id: _elastic,
@@ -456,74 +555,124 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     AMAZON_SECURITY_LAKE.id: _security_lake,
     MICROSOFT_DEFENDER.id: _defender,
     CROWDSTRIKE.id: _crowdstrike,
+    "cloudforce_one": _cloudforce_one,
 }
 
-# (server, tool, args). The tool is the name that server lists, unprefixed.
-# Each one is read-only and takes no entity, or a list of one. 192.0.2.1 is
-# TEST-NET-1 (RFC 5737): a lookup, not a host. Taken from a live tools/list of
-# the pinned server, except Jira: its remote server does not list tools until
-# the OAuth sign-in, and atlassianUserInfo is that server's read of the
-# signed-in account (its "myself"). Teams and Atomic Red Team are not here:
-# the only tool each lists writes (teams_send_alert, atomic_red_team_execute).
-_FIXED: Dict[str, Tuple[str, str, Mapping[str, Any]]] = {
-    SENTINELONE.id: ("sentinelone", "list_alerts", {"first": 1}),
-    CARBON_BLACK.id: ("carbon-black", "cb_get_alerts", {"limit": 1}),
-    OKTA.id: ("okta", "list_okta_users", {"max_results": 1}),
-    AZURE_AD.id: ("azure-ad", "aad_get_sign_ins", {"limit": 1}),
-    PALO_ALTO.id: ("palo-alto", "pan_get_threats", {"limit": 1}),
-    CLOUDFLARE.id: ("cloudflare", "cf_lookup_ip_threat", {"ip": "192.0.2.1"}),
-    JIRA.id: ("jira", "atlassianUserInfo", {}),
-    SLACK.id: ("slack", "slack_auth_test", {}),
-    PAGERDUTY.id: ("pagerduty", "list_incidents", {"limit": 1}),
-    VSTRIKE.id: ("vstrike", "vstrike_storyline_list", {}),
+
+@dataclass(frozen=True)
+class FixedCall:
+    """One fixed read. ``tool`` is the name the server lists, not the flat name."""
+
+    server: str
+    tool: str
+    args: Mapping[str, Any]
+    label: str
+
+
+# Each call is the cheapest read that still needs the credential: an account
+# or quota call where the server has one, otherwise one benign lookup.
+# 192.0.2.1 is TEST-NET-1 (RFC 5737). Taken from a live tools/list, except
+# Jira: its remote server does not list tools until the OAuth sign-in, and
+# atlassianUserInfo is that server's read of the account.
+_READ_ONLY: Dict[str, FixedCall] = {
+    # relationships=[] is one GET. The default fans out into premium lookups.
+    "virustotal": FixedCall(
+        "virustotal",
+        "get_domain_report",
+        {"domain": "google.com", "relationships": []},
+        "VirusTotal",
+    ),
+    "shodan": FixedCall("shodan", "api_info", {}, "Shodan"),
+    "firecrawl": FixedCall(
+        "firecrawl",
+        "firecrawl_scrape",
+        {"url": "https://example.com", "formats": ["markdown"]},
+        "Firecrawl",
+    ),
+    "alienvault-otx": FixedCall(
+        "alienvault-otx", "otx_check_ip", {"ip": _BENIGN_IP}, "AlienVault OTX"
+    ),
+    "misp": FixedCall("misp", "misp_get_events", {"limit": 1}, "MISP"),
+    "gcp-threat-intel": FixedCall(
+        "gcp-threat-intel",
+        "list_threat_profiles",
+        {"limit": 1},
+        "Google Threat Intelligence",
+    ),
+    "ip-geolocation": FixedCall(
+        "ip-geolocation", "geolocate_ip", {"ip": _BENIGN_IP}, "IP Geolocation"
+    ),
+    "hybrid-analysis": FixedCall(
+        "hybrid-analysis", "ha_search_hash", {"hash": _BENIGN_SHA256}, "Hybrid Analysis"
+    ),
+    "joe-sandbox": FixedCall(
+        "joe-sandbox", "get_list_of_recent_analyses", {"limit": 1}, "Joe Sandbox"
+    ),
+    "anyrun": FixedCall(
+        "anyrun", "anyrun_search_hash", {"hash": _BENIGN_SHA256}, "ANY.RUN"
+    ),
+    "cape-sandbox": FixedCall(
+        "cape-sandbox", "cape_list_tasks", {"limit": 1}, "CAPE Sandbox"
+    ),
+    "sentinelone": FixedCall("sentinelone", "list_alerts", {"first": 1}, "SentinelOne"),
+    "carbon-black": FixedCall(
+        "carbon-black", "cb_get_alerts", {"limit": 1}, "Carbon Black"
+    ),
+    "okta": FixedCall("okta", "list_okta_users", {"max_results": 1}, "Okta"),
+    "azure-ad": FixedCall("azure-ad", "aad_get_sign_ins", {"limit": 1}, "Entra"),
+    "palo-alto": FixedCall("palo-alto", "pan_get_threats", {"limit": 1}, "Palo Alto"),
+    "cloudflare": FixedCall(
+        "cloudflare",
+        "cf_lookup_ip_threat",
+        {"ip": "192.0.2.1"},
+        "Cloudflare",
+    ),
+    "jira": FixedCall("jira", "atlassianUserInfo", {}, "Jira"),
+    "slack": FixedCall("slack", "slack_auth_test", {}, "Slack"),
+    "pagerduty": FixedCall("pagerduty", "list_incidents", {"limit": 1}, "PagerDuty"),
+    "vstrike": FixedCall("vstrike", "vstrike_storyline_list", {}, "VStrike"),
 }
 
-# No read-only call exists. Test says so; the judge does not withhold readiness.
-_NO_READONLY = frozenset({MICROSOFT_TEAMS.id, ATOMIC_RED_TEAM.id})
 
-NOT_CHECKED_REASON = "no read-only call exists"
-
-
-class NotChecked:
-    """The check did not run. Test says so and stores nothing."""
-
-    reason = NOT_CHECKED_REASON
+def _timeout_message() -> str:
+    return f"No answer within {CHECK_TIMEOUT:g} s"
 
 
-NOT_CHECKED = NotChecked()
+def _rejected(label: str) -> Outcome:
+    return False, f"{label} rejected the call"
 
 
-def _clip(text: str) -> str:
-    return " ".join(str(text).split())[:200]
+def _from_connect(kind: str, label: str) -> Check:
+    if kind == "not_enabled":
+        return NotChecked("not checked: tool server is not enabled")
+    if kind == "not_configured":
+        return NotChecked("not checked: tool server is not configured")
+    if kind == "timeout":
+        return False, _timeout_message()
+    if kind == "no_client":
+        return False, "Could not check the connection (no MCP client)"
+    return False, f"{label} could not be reached"
 
 
-def _detail(text: str) -> str:
-    """One line safe to show. A tool's JSON ``error`` is the line, not the blob."""
-    raw = str(text).strip()
-    try:
-        parsed = json.loads(raw)
-    except (ValueError, TypeError):
-        return _clip(raw)
-    if isinstance(parsed, dict) and parsed.get("error"):
-        return _clip(parsed["error"])
-    return _clip(raw)
+def _from_mcp(label: str, kind: str) -> Outcome:
+    from core.agents.mcp_tools import TIMEOUT, UNAVAILABLE
+
+    if kind == TIMEOUT:
+        return False, _timeout_message()
+    if kind == UNAVAILABLE:
+        return False, f"{label} could not be reached"
+    return _rejected(label)
 
 
 def _no_credential(integration_id: str) -> bool:
-    """True when this integration has nothing to authenticate a fixed call with.
-
-    Jira's server signs in through Atlassian's OAuth, not the stored api_token,
-    so an empty token is not "no credential".
-    """
+    """True when a fixed call has nothing saved to authenticate with."""
     from core.integrations._base.descriptor import get_descriptor
 
-    if integration_id == JIRA.id:
+    if integration_id == "jira":
         return False
     desc = get_descriptor(integration_id)
-    if desc is None:
-        return False
-    if not desc.secret_fields:
-        return True
+    if desc is None or not desc.secret_fields:
+        return desc is not None and not desc.secret_fields
     try:
         config = resolve(desc)
     except Exception as exc:  # noqa: BLE001 - a failed read is not "no credential"
@@ -536,60 +685,71 @@ def _no_credential(integration_id: str) -> bool:
     return all(not config.get(name) for name in desc.secret_fields)
 
 
-def not_checked(integration_id: str) -> bool:
-    """True when the outcome is "not checked" and nothing is stored for it."""
-    if integration_id in _NO_READONLY:
-        return True
-    return integration_id in _FIXED and _no_credential(integration_id)
+def not_checked_reason(integration_id: str) -> Optional[str]:
+    """Why this id is not checked, or ``None`` when a check exists or might."""
+    reason = _NO_READ_ONLY.get(integration_id)
+    if reason:
+        return reason
+    if integration_id in _NO_CREDENTIAL_UNCHECKED and _no_credential(integration_id):
+        return "no read-only call exists"
+    return None
 
 
-async def _fixed_call(integration_id: str) -> Outcome:
-    """One read through the connected server. A server that is not up fails."""
-    import time
-    from types import SimpleNamespace
-
+async def _mcp_read(integration_id: str) -> Check:
+    """One fixed call. Connecting and the call share ``CHECK_TIMEOUT``."""
     from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, row_error
-    from core.integrations.entity_facts import _connect
+    from core.integrations.entity_facts import Source, _connect
 
-    server, tool, args = _FIXED[integration_id]
-    registry, reason = await _connect(
-        SimpleNamespace(server=server), time.monotonic() + CHECK_TIMEOUT
-    )
+    call = _READ_ONLY[integration_id]
+    deadline = time.monotonic() + CHECK_TIMEOUT
+    registry, reason = await _connect(Source(call.server, "", (), ()), deadline)
     if registry is None:
-        return False, _clip(f"{server}: {_detail(reason[1] or 'not connected')}")
-    flat = f"{server}_{tool}"
-    if flat not in set(registry.get_tool_names()):
-        return False, f"{server} does not offer {tool}"
+        # ``reason`` can quote the server. Only its kind is kept, and a server
+        # that is off is an expected "not checked", not a failed check.
+        kind = reason[0]
+        if kind not in ("not_enabled", "not_configured"):
+            logger.warning(
+                "Credential check for %s did not connect (%s)", integration_id, kind
+            )
+        return _from_connect(kind, call.label)
     try:
         rows, handled = await execute_mcp_tool(
-            flat, dict(args), CHECK_TIMEOUT, registry
+            f"{call.server}_{call.tool}",
+            dict(call.args),
+            max(0.1, deadline - time.monotonic()),
+            registry,
         )
     except MCPFailure as exc:
-        return False, _clip(f"{server}: {_detail(exc.detail or exc.kind)}")
+        logger.warning("Credential check for %s failed (%s)", integration_id, exc.kind)
+        return _from_mcp(call.label, exc.kind)
     if not handled:
-        return False, f"{server} is not connected"
-    error = row_error(rows)
-    if error:
-        return False, _clip(f"{server}: {_detail(error)}")
-    return True, f"Read {tool}"
+        return NotChecked("not checked: the read-only call is not available")
+    # An error row, or Okta's text-only "Error executing tool" reply.
+    if row_error(rows):
+        logger.warning("Credential check for %s failed (error)", integration_id)
+        return _rejected(call.label)
+    return True, f"{call.label} accepted the call"
 
 
-async def check_credentials(integration_id: str) -> Optional[Outcome] | NotChecked:
-    """``(ok, message)`` for the saved settings, ``NotChecked`` when there is
-    nothing to read, or ``None`` when no check exists."""
-    if not_checked(integration_id):
-        return NOT_CHECKED
-    if integration_id in _FIXED:
-        call = _fixed_call(integration_id)
-    elif (check := _CHECKS.get(integration_id)) is not None:
-        call = check()
-    else:
+async def check_credentials(integration_id: str) -> Optional[Check]:
+    """``(ok, message)`` for the saved settings, ``NotChecked`` when nothing
+    ran, or ``None`` when no check exists."""
+    skipped = not_checked_reason(integration_id)
+    if skipped is not None:
+        return NotChecked(f"not checked: {skipped}")
+    if integration_id not in _CHECKS and integration_id not in _READ_ONLY:
         return None
+
+    async def run() -> Check:
+        if integration_id in _CHECKS:
+            return await _CHECKS[integration_id]()
+        return await _mcp_read(integration_id)
+
     try:
-        return await asyncio.wait_for(call, CHECK_TIMEOUT)
+        return await asyncio.wait_for(run(), CHECK_TIMEOUT)
     except asyncio.TimeoutError:
         logger.warning("Credential check for %s timed out", integration_id)
-        return False, f"No answer within {CHECK_TIMEOUT:g} s"
+        return False, _timeout_message()
     except Exception as exc:  # noqa: BLE001
         # The class name only: a client error can carry the URL it was given.
         logger.warning(
@@ -602,4 +762,4 @@ async def check_credentials(integration_id: str) -> Optional[Outcome] | NotCheck
 
 def has_check(integration_id: str) -> bool:
     """True when Test makes a real read for this integration."""
-    return integration_id in _CHECKS or integration_id in _FIXED
+    return integration_id in _CHECKS or integration_id in _READ_ONLY
