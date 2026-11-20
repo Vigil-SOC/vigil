@@ -173,7 +173,9 @@ async def list_sources() -> Dict[str, Any]:
 
 @router.patch("/sources/{source_id}", dependencies=_INTEGRATIONS_WRITE)
 async def patch_source(
-    source_id: str, payload: FederationSourcePatch
+    source_id: str,
+    payload: FederationSourcePatch,
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     adapter = fed_registry.get_adapter(source_id)
     if adapter is None:
@@ -200,12 +202,16 @@ async def patch_source(
 
     # Auto-create the row on first PATCH so the UI doesn't need a separate
     # "register" endpoint — same shape we'd seed on daemon boot.
+    # The trail names who changed the source, in the write's own transaction.
+    actor = str(current_user.user_id)
     if fed_store.get_source(source_id) is None:
         row = fed_store.upsert_source(
-            source_id, {"interval_seconds": adapter.default_interval(), **fields}
+            source_id,
+            {"interval_seconds": adapter.default_interval(), **fields},
+            actor=actor,
         )
     else:
-        row = fed_store.update_source(source_id, fields)
+        row = fed_store.update_source(source_id, fields, actor=actor)
 
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to persist source")

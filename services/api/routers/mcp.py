@@ -180,6 +180,19 @@ async def set_server_enabled(
     """
     _validate_known_server(server_name)
 
+    # On the trail before the switch: a refused entry leaves the switch as it was.
+    if server_name in mcp_service.servers:
+        from core.storage.config_service import get_config_service
+
+        await run_in_threadpool(
+            get_config_service(user_id=str(current_user.user_id)).record_audit,
+            config_type="mcp",
+            config_key=f"mcp.server:{server_name}",
+            action="update",
+            old_value={"enabled": mcp_service.is_server_enabled(server_name)},
+            new_value={"enabled": request.enabled},
+        )
+
     success = mcp_service.set_server_enabled(server_name, request.enabled)
     if not success:
         raise HTTPException(status_code=404, detail="Server not found")
