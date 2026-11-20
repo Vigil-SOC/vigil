@@ -39,6 +39,9 @@ class CrowdStrikeService:
         # Detail of the last failed get_detections call (e.g. "HTTP 500 ..."),
         # so callers can report why it returned None.
         self.last_error: Optional[str] = None
+        # HTTP status of that failure, when the response had one. Not parsed
+        # back out of last_error.
+        self.last_status: Optional[int] = None
         self.timeout = timeout
         self.session = httpx.Client(
             timeout=timeout,
@@ -62,6 +65,7 @@ class CrowdStrikeService:
                 timeout=self.timeout,
             )
 
+            self.last_status = None
             if response.status_code == 201:
                 data = response.json()
                 self.access_token = data.get("access_token")
@@ -75,10 +79,12 @@ class CrowdStrikeService:
             else:
                 logger.error(f"CrowdStrike auth failed: {response.status_code}")
                 self.last_error = f"authentication failed: HTTP {response.status_code}"
+                self.last_status = response.status_code
                 return False
         except Exception as e:
             logger.error(f"CrowdStrike auth error: {e}")
             self.last_error = f"authentication error: {e}"
+            self.last_status = None
             return False
 
     def test_connection(self) -> tuple[bool, str]:
@@ -123,6 +129,7 @@ class CrowdStrikeService:
             if response.status_code != 200:
                 logger.error(f"Failed to query detections: {response.status_code}")
                 self.last_error = f"detections query: HTTP {response.status_code}"
+                self.last_status = response.status_code
                 return None
 
             data = response.json()

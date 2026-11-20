@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.federation.error_kind import kind_of
 from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.tls import tls_verify
 
@@ -26,10 +27,17 @@ _AGENT_ID = re.compile(r"^\d{3,}$")
 class WazuhError(Exception):
     """A failed manager call, with a message safe to show (never a secret)."""
 
-    def __init__(self, message: str, data: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        message: str,
+        data: Optional[Dict[str, Any]] = None,
+        *,
+        status_code: Optional[int] = None,
+    ):
         super().__init__(message)
         # The body's ``data``, when the manager sent one (a logtest token).
         self.data = data or {}
+        self.status_code = status_code
 
 
 class WazuhAuthError(WazuhError):
@@ -128,9 +136,15 @@ class WazuhService:
             auth=httpx.BasicAuth(self.username, self.password),
         )
         if resp.status_code == 401:
-            raise WazuhAuthError("Wazuh manager rejected the username or password")
+            raise WazuhAuthError(
+                "Wazuh manager rejected the username or password",
+                status_code=resp.status_code,
+            )
         if resp.status_code >= 400:
-            raise WazuhError(f"Wazuh login failed (HTTP {resp.status_code})")
+            raise WazuhError(
+                f"Wazuh login failed (HTTP {resp.status_code})",
+                status_code=resp.status_code,
+            )
         try:
             self._token = self._json(resp)["data"]["token"]
         except (KeyError, TypeError) as exc:
@@ -161,6 +175,7 @@ class WazuhService:
                 f"Wazuh {method} {path} failed (HTTP {resp.status_code})"
                 + (f": {detail}" if detail else ""),
                 body.get("data") if isinstance(body.get("data"), dict) else None,
+                status_code=resp.status_code,
             )
         body = self._json(resp)
         # error != 0 with HTTP 200 means some or all items failed.
@@ -183,7 +198,7 @@ class WazuhService:
         try:
             info = await self._request("GET", "/")
         except WazuhError as exc:
-            return False, str(exc)
+            return False, str(exc), kind_of(exc)
         return True, f"Connected to Wazuh API {info.get('api_version', 'unknown')}"
 
     async def list_rules(

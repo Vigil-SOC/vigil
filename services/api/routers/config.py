@@ -24,6 +24,7 @@ from core.deps import (
     provide_detection_rules,
     provide_integration_bridge,
     provide_mcp_client,
+    provide_process_health,
 )
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations import health as source_health
@@ -39,8 +40,10 @@ from core.integrations.integration_secrets import (
     split_secrets,
     unstorable_secret_fields,
 )
+from core.integrations.readiness import evaluate, sources_settled
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
+from core.platform.process_health import ProcessHealth
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -662,6 +665,7 @@ def build_setup_steps(
     skills_root_set: bool = False,
     custom_skills: int = 0,
     history_imported: bool = False,
+    tools_done: Optional[bool] = None,
 ) -> dict:
     """Five or six setup steps from config that already exists. No ranking, no dismissal.
 
@@ -684,12 +688,15 @@ def build_setup_steps(
     else:
         model_line = "Agents use more than one model"
     integrations_href = "/settings?section=integrations"
+    # None keeps the old "a row exists" check: the desktop app does not judge sources.
+    if tools_done is None:
+        tools_done = connected >= 1
     steps = [
         _step(
             "connect_tools",
             "Connect more tools",
             f"{connected} of {descriptor_count} integrations connected",
-            connected >= 1,
+            tools_done,
             integrations_href,
         ),
         _step(
@@ -759,9 +766,10 @@ def build_setup_steps(
     response_model=SetupStepsResponse,
     dependencies=_PLATFORM_READ,
 )
-def get_setup_steps(
+async def get_setup_steps(
     session: UnitOfWorkSession,
     detection_rules: DetectionRulesService = Depends(provide_detection_rules),
+    processes: ProcessHealth = Depends(provide_process_health),
 ):
     """Home's setup list: tools, a notify route, rules on disk, imported history, model variety, a custom skill."""
     loaded = load_integrations_config(get_config_service())
@@ -785,6 +793,7 @@ def get_setup_steps(
         history_imported=bool(
             session.scalar(select(exists().where(HistoryImport.status == "done")))
         ),
+        tools_done=sources_settled(await evaluate(processes)),
     )
 
 

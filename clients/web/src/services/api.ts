@@ -661,6 +661,7 @@ export const configApi = {
   setDemoMode: (enabled: boolean) => api.post('/config/demo-mode', { enabled }),
   getSetupSteps: () =>
     coalesce('setup-steps', () => api.get<Schema<'SetupStepsResponse'>>('/config/setup-steps')),
+  getInstallReadiness: () => api.get<Schema<'InstallReadiness'>>('/install-readiness'),
   getSetupState: () => api.get<Schema<'SetupState'>>('/config/setup-state'),
   putSetupState: (update: Schema<'SetupStateUpdate'>) =>
     afterWrite('setup-steps', api.put<Schema<'SetupState'>>('/config/setup-state', update)),

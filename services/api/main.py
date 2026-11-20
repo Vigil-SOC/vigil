@@ -717,6 +717,10 @@ async def _startup(app: FastAPI):
 
         app.state.dormancy_task = asyncio.create_task(dormancy_sweeper())
 
+        from services.api.readiness import run as readiness_sweeper
+
+        app.state.readiness_task = asyncio.create_task(readiness_sweeper())
+
         from services.api.skill_sweep import run as skill_sweeper
 
         app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
@@ -766,6 +770,7 @@ async def _stop_setup_code(app) -> None:
         "key_age_task",
         "setup_code_task",
         "dormancy_task",
+        "readiness_task",
         "skill_sweep_task",
         "token_sweep_task",
     ):

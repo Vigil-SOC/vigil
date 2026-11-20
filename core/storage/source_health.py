@@ -153,6 +153,44 @@ def record_lookup(source_id: str) -> None:
     _write(source_id, apply)
 
 
+def record_recheck(
+    source_id: str,
+    *,
+    success: bool,
+    error: Optional[str],
+    kind: Optional[str] = None,
+) -> None:
+    """A daily re-check. Success ends the failure run; a failure adds one.
+
+    Test's ``record_test`` leaves the run alone. This is the writer that moves
+    it, and both outcomes stamp ``last_check_*``.
+    """
+
+    def apply(row, now):
+        _attempt(row, now, success, error, None if success else (kind or "unknown"))
+        if success:
+            row.last_success_at = now
+            row.consecutive_failures = 0
+        else:
+            row.consecutive_failures = (row.consecutive_failures or 0) + 1
+        row.last_check_at = now
+        row.last_check_ok = success
+        row.last_check_error = None if success else _clip(error)
+
+    _write(source_id, apply)
+
+
+def stamp_recheck(session, source_id: str, now: datetime) -> None:
+    """Claim today's re-check inside the caller's transaction.
+
+    The outcome is written later by ``record_recheck``. Another replica then
+    sees ``last_check_at`` and does not check the same source again today.
+    """
+    row = _locked(session, source_id)
+    row.last_check_at = now
+    row.updated_at = now
+
+
 def record_test(
     source_id: str,
     *,

@@ -351,6 +351,10 @@ class Settings(BaseSettings):
     daemon_metrics_enabled: bool = True
     daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"
+    # Set only on the desktop stack (clients/desktop/standalone/docker-compose.yml),
+    # which ships no background service. Install readiness then says so, instead
+    # of probing a daemon that was never part of that install.
+    vigil_desktop_app: bool = False
     # Address the daemon's own listeners bind to (health/status/metrics/webhook).
     # Separate from daemon_health_host, which is the client address the backend
     # uses. Containers need 0.0.0.0; host-native installs should use 127.0.0.1.

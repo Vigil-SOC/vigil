@@ -5259,6 +5259,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/install-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Install Readiness
+         * @description Whether the install is ready, with each unmet item and its fix.
+         */
+        get: operations["get_api_install-readiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integration-health": {
         parameters: {
             query?: never;
@@ -13442,6 +13462,20 @@ export interface components {
             /** Teams */
             teams?: string[];
         };
+        /** InstallReadiness */
+        InstallReadiness: {
+            /** Items */
+            items: components["schemas"]["ReadinessItem"][];
+            /** Line */
+            line: string;
+            /** Notes */
+            notes: components["schemas"]["ReadinessNote"][];
+            /**
+             * State
+             * @description ready, not_ready, unknown, or unavailable on the desktop app
+             */
+            state: string;
+        };
         /** IntakeLaunchResponse */
         IntakeLaunchResponse: {
             /** Already Queued */
@@ -14967,6 +15001,24 @@ export interface components {
             max: number;
             /** Min */
             min: number;
+        };
+        /** ReadinessItem */
+        ReadinessItem: {
+            /** Fix */
+            fix: string;
+            /** Href */
+            href?: string | null;
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
+        };
+        /** ReadinessNote */
+        ReadinessNote: {
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
         };
         /** ReasonRequest */
         ReasonRequest: {
@@ -26615,6 +26667,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IngestionJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_install-readiness": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallReadiness"];
                 };
             };
             /** @description Validation Error */

@@ -75,6 +75,21 @@ stopped refreshing. Federation's health fields and the integrations API's
 `last_test` are read from it. Medic does not use the judge.
 _Avoid_: status (a detection source's file field), last test (only one writer)
 
+**Install Readiness**:
+Whether a new install is actually working, computed when it is read
+(`core/integrations/readiness.py`, served at `GET /api/install-readiness`
+under `platform.read`). It is ready when the background service is running,
+the provider assigned to reporting (or to chat, when reporting has no row) is
+routable, at least one alert source is switched on, every switched-on source
+is healthy, and every alert source is collected by scheduled collection or an
+enabled receiver. An input that cannot be read makes the whole state unknown.
+Unknown is not ready. It blocks nothing: Home shows each unmet item and its
+fix, and an hourly sweep on the API records one audit entry when readiness is
+reached or lost. That sweep also re-checks one switched-on integration a day.
+On the desktop app, which has no background service, it reads "not available
+on the desktop app: no background service".
+_Avoid_: `/readyz`, `/api/health/ready` (those say whether this process is up)
+
 **Workflow** (`workflows`):
 The user-facing product noun — a named, multi-agent procedure an analyst runs
 from the Workflows screen. Authored as a **Playbook**, executed by **Compose**.
