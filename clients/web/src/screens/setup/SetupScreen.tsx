@@ -9,6 +9,7 @@ import { Icon } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { ToastProvider, useToast } from '../../shell/toast'
+import ConfirmItHost from '../../shell/ConfirmItDialog'
 import SetupProviderStep from './SetupProviderStep'
 import DataSourceDialog from './DataSourceDialog'
 import { configApi } from '../../services/api'
@@ -131,7 +132,11 @@ const Shell = ({ children }: { children: React.ReactNode }) => {
       className={`soc-console su-root ${scheme === 'light' ? 'vg-light' : 'vg-dark'}`}
       data-theme={scheme}
     >
-      <ToastProvider>{children}</ToastProvider>
+      <ToastProvider>
+        {children}
+        {/* setup's saves are privileged writes: api.ts asks here and retries once confirmed */}
+        <ConfirmItHost />
+      </ToastProvider>
     </div>
   )
 }

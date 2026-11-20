@@ -728,7 +728,13 @@
   }
 
   .su-foot {
+    gap: 4px;
     padding: 0 16px;
+  }
+
+  /* Back, Save and finish later and Finish setup fit a 360px phone */
+  .su-foot .btn {
+    padding: 0 10px;
   }
 
   .su-foot-note {
