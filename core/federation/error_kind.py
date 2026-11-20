@@ -83,6 +83,34 @@ def _one(exc: BaseException) -> Optional[str]:
         return _from_status(getattr(exc, "status_code", None))
     if names & {"EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError"}:
         return "network"  # botocore
+    # aiokafka / kafka-python, matched by name so a missing client does not
+    # import it here.
+    if names & {
+        "KafkaConnectionError",
+        "NoBrokersAvailable",
+        "KafkaTimeoutError",
+        "KafkaUnavailableError",
+        "NodeNotReadyError",
+        "RequestTimedOutError",
+        "BrokerNotAvailableError",
+    }:
+        return "network"
+    if names & {
+        "UnknownTopicOrPartitionError",
+        "InvalidTopicError",
+        "KafkaConfigurationError",
+    }:
+        return "config"
+    if names & {
+        "AuthenticationFailedError",
+        "SaslAuthenticationFailed",
+        "TopicAuthorizationFailedError",
+        "GroupAuthorizationFailedError",
+        "ClusterAuthorizationFailedError",
+    }:
+        return "auth"
+    if "QuotaViolationError" in names:
+        return "quota"
     return None
 
 

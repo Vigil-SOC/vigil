@@ -3,11 +3,14 @@
 The ``source_health`` row (``core/storage/source_health.py``) is the only
 stored copy of a source's health. Its writers are scheduled collection (``core/federation/store.py``), Test
 (``services/api/routers/config.py``), a successful MCP read (``core/agents/mcp_tools.py``),
-detection-source syncs (``core/detections/detection_rules_service.py``) and the
-integration save path (a reset). Every writer is best-effort: a failed health
-write is logged and never fails the poll, test, tool call or save it describes.
-``judge`` is the only place a state is computed; a record its writer stopped
-refreshing reads "unknown since <time>" there, never healthy.
+detection-source syncs (``core/detections/detection_rules_service.py``), the push sources
+(``core/storage/push_health.py``: Kafka, the daemon webhook, and the Darktrace
+and Cloudflare receivers) and the integration save path (a reset). Every writer
+is best-effort: a failed health write is logged and never fails the poll, test,
+tool call, push or save it describes. ``judge`` is the only place a state is
+computed; a record its writer stopped refreshing reads "unknown since <time>"
+there, never healthy. ``labels`` on the row is information only and is not read
+here.
 
 Keys are integration ids, plus prefixed ids for Vigil's own inputs that cannot
 collide with one: ``kafka``, ``webhook:<name>`` and

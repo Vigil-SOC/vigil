@@ -20,11 +20,13 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from core.config import get_settings
+from core.integrations.cloudflare.ingestion import CloudyIngestionService
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
+from core.storage.push_health import CLOUDFLARE_SOURCE, note_dropped
 from core.webhook_receiver import ingest, read_signed_json, reject
 from core.webhook_rejections import DISABLED, rejection_counts
 
@@ -77,11 +79,34 @@ def _get_max_body_bytes() -> int:
     return max(1, get_settings().cloudy_webhook_max_body_kb) * 1024
 
 
-def _ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
-    from core.integrations.cloudflare.ingestion import CloudyIngestionService
+def _cloudy_labels(payload: Dict[str, Any]) -> tuple:
+    """The alert type this receiver saw. Sender-supplied, so only a short string."""
+    event = payload.get("event") if isinstance(payload.get("event"), dict) else payload
+    kind = event.get("type") or event.get("alert_type") or event.get("action")
+    if isinstance(kind, str) and kind.strip():
+        return ("cloudy", kind.strip())
+    return ("cloudy",)
 
+
+def _ingest(payload: Dict[str, Any]) -> Dict[str, Any]:
     service = CloudyIngestionService()
-    return ingest(service, service.transform_event(payload), "Cloudy event")
+    labels = _cloudy_labels(payload)
+    try:
+        finding = service.transform_event(payload)
+    except Exception as exc:
+        logger.warning("Cloudy transform failed: %s", type(exc).__name__)
+        note_dropped(CLOUDFLARE_SOURCE, labels=labels)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to transform Cloudy event payload",
+        )
+    return ingest(
+        service,
+        finding,
+        "Cloudy event",
+        source_id=CLOUDFLARE_SOURCE,
+        labels=labels,
+    )
 
 
 @router.get("/cloudy/health")
@@ -122,5 +147,7 @@ async def cloudy_event(
         secret_name="CLOUDY_WEBHOOK_SECRET",
         get_secret=_get_secret,
         get_max_body_bytes=_get_max_body_bytes,
+        source_id=CLOUDFLARE_SOURCE,
+        labels=("cloudy",),
     )
     return await asyncio.to_thread(_ingest, payload)

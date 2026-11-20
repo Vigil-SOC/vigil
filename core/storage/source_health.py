@@ -2,8 +2,9 @@
 
 Storage tier, so the config service's save path can reset a record in its own
 transaction. Every writer is best-effort: a failed health write is logged and
-never fails the poll, test or save it describes. The judge of a record is
-``core.integrations.health``.
+never fails the poll, test, tool call, push or save it describes. The judge of a record is
+``core.integrations.health``. Push sources call in through
+``core.storage.push_health``, which throttles the counts.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ FIELDS = (
     "dropped_window",
     "last_dropped_at",
     "last_data_at",
+    "labels",
     "last_check_at",
     "last_check_ok",
     "last_check_error",
@@ -108,32 +110,98 @@ def _attempt(row, now, ok: bool, error: Optional[str], kind: Optional[str]) -> N
     row.last_error_kind = None if ok else kind
 
 
-def record_collected(source_id: str, *, dropped: int = 0, received: int = 0) -> None:
-    """A collection (scheduled poll or sync) that succeeded."""
+# Sender-controlled. The writer also caps how many a process remembers at once.
+LABEL_CAP = 32
+_LABEL_MAX = 128
+
+
+def _counts(
+    row,
+    now,
+    *,
+    received: int,
+    dropped: int,
+    labels: Optional[Dict[str, str]],
+) -> None:
+    if received > 0:
+        row.last_data_at = now
+    if dropped > 0:
+        start = row.dropped_window_start
+        if start is None or now - start >= DROP_WINDOW:
+            row.dropped_window_start, row.dropped_window = now, 0
+        row.dropped_window += dropped
+        row.dropped_total = (row.dropped_total or 0) + dropped
+        row.last_dropped_at = now
+    if not labels:
+        return
+    current = dict(row.labels or {})
+    for label, seen in labels.items():
+        text = str(label).strip()[:_LABEL_MAX]
+        if not text:
+            continue
+        prev = current.get(text)
+        if prev is None or str(seen) > str(prev):
+            current[text] = seen
+    if len(current) > LABEL_CAP:
+        current = dict(
+            sorted(current.items(), key=lambda kv: str(kv[1]), reverse=True)[:LABEL_CAP]
+        )
+    row.labels = current
+
+
+def record_collected(
+    source_id: str,
+    *,
+    dropped: int = 0,
+    received: int = 0,
+    labels: Optional[Dict[str, str]] = None,
+) -> None:
+    """A collection (scheduled poll, sync or accepted push) that succeeded."""
 
     def apply(row, now):
         _attempt(row, now, True, None, None)
         row.last_success_at = now
         row.consecutive_failures = 0
-        if received > 0:
-            row.last_data_at = now
-        if dropped > 0:
-            start = row.dropped_window_start
-            if start is None or now - start >= DROP_WINDOW:
-                row.dropped_window_start, row.dropped_window = now, 0
-            row.dropped_window += dropped
-            row.dropped_total = (row.dropped_total or 0) + dropped
-            row.last_dropped_at = now
+        _counts(row, now, received=received, dropped=dropped, labels=labels)
 
     _write(source_id, apply)
 
 
-def record_failed(source_id: str, error: str, kind: str = "unknown") -> None:
+def record_dropped(
+    source_id: str,
+    dropped: int,
+    *,
+    labels: Optional[Dict[str, str]] = None,
+) -> None:
+    """Unreadable records that are not themselves a success or a failure.
+
+    Does not move the last attempt, so a receiver with nothing accepted yet
+    stays "requires a test".
+    """
+    if dropped <= 0 and not labels:
+        return
+
+    def apply(row, now):
+        _counts(row, now, received=0, dropped=max(dropped, 0), labels=labels)
+
+    _write(source_id, apply)
+
+
+def record_failed(
+    source_id: str,
+    error: str,
+    kind: str = "unknown",
+    *,
+    dropped: int = 0,
+    received: int = 0,
+    labels: Optional[Dict[str, str]] = None,
+) -> None:
     """A collection that failed: one more in the run of failures."""
 
     def apply(row, now):
         _attempt(row, now, False, error, kind)
         row.consecutive_failures = (row.consecutive_failures or 0) + 1
+        _counts(row, now, received=received, dropped=dropped, labels=labels)
 
     _write(source_id, apply)
 

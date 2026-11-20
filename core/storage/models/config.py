@@ -264,7 +264,8 @@ class FederationSource(Base):
 
 class SourceHealth(Base):
     """Integration Health: one record per source, from scheduled collection,
-    Test and detection-source syncs (core/integrations/health.py writes it).
+    Test, detection-source syncs and the push sources (Kafka, the daemon
+    webhook, the Darktrace and Cloudflare receivers).
 
     Keyed by integration id, or a prefixed id for Vigil's own inputs (``kafka``,
     ``webhook:<name>``, ``detection_source:<id>``). No secret, no vendor payload.
@@ -292,6 +293,11 @@ class SourceHealth(Base):
     )
     last_dropped_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_data_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Sender labels (a webhook data_source, a receiver's alert type) and when
+    # each was last seen. Information only: the judge does not read this.
+    labels: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     # Last real check (credential_check), apart from attempts that only probe.
     last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_check_ok: Mapped[Optional[bool]] = mapped_column(Boolean)

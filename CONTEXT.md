@@ -65,10 +65,13 @@ integration id, or one of Vigil's own inputs under an id that can't collide with
 one: `kafka`, `webhook:daemon`, `webhook:darktrace`, `webhook:cloudflare`,
 `detection_source:<id>`. The record holds the last attempt with its outcome and
 error kind, consecutive failures, dropped records (cumulative and the current
-hour), last data received, the last real check, and a reset mark. Scheduled
-collection, Test and detection-source syncs write it; switching an integration
-on or changing its endpoint or credential resets it to "no attempt yet". The
-states are healthy, no attempt yet, unhealthy (3 failures in a row, or dropped
+hour), last data received, the last real check, a reset mark, and the labels
+senders put on webhook events (information only; the judge does not read
+them). Scheduled collection, Test, detection-source syncs and the push sources
+(Kafka, the daemon webhook, the Darktrace and Cloudflare receivers) write it.
+A push source writes a change of state at once and its counts at most once a
+minute. Switching an integration on or changing its endpoint or credential
+resets it to "no attempt yet". The states are healthy, no attempt yet, unhealthy (3 failures in a row, or dropped
 records in the last hour), failing once, requires a test, not checked (with a
 reason), switched off, and unknown since a time, for a record its writer has
 stopped refreshing. Federation's health fields and the integrations API's

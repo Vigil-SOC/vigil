@@ -28,6 +28,7 @@ from core.ingestion.dedup import RedisDedupSet
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.adapter import _confidence_to_score
 from core.integrations.splunk.adapter import _splunk_event_to_finding
+from core.storage.push_health import DAEMON_SOURCE, note_dropped, note_success
 from core.storage.service import _mitre_prediction_items
 from core.time import utcnow
 from core.webhook_rejections import (
@@ -669,10 +670,25 @@ class DataPoller:
                             count += 1
 
                 self.stats["webhook_findings"] += count
+                labels = []
+                for finding_data in findings:
+                    source = finding_data.get("data_source")
+                    labels.append(
+                        source.strip()
+                        if isinstance(source, str) and source.strip()
+                        else "webhook"
+                    )
+                await asyncio.to_thread(
+                    note_success,
+                    DAEMON_SOURCE,
+                    received=count,
+                    labels=labels,
+                )
                 return web.json_response({"status": "ok", "ingested": count})
 
             except Exception as e:
                 logger.error(f"Webhook error: {e}")
+                await asyncio.to_thread(note_dropped, DAEMON_SOURCE)
                 return web.json_response({"error": str(e)}, status=400)
 
         async def health_check(request: web.Request) -> web.Response:

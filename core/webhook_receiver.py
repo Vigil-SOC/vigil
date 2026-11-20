@@ -1,14 +1,16 @@
 """HMAC-SHA256 signed JSON webhook receiving, shared by the Darktrace and Cloudy routers."""
 
+import asyncio
 import hmac
 import json
 import logging
 from hashlib import sha256
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from fastapi import HTTPException, Request, status
 
 from core.ingestion.triage_signal import signal_new_findings
+from core.storage.push_health import note_dropped, note_failure, note_success
 from core.webhook_rejections import (
     BAD_SIGNATURE,
     MISSING_SIGNATURE,
@@ -44,6 +46,8 @@ async def read_signed_json(
     secret_name: str,
     get_secret: Callable[[], Optional[str]],
     get_max_body_bytes: Callable[[], int],
+    source_id: str,
+    labels: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     try:
         secret = get_secret()
@@ -87,11 +91,13 @@ async def read_signed_json(
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
+        await asyncio.to_thread(note_dropped, source_id, 1, labels=labels)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Invalid JSON body",
         )
     if not isinstance(payload, dict):
+        await asyncio.to_thread(note_dropped, source_id, 1, labels=labels)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Webhook payload must be a JSON object",
@@ -99,17 +105,36 @@ async def read_signed_json(
     return payload
 
 
-def ingest(service: Any, finding: Optional[Dict], label: str) -> Dict[str, Any]:
+def ingest(
+    service: Any,
+    finding: Optional[Dict],
+    label: str,
+    *,
+    source_id: str,
+    labels: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
     if finding is None:
+        note_dropped(source_id, labels=labels)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unable to transform {label} payload",
         )
-    if not service.ingestion_service.ingest_finding(finding):
+    try:
+        stored = service.ingestion_service.ingest_finding(finding)
+    except Exception:
+        logger.exception("%s ingest failed", label)
+        note_failure(source_id, "Finding was not persisted", "unknown")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Finding was not persisted",
         )
+    if not stored:
+        note_failure(source_id, "Finding was not persisted", "unknown")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Finding was not persisted",
+        )
+    note_success(source_id, received=1, labels=labels)
     signal_new_findings([finding["finding_id"]])
     logger.info(
         "%s ingested: finding_id=%s data_source=%s",
