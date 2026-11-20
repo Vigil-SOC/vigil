@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.memory.imported_history import ImportRunning, delete_import, list_imports
-from core.memory.notes_router import _actor
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
@@ -87,7 +86,7 @@ def remove_import(
 ):
     """Delete one whole import: its Verdicts, Sightings, tickets and record."""
     try:
-        row = delete_import(session, import_id, actor=_actor(current_user))
+        row = delete_import(session, import_id, actor=current_user.principal_id)
     except ImportRunning:
         raise HTTPException(
             status_code=409,

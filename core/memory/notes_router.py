@@ -89,6 +89,7 @@ def add_note(
             entity_key=body.entity_key,
             statement=body.statement,
             written_by=_actor(current_user),
+            actor=current_user.principal_id,
         )
     except NoteError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -101,7 +102,7 @@ def remove_note(
     current_user: User = Depends(get_current_user),
 ):
     """Withdraw a note: the row is deleted, and the trail keeps what it said."""
-    row = withdraw_note(session, note_id, withdrawn_by=_actor(current_user))
+    row = withdraw_note(session, note_id, actor=current_user.principal_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Note not found")
     return row

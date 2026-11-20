@@ -68,8 +68,10 @@ def list_notes(
 
 
 def write_note(
-    session: Session, *, entity_key: str, statement: str, written_by: str
+    session: Session, *, entity_key: str, statement: str, written_by: str, actor: str
 ) -> Dict[str, Any]:
+    """``written_by`` is the name the note shows; ``actor`` is the writer's
+    principal id, which the trail names."""
     key = entity_key_of(entity_key)
     said = bounded_prose(statement).strip()
     if not said:
@@ -81,19 +83,19 @@ def write_note(
         .mappings()
         .one()
     )
-    _record(session, NOTE_WRITTEN, written_by, row)
+    _record(session, NOTE_WRITTEN, actor, row)
     return row
 
 
 def withdraw_note(
-    session: Session, note_id: int, *, withdrawn_by: str
+    session: Session, note_id: int, *, actor: str
 ) -> Optional[Dict[str, Any]]:
     """Delete the note, or None when there is none with this id."""
     found = session.execute(_DELETE, {"id": note_id}).mappings().one_or_none()
     if found is None:
         return None
     row = note_row(found)
-    _record(session, NOTE_WITHDRAWN, withdrawn_by, row)
+    _record(session, NOTE_WITHDRAWN, actor, row)
     return row
 
 
