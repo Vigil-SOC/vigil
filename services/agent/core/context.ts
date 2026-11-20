@@ -97,6 +97,23 @@ export function renderFacts(payload: FactsPayload | null): string {
   ].join("\n");
 }
 
+// The deployment's operator instructions, after whatever the role was told. Last,
+// so a plugin's own rules come first; stated as preferences, because the grants,
+// approvals and the autonomy ceiling are enforced in code whatever they say.
+export function withInstructions(system: string, instructions?: string): string {
+  if (instructions === undefined || instructions.trim() === "") return system;
+  return [
+    system,
+    [
+      "## This deployment's instructions",
+      "The operators of this deployment ask every agent to follow these. They govern how you write and what you emphasise, not which tools you may call or what needs approval.",
+      instructions.trim(),
+    ].join("\n\n"),
+  ]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
 export function prefixOf(system: string, tools: readonly ToolSchema[], notes: readonly string[], facts = ""): Prefix {
   return { system, tools: stableTools(tools), recall: renderRecall(notes), ...(facts === "" ? {} : { facts }) };
 }

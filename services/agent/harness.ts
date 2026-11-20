@@ -96,6 +96,7 @@ export function harnessFor<K extends Record<string, unknown>>(
       ...(principal === undefined ? {} : { principal }),
     }),
     state,
+    ...(spec.instructions === undefined ? {} : { instructions: spec.instructions }),
   };
 }
 

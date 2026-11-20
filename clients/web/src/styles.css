@@ -4896,6 +4896,28 @@
    .ef-val { justify-self: end; font-size: 13px; color: var(--tx0); }
    .lim-foot a:hover { text-decoration: underline; }
 
+   /* Settings › Operator instructions (#4918) */
+   .oi-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+   .oi-empty {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      padding: 10px 12px;
+      border: 1px dashed var(--ln1);
+      border-radius: var(--radius-card-inner);
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--tx2);
+   }
+   .oi-empty > svg { flex: none; margin-top: 2px; color: var(--tx3); }
+   .oi-text {
+      min-height: 180px;
+      max-width: 100%;
+      resize: vertical;
+      line-height: 1.5;
+      white-space: pre-wrap;
+   }
+
    /* Tool-class cards and their segment: tokens.json (meta 12px, label 12px/600) */
    .lim-class {
       display: flex;

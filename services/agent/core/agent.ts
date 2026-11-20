@@ -1641,7 +1641,10 @@ function guardsFor(ctx: PluginContext, turn: TurnConfig, held: Ledger, prior: re
       const calls = budget.spent.calls;
       try {
         const provider = ctx.harness.guards_provider ?? ctx.harness.provider;
-        const outcome = await runChild<unknown>({ ...ctx, harness: { ...ctx.harness, provider } }, `reader:${await childOrdinal(ctx, "reader")}`, reader);
+        // Without the operator instructions: the reader extracts quarantined results
+        // as they are, and a "write in Japanese" would have it rephrase the evidence.
+        const { instructions: _unused, ...plain } = ctx.harness;
+        const outcome = await runChild<unknown>({ ...ctx, harness: { ...plain, provider } }, `reader:${await childOrdinal(ctx, "reader")}`, reader);
         read = outcome.status === "completed" ? readOf(outcome.value) : null;
       } catch (error) {
         if (turn.signal?.aborted === true || hardStop(error)) throw error;

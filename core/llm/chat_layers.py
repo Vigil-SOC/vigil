@@ -129,6 +129,7 @@ def chat_config(
     provider: Optional[str] = None,
     effort: Optional[str] = None,
     context_window: Optional[int] = None,
+    instructions: str = "",
 ) -> str:
     """Render the agent layer's config document.
 
@@ -139,6 +140,7 @@ def chat_config(
     ``effort`` is the reasoning effort set on the model, left out when unset.
     ``context_window`` is the model's window in tokens, left out when unknown
     (0 or None); the agent layer only uses it to lower how much history it sends.
+    ``instructions`` is the deployment's operator instructions, left out when empty.
     """
     document = {
         "model": model,
@@ -149,6 +151,7 @@ def chat_config(
             if context_window and context_window > 0
             else {}
         ),
+        **({"instructions": instructions} if instructions else {}),
         "budgets": DEFAULT_BUDGETS,
         "runtime": DEFAULT_RUNTIME,
         "tools": _declare(tools, mcp_tools),

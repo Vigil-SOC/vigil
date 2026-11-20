@@ -1,7 +1,7 @@
 """Shared validator for user-supplied ``system_prompt`` fields (issue #87).
 
-Used by: nothing since the Agent Builder's persona prompt fields went (#4024);
-an operator manifest's ``system`` is checked by agent-serve instead.
+Used by: the deployment-wide operator instructions (#4918). An operator
+manifest's ``system`` is checked by agent-serve instead.
 
 Behaviour is **validate + audit, allow** in v1: shape checks reject
 oversized or control-char-laced input with 422; injection-pattern hits
@@ -76,3 +76,21 @@ def validate_system_prompt(value: Optional[str], *, source: str) -> Optional[str
 
     _audit(source=source, value=value)
     return value
+
+
+# Deployment-wide operator instructions (#4918): one free-text value every agent
+# run's config carries, appended by the agent layer to each system prompt it sends.
+OPERATOR_INSTRUCTIONS_KEY = "agents.operator_instructions"
+
+
+def operator_instructions() -> str:
+    """The saved instructions, or "" when unset or unreadable.
+
+    An unreadable row runs without them rather than failing the run: they shape
+    how a run writes, never what it may do.
+    """
+    from core.storage.config_service import get_config_service
+
+    value = get_config_service().get_system_config(OPERATOR_INSTRUCTIONS_KEY) or {}
+    text = value.get("text") if isinstance(value, dict) else None
+    return text.strip() if isinstance(text, str) else ""

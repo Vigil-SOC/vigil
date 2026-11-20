@@ -3443,6 +3443,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/operator-instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Operator Instructions
+         * @description The saved instructions; empty text when none are set.
+         */
+        get: operations["get_api_config_operator-instructions"];
+        put?: never;
+        /**
+         * Set Operator Instructions
+         * @description Save the instructions. Runs started after this carry them; empty clears.
+         */
+        post: operations["post_api_config_operator-instructions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/orchestrator": {
         parameters: {
             query?: never;
@@ -14405,6 +14429,17 @@ export interface components {
             ids?: number[] | null;
         };
         /**
+         * OperatorInstructions
+         * @description Deployment-wide text appended to every agent run's system prompt (#4918).
+         */
+        OperatorInstructions: {
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /**
          * OrchestratorConfigResponse
          * @description Flat saved settings, the profiles the Settings cards render, and the
          *     model's ``defaults`` and ``bounds``. Only the flat keys are stored; POST takes
@@ -23391,6 +23426,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntentReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_config_operator-instructions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_config_operator-instructions": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperatorInstructions"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -113,6 +113,11 @@ export interface Config {
   // The model's context window in tokens, when the gateway catalogue knows it.
   // Absent means unknown; it only ever lowers how much history a request carries.
   context_window?: number;
+  // The deployment's operator instructions (Settings), read once when the run's
+  // config was resolved. Journaled with the spec, so a resume and a replay see
+  // what the run saw. They shape what the model writes; nothing here reads them
+  // for grants, approvals or the autonomy ceiling.
+  instructions?: string;
   budgets: BudgetLimits;
   runtime: Runtime;
   tools: ToolSpec[];
@@ -161,7 +166,7 @@ const LAYERS = {
     "phases",
     "narrative",
   ],
-  config: ["model", "provider", "effort", "context_window", "budgets", "runtime", "tools", "approvals", "thresholds"],
+  config: ["model", "provider", "effort", "context_window", "instructions", "budgets", "runtime", "tools", "approvals", "thresholds"],
 } as const;
 
 export type Layer = keyof typeof LAYERS;
@@ -447,6 +452,10 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
     throw new SpecError("context_window must be a non-negative integer");
   }
 
+  const said = front["instructions"];
+  if (said !== undefined && said !== null && typeof said !== "string") throw new SpecError("instructions must be a string");
+  const instructions = typeof said === "string" ? said.trim() : "";
+
   const tools = parseTools(front["tools"]);
   const declared = new Set(tools.map((tool) => tool.id));
   if (declared.size !== tools.length) throw new SpecError("tools declares the same id twice");
@@ -461,6 +470,7 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
     ...(provider === undefined ? {} : { provider }),
     ...(effort === undefined ? {} : { effort: effort as Effort }),
     ...(window === undefined ? {} : { context_window: window }),
+    ...(instructions === "" ? {} : { instructions }),
     budgets: positive(merge(front["budgets"], DEFAULT_BUDGETS, "budgets"), "budgets"),
     runtime: positive(merge(front["runtime"], DEFAULT_RUNTIME, "runtime"), "runtime"),
     tools,

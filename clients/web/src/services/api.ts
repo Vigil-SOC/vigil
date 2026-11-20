@@ -645,6 +645,12 @@ export interface IntegrationTestResult {
   credentials?: { success: boolean | null; message: string }
 }
 
+export interface OperatorInstructions {
+  text: string
+  /** the UTF-8 byte cap the server enforces */
+  max_bytes: number
+}
+
 export const configApi = {
   
   getS3: () => api.get('/config/s3'),
@@ -703,6 +709,11 @@ export const configApi = {
     ssh_key_passphrase?: string
     verify_proxy_tls?: boolean
   }) => api.post('/config/platform-database', data),
+
+  // Deployment-wide text every agent run appends to its system prompt (#4918).
+  getOperatorInstructions: () => api.get<OperatorInstructions>('/config/operator-instructions'),
+  setOperatorInstructions: (text: string) =>
+    api.post<OperatorInstructions>('/config/operator-instructions', { text }),
 
   getAIOperations: () => api.get('/config/ai-operations'),
   setAIOperations: (data: {
