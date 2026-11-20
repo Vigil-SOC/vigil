@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,6 +47,30 @@ def _as_search(query: str) -> str:
     if leading == "search" or stripped.startswith("|"):
         return stripped
     return f"search {stripped}"
+
+
+# Commands that write to Splunk, send data out, run code or run searches built
+# from field values (map). Every search here is a read, and model-written SPL
+# is steered by the alerts and logs it reads, so these are refused whatever the
+# Splunk account may do. A command starts a pipe stage or a subsearch.
+_SIDE_EFFECTS = re.compile(
+    r"[|\[]\s*(?:delete|collect|summaryindex|mcollect|meventcollect|tscollect"
+    r"|outputlookup|outputcsv|outputtext|outputtelemetry|sendemail|sendalert"
+    r"|script|run|runshellscript|dump|map|fit|dbxoutput|dbxquery)\b",
+    re.IGNORECASE,
+)
+
+
+def side_effect_refusal(query: str) -> Optional[str]:
+    """Why ``query`` may not run, or None for a search that only reads."""
+    # Splunk drops ```comments``` before parsing, so a comment can't hide a command.
+    found = _SIDE_EFFECTS.search(
+        re.sub(r"```.*?```", " ", _as_search(query), flags=re.S)
+    )
+    if not found:
+        return None
+    command = found.group(0).lstrip("|[ \t\r\n").lower()
+    return f"Refused: '{command}' can change Splunk or send data out; searches here only read"
 
 
 class SplunkSearchError(Exception):
@@ -269,6 +294,9 @@ class SplunkService:
         Raises:
             SplunkSearchError: with Splunk's reason when the search failed.
         """
+        refusal = side_effect_refusal(query)
+        if refusal:
+            raise SplunkSearchError(refusal)
         session = self.session
         try:
             return self._run_search(

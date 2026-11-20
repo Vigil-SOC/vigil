@@ -5972,7 +5972,7 @@ export interface paths {
         post?: never;
         /**
          * Remove Import
-         * @description Delete one whole import: its Verdicts, Sightings and marker.
+         * @description Delete one whole import: its Verdicts, Sightings, tickets and record.
          */
         delete: operations["delete_api_memory_imports_import_id"];
         options?: never;
@@ -13321,11 +13321,16 @@ export interface components {
         };
         /** ImportOut */
         ImportOut: {
-            /**
-             * Concluded At
-             * Format: date-time
-             */
-            concluded_at: string;
+            /** Bulk Not Tested */
+            bulk_not_tested: number;
+            /** Concluded At */
+            concluded_at: string | null;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Has Ticket Detail */
+            has_ticket_detail: boolean;
             /** Import Id */
             import_id: string;
             /**
@@ -13333,10 +13338,38 @@ export interface components {
              * Format: date-time
              */
             imported_at: string;
+            /** Left Out */
+            left_out: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Pull Days */
+            pull_days: number | null;
+            /** Pulled At */
+            pulled_at: string | null;
+            /** Rows Read */
+            rows_read: number;
+            /** Severity Unknown */
+            severity_unknown: number;
             /** Sightings Written */
             sightings_written: number;
             /** Source System */
             source_system: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "done" | "failed" | "incomplete";
+            /** Tickets Kept */
+            tickets_kept: number;
+            /** Unmapped */
+            unmapped: components["schemas"]["UnmappedValue"][];
             /** Verdicts Written */
             verdicts_written: number;
         };
@@ -16851,6 +16884,13 @@ export interface components {
              * @default false
              */
             suspected_compromise: boolean;
+        };
+        /** UnmappedValue */
+        UnmappedValue: {
+            /** Count */
+            count: number;
+            /** Value */
+            value: string;
         };
         /**
          * UpdateConversationRequest
