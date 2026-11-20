@@ -245,6 +245,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
                     incident_id=incident.name,
                 )
                 owner = incident.owner
+                # A rule id only when one rule raised it; else the title stands in.
+                rules = list(getattr(incident, "related_analytic_rule_ids", None) or [])
                 rows.append(
                     {
                         "id": incident.name,
@@ -257,6 +259,7 @@ class AzureSentinelIngestion(SIEMIngestionService):
                         # Sentinel has no closed-time property; a closed
                         # incident's last modification is the closest one.
                         "closed_at": _iso(incident.last_modified_time_utc),
+                        "closed_at_approximate": True,
                         "closed_by": owner
                         and (
                             owner.email
@@ -264,6 +267,10 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             or owner.user_principal_name
                         ),
                         "close_notes": incident.classification_comment,
+                        "severity": getattr(
+                            incident.severity, "value", incident.severity
+                        ),
+                        "rule_id": rules[0] if len(rules) == 1 else None,
                         "entity_context": _entity_context(
                             getattr(entities, "entities", None) or []
                         ),

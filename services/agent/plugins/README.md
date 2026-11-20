@@ -54,6 +54,8 @@ guard:                              # optional second look before a guarded answ
     ...
   min_hypotheses: 2                 # optional; conclude refuses a guarded answer once while the record holds fewer claims
   proposals_note: "..."             # optional; prefixed to each proposed action's reason when the guard holds the answer
+  min_sources: 2                    # optional; the answer stands only over cited, served, non-empty results from this many capabilities, counted by the kernel
+  uncounted: [shell, get_finding]   # optional; capabilities that never count toward min_sources (the subject's own record)
 escalation_guard: { ... }           # optional; the same shape for the other end (investigate guards malicious, falls back to suspicious); no value may be guarded by both
 max_turns: 24                       # optional; else the deployment's runtime.max_turns
 record: required                    # off | available (the default) | required

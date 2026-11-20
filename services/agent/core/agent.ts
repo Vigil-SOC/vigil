@@ -29,12 +29,13 @@ import { ADDED_SKILLS, withAddedSkills } from "../plugins/registry.js";
 import { DENIAL_RECHECK_MS } from "./leases.js";
 import { logger } from "./log.js";
 import { scrub } from "./security.js";
+import { isEmptyResult } from "./call-view.js";
 import type { ToolDispatch } from "./seams.js";
 import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { bridgeHeaders } from "./principal.js";
-import { claimCount, classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
+import { claimCount, classify, classOf, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { CONFIDENCES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
@@ -1229,15 +1230,35 @@ export async function reviewOf(ctx: PluginContext, conclusion: ConclusionPayload
   const required = recordModeOf(plugin) === "required";
   const held = required ? await ctx.harness.state.read(ctx.options.run_id) : [];
   const isGrounded = required ? grounded(held, calls, real) : undefined;
+  const sources = guard.min_sources === undefined ? undefined : { counted: sourcesOf(guard, ctx.options.spec.tools, calls, real), required: guard.min_sources };
   const reviewed = await askReviewer(ctx, guard, conclusion, calls, real);
-  const stands = reviewed.stance === "uphold" && real.length > 0 && isGrounded !== false;
+  const stands =
+    reviewed.stance === "uphold" && real.length > 0 && isGrounded !== false && (sources === undefined || sources.counted.length >= sources.required);
   return {
     ...reviewed,
     cited,
     unknown_refs,
     guarded: { field: guard.field, asked, final: stands ? asked : guard.fallback },
     ...(isGrounded === undefined ? {} : { grounded: isGrounded }),
+    ...(sources === undefined ? {} : { sources }),
   };
+}
+
+// The independent sources a guarded answer cites, by capability: each cited result
+// that was served and found something, from a tool outside the guard's uncounted ones.
+// The reviewer is told the same rule; this is the part a record's text cannot argue with.
+export function sourcesOf(guard: GuardSpec, tools: readonly ToolSpec[], calls: readonly CallPayload[], real: readonly string[]): string[] {
+  const provides = new Map(tools.map((tool) => [tool.id, typeof tool["provides"] === "string" ? (tool["provides"] as string) : tool.id]));
+  const uncounted = new Set(guard.uncounted ?? []);
+  const wanted = new Set(real);
+  const kinds = new Set<string>();
+  for (const call of calls) {
+    if (!wanted.has(call.ref) || classOf(call) !== "served" || isEmptyResult(call.result)) continue;
+    // A tool the deployment does not declare (a skill, a record write) is no source.
+    const kind = provides.get(call.tool);
+    if (kind !== undefined && !uncounted.has(kind) && !uncounted.has(call.tool)) kinds.add(kind);
+  }
+  return [...kinds].sort();
 }
 
 async function askReviewer(
@@ -1410,9 +1431,11 @@ export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayloa
 export function heldBecause(review: ReviewPayload): string | null {
   const guarded = review.guarded;
   if (guarded === undefined || guarded.asked === guarded.final) return null;
-  return review.grounded === false && review.stance === "uphold"
-    ? "no cited result is linked to a claim on the record"
-    : `the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}`;
+  if (review.stance === "uphold" && review.grounded === false) return "no cited result is linked to a claim on the record";
+  if (review.stance === "uphold" && review.sources !== undefined && review.sources.counted.length < review.sources.required) {
+    return `it cites ${review.sources.counted.length} independent source${review.sources.counted.length === 1 ? "" : "s"} that found something, and ${review.sources.required} are needed`;
+  }
+  return `the review was ${review.stance}${review.reasons ? `: ${review.reasons}` : ""}`;
 }
 
 // --- ledger ----------------------------------------------------------------

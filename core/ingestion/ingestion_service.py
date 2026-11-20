@@ -1256,7 +1256,12 @@ class IngestionService:
         self, file_path: Path, fmt: str, source_system: str, actor: str
     ) -> Dict[str, Any]:
         """Alerts and closed tickets become one import in episodic memory."""
-        from core.memory.imported_history import import_id, write_import
+        from core.memory.imported_history import (
+            fail_run,
+            import_id,
+            start_run,
+            write_import,
+        )
         from core.storage.unit_of_work import unit_of_work
 
         self.reset_stats()
@@ -1282,16 +1287,23 @@ class IngestionService:
         investigation_id = import_id(
             rows["alerts"] + rows["tickets"], file_path.read_bytes(), source_system
         )
-        with unit_of_work() as session:
-            write_import(
-                session,
-                investigation_id=investigation_id,
-                alerts=rows["alerts"],
-                tickets=rows["tickets"],
-                actor=actor,
-                stats=self.stats,
-            )
+        # The caller holds the import lock (ingestion_jobs.run_job).
+        start_run(investigation_id)
+        try:
+            with unit_of_work() as session:
+                result = write_import(
+                    session,
+                    investigation_id=investigation_id,
+                    alerts=rows["alerts"],
+                    tickets=rows["tickets"],
+                    actor=actor,
+                    stats=self.stats,
+                )
+        except Exception as e:
+            fail_run(investigation_id, f"Import failed: {e}")
+            raise
         self.import_id = investigation_id
+        self.unmapped = result["unmapped"]
         logger.info("History import %s complete: %s", investigation_id, self.stats)
         return self.stats
 

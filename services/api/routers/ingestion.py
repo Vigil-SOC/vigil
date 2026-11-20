@@ -41,6 +41,7 @@ from core.ingestion.sample_alerts import (
     build_sample_alerts,
 )
 from core.ingestion.triage_signal import signal_new_findings
+from core.memory.imported_history import release_import_lock, take_import_lock
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.storage.s3_service import S3_LIST_ERRORS, describe_s3_error
@@ -114,6 +115,29 @@ class IngestionJobStatus(BaseModel):
     message: str
     error: Optional[str]
     stats: Dict[str, int]
+
+
+async def _admit(job: IngestionJob) -> None:
+    """Admit a job, or 409. A history import first takes the import lock, which
+    every API process shares; the job releases it when it ends."""
+    if job.data_type == HISTORY:
+        # Inline, not in a thread: a cancelled await would strand the lock.
+        job.history_lock = take_import_lock()
+        if job.history_lock is None:
+            raise HTTPException(
+                status_code=409,
+                detail="A history import is already running. Wait for it to finish.",
+            )
+    try:
+        get_job_registry().start(job)
+    except IngestionJobConflict as conflict:
+        if job.history_lock is not None:
+            release_import_lock(job.history_lock)
+            job.history_lock = None
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish.",
+        )
 
 
 async def _spool_upload(file: UploadFile, suffix: str) -> Path:
@@ -192,13 +216,10 @@ async def upload_and_ingest_file(
         source_system=source_system.strip(),
     )
     try:
-        get_job_registry().start(job)
-    except IngestionJobConflict as conflict:
+        await _admit(job)
+    except HTTPException:
         temp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish.",
-        )
+        raise
 
     task = asyncio.create_task(run_in_threadpool(run_job, job, temp_path))
     _running_tasks.add(task)
@@ -245,13 +266,7 @@ async def import_connected_history(
         actor=current_user.username or current_user.user_id,
         source_system=request.source,
     )
-    try:
-        get_job_registry().start(job)
-    except IngestionJobConflict as conflict:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish.",
-        )
+    await _admit(job)
 
     task = asyncio.create_task(
         run_in_threadpool(run_connected_history_job, job, request.days)
