@@ -237,6 +237,8 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             "closed_at": alert.get("resolvedTime"),
             "closed_by": alert.get("assignedTo"),
             "close_notes": alert.get("determination"),
+            "severity": alert.get("severity"),
+            "rule_id": alert.get("detectorId"),
             "entity_context": finding.get("entity_context") or {},
             "source_system": "microsoft_defender",
         }

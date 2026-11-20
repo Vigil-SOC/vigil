@@ -93,6 +93,7 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
+from core.storage.models.history import HistoryImport, HistoryTicket
 from core.storage.models.medic import (
     MedicIncidentNotice,
     MedicLastSeen,
@@ -163,6 +164,8 @@ __all__ = [
     "EpisodicSighting",
     "EpisodicVerdict",
     "EpisodicVerdictSource",
+    "HistoryImport",
+    "HistoryTicket",
     "FederationSource",
     "Finding",
     "FindingMitrePrediction",

@@ -3126,6 +3126,186 @@
   "nullable": false,
   "type": "timestamp without time zone"
  },
+ "column history_imports.bulk_not_tested": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_imports.concluded_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column history_imports.error": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column history_imports.finished_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column history_imports.has_ticket_detail": {
+  "default": "true",
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column history_imports.id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_imports.left_out": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column history_imports.pull_days": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
+ "column history_imports.pulled_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column history_imports.rows_read": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_imports.severity_unknown": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_imports.sightings_written": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_imports.source_system": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_imports.started_at": {
+  "default": "now()",
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column history_imports.status": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_imports.tickets_kept": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_imports.unmapped": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
+ "column history_imports.verdicts_written": {
+  "default": "0",
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_tickets.bulk_closed": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column history_tickets.category": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_tickets.closed_approximate": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column history_tickets.closed_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column history_tickets.disposition_raw": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_tickets.entity_keys": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
+ },
+ "column history_tickets.id": {
+  "default": "nextval('history_tickets_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column history_tickets.import_id": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_tickets.notes_empty": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column history_tickets.notes_fingerprint": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column history_tickets.opened_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp with time zone"
+ },
+ "column history_tickets.opened_missing": {
+  "default": null,
+  "nullable": false,
+  "type": "boolean"
+ },
+ "column history_tickets.position": {
+  "default": null,
+  "nullable": false,
+  "type": "integer"
+ },
+ "column history_tickets.rule_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column history_tickets.severity": {
+  "default": "'unknown'::text",
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_tickets.source_system": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column history_tickets.ticket_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column history_tickets.title": {
+  "default": "''::text",
+  "nullable": false,
+  "type": "text"
+ },
  "column identifier_reservations.hash": {
   "default": null,
   "nullable": false,
@@ -5401,6 +5581,13 @@
  "constraint finding_mitre_predictions.finding_mitre_predictions_finding_id_fkey": "FOREIGN KEY (finding_id) REFERENCES findings(finding_id) ON DELETE CASCADE",
  "constraint finding_mitre_predictions.finding_mitre_predictions_pkey": "PRIMARY KEY (finding_id, technique_id)",
  "constraint findings.findings_pkey": "PRIMARY KEY (finding_id)",
+ "constraint history_imports.history_imports_pkey": "PRIMARY KEY (id)",
+ "constraint history_imports.history_imports_status_check": "CHECK ((status = ANY (ARRAY['running'::text, 'done'::text, 'failed'::text])))",
+ "constraint history_tickets.history_tickets_category_check": "CHECK ((category = ANY (ARRAY['resolved'::text, 'benign'::text, 'false_positive'::text, 'unable_to_resolve'::text])))",
+ "constraint history_tickets.history_tickets_import_id_fkey": "FOREIGN KEY (import_id) REFERENCES history_imports(id) ON DELETE CASCADE",
+ "constraint history_tickets.history_tickets_import_position_key": "UNIQUE (import_id, \"position\")",
+ "constraint history_tickets.history_tickets_pkey": "PRIMARY KEY (id)",
+ "constraint history_tickets.history_tickets_severity_check": "CHECK ((severity = ANY (ARRAY['critical'::text, 'high'::text, 'medium'::text, 'low'::text, 'info'::text, 'unknown'::text])))",
  "constraint identifier_reservations.identifier_reservations_pkey": "PRIMARY KEY (hash)",
  "constraint intake_triggers.intake_triggers_pkey": "PRIMARY KEY (id)",
  "constraint integration_configs.integration_configs_pkey": "PRIMARY KEY (integration_id)",
@@ -5693,6 +5880,9 @@
  "index federation_sources_pkey": "CREATE UNIQUE INDEX federation_sources_pkey ON public.federation_sources USING btree (source_id)",
  "index finding_mitre_predictions_pkey": "CREATE UNIQUE INDEX finding_mitre_predictions_pkey ON public.finding_mitre_predictions USING btree (finding_id, technique_id)",
  "index findings_pkey": "CREATE UNIQUE INDEX findings_pkey ON public.findings USING btree (finding_id)",
+ "index history_imports_pkey": "CREATE UNIQUE INDEX history_imports_pkey ON public.history_imports USING btree (id)",
+ "index history_tickets_import_position_key": "CREATE UNIQUE INDEX history_tickets_import_position_key ON public.history_tickets USING btree (import_id, \"position\")",
+ "index history_tickets_pkey": "CREATE UNIQUE INDEX history_tickets_pkey ON public.history_tickets USING btree (id)",
  "index identifier_reservations_pkey": "CREATE UNIQUE INDEX identifier_reservations_pkey ON public.identifier_reservations USING btree (hash)",
  "index idx_agent_directives_run": "CREATE INDEX idx_agent_directives_run ON public.agent_directives USING btree (run_id, id)",
  "index idx_agent_events_terminal": "CREATE INDEX idx_agent_events_terminal ON public.agent_events USING btree (run_id) WHERE (kind = 'terminal'::text)",
@@ -7678,6 +7868,66 @@
    false
   ],
   "sequence": null
+ },
+ "relation history_imports": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation history_tickets": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation history_tickets_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
  },
  "relation identifier_reservations": {
   "acl": [
