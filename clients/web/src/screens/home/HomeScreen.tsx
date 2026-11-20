@@ -53,6 +53,12 @@ function answersOnCase(item: NeedsYouItem): boolean {
 
 type Pickup = { share: number; launched: number; today: number }
 
+const READINESS_TIP = {
+  source: 'Background service, model routability and integration health',
+  calculation: 'Computed when Home reads it',
+  limit: 'None',
+}
+
 const SETUP_TIP = {
   source: 'Setup steps',
   calculation: 'Fixed order; steps hidden with Not now are left out, done steps show a tick',
@@ -238,6 +244,8 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const [showAll, setShowAll] = useState(false)
   const [setup, setSetup] = useState<Schema<'SetupStepsResponse'> | null>(null)
   const [setupError, setSetupError] = useState<string | null>(null)
+  const [readiness, setReadiness] = useState<Schema<'InstallReadiness'> | null>(null)
+  const [readinessError, setReadinessError] = useState<string | null>(null)
   const [hidden, setHidden] = useState<string[]>(() => readSetupHidden())
   const [demoMessage, setDemoMessage] = useState<string | null>(null)
   const [demoBusy, setDemoBusy] = useState(false)
@@ -260,9 +268,34 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       },
       () => null,
     )
-    const [needsResult, pickup] = await Promise.all([needs, shareRead])
+    const readyRead = configApi.getInstallReadiness().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const setupRead = configApi.getSetupSteps().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const [needsResult, pickup, readyResult, setupResult] = await Promise.all([
+      needs,
+      shareRead,
+      readyRead,
+      setupRead,
+    ])
     if (ticket !== loadTicket.current) return
     setShare(pickup)
+    if (readyResult.ok) {
+      setReadiness(readyResult.data)
+      setReadinessError(null)
+    } else {
+      setReadinessError(errorText(readyResult.err, 'Could not load install readiness'))
+    }
+    if (setupResult.ok) {
+      setSetup(setupResult.data)
+      setSetupError(null)
+    } else {
+      setSetupError(errorText(setupResult.err, 'Could not load setup steps'))
+    }
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
       return
@@ -287,21 +320,6 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [load])
-
-  useEffect(() => {
-    let cancelled = false
-    configApi
-      .getSetupSteps()
-      .then((res) => {
-        if (!cancelled) setSetup(res.data)
-      })
-      .catch((err) => {
-        if (!cancelled) setSetupError(errorText(err, 'Could not load setup steps'))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   // a fused commit just landed or failed (possibly after Home was left and reopened): refresh
   const seenSettled = useRef(settled)
@@ -469,6 +487,43 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
           </div>
         )}
         {error && <p role="alert">{error}</p>}
+        {(readiness !== null || readinessError !== null) && (
+          <section aria-label="Install readiness">
+            {sectionHead(
+              'Install readiness',
+              null,
+              <InfoTip label="How install readiness is calculated" align="start" {...READINESS_TIP} />,
+              null,
+            )}
+            {readinessError && <p role="alert">{readinessError}</p>}
+            {readiness && (
+              <div className="home-readiness">
+                <p className="home-readiness-line">{readiness.line}</p>
+                {readiness.items.length > 0 && (
+                  <ul>
+                    {readiness.items.map((item) => (
+                      <li key={item.id} className={item.href ? 'has-link' : undefined}>
+                        <p>{item.text}</p>
+                        {item.href ? (
+                          <Link to={item.href}>{item.fix}</Link>
+                        ) : (
+                          <p className="home-readiness-fix">{item.fix}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {readiness.notes.length > 0 && (
+                  <ul className="home-readiness-notes">
+                    {readiness.notes.map((note) => (
+                      <li key={note.id}>{note.text}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+        )}
         {!noAlerts && (
           <section aria-label="Setup" id={HOME_SETUP_ID}>
             {sectionHead(

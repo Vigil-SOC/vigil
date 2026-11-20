@@ -86,6 +86,23 @@ def _one(exc: BaseException) -> Optional[str]:
     return None
 
 
+def kind_of(exc: Optional[BaseException] = None, status: Optional[int] = None) -> str:
+    """One of :data:`KINDS` from an exception, else from an HTTP status.
+
+    A status the exception does not carry (a client that kept the code on
+    itself) still counts. Message text is not read.
+    """
+    if status is None and exc is not None:
+        carried = getattr(exc, "status_code", None)
+        if isinstance(carried, int):
+            status = carried
+    if exc is not None:
+        found = classify_failure(exc)
+        if found != "unknown":
+            return found
+    return _from_status(status) or "unknown"
+
+
 def classify_failure(exc: BaseException) -> str:
     """One of :data:`KINDS`; walks ``__cause__``/``__context__`` for chained errors."""
     seen = set()

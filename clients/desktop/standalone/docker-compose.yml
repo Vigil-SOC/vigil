@@ -133,6 +133,9 @@ services:
       - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:?set by the desktop app}
       # core/config.py defaults to localhost:6989, which is nothing here.
       - AGENT_URL=http://agent-serve:6989
+      # This stack has no background service. Install readiness says so
+      # instead of reporting the daemon probe's not_running.
+      - VIGIL_DESKTOP_APP=true
       - VIGIL_UPGRADE_DIR=/var/lib/vigil-upgrade
       - SHELL_SOCKET=/run/vigil/shell/shell.sock
     ports:

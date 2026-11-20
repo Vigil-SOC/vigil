@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from core.federation.error_kind import kind_of
 from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.tls import tls_verify
 
@@ -145,6 +146,8 @@ class SplunkService:
             True if authentication successful, False otherwise.
         """
         session = self.session  # an unusable CA path raises here, not below
+        self.last_status = None
+        self._auth_exc = None
         try:
             auth_url = f"{self.server_url}/services/auth/login"
             data = {
@@ -169,12 +172,14 @@ class SplunkService:
                 else:
                     logger.error("No session key returned from Splunk")
                     return False
-            else:
-                logger.error(f"Authentication failed: HTTP {response.status_code}")
-                return False
+            logger.error(f"Authentication failed: HTTP {response.status_code}")
+            self.last_status = response.status_code
+            return False
 
         except Exception as e:
             logger.error(f"Error during authentication: {e}")
+            self.last_status = None
+            self._auth_exc = e
             return False
 
     def _drop_session_key(self) -> None:
@@ -210,7 +215,11 @@ class SplunkService:
         """
         try:
             if not self.authenticate():
-                return False, "Authentication failed"
+                return (
+                    False,
+                    "Authentication failed",
+                    kind_of(getattr(self, "_auth_exc", None), self.last_status),
+                )
 
             # Try to get server info
             response = self._request(
@@ -221,11 +230,14 @@ class SplunkService:
 
             if response.status_code == 200:
                 return True, "Connection successful"
-            else:
-                return False, f"Connection failed: HTTP {response.status_code}"
+            return (
+                False,
+                f"Connection failed: HTTP {response.status_code}",
+                kind_of(status=response.status_code),
+            )
 
         except (*_HTTP_ERRORS, OSError) as e:
-            return False, f"Connection error: {str(e)}"
+            return False, f"Connection error: {str(e)}", kind_of(e)
 
     def search(
         self,

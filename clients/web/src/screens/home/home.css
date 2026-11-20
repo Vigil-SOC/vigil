@@ -649,10 +649,86 @@
   align-items: center;
 }
 
+.home-screen .home-readiness {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+}
+
+.home-screen .home-readiness-line {
+  margin: 0;
+  color: var(--tx0);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.home-screen .home-readiness ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.home-screen .home-readiness li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-screen .home-readiness li p {
+  margin: 0;
+  color: var(--tx1);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* A linked item clamps; focus inside it (the fix link) shows the rest. No link, so it wraps in full. */
+.home-screen .home-readiness li.has-link > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.home-screen .home-readiness li.has-link:focus-within > p {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.home-screen .home-readiness a,
+.home-screen .home-readiness-fix {
+  color: var(--ac);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.home-screen .home-readiness-notes li {
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 /* reflow tier (.main under 700px): section heads wrap their actions under the title; the setup steps stack */
 @container main (max-width: 699px) {
   .home-screen { padding: 24px 16px; }
   .home-screen .home-head { flex-direction: column; gap: 6px; }
   .home-screen .home-head-actions { flex-wrap: wrap; flex-shrink: 1; }
   .home-screen .home-steps { grid-template-columns: minmax(0, 1fr); }
+  .home-screen .home-first-grid { grid-template-columns: minmax(0, 1fr); }
 }

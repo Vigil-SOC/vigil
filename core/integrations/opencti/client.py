@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.federation.error_kind import kind_of
 from core.integrations._base.proxy import integration_proxy
 from core.integrations._base.tls import tls_verify
 
@@ -59,6 +60,10 @@ _TARGET_FIELDS = """
 
 class OpenCTIError(Exception):
     """A failed OpenCTI call, with a message safe to show (never the token)."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _limit(value: Any) -> int:
@@ -141,9 +146,14 @@ class OpenCTIService:
         except OSError as exc:  # tls_verify: an unusable CA path, which it names
             raise OpenCTIError(str(exc)) from exc
         if resp.status_code in (401, 403):
-            raise OpenCTIError("OpenCTI rejected the API token")
+            raise OpenCTIError(
+                "OpenCTI rejected the API token", status_code=resp.status_code
+            )
         if resp.status_code >= 400:
-            raise OpenCTIError(f"OpenCTI request failed (HTTP {resp.status_code})")
+            raise OpenCTIError(
+                f"OpenCTI request failed (HTTP {resp.status_code})",
+                status_code=resp.status_code,
+            )
         try:
             body = resp.json()
         except ValueError as exc:
@@ -167,7 +177,7 @@ class OpenCTIService:
         try:
             data = await self._query("query { about { version } }")
         except OpenCTIError as exc:
-            return False, str(exc)
+            return False, str(exc), kind_of(exc)
         version = (data.get("about") or {}).get("version")
         if not version:
             return False, "OpenCTI returned no version; is this the platform URL?"

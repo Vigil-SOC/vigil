@@ -25,6 +25,7 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Uni
 
 import httpx
 
+from core.federation.error_kind import kind_of
 from core.integrations._base.config import missing, resolve, resolve_fields
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
@@ -39,8 +40,20 @@ from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 
 logger = logging.getLogger(__name__)
 
-# (success, one line safe to show: never a secret)
-Outcome = Tuple[bool, str]
+# (success, one line safe to show: never a secret) and, on a failure, the
+# error kind when one can be named without reading the vendor's text.
+Outcome = Tuple[bool, str] | Tuple[bool, str, str]
+
+
+def failed(
+    message: str,
+    *,
+    exc: Optional[BaseException] = None,
+    status: Optional[int] = None,
+    kind: Optional[str] = None,
+) -> Outcome:
+    """A failed check, carrying the kind ``error_kind`` would assign."""
+    return False, message, kind if kind is not None else kind_of(exc, status)
 
 
 @dataclass(frozen=True)
@@ -267,26 +280,32 @@ async def _sentinel() -> Outcome:
         if isinstance(exc, ClientAuthenticationError):
             aadsts = _AADSTS.search(str(exc))
             if aadsts:
-                return False, (
+                return failed(
                     "Microsoft Sentinel credential rejected by Entra ID "
-                    f"({aadsts.group(0)})"
+                    f"({aadsts.group(0)})",
+                    exc=exc,
                 )
             if not exc.status_code:
                 # azure-identity wraps a network failure the same way
                 cause = type(exc.__cause__ or exc).__name__
-                return False, (
-                    f"Microsoft Sentinel could not get a token from Entra ID ({cause})"
+                return failed(
+                    f"Microsoft Sentinel could not get a token from Entra ID ({cause})",
+                    exc=exc,
                 )
         code = getattr(getattr(exc, "error", None), "code", None)
         detail = f"HTTP {exc.status_code}" + (f", {code}" if code else "")
         if exc.status_code == 404:
-            return False, (
+            return failed(
                 f"Microsoft Sentinel workspace not found ({detail}); check "
-                "subscription_id, resource_group and workspace_name"
+                "subscription_id, resource_group and workspace_name",
+                exc=exc,
             )
-        return False, f"Microsoft Sentinel refused the read ({detail})"
+        return failed(f"Microsoft Sentinel refused the read ({detail})", exc=exc)
     except AzureError as exc:
-        return False, f"Microsoft Sentinel could not be reached ({type(exc).__name__})"
+        return failed(
+            f"Microsoft Sentinel could not be reached ({type(exc).__name__})",
+            exc=exc,
+        )
     return True, f"Read incidents from workspace {config['workspace_name']}"
 
 
@@ -329,20 +348,22 @@ async def _security_hub() -> Outcome:
 
     try:
         await asyncio.to_thread(read)
-    except NoCredentialsError:
-        return False, "No AWS credentials saved, and none found on this host"
+    except NoCredentialsError as exc:
+        return failed("No AWS credentials saved, and none found on this host", exc=exc)
     except ClientError as exc:
         # The code says what is wrong (UnrecognizedClientException,
         # AccessDeniedException, InvalidAccessException when the Hub is off).
         error = exc.response.get("Error") or {}
         status = (exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-        return False, (
+        return failed(
             f"AWS Security Hub refused the read "
-            f"(HTTP {status}, {error.get('Code') or 'no error code'})"
+            f"(HTTP {status}, {error.get('Code') or 'no error code'})",
+            exc=exc,
         )
     except BotoCoreError as exc:
-        return False, (
-            f"AWS Security Hub in {region} could not be reached ({type(exc).__name__})"
+        return failed(
+            f"AWS Security Hub in {region} could not be reached ({type(exc).__name__})",
+            exc=exc,
         )
     source = "" if keys else " (default AWS credentials)"
     return True, f"Read AWS Security Hub findings in {region}{source}"
@@ -411,18 +432,23 @@ async def _defender() -> Outcome:
     try:
         resp = await asyncio.to_thread(read)
     except TokenError as exc:
-        return False, str(exc)
+        return failed(str(exc), exc=exc)
     except httpx.HTTPError as exc:
-        return False, (
-            f"Microsoft Defender API could not be reached ({type(exc).__name__})"
+        return failed(
+            f"Microsoft Defender API could not be reached ({type(exc).__name__})",
+            exc=exc,
         )
     if resp.status_code in (401, 403):
-        return False, (
+        return failed(
             f"Microsoft Defender API refused the token (HTTP {resp.status_code}); "
-            "the app needs the Alert.Read.All application permission"
+            "the app needs the Alert.Read.All application permission",
+            status=resp.status_code,
         )
     if resp.status_code != 200:
-        return False, f"Microsoft Defender API answered HTTP {resp.status_code}"
+        return failed(
+            f"Microsoft Defender API answered HTTP {resp.status_code}",
+            status=resp.status_code,
+        )
     return True, "Read Microsoft Defender alerts"
 
 
@@ -444,9 +470,14 @@ async def _crowdstrike() -> Outcome:
         # The adapter's token exchange, then its detections ID query for one
         # ID. last_error is a status or a connection error, never the secret.
         if not service._ensure_authenticated():
-            return False, f"CrowdStrike {service.last_error or 'authentication failed'}"
+            return failed(
+                f"CrowdStrike {service.last_error or 'authentication failed'}",
+                status=service.last_status,
+            )
         if service._query_detection_ids(None, 1) is None:
-            return False, f"CrowdStrike {service.last_error}"
+            return failed(
+                f"CrowdStrike {service.last_error}", status=service.last_status
+            )
         return True, "Read CrowdStrike detections"
 
     try:
@@ -519,8 +550,8 @@ async def _cloudforce_one() -> Outcome:
         )
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status in (401, 403):
-            return False, "Cloudforce One rejected the call"
-        return False, "Cloudforce One could not be reached"
+            return failed("Cloudforce One rejected the call", status=status, exc=exc)
+        return failed("Cloudforce One could not be reached", status=status, exc=exc)
 
 
 _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
@@ -615,19 +646,19 @@ def _from_connect(kind: str, label: str) -> Check:
     if kind == "not_configured":
         return NotChecked("not checked: tool server is not configured")
     if kind == "timeout":
-        return False, _timeout_message()
+        return failed(_timeout_message(), kind="network")
     if kind == "no_client":
-        return False, "Could not check the connection (no MCP client)"
-    return False, f"{label} could not be reached"
+        return failed("Could not check the connection (no MCP client)")
+    return failed(f"{label} could not be reached", kind="network")
 
 
 def _from_mcp(label: str, kind: str) -> Outcome:
     from core.agents.mcp_tools import TIMEOUT, UNAVAILABLE
 
     if kind == TIMEOUT:
-        return False, _timeout_message()
+        return failed(_timeout_message(), kind="network")
     if kind == UNAVAILABLE:
-        return False, f"{label} could not be reached"
+        return failed(f"{label} could not be reached", kind="network")
     return _rejected(label)
 
 
@@ -682,9 +713,9 @@ async def check_credentials(integration_id: str) -> Optional[Check]:
 
     try:
         return await asyncio.wait_for(run(), CHECK_TIMEOUT)
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         logger.warning("Credential check for %s timed out", integration_id)
-        return False, _timeout_message()
+        return failed(_timeout_message(), exc=exc)
     except Exception as exc:  # noqa: BLE001
         # The class name only: a client error can carry the URL it was given.
         logger.warning(
@@ -692,7 +723,7 @@ async def check_credentials(integration_id: str) -> Optional[Check]:
             integration_id,
             type(exc).__name__,
         )
-        return False, f"Could not check the connection ({type(exc).__name__})"
+        return failed(f"Could not check the connection ({type(exc).__name__})", exc=exc)
 
 
 def has_check(integration_id: str) -> bool:
