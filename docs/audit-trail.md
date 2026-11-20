@@ -8,6 +8,8 @@ A row in the trail is not rewritten. The application may insert a row, and it ma
 
 Erasure blanks those beside-columns for a principal, and blanks the same details on a row that is still waiting to be recorded. A name or any other detail already inside the hashed payload of an older row stays there. The chain still verifies after the beside-columns are blanked.
 
+Erasure also rewrites the account's username, email and full name to `erased-<principal id>` placeholders, and rewrites that username wherever a record outside the trail stores it as text: case assignees, comment authors and mentions, evidence collectors and chain-of-custody entries, case links and closures, IP exclusions, finding dismissals, detection proposals, rule stages, exceptions and links, approvals, workflow runs, memory notes, agent directives and the setup record. Case watches and notices addressed to that username are deleted. Free text a person typed, such as a comment that names someone, is not rewritten.
+
 Erasure needs `audit.manage`. Erasing a principal that has an account also deactivates that account, so it asks what deactivating does as well: `users.write` with "Confirm it's you", a role that grants everything the account's role grants, and someone left who can manage roles. An erasure that waited seven days stays waiting if applying it would leave nobody holding `roles.manage`.
 
 Once a retention period is in force, entries older than that period are removed from the oldest end of the trail, as a prefix, and the chain's anchor moves to the last removed entry. That removes rows. It does not rewrite a row that remains. The period is at least 365 days and takes effect 7 days after it is set.
