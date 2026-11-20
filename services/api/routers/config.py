@@ -41,7 +41,6 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
-from core.memory.recall_contract import InvestigationKind
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -60,7 +59,7 @@ from core.skills.skill_library import (
 from core.storage.config_service import get_config_service
 from core.storage.models import (
     AIModelConfig,
-    EpisodicDistilMarker,
+    HistoryImport,
     User,
 )
 from core.storage.schemas.base import _iso_utc
@@ -782,15 +781,9 @@ def get_setup_steps(
         demo_enabled=is_demo_mode(),
         skills_root_set=skills_root_set,
         custom_skills=custom_skills,
+        # Only a finished import counts; a running or failed one does not.
         history_imported=bool(
-            session.scalar(
-                select(
-                    exists().where(
-                        EpisodicDistilMarker.investigation_kind
-                        == InvestigationKind.IMPORTED.value
-                    )
-                )
-            )
+            session.scalar(select(exists().where(HistoryImport.status == "done")))
         ),
     )
 

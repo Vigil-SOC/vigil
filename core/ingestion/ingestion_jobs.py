@@ -63,6 +63,9 @@ class IngestionJob:
         self.message = ""
         self.error: Optional[str] = None
         self._stats: Dict[str, int] = {}
+        # A history import's lock connection (imported_history.take_import_lock),
+        # held until the job ends.
+        self.history_lock: Any = None
 
     def track(self, stats: Dict[str, int]) -> None:
         """Adopt the service's stats dict as this job's live progress source."""
@@ -156,13 +159,18 @@ def get_job_registry() -> IngestionJobRegistry:
     return _registry
 
 
-def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) -> tuple:
+def summarize_stats(
+    stats: Dict[str, int],
+    first_error: Optional[str] = None,
+    unmapped: Optional[Dict[str, int]] = None,
+) -> tuple:
     """Reduce ingestion stats to a (success, human message) pair.
 
     ``first_error`` is the reason the first row failed; it follows the counts.
+    ``unmapped`` is a history import's unmapped disposition values.
     """
     if "verdicts_written" in stats or "alerts_total" in stats:
-        return _summarize_history(stats, first_error)
+        return _summarize_history(stats, first_error, unmapped or {})
     imported = stats.get("findings_imported", 0) + stats.get("cases_imported", 0)
     skipped = stats.get("findings_skipped", 0) + stats.get("cases_skipped", 0)
     errors = stats.get("findings_errors", 0) + stats.get("cases_errors", 0)
@@ -187,13 +195,20 @@ def summarize_stats(stats: Dict[str, int], first_error: Optional[str] = None) ->
     return success, ". ".join(messages) if messages else "No data imported"
 
 
-def _summarize_history(stats: Dict[str, int], first_error: Optional[str]) -> tuple:
+def _summarize_history(
+    stats: Dict[str, int], first_error: Optional[str], unmapped: Dict[str, int]
+) -> tuple:
     """A history import: what memory got, and what was left out and why."""
+    from core.memory.imported_history import describe_unmapped
+
     if "verdicts_written" not in stats:
         return False, first_error or "Nothing was written to memory"
     verdicts = stats.get("verdicts_written", 0)
     sightings = stats.get("sightings_written", 0)
-    messages = [f"Wrote {verdicts} verdicts and {sightings} sightings to memory"]
+    messages = [
+        f"Wrote {verdicts} verdicts and {sightings} sightings to memory",
+        f"Kept {stats.get('tickets_kept', 0)} closed tickets in the import's record",
+    ]
     for kind in ("tickets", "alerts"):
         dropped = {
             key[len(f"{kind}_dropped_") :].replace("_", " "): n
@@ -205,6 +220,8 @@ def _summarize_history(stats: Dict[str, int], first_error: Optional[str]) -> tup
             messages.append(f"Left out {kind}: {reasons}")
     if stats.get("rows_unreadable"):
         messages.append(f"{stats['rows_unreadable']} unreadable rows")
+    if unmapped_line := describe_unmapped(unmapped):
+        messages.append(unmapped_line)
     if first_error:
         messages.append(first_error)
     success = first_error is None
@@ -229,32 +246,63 @@ def run_connected_history_job(job: IngestionJob, days: int) -> None:
     import asyncio
 
     from core.ingestion.ingestion_service import IngestionService
-    from core.memory.imported_history import write_import
+    from core.memory.imported_history import start_run, write_import
     from core.storage.unit_of_work import unit_of_work
 
+    investigation_id = f"{job.source_system}:connected"
+    started = False
     try:
         service = IngestionService()
         service.reset_stats()
         service.stats.update(alerts_total=0, tickets_total=0, rows_unreadable=0)
         job.track(service.stats)
+        start_run(investigation_id)
+        started = True
         rows = asyncio.run(
             _connected_service(job.source_system).fetch_closed_history(days)
         )
         service.stats["tickets_total"] = len(rows)
         with unit_of_work() as session:
-            write_import(
+            result = write_import(
                 session,
-                investigation_id=f"{job.source_system}:connected",
+                investigation_id=investigation_id,
                 alerts=[],
                 tickets=rows,
                 actor=job.actor,
                 stats=service.stats,
+                pull_days=days,
             )
-        success, message = summarize_stats(service.stats, service.first_error)
+        success, message = summarize_stats(
+            service.stats, service.first_error, result["unmapped"]
+        )
         job.finish(message) if success else job.fail(message)
     except Exception as e:
         logger.error(f"Ingestion job {job.job_id} failed: {e}", exc_info=True)
         job.fail(f"Import failed: {e}")
+        if started:
+            _fail_run(investigation_id, job.message)
+    finally:
+        _release(job)
+
+
+def _fail_run(investigation_id: str, message: str) -> None:
+    from core.memory.imported_history import fail_run
+
+    try:
+        fail_run(investigation_id, message)
+    except Exception:  # noqa: BLE001 - the row then reads "didn't complete"
+        logger.warning(
+            "Could not mark import %s failed", investigation_id, exc_info=True
+        )
+
+
+def _release(job: IngestionJob) -> None:
+    """Drop the history import lock, if this job holds it."""
+    from core.memory.imported_history import release_import_lock
+
+    if job.history_lock is not None:
+        release_import_lock(job.history_lock)
+        job.history_lock = None
 
 
 def run_job(job: IngestionJob, source_path: Path) -> None:
@@ -275,7 +323,9 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
                 source_path, job.format, data_type=job.data_type
             )
             signal_new_findings(service.stored_ids)
-        success, message = summarize_stats(stats or {}, service.first_error)
+        success, message = summarize_stats(
+            stats or {}, service.first_error, getattr(service, "unmapped", None)
+        )
         if success:
             job.finish(message)
         else:
@@ -284,4 +334,7 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
         logger.error(f"Ingestion job {job.job_id} failed: {e}", exc_info=True)
         job.fail(f"Ingestion failed: {e}")
     finally:
-        source_path.unlink(missing_ok=True)
+        try:
+            _release(job)
+        finally:
+            source_path.unlink(missing_ok=True)
