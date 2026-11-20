@@ -5,7 +5,7 @@ import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
 import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, federationApi, mcpApi } from '../services/api'
+import { approvalsApi, autonomyApi, casesApi, configApi, consoleApi, integrationHealthApi, mcpApi } from '../services/api'
 import { Icon } from '../shared/icons'
 import { InfoTip } from '../shared/InfoTip'
 import { anyActs } from '../shared/autonomy'
@@ -54,8 +54,8 @@ import { VigilLogo } from '../shared/VigilLogo'
 import {
   authBypassed,
   foldStatus,
-  type FederationRead,
   type HealthRead,
+  type IntegrationHealthFold,
   type McpRead,
   type RoutabilityRead,
   type StatusFold,
@@ -413,15 +413,23 @@ function SocConsoleInner() {
       inFlight = true
       Promise.all([
         settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
-        settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
+        integrationHealthApi.get().then((res): IntegrationHealthFold => {
+          const sources = res.data?.sources
+          return Array.isArray(sources) ? { sources } : { failed: true }
+        }).catch((err: { response?: { status?: number } }): IntegrationHealthFold | null => {
+          const status = err.response?.status
+          // forbidden is left out of the fold; a 503 or a dropped connection is a failed read
+          if (status === 401 || status === 403) return null
+          return { failed: true }
+        }),
         settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
         settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead)),
         settled(consoleApi.getProcesses().then((res) => res.data)),
         settled(configApi.getOrchestrator().then((res) => res.data as { enabled?: boolean })),
-      ]).then(([health, federation, mcp, routability, processes, autoOps]) => {
+      ]).then(([health, integrationHealth, mcp, routability, processes, autoOps]) => {
         inFlight = false
         if (!live) return
-        setStatus(foldStatus({ health, federation, mcp, routability, processes, autoOps }))
+        setStatus(foldStatus({ health, integrationHealth, mcp, routability, processes, autoOps }))
         if (health) setHealth(health)
         if (queued) {
           queued = false

@@ -21,7 +21,7 @@ import {
   tabFromQuery,
   type IntegrationsTab,
 } from './integrationsData'
-import { relativeTime, type ServerRow } from './integrationHealth'
+import { rowPhrase, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
 import AddIntegrationTab from './AddIntegrationTab'
 import AuditFeedCard from './AuditFeedCard'
@@ -47,7 +47,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
   const requested = tabFromQuery(searchParams.get('tab'))
   const [tab, setTab] = useState<IntegrationsTab>(requested)
-  const { mcp, int, phase, rows, attention } = useIntegrationsState()
+  const { mcp, int, health, phase, rows, attention } = useIntegrationsState()
   const { reload: reloadExtensions } = useExtensions()
   const [busy, setBusy] = useState<string | null>(null)
   const [reloadingServers, setReloadingServers] = useState(false)
@@ -59,6 +59,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const reload = () => {
     reloadMcp()
     reloadInt()
+    health.reload()
   }
 
   // Refresh only re-reads; this asks the backend to re-read mcp-config.json and
@@ -139,6 +140,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     try {
       await setIntegrationEnabled(id, want)
       reloadExtensions()
+      health.reload()
     } catch {
       notify('err', `Could not ${want ? 'enable' : 'disable'} the ${id} panel.`)
     }
@@ -262,13 +264,14 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                 <span className="col-low-note">Last verified and what agents may do are hidden while Ask Vigil is open</span>
               </th>
               <th>Health</th>
-              <th className="col-low">
+                <th className="col-low">
                 Last verified
                 <InfoTip
                   label="About Last verified"
                   align="start"
-                  source="The last test of the integration, run through POST /api/config/integrations/{id}/test."
-                  limit="Never-tested integrations show —. A failed test stays until the next test passes."
+                  source="Integration Health for this integration, from GET /api/integration-health."
+                  calculation="Healthy shows when it was last confirmed working. Any other state is the server's own wording."
+                  limit="No record shows —. A failed read shows Could not read, never Good."
                 />
               </th>
               <th className="col-low">What agents may do with it</th>
@@ -278,7 +281,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             </tr>
           </thead>
           <tbody>
-            {connected.map((r) => (
+            {connected.map((r) => {
+              const phrase = rowPhrase(r)
+              return (
               <tr key={r.name}>
                 <td>
                   <div className="int-ident">
@@ -294,10 +299,18 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                   </div>
                 </td>
                 <td>
-                  {r.level ? <LevelBadge level={r.level} variant="pill" /> : <span className="int-neutral">{r.word}</span>}
+                  {r.level ? <LevelBadge level={r.level} variant="pill" /> : <span className="int-neutral"><Clamp text={phrase || r.word || '—'} /></span>}
                 </td>
-                <td className="int-time col-low">
-                  {r.lastTest ? <time dateTime={r.lastTest.at} title={r.lastTest.at}>{relativeTime(r.lastTest.at)}</time> : <span title="Never tested">—</span>}
+                <td className="col-low">
+                  {phrase ? (
+                    r.judgement?.since && r.judgement.state === 'healthy' ? (
+                      <time dateTime={r.judgement.since} title={r.judgement.since}><Clamp text={phrase} /></time>
+                    ) : (
+                      <Clamp text={phrase} />
+                    )
+                  ) : (
+                    <span>—</span>
+                  )}
                 </td>
                 <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'} /></td>
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
@@ -314,7 +327,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                   )}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
         </div>
@@ -349,10 +363,14 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           lastTest={intCfg.last_test[wizardFor.id]}
           health={wizardRow?.level}
           category={categoryOf(wizardRow?.name ?? '')}
-          onTested={reloadInt}
+          onTested={() => {
+            reloadInt()
+            health.reload()
+          }}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
+            health.reload()
             // refresh the registry so a URL edit re-reads; saving alone doesn't enable
             const isExtension = wizardFor.fields?.some((f) => f.name === 'connectorUrl')
             if (isExtension) reloadExtensions()

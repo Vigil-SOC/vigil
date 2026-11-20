@@ -1,5 +1,6 @@
-/** One level and one sentence from the five reads the shell polls. */
+/** One level and one sentence from the reads the shell polls. */
 
+import type { IntegrationHealthSource } from '../services/api'
 import type { Schema } from '../services/apiTypes'
 
 type StatusLevel = 'good' | 'fair' | 'poor'
@@ -25,10 +26,6 @@ export function authBypassed(health: HealthRead | null): boolean {
 
 export type ProcessesRead = Schema<'ProcessStates'>
 
-export interface FederationRead {
-  sources?: { source_id?: string; enabled?: boolean; consecutive_errors?: number }[]
-}
-
 export interface McpRead {
   statuses?: { name?: string; status?: string; enabled?: boolean; setup?: string; setup_action?: string }[]
 }
@@ -37,20 +34,21 @@ export interface RoutabilityRead {
   providers?: Record<string, boolean>
 }
 
+/** A successful Integration Health read, or a failed one. Forbidden reads are left out (null). */
+export type IntegrationHealthFold =
+  | { sources: Pick<IntegrationHealthSource, 'source_id' | 'switched_on' | 'state'>[] }
+  | { failed: true }
+
 export interface StatusReads {
   /** null: the call failed or was forbidden, so it is left out of the fold */
   health: HealthRead | null
-  federation: FederationRead | null
+  /** null: forbidden, so it is left out. `{ failed: true }` is a failed read and is itself a fact. */
+  integrationHealth: IntegrationHealthFold | null
   mcp: McpRead | null
   routability: RoutabilityRead | null
   processes: ProcessesRead | null
   /** the orchestrator's switch; null when the read failed */
   autoOps?: { enabled?: boolean } | null
-}
-
-/** An enabled federation source that is erroring. Disabled and never-seeded sources report none. */
-export function failingFederationSource(read: FederationRead | null) {
-  return read?.sources?.find((source) => source.enabled && (source.consecutive_errors ?? 0) > 0)
 }
 
 /** Not running, and not down either: waiting for its first call, or for the
@@ -118,12 +116,19 @@ export function foldStatus(reads: StatusReads): StatusFold {
   const medic = reads.processes?.medic && MEDIC_FACT[reads.processes.medic]
   if (medic) facts.push(medic)
 
-  const failing = failingFederationSource(reads.federation)
-  if (failing) {
-    facts.push({
-      level: 'fair',
-      sentence: `Federation source ${failing.source_id ?? 'unknown'} has consecutive errors.`,
-    })
+  const integrationHealth = reads.integrationHealth
+  if (integrationHealth && 'failed' in integrationHealth) {
+    facts.push({ level: 'poor', sentence: 'Could not read integration health.' })
+  } else if (integrationHealth) {
+    const on = integrationHealth.sources.filter((source) => source.switched_on)
+    const unhealthy = on.find((source) => source.state === 'unhealthy')
+    if (unhealthy) {
+      facts.push({ level: 'poor', sentence: `Integration ${unhealthy.source_id} is unhealthy.` })
+    }
+    const once = on.find((source) => source.state === 'failing_once')
+    if (once) {
+      facts.push({ level: 'fair', sentence: `Integration ${once.source_id} failed its last attempt.` })
+    }
   }
 
   const down = stoppedMcpServer(reads.mcp)

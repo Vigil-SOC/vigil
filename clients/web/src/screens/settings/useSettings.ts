@@ -8,6 +8,7 @@ import api, {
   detectionRulesApi,
   federationApi,
   ingestionApi,
+  integrationHealthApi,
   kafkaApi,
   localServicesApi,
   mcpApi,
@@ -23,6 +24,7 @@ import api, {
   type EffectClass,
   type FederationSourceView,
   type IngestionJob,
+  type IntegrationHealthSource,
   type PlatformDatabaseProxyConfig,
   type ToolClass,
   type AgentAgreement,
@@ -179,6 +181,45 @@ export function usePlatformDatabase() {
   )
 
   return { form, setForm, hasPassword, hasPassphrase, phase, error, reload, save }
+}
+
+/** GET /api/integration-health. `failed` is a failed read (including 503), never an empty healthy list. */
+export function useIntegrationHealth() {
+  const [sources, setSources] = useState<IntegrationHealthSource[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
+
+  useEffect(() => {
+    let cancelled = false
+    integrationHealthApi
+      .get()
+      .then((res) => {
+        if (cancelled) return
+        const list = res.data?.sources
+        if (!Array.isArray(list)) {
+          setSources(null)
+          setFailed(true)
+          setPhase('error')
+          return
+        }
+        setSources(list)
+        setFailed(false)
+        setPhase('ready')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSources(null)
+        setFailed(true)
+        setPhase('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reloadKey])
+
+  return { sources, failed, phase, reload }
 }
 
 export function useFederation() {

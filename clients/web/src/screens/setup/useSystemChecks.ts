@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
-import { consoleApi, federationApi, mcpApi, storageApi } from '../../services/api'
+import { consoleApi, integrationHealthApi, mcpApi, storageApi } from '../../services/api'
 import { readProviderStatus } from '../../routing/useSetupStatus'
+import { healthPhrase } from '../settings/integrationHealth'
 import {
-  failingFederationSource,
   stoppedMcpServer,
-  type FederationRead,
   type McpRead,
   type ProcessesRead,
 } from '../../shell/statusLine'
@@ -120,24 +119,19 @@ const readProvider = async (): Promise<Result> => {
 }
 
 const readFederation = async (): Promise<Result> => {
-  const read = (await federationApi.getHealth()).data as FederationRead | undefined
-  // no body is a failed read, not an empty list
-  if (!read) throw new Error('no federation health body')
-  const failing = failingFederationSource(read)
-  if (failing) {
-    return {
-      phase: 'needs',
-      detail: `${failing.source_id ?? 'A source'} has consecutive errors`,
-    }
-  }
-  const enabled = read?.sources?.filter((s) => s.enabled).length ?? 0
-  if (!enabled) {
+  const sources = (await integrationHealthApi.get()).data?.sources
+  // no body is a failed read, not an empty list, and never "all healthy"
+  if (!Array.isArray(sources)) throw new Error('no integration health body')
+  const pulled = sources.filter((s) => s.kind === 'pulled' && s.switched_on)
+  if (!pulled.length) {
     return {
       phase: 'waiting',
       detail: 'Nothing to check yet · the next step connects a source',
     }
   }
-  return { phase: 'passed', detail: `${enabled} source${enabled === 1 ? '' : 's'} collecting` }
+  const failing = pulled.find((s) => s.state === 'unhealthy' || s.state === 'failing_once' || s.state === 'unknown')
+  if (failing) return { phase: 'needs', detail: `${failing.source_id}: ${healthPhrase(failing)}` }
+  return { phase: 'passed', detail: `${pulled.length} source${pulled.length === 1 ? '' : 's'} collecting` }
 }
 
 const readMcp = async (): Promise<Result> => {
