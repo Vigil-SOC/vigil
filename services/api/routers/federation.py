@@ -186,8 +186,12 @@ async def patch_source(
         fields["interval_seconds"] = payload.interval_seconds
     if payload.max_items is not None:
         fields["max_items"] = payload.max_items
-    if payload.min_severity is not None:
-        sev = payload.min_severity.lower() if payload.min_severity else None
+    # Optional[str] = None cannot tell a missing field from an explicit null.
+    # model_fields_set can: a sent null or "" clears the floor, an omitted
+    # field leaves it unchanged.
+    if "min_severity" in payload.model_fields_set:
+        raw = payload.min_severity
+        sev = raw.lower() if raw else None
         if sev and sev not in _VALID_SEVERITIES:
             raise HTTPException(
                 status_code=400,
