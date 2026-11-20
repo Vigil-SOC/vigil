@@ -40,7 +40,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sqlalchemy import and_, select
 
-from core.auth import trail_events
+from core.auth import signing_key, trail_events
 from core.detections import exceptions as excepts
 from core.detections import overlay, proof_card
 from core.detections.detection_rules_service import DetectionRulesService
@@ -147,7 +147,7 @@ def export(rule_id: int, actor: str) -> Tuple[Dict[str, Any], bytes]:
     before the zip is handed back, and if it can't be written the export fails."""
     name, copies, card_ids = _copies(rule_id)
     card = proof_card.build(card_ids)
-    card_bytes = proof_card.canonical(card)
+    card_bytes = signing_key.canonical(card)
     root = DetectionRulesService().overlay_source()["local_path"]
     files: Dict[str, bytes] = {}
     listed = []
@@ -177,8 +177,8 @@ def export(rule_id: int, actor: str) -> Tuple[Dict[str, Any], bytes]:
         "proof_card_sha256": _sha(card_bytes),
         "copies": listed,
     }
-    manifest_bytes = proof_card.canonical(manifest)
-    signature, kid, pem = proof_card.sign(manifest_bytes, actor=actor)
+    manifest_bytes = signing_key.canonical(manifest)
+    signature, kid, pem = signing_key.sign(manifest_bytes, actor=actor)
     card_zip = proof_card.bundle(card)
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -269,7 +269,7 @@ def _key_id(pem: str) -> str:
         raise Refused(f"The public key could not be read: {exc}") from exc
     if not isinstance(public, Ed25519PublicKey):
         raise Refused("The public key is not an Ed25519 key")
-    return proof_card.key_id(public)
+    return signing_key.key_id(public)
 
 
 def _signed(entries: Dict[str, bytes], name: str, pem: str) -> bytes:
@@ -278,7 +278,7 @@ def _signed(entries: Dict[str, bytes], name: str, pem: str) -> bytes:
     if data is None or sig is None:
         raise Refused(f"The zip has no {name} with its signature")
     try:
-        good = proof_card.verify(data, sig.decode().strip(), pem)
+        good = signing_key.verify(data, sig.decode().strip(), pem)
     except (ValueError, TypeError, UnicodeDecodeError):
         good = False
     if not good:
@@ -502,7 +502,7 @@ def import_skill(
         exported_from=manifest.get("exported_from"),
         exported_at=manifest.get("exported_at"),
         key_id=kid,
-        sha256=_sha(proof_card.canonical(manifest)),
+        sha256=_sha(signing_key.canonical(manifest)),
     )
     return {
         **saved,
