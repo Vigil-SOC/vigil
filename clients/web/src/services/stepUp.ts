@@ -1,6 +1,7 @@
 // A privileged change the server refused until the person confirms it's them (#4179).
-// The response interceptor in api.ts hands the refusal to the one dialog the console
-// mounts (shell/ConfirmItDialog), then retries the request once it is confirmed.
+// The response interceptor in api.ts hands the refusal to the confirmation dialog
+// (shell/ConfirmItDialog, mounted once per page: the console, setup and OAuth consent),
+// then retries the request once it is confirmed.
 export const CONFIRMATION_REQUIRED = 'confirmation_required'
 // The person has no two-step sign-in yet: set it up, then the change goes through.
 export const STEP_UP_MFA_SETUP = 'step_up_mfa_setup'

@@ -15,7 +15,8 @@ import { KEY_AFTER_CONTINUE, KeyWaiting } from './SecurityKeyParts'
 type Pending = { detail: StepUpDetail; resolve: () => void; reject: (reason?: unknown) => void }
 
 // The one place a refused privileged change asks "Confirm it's you" (api.ts hands the refusal
-// here and retries the request once this resolves). Mounted once, in the console.
+// here and retries the request once this resolves). Mounted once per page:
+// the console, the setup wizard and the OAuth consent screen.
 export default function ConfirmItHost() {
   const { user } = useAuth()
   const [pending, setPending] = useState<Pending | null>(null)
