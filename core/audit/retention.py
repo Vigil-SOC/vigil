@@ -105,9 +105,10 @@ def is_erased(username: Optional[str], principal_id: Optional[str]) -> bool:
 
 def free_identifiers(session, principal_id: str) -> None:
     """Rewrite the account's username, email and full name to opaque values, so
-    nothing readable stays and the username and email can be used again. Cases
-    and tasks assigned by username follow, so a new account of that name does
-    not inherit them. Plain SQL: an upgrade step runs it on its own connection too."""
+    nothing readable stays and the username and email can be used again. Every
+    record that keeps the username as text follows (``_USERNAME_COLUMNS``), so
+    neither the name stays readable nor does a new account of that name inherit
+    them. Plain SQL: an upgrade step runs it on its own connection too."""
     if not _table(session, "users"):
         return
     params = {
@@ -116,16 +117,13 @@ def free_identifiers(session, principal_id: str) -> None:
         "domain": ERASED_DOMAIN,
         "name": ERASED_NAME,
     }
-    for table in ("cases", "case_tasks"):
-        if _table(session, table):
-            session.execute(
-                text(f"""
-                    UPDATE public.{table} t SET assignee = :prefix || u.principal_id
-                    FROM public.users u
-                    WHERE u.principal_id = :id AND t.assignee = u.username
-                    """),
-                params,
-            )
+    username = session.execute(
+        text("SELECT username FROM public.users WHERE principal_id = :id"),
+        {"id": principal_id},
+    ).scalar()
+    # Vigil's own rows name it "system": a person of that name cannot be told apart.
+    if username and username != trail.SYSTEM and not is_erased(username, principal_id):
+        _rename_records(session, username, erased_username(principal_id))
     session.execute(
         text("""
             UPDATE public.users SET
@@ -933,6 +931,115 @@ def _perform(session, principal_id: str) -> None:
     trail._lock(session)
     _blank_beside(session, principal_id)
     _queue_append(session, [principal_id])
+
+
+# Columns that keep a person's username as text, rewritten with the account.
+_USERNAME_COLUMNS = (
+    ("cases", "assignee"),
+    ("case_tasks", "assignee"),
+    ("case_comments", "author"),
+    ("case_evidence", "collected_by"),
+    ("case_relationships", "created_by"),
+    ("case_closure_info", "closed_by"),
+    ("case_closure_info", "closed_by_text"),
+    ("case_attachments", "uploaded_by"),
+    ("case_escalations", "escalated_from"),
+    ("case_escalations", "escalated_to"),
+    ("case_audit_logs", "changed_by"),
+    ("ip_exclusions", "created_by"),
+    ("ip_exclusions", "removed_by"),
+    ("findings", "noise_marked_by"),
+    ("detection_proposals", "created_by"),
+    ("detection_proposal_events", "actor"),
+    ("detection_rules", "linked_by"),
+    ("detection_rule_stages", "actor"),
+    ("detection_rule_exceptions", "created_by"),
+    ("detection_rule_exceptions", "removed_by"),
+    ("approval_actions", "created_by"),
+    ("approval_actions", "approved_by"),
+    ("workflow_runs", "triggered_by"),
+    ("custom_workflows", "created_by"),
+    ("custom_agents", "created_by"),
+    ("episodic_notes", "written_by"),
+    ("agent_directives", "actor"),
+    ("investigation_replay", "started_by"),
+    ("skill_scans", "approved_by"),
+    ("skill_installs", "installed_by"),
+    ("tool_effect_classes", "classified_by"),
+    ("system_config", "updated_by"),
+    ("integration_configs", "updated_by"),
+    ("ai_model_configs", "updated_by"),
+    ("config_audit_log", "changed_by"),
+)
+
+
+def _columns(session, table: str) -> set[str]:
+    return set(
+        session.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns"
+                " WHERE table_schema = 'public' AND table_name = :table"
+            ),
+            {"table": table},
+        ).scalars()
+    )
+
+
+def _rename_records(session, username: str, erased: str) -> None:
+    """Rewrite ``username`` to ``erased`` wherever a record keeps it as text.
+    An upgrade step runs this on an older schema, so a missing column is skipped."""
+    params = {"old": username, "new": erased}
+    have: dict[str, set[str]] = {}
+    for table, column in _USERNAME_COLUMNS:
+        if table not in have:
+            have[table] = _columns(session, table)
+        if column in have[table]:
+            # {table} and {column} are fixed names from the list above.
+            session.execute(
+                text(
+                    f"UPDATE public.{table} SET {column} = :new WHERE {column} = :old"
+                ),
+                params,
+            )
+    if "mentions" in _columns(session, "case_comments"):
+        session.execute(
+            text("""
+                UPDATE public.case_comments
+                SET mentions = array_replace(mentions, CAST(:old AS varchar), CAST(:new AS varchar))
+                WHERE CAST(:old AS varchar) = ANY(mentions)
+                """),
+            params,
+        )
+    if "chain_of_custody" in _columns(session, "case_evidence"):
+        session.execute(
+            text("""
+                UPDATE public.case_evidence SET chain_of_custody = (
+                    SELECT jsonb_agg(CASE WHEN e->>'user' = :old
+                        THEN jsonb_set(e, '{user}', to_jsonb(CAST(:new AS text)))
+                        ELSE e END ORDER BY n)
+                    FROM jsonb_array_elements(chain_of_custody) WITH ORDINALITY AS c(e, n)
+                )
+                WHERE jsonb_typeof(chain_of_custody) = 'array'
+                  AND chain_of_custody @> jsonb_build_array(jsonb_build_object('user', CAST(:old AS text)))
+                """),
+            params,
+        )
+    if "value" in _columns(session, "system_config"):
+        # The setup wizard names who finished it.
+        session.execute(
+            text("""
+                UPDATE public.system_config
+                SET value = jsonb_set(value, '{finished_by}', to_jsonb(CAST(:new AS text)))
+                WHERE jsonb_typeof(value) = 'object' AND value->>'finished_by' = :old
+                """),
+            params,
+        )
+    # Watching and notices addressed by username serve nobody once the account goes.
+    for table in ("case_watchers", "case_notifications"):
+        if "user_id" in _columns(session, table):
+            session.execute(
+                text(f"DELETE FROM public.{table} WHERE user_id = :old"), params
+            )
 
 
 def _blank_label(session, principal_id: str) -> None:
