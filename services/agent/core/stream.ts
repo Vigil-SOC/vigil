@@ -20,7 +20,7 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, stopCauseOf, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, canonical, DEFAULT_FOLD, prefixOf, renderFacts, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
+import { assemble, canonical, DEFAULT_FOLD, prefixOf, renderFacts, withInstructions, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
 import { createHash } from "node:crypto";
 import { redactCredentials, scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
@@ -158,7 +158,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const submit = schema !== null && this.cfg.submit !== false;
     const offered = this.tools.map(schemaOf);
     this.prefix = prefixOf(
-      this.cfg.system,
+      withInstructions(this.cfg.system, this.harness.instructions),
       submit ? [...offered, { id: SUBMIT_TOOL, description: "Give your final answer, in the shape its parameters describe. Call it alone, once you can answer.", parameters: schema }] : offered,
       await this.recalled(),
       await this.facts(),

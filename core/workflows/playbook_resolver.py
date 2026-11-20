@@ -533,6 +533,7 @@ def resolve(
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
         **({"effort": effort} if effort else {}),
+        **_instructions(),
         "budgets": (
             dict(INVESTIGATE_BUDGETS)
             if definition.run_kind == "investigate"
@@ -696,6 +697,7 @@ def resolve_hunt(
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
         **({"effort": effort} if effort else {}),
+        **_instructions(),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
         "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
@@ -748,6 +750,7 @@ def resolve_root_cause(
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
         **({"effort": effort} if effort else {}),
+        **_instructions(),
         "budgets": {
             "max_calls": ROOT_CAUSE_MAX_CALLS,
             "max_cost_usd": HUNT_BUDGETS["max_cost_usd"],
@@ -834,6 +837,15 @@ def _expand_tool() -> Dict[str, Any]:
             },
         },
     }
+
+
+# Read at resolve time, which is run start: the agent layer journals the config
+# with the spec, so the run, a resume and a replay all hold the same text.
+def _instructions() -> Dict[str, str]:
+    from core.llm.system_prompt import operator_instructions
+
+    text = operator_instructions()
+    return {"instructions": text} if text else {}
 
 
 # Block style and no aliases: the agent layer parses this, and a YAML anchor would

@@ -21,6 +21,7 @@ import SlaPoliciesSection, { SLA_DESC } from './SlaPoliciesSection'
 import DataUploadsSection from './DataUploadsSection'
 import AuditSection, { AUDIT_DESC } from './AuditSection'
 import EntityFactsSection from './EntityFactsSection'
+import OperatorInstructionsSection, { OPERATOR_INSTRUCTIONS_DESC } from './OperatorInstructionsSection'
 import NavigationSection from './NavigationSection'
 import { useAuth } from '../../contexts/AuthContext'
 import type { SectionProps } from './types'
@@ -29,6 +30,7 @@ const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
 type NavKey =
   | 'ai-config'
+  | 'operator-instructions'
   | 'integrations'
   | 'federation'
   | 'sla'
@@ -107,6 +109,7 @@ function SystemTabs({ notify }: SectionProps) {
 
 const NAV: NavDef[] = [
   { key: 'ai-config', label: 'AI models', desc: AI_CONFIG_DESC, icon: 'sparkle', Component: AiConfigSection, ownsHead: true, perm: 'platform.read' },
+  { key: 'operator-instructions', label: 'Operator instructions', desc: OPERATOR_INSTRUCTIONS_DESC, icon: 'note', Component: OperatorInstructionsSection, perm: 'platform.read' },
   { key: 'integrations', label: 'Integrations', desc: INTEGRATIONS_DESC, icon: 'link', Component: IntegrationsSection, ownsHead: true, perm: 'integrations.read' },
   { key: 'federation', label: 'Alert collection', desc: 'Pull alerts from your SIEM and EDR tools on a schedule, so agents can start on them without anyone forwarding them.', icon: 'graph', Component: FederationSection, perm: 'platform.read' },
   { key: 'sla', label: 'SLA policies', desc: SLA_DESC, icon: 'clock', Component: SlaPoliciesSection, ownsHead: true, perm: 'platform.read' },

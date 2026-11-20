@@ -34,6 +34,10 @@ export interface Harness<Kinds extends Record<string, unknown> = Record<never, n
   // Experimental (core/guards.ts): the guarded reader's model, when it is
   // not the run's own. A reader only extracts and labels, so a cheaper one serves.
   guards_provider?: Provider;
+  // The run's operator instructions (Config.instructions). On the harness rather
+  // than each turn, so every model call the run makes -- plugin turns, subturns,
+  // compose phases, children -- carries them from the one place prompts are built.
+  instructions?: string;
 }
 
 export interface TurnConfig {

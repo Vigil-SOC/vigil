@@ -43,6 +43,8 @@ from core.integrations.integration_secrets import (
 from core.integrations.readiness import evaluate, sources_settled
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
+from core.llm.security import MAX_SYSTEM_PROMPT_BYTES
+from core.llm.system_prompt import OPERATOR_INSTRUCTIONS_KEY, validate_system_prompt
 from core.platform.process_health import ProcessHealth
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
@@ -1379,6 +1381,58 @@ def set_general_config(
         logger.warning(f"Could not update secrets manager: {e}")
 
     return {"success": True, "message": "General settings saved"}
+
+
+class OperatorInstructions(BaseModel):
+    """Deployment-wide text appended to every agent run's system prompt (#4918)."""
+
+    text: str = ""
+
+
+@router.get("/operator-instructions", dependencies=_PLATFORM_READ)
+def get_operator_instructions():
+    """The saved instructions; empty text when none are set."""
+    try:
+        value = get_config_service().read_system_config(OPERATOR_INSTRUCTIONS_KEY)
+    except Exception as e:
+        logger.error("Error getting operator instructions: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Could not read the operator instructions"
+        ) from e
+    return {
+        "text": (value or {}).get("text") or "",
+        "max_bytes": MAX_SYSTEM_PROMPT_BYTES,
+    }
+
+
+@router.post("/operator-instructions", dependencies=_PLATFORM_WRITE)
+def set_operator_instructions(
+    config: OperatorInstructions,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Save the instructions. Runs started after this carry them; empty clears."""
+    text = config.text.strip()
+    try:
+        validate_system_prompt(text, source="operator_instructions")
+    except ValueError as e:
+        # A string detail, so the console can say why rather than "422".
+        raise HTTPException(
+            status_code=422,
+            detail=str(e)
+            .replace("system_prompt exceeds", "The instructions exceed")
+            .replace("system_prompt contains", "The instructions contain"),
+        ) from None
+    if not _for_user(current_user).set_system_config(
+        key=OPERATOR_INSTRUCTIONS_KEY,
+        value={"text": text},
+        description="Operator instructions appended to every agent run's system prompt",
+        config_type="agents",
+        change_reason="Updated via Settings UI",
+    ):
+        raise HTTPException(
+            status_code=500, detail="Failed to save configuration to database"
+        )
+    return {"text": text, "max_bytes": MAX_SYSTEM_PROMPT_BYTES}
 
 
 @router.get("/postgresql", dependencies=_PLATFORM_READ)

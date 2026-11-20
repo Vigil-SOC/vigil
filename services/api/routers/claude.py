@@ -34,6 +34,7 @@ from core.llm.chat_layers import (
 )
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry
+from core.llm.system_prompt import operator_instructions
 from core.llm.target import (
     component_fallback,
     model_for,
@@ -485,6 +486,8 @@ async def chat_stream(
             provider=provider_type,
             effort=resolve_effort("chat_default"),
             context_window=context_window,
+            # Per turn, so a saved change reaches the next message.
+            instructions=await asyncio.to_thread(operator_instructions),
         ),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
