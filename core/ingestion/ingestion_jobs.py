@@ -256,7 +256,7 @@ def run_connected_history_job(job: IngestionJob, days: int) -> None:
         service.reset_stats()
         service.stats.update(alerts_total=0, tickets_total=0, rows_unreadable=0)
         job.track(service.stats)
-        start_run(investigation_id)
+        start_run(investigation_id, pull_days=days)
         started = True
         rows = asyncio.run(
             _connected_service(job.source_system).fetch_closed_history(days)

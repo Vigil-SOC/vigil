@@ -11,6 +11,9 @@ import ChoiceCard from './ChoiceCard'
 import ConnectSource, { type ConnectResult } from './ConnectSource'
 import { fieldsOf, type ConnectConfig } from './connectConfig'
 import { DemoSource, UploadSource } from './FileAndDemoSources'
+import { HistoryImportCard } from '../settings/DataIngestion'
+import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../shell/toast'
 
 interface IntegrationsConfig {
   enabled_integrations: string[]
@@ -30,6 +33,11 @@ const CATEGORY_ICON: Record<string, IconName> = {
 }
 const TILE_COUNT = 6
 
+// optional, and apart from the step's pass: closed tickets go to agent memory, not to triage
+const HISTORY_DESC =
+  'Optional. Brings your closed tickets and how your team decided them into agent memory, so agents recall past dispositions. ' +
+  'Unlike “Upload a file”, which imports findings to triage, nothing here is triaged: no findings or cases are created.'
+
 type Pick = string | null | undefined
 
 const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
@@ -40,6 +48,10 @@ const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
   const [availableServers, setAvailableServers] = useState<Set<string> | null>(null)
   const [serversError, setServersError] = useState(false)
   const [cfgReady, setCfgReady] = useState(false)
+  const { notify } = useToast()
+  const canImportHistory = useAuth().hasPermission('findings.write')
+  // bumped when a source connects here, so the history card re-reads which can pull history
+  const [connects, setConnects] = useState(0)
   // loaded once, so the save merges instead of clobbering other integrations
   const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {}, secrets_set: {} })
 
@@ -96,7 +108,10 @@ const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
   // saves run one at a time: each reads and rewrites the shared config
   const saving = useRef<Promise<unknown>>(Promise.resolve())
   const handleSave = (integration: IntegrationMetadata, config: ConnectConfig) => {
-    const run = saving.current.then(() => save(integration, config))
+    const run = saving.current.then(() => save(integration, config)).then((r) => {
+      if (r.connected !== false) setConnects((n) => n + 1)
+      return r
+    })
     saving.current = run.catch(() => {})
     return run
   }
@@ -242,6 +257,9 @@ const DataSourceDialog = ({ onAdvance }: { onAdvance: () => void }) => {
         )
       ) : (
         <p className="su-note">Pick a source above to connect it.</p>
+      )}
+      {canImportHistory && (
+        <HistoryImportCard key={connects} notify={notify} title="Bring your ticket history" desc={HISTORY_DESC} leadConnected />
       )}
     </>
   )
