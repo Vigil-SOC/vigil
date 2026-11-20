@@ -377,8 +377,15 @@ def _techniques_of(conclusion: Mapping[str, Any]) -> List[str]:
 
 
 def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
+    """One row per (Entity Key, source system).
+
+    The harness groups by its own spelling, and two spellings it keeps apart can
+    mint one key here (a nested defang token, a handle literal rewritten after
+    grouping). Those are merged rather than written twice: two rows would break
+    the unique constraint and roll the whole hunt back on every retry.
+    """
     payload, investigation_id = concluded.payload, concluded.investigation_id
-    rows: List[Dict[str, Any]] = []
+    rows: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for sighting in payload.get("sightings") or []:
         entity = sighting.get("entity") or {}
         key = entity_key(str(entity.get("type", "")), str(entity.get("value", "")))
@@ -392,23 +399,32 @@ def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
                 "Distil: %s dropped an unusable sighting %r", investigation_id, sighting
             )
             continue
-        rows.append(
-            {
-                "entity_key": key,
-                "investigation_kind": InvestigationKind.HUNT.value,
-                "investigation_id": investigation_id,
-                "source_system": str(sighting.get("source_system", "")),
-                "hit_count": hits,
-                "attacker_influenceable": bool(sighting.get("attacker_influenceable")),
-                # Both ends inclusive, and ordered: a harness that stamped them
-                # out of order would otherwise fail the window constraint and
-                # take the whole investigation down with it.
-                "first_seen": min(first, last),
-                "last_seen": max(first, last),
-                "concluded_at": concluded.concluded_at,
-            }
-        )
-    return rows
+        system = str(sighting.get("source_system", ""))
+        merged = rows.get((key, system))
+        if merged is not None:
+            merged["hit_count"] += hits
+            # Either spelling being attacker-shaped makes the merged row so.
+            merged["attacker_influenceable"] |= bool(
+                sighting.get("attacker_influenceable")
+            )
+            merged["first_seen"] = min(merged["first_seen"], first, last)
+            merged["last_seen"] = max(merged["last_seen"], first, last)
+            continue
+        rows[(key, system)] = {
+            "entity_key": key,
+            "investigation_kind": InvestigationKind.HUNT.value,
+            "investigation_id": investigation_id,
+            "source_system": system,
+            "hit_count": hits,
+            "attacker_influenceable": bool(sighting.get("attacker_influenceable")),
+            # Both ends inclusive, and ordered: a harness that stamped them
+            # out of order would otherwise fail the window constraint and
+            # take the whole investigation down with it.
+            "first_seen": min(first, last),
+            "last_seen": max(first, last),
+            "concluded_at": concluded.concluded_at,
+        }
+    return list(rows.values())
 
 
 def _conclusion_rows(
