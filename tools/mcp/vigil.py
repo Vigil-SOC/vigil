@@ -208,11 +208,17 @@ def list_findings(
 
 @tool("Get finding", reads=True)
 @requires("findings.read")
-def get_finding(finding_id: str) -> str:
+def get_finding(
+    finding_id: str, records_offset: Annotated[int, Field(ge=0)] = 0
+) -> str:
     """Get a specific finding by ID: its stored triage under ``triage``, then
-    ``entity_context`` with a sample of the source records. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.
+    ``entity_context`` with a page of up to 5 source records. ``records_shown``
+    says which, of how many; pass its ``next_offset`` as ``records_offset`` to
+    read the next page. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0.
     """
-    return _call(tool_registry.get_finding, finding_id=finding_id)
+    return _call(
+        tool_registry.get_finding, finding_id=finding_id, records_offset=records_offset
+    )
 
 
 @tool("Dismiss finding", destructive=True)

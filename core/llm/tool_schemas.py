@@ -507,14 +507,19 @@ DEEPTEMPO_FINDING_TOOLS = [
     },
     {
         "name": "get_finding",
-        "description": "Get detailed information about a specific finding by ID. Returns the finding's title, severity, data source, scores and predicted techniques first, then the daemon's stored triage under triage (severity, confidence, category, recommended_action, reasoning) when there is one, then entity_context with every entity it names. The raw source record under entity_context.source_evidence is a sample of its records (records_shown says how many of how many); for a NetFlow finding entity_context.netflow_digest counts every flow by host pair. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0. detection_rule names the inventory rule and version that fired it (rule_id, name, version, query, first_seen, checks such as runs), or resolved false with the reason it is unknown; only Kibana rules resolve today.",
+        "description": "Get detailed information about a specific finding by ID. Returns the finding's title, severity, data source, scores and predicted techniques first, then the daemon's stored triage under triage (severity, confidence, category, recommended_action, reasoning) when there is one, then entity_context with every entity it names. The raw source record under entity_context.source_evidence is a page of up to 5 of its records; records_shown says which records these are, of how many, and when more remain the next_offset to pass as records_offset to read the next page. Page on until it says none remain when the deciding record may be among those not shown. For a NetFlow finding entity_context.netflow_digest counts every flow by host pair. A null confidence in mitre_predictions means the source named the technique and gave no confidence: it is unknown, not 0. detection_rule names the inventory rule and version that fired it (rule_id, name, version, query, first_seen, checks such as runs), or resolved false with the reason it is unknown; only Kibana rules resolve today.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "finding_id": {
                     "type": "string",
                     "description": "The finding ID (e.g., 'f-20260209-001')",
-                }
+                },
+                "records_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Index of the first entity_context.source_evidence.records entry to return, default 0. Pass the next_offset that records_shown names to read the next page.",
+                },
             },
             "required": ["finding_id"],
         },
