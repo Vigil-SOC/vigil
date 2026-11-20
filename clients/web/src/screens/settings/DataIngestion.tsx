@@ -344,34 +344,41 @@ const CONNECTED_SOURCES: { value: ConnectedHistorySource; label: string }[] = [
   { value: 'azure_sentinel', label: 'Azure Sentinel' },
 ]
 
-/** Reads a configured Defender's or Sentinel's closed records; shown only when one is. */
-function ConnectedHistoryImport({
-  running,
-  attaching,
-  onImport,
-}: {
-  running: boolean
-  attaching: boolean
-  onImport: (source: ConnectedHistorySource, label: string, days: number) => Promise<void>
-}) {
-  const [configured, setConfigured] = useState<typeof CONNECTED_SOURCES>([])
-  const [source, setSource] = useState<ConnectedHistorySource | ''>('')
-  const [days, setDays] = useState('90')
-  const [submitting, setSubmitting] = useState(false)
-
+/** The Defender and Sentinel sources that are configured; null while loading. */
+function useConnectedHistorySources() {
+  const [configured, setConfigured] = useState<typeof CONNECTED_SOURCES | null>(null)
   useEffect(() => {
     federationApi
       .listSources()
       .then((res) => {
         const ready = new Set(res.data.sources.filter((s) => s.is_configured).map((s) => s.source_id))
-        const offered = CONNECTED_SOURCES.filter((s) => ready.has(s.value))
-        setConfigured(offered)
-        setSource(offered[0]?.value ?? '')
+        setConfigured(CONNECTED_SOURCES.filter((s) => ready.has(s.value)))
       })
       .catch(() => setConfigured([])) // no integrations.read, or no sources: nothing to offer
   }, [])
+  return configured
+}
 
-  if (!configured.length || !source) return null
+/** Reads a configured Defender's or Sentinel's closed records; shown only when one is. */
+function ConnectedHistoryImport({
+  configured,
+  lead,
+  running,
+  attaching,
+  onImport,
+}: {
+  configured: typeof CONNECTED_SOURCES
+  lead: boolean
+  running: boolean
+  attaching: boolean
+  onImport: (source: ConnectedHistorySource, label: string, days: number) => Promise<void>
+}) {
+  const [picked, setSource] = useState<ConnectedHistorySource | ''>('')
+  const [days, setDays] = useState('90')
+  const [submitting, setSubmitting] = useState(false)
+
+  const source = picked || configured[0]?.value
+  if (!source) return null
   const n = Number(days)
   const valid = Number.isInteger(n) && n >= 1 && n <= 180
   const label = configured.find((s) => s.value === source)?.label ?? source
@@ -386,7 +393,7 @@ function ConnectedHistoryImport({
   }
 
   return (
-    <div className="data-connected">
+    <div className={`data-connected${lead ? ' lead' : ''}`}>
       <span className="data-drop-title">From a connected source</span>
       <span className="data-drop-sub">
         {configured.length > 1
@@ -420,14 +427,131 @@ function ConnectedHistoryImport({
   )
 }
 
-export function HistoryImportCard({ notify }: SectionProps) {
+const IMPORT_STATUS: Record<HistoryImport['status'], { level: string; text: string }> = {
+  running: { level: 'idle', text: 'Importing' },
+  done: { level: 'good', text: 'Done' },
+  failed: { level: 'poor', text: 'Failed' },
+  incomplete: { level: 'fair', text: 'Didn’t complete' },
+}
+
+const LEFT_OUT_KIND: Record<string, string> = { tickets: 'Tickets', alerts: 'Alerts', rows: 'Rows' }
+
+// the API's reason keys, in words; an unknown key reads with its underscores dropped
+const LEFT_OUT_REASON: Record<string, string> = {
+  duplicate: 'duplicate',
+  no_closed_at: 'no close time',
+  unmapped_disposition: 'unmapped disposition',
+  bulk_close: 'bulk-closed',
+  auto_closed: 'auto-closed',
+  no_timestamp: 'no timestamp',
+  no_entities: 'no entities',
+  unreadable: 'unreadable',
+}
+
+const UNMAPPED_SHOWN = 20
+
+const sourceLabel = (row: HistoryImport) =>
+  CONNECTED_SOURCES.find((s) => s.value === row.source_system)?.label ?? (row.source_system || 'file')
+
+const stopped = (row: HistoryImport) => row.status === 'failed' || row.status === 'incomplete'
+
+// a connected pull can be repeated as it was; a file has to be uploaded again
+const connectedPull = (row: HistoryImport) =>
+  row.pull_days != null && CONNECTED_SOURCES.some((s) => s.value === row.source_system)
+
+// opened by default: the rows someone has something to do about
+const needsAttention = (row: HistoryImport) => stopped(row) || row.unmapped.length > 0 || !row.has_ticket_detail
+
+// rerun: a stopped connected pull's Re-run; absent without findings.write or once its source is unconfigured
+function ImportDetails({ row, canWrite, rerun }: { row: HistoryImport; canWrite: boolean; rerun?: ReactNode }) {
+  const window = row.pull_days != null
+    ? `Last ${row.pull_days} days${row.status === 'done' && row.pulled_at ? `, pulled ${utcDayClock(row.pulled_at)}` : ''}`
+    : row.concluded_at ? `Through ${utcDay(row.concluded_at)}` : '—'
+  const leftOut = Object.entries(row.left_out)
+  const more = row.unmapped.length - UNMAPPED_SHOWN
+  const facts: [string, ReactNode][] = [
+    ['Started', utcDayClock(row.started_at) ?? '—'],
+    ['Finished', utcDayClock(row.finished_at) ?? (row.status === 'running' ? 'Still importing' : '—')],
+    ['Window', window],
+    ['Tickets kept', row.tickets_kept],
+  ]
+  return (
+    <div className="data-history-detail">
+      {stopped(row) && (
+        <p className={`data-history-warn ${row.status}`}>
+          {(row.error || 'The import stopped before it finished').replace(/([^.!?])$/, '$1.')}
+          {!connectedPull(row) && ' Upload the file again to import it whole.'}
+          {connectedPull(row) && canWrite && !rerun && ' Re-run it once its source is connected again.'}
+          {rerun}
+        </p>
+      )}
+      <dl className="data-history-facts">
+        {facts.map(([k, v]) => (
+          <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+        ))}
+      </dl>
+      {/* nothing recorded is not "nothing left out" while it runs, or for an import from before ticket detail */}
+      {(leftOut.length > 0 || (row.status === 'done' && row.has_ticket_detail)) && (
+      <div className="data-history-line">
+        <b>Left out</b>{' '}
+        {leftOut.length === 0
+          ? 'Nothing.'
+          : leftOut.map(([kind, reasons], i) => (
+            <span key={kind}>
+              {i > 0 && ' · '}
+              {LEFT_OUT_KIND[kind] ?? kind}:{' '}
+              {Object.entries(reasons)
+                .map(([reason, n]) => `${n} ${LEFT_OUT_REASON[reason] ?? reason.replace(/_/g, ' ')}`)
+                .join(', ')}
+            </span>
+          ))}
+        {leftOut.length > 0 && '.'}
+        {row.bulk_not_tested > 0 && ` ${row.bulk_not_tested} tickets name no closer, so they were not tested for bulk closes.`}
+        {row.severity_unknown > 0 && ` ${row.severity_unknown} tickets have no severity.`}
+      </div>
+      )}
+      {row.unmapped.length > 0 && (
+        <div className="data-history-line">
+          <b>Unmapped dispositions</b>{' '}
+          {row.unmapped.slice(0, UNMAPPED_SHOWN).map((u, i) => (
+            <span key={u.value}>
+              {i > 0 && ', '}
+              <code className="data-history-value">{u.value}</code> ({u.count})
+            </span>
+          ))}
+          {more > 0 && ` and ${more} more`}. Rename them in the export to a listed value and import again.
+        </div>
+      )}
+      {!row.has_ticket_detail && (
+        <div className="data-history-line">
+          Imported before this release; import again to add severity and bulk-closed tickets.
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function HistoryImportCard({
+  notify,
+  title = 'Alert and ticket history',
+  desc = HISTORY_DESC,
+  leadConnected = false,
+}: SectionProps & {
+  title?: string
+  desc?: string
+  /** the setup wizard: a configured Defender or Sentinel pull comes before the file drop */
+  leadConnected?: boolean
+}) {
   const { job, attaching, upload, start } = useIngestionJob('history')
   const canWrite = useAuth().hasPermission('findings.write')
+  const configured = useConnectedHistorySources()
   const [imports, setImports] = useState<HistoryImport[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [source, setSource] = useState('')
   const [removing, setRemoving] = useState<HistoryImport | null>(null)
   const [busy, setBusy] = useState(false)
+  // ids whose details were toggled away from their default (open when they need attention)
+  const [toggled, setToggled] = useState<Set<string>>(new Set())
   const running = job?.status === 'running'
 
   const load = useCallback(() => {
@@ -439,12 +563,19 @@ export function HistoryImportCard({ notify }: SectionProps) {
   // on open, and again when an import finishes, so it lists without a reload
   useEffect(load, [load, job?.job_id, running])
 
+  const toggle = (id: string) =>
+    setToggled((s) => {
+      const next = new Set(s)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+
   const remove = async () => {
     if (!removing) return
     setBusy(true)
     try {
       await importsApi.remove(removing.import_id)
-      notify('ok', `Deleted the ${removing.source_system} import.`)
+      notify('ok', `Deleted the ${sourceLabel(removing)} import.`)
       setRemoving(null)
       load()
     } catch (e) {
@@ -454,10 +585,32 @@ export function HistoryImportCard({ notify }: SectionProps) {
     }
   }
 
+  const importConnected = async (src: ConnectedHistorySource, label: string, days: number) => {
+    try {
+      await start(ingestionApi.importConnectedHistory(src, days))
+      notify('ok', `Importing ${label} history into agent memory in the background.`)
+    } catch (e) {
+      // a 409 names the import that holds the lock
+      notify('err', errorText(e, 'Could not start the import.'))
+    }
+  }
+
+  const connected = configured && configured.length > 0 && (
+    <ConnectedHistoryImport
+      configured={configured}
+      lead={leadConnected}
+      running={running}
+      attaching={attaching}
+      onImport={importConnected}
+    />
+  )
+
   return (
-    <SettingsCard title="Alert and ticket history" desc={HISTORY_DESC}>
+    <SettingsCard title={title} desc={desc}>
       {canWrite && (
         <>
+          {leadConnected && connected}
+          {leadConnected && connected && <span className="data-drop-title data-history-file">From a file</span>}
           <div className="data-history-source">
             <Field label="Source system" hint="Optional. Names the import; left blank, Vigil reads it from the file.">
               <TextInput
@@ -479,18 +632,7 @@ export function HistoryImportCard({ notify }: SectionProps) {
             }}
             notify={notify}
           />
-          <ConnectedHistoryImport
-            running={running}
-            attaching={attaching}
-            onImport={async (src, label, days) => {
-              try {
-                await start(ingestionApi.importConnectedHistory(src, days))
-                notify('ok', `Importing ${label} history into agent memory in the background.`)
-              } catch (e) {
-                notify('err', errorText(e, 'Could not start the import.'))
-              }
-            }}
-          />
+          {!leadConnected && connected}
           {job && <IngestionJobStatus job={job} wrap />}
         </>
       )}
@@ -509,34 +651,69 @@ export function HistoryImportCard({ notify }: SectionProps) {
             <thead>
               <tr>
                 <th>Source</th>
+                <th>Status</th>
+                <th className="num">Rows read</th>
                 <th className="num">Verdicts</th>
                 <th className="num">Sightings</th>
-                <th>Latest record</th>
                 <th>Imported</th>
                 {canWrite && <th className="col-act" aria-label="Action" />}
               </tr>
             </thead>
             <tbody>
-              {imports.map((row) => (
-                <tr key={row.import_id}>
-                  <td title={row.import_id}><b>{row.source_system || 'file'}</b></td>
-                  <td className="num">{row.verdicts_written}</td>
-                  <td className="num">{row.sightings_written}</td>
-                  <td className="muted">{utcDay(row.concluded_at)}</td>
-                  <td className="muted">{utcDayClock(row.imported_at)}</td>
-                  {canWrite && (
-                    <td className="data-act col-act">
+              {imports.flatMap((row) => {
+                const open = needsAttention(row) !== toggled.has(row.import_id)
+                const status = IMPORT_STATUS[row.status]
+                const name = sourceLabel(row)
+                return [
+                  <tr key={row.import_id} className={open ? 'open' : undefined}>
+                    <td title={row.import_id}>
                       <button
-                        className="data-link"
-                        aria-label={`Delete the ${row.source_system} import`}
-                        onClick={() => setRemoving(row)}
+                        className="data-history-toggle"
+                        aria-expanded={open}
+                        aria-label={`${open ? 'Hide' : 'Show'} details of the ${name} import`}
+                        onClick={() => toggle(row.import_id)}
                       >
-                        Delete
+                        <Icon name={open ? 'chevD' : 'chevR'} size={13} />
+                        <b>{name}</b>
                       </button>
                     </td>
-                  )}
-                </tr>
-              ))}
+                    <td><span className={`level-pill ${status.level}`}>{status.text}</span></td>
+                    <td className="num">{row.rows_read}</td>
+                    <td className="num">{row.verdicts_written}</td>
+                    <td className="num">{row.sightings_written}</td>
+                    <td className="muted">{utcDayClock(row.imported_at)}</td>
+                    {canWrite && (
+                      <td className="data-act col-act">
+                        <button
+                          className="data-link"
+                          aria-label={`Delete the ${name} import`}
+                          onClick={() => setRemoving(row)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    )}
+                  </tr>,
+                  <tr key={`${row.import_id}-detail`} className="data-expand" hidden={!open}>
+                    <td colSpan={canWrite ? 7 : 6}>
+                      <ImportDetails
+                        row={row}
+                        canWrite={canWrite}
+                        rerun={canWrite && connectedPull(row) && configured?.some((c) => c.value === row.source_system) && (
+                          <button
+                            className="data-link data-history-rerun"
+                            disabled={running || attaching}
+                            aria-label={`Re-run the ${name} import`}
+                            onClick={() => importConnected(row.source_system as ConnectedHistorySource, name, row.pull_days!)}
+                          >
+                            Re-run
+                          </button>
+                        )}
+                      />
+                    </td>
+                  </tr>,
+                ]
+              })}
             </tbody>
           </table>
         </div>
@@ -544,7 +721,7 @@ export function HistoryImportCard({ notify }: SectionProps) {
       <ConfirmDialog
         open={removing !== null}
         title="Delete import"
-        body={`Deletes the ${removing?.verdicts_written ?? 0} Verdicts and ${removing?.sightings_written ?? 0} Sightings this ${removing?.source_system ?? ''} import wrote to agent memory. Agents stop recalling them.`}
+        body={`Deletes the ${removing?.verdicts_written ?? 0} Verdicts and ${removing?.sightings_written ?? 0} Sightings this ${removing ? sourceLabel(removing) : ''} import wrote to agent memory. Agents stop recalling them.`}
         confirmLabel="Delete"
         busy={busy}
         onConfirm={remove}

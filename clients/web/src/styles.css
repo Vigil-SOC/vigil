@@ -5221,8 +5221,10 @@
       margin-bottom: 12px;
    }
 
+   /* a container, so an import's details can be held to the visible width */
    .data-history-list {
       margin-top: 14px;
+      container-type: inline-size;
    }
 
    .data-connected {
@@ -5283,6 +5285,126 @@
    .data-imports tbody td:first-child {
       white-space: normal;
       overflow-wrap: anywhere;
+   }
+
+   /* the setup wizard leads with a connected pull; the file drop follows it */
+   .data-connected.lead {
+      margin-top: 0;
+   }
+
+   /* the source name opens its details */
+   .data-history-toggle {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 0;
+      background: none;
+      border: 0;
+      font: inherit;
+      color: var(--tx0);
+      text-align: left;
+      cursor: pointer;
+   }
+
+   .data-history-toggle svg {
+      flex: none;
+      margin-top: 3px;
+      color: var(--tx2);
+   }
+
+   .data-history-toggle:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 2px;
+      border-radius: 4px;
+   }
+
+   .data-history-rerun {
+      margin-left: 6px;
+      padding: 0 4px;
+   }
+
+   .data-history-file {
+      display: block;
+      margin: 18px 0 8px;
+   }
+
+   /* an import's details sit under its row, read as one */
+   .data-imports tbody tr.open > td {
+      border-bottom: 0;
+   }
+
+   .data-imports tbody tr.data-expand[hidden] {
+      display: none;
+   }
+
+   .data-imports tbody tr.data-expand,
+   .data-imports tbody tr.data-expand:hover {
+      background: transparent;
+   }
+
+   /* side padding stays the first cell's, so the details line up with the source */
+   .data-imports tbody tr.data-expand > td {
+      white-space: normal;
+      padding-top: 0;
+      padding-bottom: 16px;
+   }
+
+   /* held to the card's visible width and pinned left, so a table that scrolls
+      sideways never hides them (44px: the cell's side padding) */
+   .data-history-detail {
+      position: sticky;
+      left: 22px;
+      max-width: calc(100cqw - 44px);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--tx1);
+      overflow-wrap: anywhere;
+   }
+
+   .data-history-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 28px;
+      margin: 0;
+   }
+
+   .data-history-facts dt {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--tx2);
+   }
+
+   .data-history-facts dd {
+      margin: 0;
+      color: var(--tx0);
+      font-variant-numeric: tabular-nums;
+   }
+
+   .data-history-line b {
+      font-weight: 650;
+      color: var(--tx0);
+   }
+
+   .data-history-warn {
+      margin: 0;
+      padding: 8px 12px;
+      border-radius: 10px;
+      color: var(--poor);
+      background: var(--poor-bg);
+   }
+
+   .data-history-warn.incomplete {
+      color: var(--fair);
+      background: var(--fair-bg);
+   }
+
+   .data-history-value {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--tx0);
    }
 
    /* Streams and rule-source tables: fixed layout so long settings or URLs ellipsize instead of widening the page */

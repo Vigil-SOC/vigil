@@ -640,10 +640,11 @@ def _lock_held(session: Session) -> bool:
     )
 
 
-def start_run(investigation_id: str) -> None:
+def start_run(investigation_id: str, pull_days: Optional[int] = None) -> None:
     """Commit the import's ``running`` row before its work starts, so a crash
     leaves it visible. The caller holds the import lock, so any other running
-    row is a run that died: it is marked failed."""
+    row is a run that died: it is marked failed. A connected pull records its
+    window now, so one that fails or dies can still be re-run as it was."""
     now = datetime.now(timezone.utc)
     with unit_of_work() as session:
         session.execute(
@@ -659,6 +660,8 @@ def start_run(investigation_id: str) -> None:
             )
             session.add(record)
         record.status = RUNNING
+        if pull_days is not None:
+            record.pull_days = pull_days
         record.started_at = now
         record.finished_at = None
         record.error = None
