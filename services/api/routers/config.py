@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, create_model
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, text
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
@@ -63,9 +63,11 @@ from core.storage.config_service import get_config_service
 from core.storage.models import (
     AIModelConfig,
     HistoryImport,
+    SystemConfig,
     User,
 )
 from core.storage.schemas.base import _iso_utc
+from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
@@ -832,33 +834,72 @@ def get_setup_state():
     return _read_setup_state()
 
 
+# Serialises two wizard saves. A progress write that read the row before
+# "Go to console" must not land afterwards and clear finished.
+SETUP_LOCK = 48751
+
+
 @router.put("/setup-state", response_model=SetupState, dependencies=_PLATFORM_WRITE)
 def put_setup_state(
     update: SetupStateUpdate,
     current_user: User = Depends(get_current_active_user),
 ):
     """Move the wizard on. Progress only grows: a step once passed stays passed,
-    and the furthest step never moves back, so two admins cannot undo each other."""
+    and the furthest step never moves back, so two admins cannot undo each other.
+    A finish, once recorded, stays recorded."""
     if update.passed and any(not 1 <= n <= SETUP_STEP_COUNT for n in update.passed):
         raise HTTPException(status_code=422, detail="passed holds steps 1 to 5")
-    state = _read_setup_state()
-    if update.furthest is not None:
-        state.furthest = max(state.furthest, update.furthest)
-    if update.passed:
-        state.passed = sorted(set(state.passed) | set(update.passed))
-    if update.finished and not state.finished:
-        state.finished = True
-        state.finished_by = current_user.username
-        state.finished_at = utcnow().isoformat()
-    saved = _for_user(current_user).set_system_config(
-        SETUP_STATE_KEY,
-        state.model_dump(),
-        description="Setup wizard progress for this install",
-        config_type="setup",
-        change_reason="setup wizard",
-    )
-    if not saved:
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
+    try:
+        with unit_of_work() as session:
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": SETUP_LOCK}
+            )
+            row = (
+                session.query(SystemConfig).filter_by(key=SETUP_STATE_KEY).one_or_none()
+            )
+            raw = row.value if row is not None else None
+            try:
+                state = SetupState.model_validate(raw) if raw else SetupState()
+            except Exception:  # a hand-edited row must not block the wizard
+                logger.warning("Unreadable %s; reading as not started", SETUP_STATE_KEY)
+                state = SetupState()
+            if update.furthest is not None:
+                state.furthest = max(state.furthest, update.furthest)
+            if update.passed:
+                state.passed = sorted(set(state.passed) | set(update.passed))
+            if update.finished and not state.finished:
+                state.finished = True
+                state.finished_by = current_user.username
+                state.finished_at = utcnow().isoformat()
+            payload = state.model_dump()
+            action = "update" if row is not None else "create"
+            if row is None:
+                session.add(
+                    SystemConfig(
+                        key=SETUP_STATE_KEY,
+                        value=payload,
+                        description="Setup wizard progress for this install",
+                        config_type="setup",
+                        updated_by=str(current_user.user_id),
+                    )
+                )
+            else:
+                row.value = payload
+                row.updated_by = str(current_user.user_id)
+            _for_user(current_user)._create_audit_log(
+                session,
+                config_type="setup",
+                config_key=SETUP_STATE_KEY,
+                action=action,
+                old_value=raw if isinstance(raw, dict) else None,
+                new_value=payload,
+                change_reason="setup wizard",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("setup state was not saved")
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from None
     return state
 
 

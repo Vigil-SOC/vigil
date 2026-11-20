@@ -171,15 +171,22 @@ const SetupWizard = () => {
     }
   }, [])
 
-  // the install's copy; best effort, this browser's copy is already saved
-  const share = (update: { furthest?: number; passed?: number[]; finished?: boolean }) => {
+  // Progress is best effort: this browser's copy is already saved. Finishing is not.
+  const share = (update: { furthest?: number; passed?: number[] }) => {
     if (canWrite) configApi.putSetupState(update).catch(() => undefined)
   }
 
   const dismiss = () => {
     markSetupDismissed()
-    share({ finished: true })
     navigate('/', { replace: true })
+  }
+
+  // Only the done step records setup as finished. A failed write stays on the page.
+  const goToConsole = () => {
+    configApi.putSetupState({ finished: true }).then(
+      () => dismiss(),
+      () => notify('err', 'Could not record that setup finished'),
+    )
   }
 
   const save = (next: SetupProgress) => {
@@ -190,11 +197,26 @@ const SetupWizard = () => {
 
   const advance = () => {
     const n = index + 1
-    save({
+    const next = {
       furthest: Math.max(progress.furthest, Math.min(n + 1, SETUP_STEP_COUNT)),
       passed: [...new Set([...progress.passed, n])],
-    })
-    setIndex(n)
+    }
+    writeSetupProgress(next)
+    setProgress(next)
+    const moved = () => setIndex(n)
+    if (!canWrite) {
+      moved()
+      return
+    }
+    const write = configApi.putSetupState(next)
+    // The done step's finish must not race this write: a late progress save
+    // would replace the row from a copy that was not finished.
+    if (!last) {
+      write.catch(() => undefined)
+      moved()
+      return
+    }
+    write.then(moved, () => notify('err', 'Could not save setup progress'))
   }
 
   // step 3 counts as passed once any provider can route, however the person got there
@@ -298,7 +320,7 @@ const SetupWizard = () => {
               {!done && `Step ${index + 1} of ${SETUP_STEP_COUNT} · your progress is saved`}
             </span>
             {done ? (
-              <button className="btn primary" onClick={dismiss}>
+              <button className="btn primary" onClick={goToConsole}>
                 Go to console
                 <Icon name="arrowR" size={15} />
               </button>

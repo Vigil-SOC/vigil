@@ -3,7 +3,7 @@ import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, day1Api, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
@@ -21,6 +21,8 @@ import {
 } from './setupHidden'
 import { errorText } from '../../shared/errorText'
 import { useAuth } from '../../contexts/AuthContext'
+import { stepUpDetailOf } from '../../services/stepUp'
+import { reportStamp } from '../report/stamp'
 import { CloseCaseDialog } from '../cases/ClosureFields'
 import { closesOnCase } from '../../shared/closesOnCase'
 import './home.css'
@@ -252,7 +254,12 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const busyRef = useRef<string | null>(null)
   const loadTicket = useRef(0)
   const { notify, pending, settled } = useToast()
-  const canClose = useAuth().hasPermission('cases.write')
+  const { hasPermission } = useAuth()
+  const canClose = hasPermission('cases.write')
+  const canRunReport = hasPermission('platform.write')
+  const [reportLine, setReportLine] = useState<Schema<'Day1Status'> | null>(null)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [rerunning, setRerunning] = useState(false)
   const [closing, setClosing] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -276,11 +283,16 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       (res) => ({ ok: true as const, data: res.data }),
       (err: unknown) => ({ ok: false as const, err }),
     )
-    const [needsResult, pickup, readyResult, setupResult] = await Promise.all([
+    const reportRead = day1Api.status().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const [needsResult, pickup, readyResult, setupResult, reportResult] = await Promise.all([
       needs,
       shareRead,
       readyRead,
       setupRead,
+      reportRead,
     ])
     if (ticket !== loadTicket.current) return
     setShare(pickup)
@@ -295,6 +307,15 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       setSetupError(null)
     } else {
       setSetupError(errorText(setupResult.err, 'Could not load setup steps'))
+    }
+    if (reportResult.ok) {
+      setReportLine(reportResult.data)
+      setReportError(null)
+    } else if ((reportResult.err as { response?: { status?: number } })?.response?.status === 403) {
+      setReportLine(null)
+      setReportError(null)
+    } else {
+      setReportError(errorText(reportResult.err, 'Could not load the Day 1 Report'))
     }
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
@@ -432,6 +453,19 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const shownChips = fillCommand ? LIVE_COMMANDS : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
+  const rerunReport = async () => {
+    setRerunning(true)
+    try {
+      await day1Api.run()
+      notify('ok', 'Day 1 Report is ready.')
+      await load()
+    } catch (err) {
+      if (!stepUpDetailOf(err)) notify('err', errorText(err, 'Could not run the Day 1 Report'))
+    } finally {
+      setRerunning(false)
+    }
+  }
+
   const sectionHead = (title: string, sub: string | null, tip: ReactNode, link: ReactNode) => (
     <div className="home-head">
       <div className="home-head-title">
@@ -519,6 +553,41 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                       <li key={note.id}>{note.text}</li>
                     ))}
                   </ul>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+        {(reportLine !== null || reportError !== null) &&
+          (reportError !== null ||
+            reportLine?.running_since ||
+            reportLine?.incomplete_since ||
+            reportLine?.latest_id) && (
+          <section aria-label="Day 1 Report">
+            {sectionHead('Day 1 Report', null, null, null)}
+            {reportError && <p role="alert">{reportError}</p>}
+            {reportLine && (
+              <div className="home-readiness">
+                {reportLine.running_since && (
+                  <p className="home-report-line">Running since {reportStamp(reportLine.running_since)}.</p>
+                )}
+                {reportLine.incomplete_since && (
+                  <p className="home-report-line">
+                    Didn't complete.
+                    {canRunReport && (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => void rerunReport()}
+                        disabled={rerunning}
+                      >
+                        {rerunning ? 'Running…' : 'Re-run'}
+                      </button>
+                    )}
+                  </p>
+                )}
+                {reportLine.latest_id && (
+                  <Link to={`/report?record=${encodeURIComponent(reportLine.latest_id)}`}>Latest report</Link>
                 )}
               </div>
             )}

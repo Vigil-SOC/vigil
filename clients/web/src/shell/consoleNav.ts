@@ -12,6 +12,7 @@ export const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   detections: 'detections.read',
   home: HOME_PERM,
   medic: 'medic.read',
+  report: 'platform.read',
 }
 
 /** key is a plain string, so extension screens can join the nav row */
