@@ -69,6 +69,9 @@ CATALOG = {
         "integrations.read": _SIGNED_IN_READ,
         "integrations.install": _split_from("integrations.write"),
         "cases.assign": _split_from("cases.write"),
+        # Sends a whole case outside Vigil in one signed file. Apart from
+        # cases.read so not every reader of a case can carry all of it out.
+        "cases.export": _NEW_CAPABILITY,
         "cases.move": _NEW_CAPABILITY,
         "roles.manage": _NEW_CAPABILITY,
         "teams.manage": _NEW_CAPABILITY,
@@ -95,6 +98,7 @@ CATALOG = {
             "automation.write": True,
             "cases.assign": True,
             "cases.delete": True,
+            "cases.export": True,
             "cases.move": True,
             "cases.read": True,
             "cases.write": True,
@@ -151,6 +155,7 @@ CATALOG = {
             "automation.write": True,
             "cases.assign": True,
             "cases.delete": True,
+            "cases.export": True,
             "cases.move": True,
             "cases.read": True,
             "cases.write": True,
@@ -274,11 +279,11 @@ PRESETS = {
     },
     "auditor": {
         "name": "Auditor",
-        "description": "Reads everything, including the audit trail. No writes.",
+        "description": "Reads everything, including the audit trail, and exports cases. No writes.",
         "permissions": {
             k: True
             for k in sorted(KNOWN_PERMISSIONS)
-            if k.endswith(".read") or k == "loglm.view"
+            if k.endswith(".read") or k in ("loglm.view", "cases.export")
         },
     },
 }
