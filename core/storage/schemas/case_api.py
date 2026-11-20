@@ -6,11 +6,11 @@ under ``services/api/routers/`` because every module there must export a
 ``router``.
 """
 
-from datetime import datetime
 from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel
 
+from core.storage.schemas.base import OptDateTime
 from core.storage.schemas.case import CaseSchema, CaseTeam
 from core.storage.schemas.case_entities import (
     CaseClosureInfoSchema,
@@ -68,7 +68,7 @@ class CaseQueueItem(BaseModel):
     max_cost_usd: Optional[float] = None
     budget_health: Optional[str] = None
     comment_count: int = 0
-    last_activity: Optional[datetime] = None
+    last_activity: OptDateTime = None
     age_seconds: float
     sla_seconds_left: Optional[float] = None
     health_status: Optional[str] = None
