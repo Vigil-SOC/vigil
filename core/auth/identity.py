@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import unicodedata
 from typing import Optional
 
@@ -13,7 +14,7 @@ from sqlalchemy import func, literal_column, or_, text
 from sqlalchemy.orm import Session
 
 from core.auth import key_ring
-from core.storage.models import AuthLink, IdentifierReservation, User
+from core.storage.models import AuthLink, IdentifierReservation, Principal, User
 from core.time import utcnow
 
 # What identifier_in_use answers besides None. All truthy, so a caller that only
@@ -22,6 +23,11 @@ IN_USE = "in_use"
 RESERVED = "reserved"
 # A reservation exists but its key can't be read, so the check can't tell.
 UNAVAILABLE = "unavailable"
+
+# Spelled like a principal id: an account's ``user-<12 hex>``, an agent's
+# ``agent:<key>``, or the system's ``system``. The trail and the lookups that
+# take "username or id" would read such a name as that principal.
+_PRINCIPAL_SHAPED = re.compile(r"user-[0-9a-f]{12}|agent:.*|system", re.DOTALL)
 
 
 def fold(value: str) -> str:
@@ -126,7 +132,8 @@ def identifier_in_use(
     pending_invites: bool = True,
 ) -> Optional[str]:
     """``IN_USE`` when another account, or a pending invite, uses ``value`` as a
-    username or email, ``RESERVED`` when an erased person held it, ``UNAVAILABLE``
+    username or email, ``RESERVED`` when an erased person held it or it is
+    (or is spelled like) a principal id, ``UNAVAILABLE``
     when a reservation can't be read, else None.
 
     Compared by ``fold``, so ``Ada@Example.com`` and the full-width ``ａｄａ@example.com``
@@ -138,6 +145,8 @@ def identifier_in_use(
     instead of treating it as a collision.
     """
     key = fold(value)
+    if _names_principal(session, key, except_user_id):
+        return RESERVED
     clauses = [
         or_(
             User.username == value,
@@ -167,6 +176,18 @@ def identifier_in_use(
     # finds the account sees the reservation. Reading it first would miss one
     # written between. No lock; do not reorder.
     return _reserved(session, key)
+
+
+def _names_principal(session: Session, key: str, except_user_id: Optional[str]) -> bool:
+    """A sign-in name may not be, or look like, a principal id."""
+    if _PRINCIPAL_SHAPED.fullmatch(key):
+        return True
+    query = session.query(Principal.principal_id).filter(
+        sql_fold(Principal.principal_id) == key
+    )
+    if except_user_id is not None:
+        query = query.filter(Principal.principal_id != except_user_id)
+    return query.first() is not None
 
 
 def _invited(session: Session, key: str, except_link_id: Optional[str]) -> bool:

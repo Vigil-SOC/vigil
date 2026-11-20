@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from core.cases.agent_closure import actor, run_agent
+from core.cases.agent_closure import acting_principal, actor, run_agent
 from core.detections.inventory.catalog import in_repo
 from core.storage.config_service import ConfigService
 from core.storage.connection import get_db_manager
@@ -41,13 +41,16 @@ def _value(rule: DetectionRule) -> Dict[str, Any]:
 
 
 def _who() -> tuple:
-    """(who decided, the run's agent and run id): never an argument the model gave.
+    """(who decided, their principal id, the run's agent and run id): never an
+    argument the model gave. The rule row keeps the name; the trail names the
+    principal.
 
     A run no person started has no caller, only its signed claims.
     """
     agent_id, run_id = run_agent()
     run = {"agent_id": agent_id, "run_id": run_id}
-    return actor(), {k: v for k, v in run.items() if v}
+    who = actor()
+    return who, acting_principal() or who, {k: v for k, v in run.items() if v}
 
 
 def link_rule(
@@ -67,7 +70,7 @@ def link_rule(
     if origin_rule_id is not None and origin_id is None:
         return {"error": "origin_rule_id must be a rule_id"}
 
-    who, run = _who()
+    who, principal, run = _who()
     with get_db_manager().session_scope() as session:
         # Locked so a sync linking this copy now waits, then sees the decision.
         copy = session.get(DetectionRule, copy_id, with_for_update=True)
@@ -105,7 +108,7 @@ def link_rule(
                 datetime.now(timezone.utc),
             )
         new = _value(copy)
-        ConfigService(user_id=who)._create_audit_log(
+        ConfigService(user_id=principal)._create_audit_log(
             session,
             config_type=AUDIT_TYPE,
             config_key=f"detection_rule:{copy_id}",

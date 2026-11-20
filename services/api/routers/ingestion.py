@@ -212,7 +212,7 @@ async def upload_and_ingest_file(
         filename=filename,
         fmt=format,
         data_type=data_type,
-        actor=current_user.username or current_user.user_id,
+        actor=current_user.principal_id,  # the trail names people by principal id
         source_system=source_system.strip(),
     )
     try:
@@ -263,7 +263,7 @@ async def import_connected_history(
         filename=f"{label}, last {request.days} days",
         fmt="connected",
         data_type=HISTORY,
-        actor=current_user.username or current_user.user_id,
+        actor=current_user.principal_id,  # the trail names people by principal id
         source_system=request.source,
     )
     await _admit(job)
