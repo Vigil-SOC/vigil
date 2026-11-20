@@ -28,7 +28,7 @@ from core.deps import (
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations import health as source_health
 from core.integrations._base.descriptor import iter_descriptors
-from core.integrations.credential_check import check_credentials, has_check
+from core.integrations.credential_check import NotChecked, check_credentials, has_check
 from core.integrations.darktrace.darktrace_webhook_router import darktrace_enabled
 from core.integrations.extension import session_service as extension_sessions
 from core.integrations.integration_bridge_service import IntegrationBridgeService
@@ -1136,6 +1136,59 @@ async def _probe_mcp_server(
     return result
 
 
+def _test_result(
+    integration_id: str,
+    *,
+    success: bool,
+    errors: List[Optional[str]],
+    servers: List[Dict[str, Any]],
+    outcome: Any,
+) -> dict:
+    """Record Test and shape its answer.
+
+    A check that did not run is not a failure and is not stored as a pass:
+    the record keeps whatever the last real check said. A real check's line
+    is fixed text; nothing from the vendor is added to it.
+    """
+    credentials = None
+    check = None
+    unchecked = isinstance(outcome, NotChecked)
+    if unchecked:
+        # The read did not run. A probe that failed beside it is not a failed Test.
+        credentials = {"success": None, "message": outcome.reason}
+        success = True
+        errors = []
+    elif outcome is not None:
+        credentials = {"success": outcome[0], "message": outcome[1]}
+        check = outcome
+        if not outcome[0]:
+            success = False
+            errors.append(outcome[1])
+    error_summary = "; ".join(error for error in errors if error) or None
+    # A probe that started and a check that did not run must not read as healthy.
+    if not (unchecked and success):
+        source_health.record_test(
+            integration_id, success=success, error=error_summary, check=check
+        )
+    if unchecked and success:
+        message, reason = outcome.reason, "not_checked"
+    elif success:
+        message, reason = f"Integration '{integration_id}' connected.", None
+    else:
+        message = error_summary or f"Integration '{integration_id}' failed to connect."
+        reason = None
+    result: Dict[str, Any] = {
+        "success": success,
+        "message": message,
+        "servers": servers,
+    }
+    if reason is not None:
+        result["reason"] = reason
+    if credentials is not None:
+        result["credentials"] = credentials
+    return result
+
+
 def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
     parts = []
     for server in servers:
@@ -1168,16 +1221,18 @@ async def test_integration(
     """Probe the MCP servers behind an integration, or its connector URL.
 
     A UI-extension connector (stored ``connectorUrl``, no MCP server) is probed
-    over HTTP instead. Other catalog entries have no descriptor, so they are not
-    testable. A stored
+    over HTTP instead. A catalog entry with no server and no credential check
+    is not testable. One with a check and no server (Cloudforce One) skips the
+    probe and runs the check. A stored
     config of ``{}`` is still configured — secret-only rows keep the secret
     outside this dict. The integration's enabled flag does not block the
     probe: enabled MCP servers are contacted, and if none are enabled every
     declared server is probed with a temporary session. The alert sources
     (Splunk, Elastic, OpenSearch, Sentinel, Security Hub, Defender, CrowdStrike)
-    are also read with their saved URL and credentials, whether or not their
-    servers started (``credentials`` in the answer): a server starts whatever
-    it is pointed at, and the adapter that pulls alerts does not go through it.
+    and the lookup and sandbox integrations are also read with their saved
+    credentials (``credentials`` in the answer): a server starts whatever it
+    is pointed at. A lookup whose tool server is off is ``not_checked``, not
+    a failure.
     """
     server_names = list(bridge.server_names_for(integration_id))
     integrations = bridge.load_integration_config().get("integrations", {})
@@ -1185,7 +1240,7 @@ async def test_integration(
     stored = integrations.get(integration_id) or {}
     if not server_names and stored.get("connectorUrl"):
         return await _probe_connector_integration(integration_id, current_user)
-    if not server_names:
+    if not server_names and not has_check(integration_id):
         return {
             "success": False,
             "reason": "not_testable",
@@ -1196,6 +1251,16 @@ async def test_integration(
     # as {} after split_secrets and is still configured.
     if integration_id not in integrations:
         raise HTTPException(status_code=400, detail="Integration not configured")
+
+    # Cloudforce One has a check and no MCP server, so there is nothing to probe.
+    if not server_names:
+        return _test_result(
+            integration_id,
+            success=True,
+            errors=[],
+            servers=[],
+            outcome=await check_credentials(integration_id),
+        )
 
     if mcp_client is None:
         return {
@@ -1231,41 +1296,21 @@ async def test_integration(
             )
         )
     success = all(server["success"] for server in servers)
-    errors = [] if success else [_probe_error_summary(servers)]
+    errors: List[Optional[str]] = [] if success else [_probe_error_summary(servers)]
 
     # The servers starting says nothing about the URL or credentials, so read
     # the saved settings against the real service (read-only) before saying Good.
     # It runs whatever the probe said, as its own result: an alert source's
     # adapter reads with these settings directly, not through an MCP server
-    # that may need other config or a browser sign-in.
-    credentials = None
-    outcome = await check_credentials(integration_id)
-    if outcome is not None:
-        credentials = {"success": outcome[0], "message": outcome[1]}
-        if not outcome[0]:
-            success = False
-            errors.append(outcome[1])
-    error_summary = "; ".join(error for error in errors if error) or None
-
-    # The attempt is Test's whole answer; the real check, when one ran, is kept
-    # apart as the last real check.
-    source_health.record_test(
-        integration_id, success=success, error=error_summary, check=outcome
+    # that may need other config or a browser sign-in. A lookup whose tool
+    # server is off comes back not checked, which is not a failure.
+    return _test_result(
+        integration_id,
+        success=success,
+        errors=errors,
+        servers=servers,
+        outcome=await check_credentials(integration_id),
     )
-
-    if success:
-        message = f"Integration '{integration_id}' connected."
-    else:
-        message = error_summary or f"Integration '{integration_id}' failed to connect."
-
-    result = {
-        "success": success,
-        "message": message,
-        "servers": servers,
-    }
-    if credentials is not None:
-        result["credentials"] = credentials
-    return result
 
 
 @router.get("/general", dependencies=_PLATFORM_READ)

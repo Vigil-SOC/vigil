@@ -2,7 +2,7 @@
 
 Storage tier, so the config service's save path can reset a record in its own
 transaction. Every writer is best-effort: a failed health write is logged and
-never fails the poll, test, push or save it describes. The judge of a record is
+never fails the poll, test, tool call, push or save it describes. The judge of a record is
 ``core.integrations.health``. Push sources call in through
 ``core.storage.push_health``, which throttles the counts.
 """
@@ -202,6 +202,21 @@ def record_failed(
         _attempt(row, now, False, error, kind)
         row.consecutive_failures = (row.consecutive_failures or 0) + 1
         _counts(row, now, received=received, dropped=dropped, labels=labels)
+
+    _write(source_id, apply)
+
+
+def record_lookup(source_id: str) -> None:
+    """A real MCP read succeeded.
+
+    Not a Test and not a collection: ``last_check_*`` stays Test's answer, and
+    the run of collection failures ends because the source just answered.
+    """
+
+    def apply(row, now):
+        _attempt(row, now, True, None, None)
+        row.last_success_at = now
+        row.consecutive_failures = 0
 
     _write(source_id, apply)
 
