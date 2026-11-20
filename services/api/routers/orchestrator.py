@@ -189,6 +189,8 @@ def _persist_orchestrator_enabled(
         config_type="orchestrator",
         change_reason=reason
         or f'Orchestrator {"enabled" if enabled else "disabled"} via API',
+        # Turning it off is a safety write: not held by a restore's write pause.
+        gated=bool(enabled),
     )
     if stored is False:
         raise RuntimeError("orchestrator.settings was not stored")
