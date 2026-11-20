@@ -25,7 +25,7 @@ import { relativeTime, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
 import AddIntegrationTab from './AddIntegrationTab'
 import AuditFeedCard from './AuditFeedCard'
-import { buildCatalog } from './integrationCatalog'
+import { buildCatalog, savedCustomWithoutServer } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationMark from './IntegrationMark'
 import IntegrationWizard from './IntegrationWizard'
@@ -103,7 +103,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     [intCfg.enabled_integrations, connected],
   )
   const entries = useMemo(() => buildCatalog(catalog, rows, connectedIds), [catalog, rows, connectedIds])
-  const available = entries.filter((e) => !e.connected).length
+  // a saved custom integration with no server is not available to add
+  const available = entries.filter((e) => !e.connected && !e.notRunning).length
   const healthy = connected.filter((r) => r.level === 'good').length
 
   // gate M: MCP server on/off (agent tools)
@@ -355,11 +356,15 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             // refresh the registry so a URL edit re-reads; saving alone doesn't enable
             const isExtension = wizardFor.fields?.some((f) => f.name === 'connectorUrl')
             if (isExtension) reloadExtensions()
+            // no server row, so there is no toggle to point at
+            const notRunning = savedCustomWithoutServer(wizardFor, rows)
             notify(
               'ok',
               isExtension
                 ? `${wizardFor.name} connected. Turn it on with the toggle to enable it.`
-                : `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`,
+                : notRunning
+                  ? `${wizardFor.name} configured.`
+                  : `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`,
             )
           }}
         />
