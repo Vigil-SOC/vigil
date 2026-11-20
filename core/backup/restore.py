@@ -1458,7 +1458,10 @@ def _tell_session_holders(
         " API token reminders resume now, and no token is revoked for disuse sooner "
         "than 7 days after a fresh reminder."
     )
-    holders = permissions.holders("sessions.manage")
+    # The re-apply runs after this: a person erased since the backup is still
+    # active here, and must not be told (or mailed) at a retired address.
+    erased = set(retention.read_ids(retention.outside_path()))
+    holders = [p for p in permissions.holders("sessions.manage") if p not in erased]
     for principal in holders:
         try:
             notify(
