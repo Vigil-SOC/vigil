@@ -1009,6 +1009,19 @@ prepare_backup_mounts() {
     if [ -f "$REPO_ROOT/.env" ]; then
         BACKUP_RUN_ARGS+=(-v "$REPO_ROOT/.env:/app/.env:$env_mode")
     fi
+    # The erasure list the host API keeps (core/audit/retention.outside_path):
+    # mounted at a fixed path, or every snapshot would carry an empty list and a
+    # restore would bring erased people back. The env var outranks the .env above.
+    local erasure="${VIGIL_ERASURE_DIR:-${VIGIL_UPGRADE_DIR:-}}"
+    if [ -n "$erasure" ]; then
+        case "$erasure" in
+            /*) ;;
+            *) erasure="$REPO_ROOT/$erasure" ;;
+        esac
+        mkdir -p "$erasure"
+        BACKUP_RUN_ARGS+=(-v "$(cd "$erasure" && pwd):/var/lib/vigil-erasure"
+            -e VIGIL_ERASURE_DIR=/var/lib/vigil-erasure)
+    fi
 }
 
 # Before the schema is touched: take a restore point when this image would
