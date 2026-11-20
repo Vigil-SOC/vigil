@@ -1,5 +1,6 @@
 """Service for generating custom integrations with the assigned AI model."""
 
+import hashlib
 import json
 import logging
 import os
@@ -50,6 +51,24 @@ def _validate_integration_id(integration_id: str) -> str:
             "integration_id must match ^[a-z0-9][a-z0-9_-]{0,63}$"
         )
     return integration_id
+
+
+def _sha256(code: str) -> str:
+    # 16 hex characters: the trail blanks 32 or more as secret-shaped.
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
+
+
+def _record_change(actor, integration_id, verb, old_value, new_value) -> None:
+    """Record a save or delete before it touches disk; a refused entry stops it."""
+    from core.storage.config_service import get_config_service
+
+    get_config_service(user_id=actor).record_audit(
+        config_type="custom_integration",
+        config_key=f"custom_integration:{integration_id}",
+        action=verb,
+        old_value=old_value,
+        new_value=new_value,
+    )
 
 
 def _validate_secret_fields(integration_id: str, metadata: Dict[str, Any]) -> None:
@@ -536,8 +555,9 @@ Only generate the JSON response when you have enough information to create a com
         integration_id: str,
         metadata: Dict[str, Any],
         server_code: str,
+        actor: str,
     ) -> Dict[str, Any]:
-        """Save a generated custom integration.
+        """Save a generated custom integration, recorded on the trail as ``actor``.
 
         Validates ``integration_id`` and the resolved write path so a
         crafted ID can't escape ``custom_integrations_dir``. The
@@ -552,6 +572,13 @@ Only generate the JSON response when you have enough information to create a com
             )
 
         all_metadata = self._load_metadata()
+        _record_change(
+            actor,
+            integration_id,
+            "update" if integration_id in all_metadata else "create",
+            self._snapshot(all_metadata, integration_id, server_file),
+            {"metadata": metadata, "code_sha256": _sha256(server_code)},
+        )
         _write_atomic(server_file, server_code)
 
         init_file = self.custom_integrations_dir / "__init__.py"
@@ -582,8 +609,10 @@ Only generate the JSON response when you have enough information to create a com
         """
         return list(self._load_metadata().values())
 
-    async def delete_integration(self, integration_id: str) -> Dict[str, Any]:
-        """Delete a custom integration."""
+    async def delete_integration(
+        self, integration_id: str, actor: str
+    ) -> Dict[str, Any]:
+        """Delete a custom integration, recorded on the trail as ``actor``."""
         server_file = self._server_path_for(integration_id)
 
         all_metadata = self._load_metadata()
@@ -591,6 +620,13 @@ Only generate the JSON response when you have enough information to create a com
         if integration_id not in all_metadata:
             raise NotFoundError(f"Integration '{integration_id}' not found")
 
+        _record_change(
+            actor,
+            integration_id,
+            "delete",
+            self._snapshot(all_metadata, integration_id, server_file),
+            None,
+        )
         del all_metadata[integration_id]
         self._save_metadata(all_metadata)
 
@@ -639,6 +675,20 @@ Only generate the JSON response when you have enough information to create a com
             "valid": all_valid,
             "checks": validation_checks,
             "syntax_error": syntax_error,
+        }
+
+    @staticmethod
+    def _snapshot(
+        all_metadata, integration_id, server_file
+    ) -> Optional[Dict[str, Any]]:
+        """What the trail keeps of a saved integration: its metadata and a code hash."""
+        if integration_id not in all_metadata:
+            return None
+        return {
+            "metadata": all_metadata[integration_id],
+            "code_sha256": (
+                _sha256(server_file.read_text()) if server_file.exists() else None
+            ),
         }
 
     def _load_metadata(self) -> Dict[str, Any]:

@@ -156,12 +156,37 @@ def get_source(source_id: str) -> Optional[Dict[str, Any]]:
     return read_source(source_id)
 
 
+# The operator-set columns a source change records on the audit trail.
+_SETTINGS = ("enabled", "interval_seconds", "max_items", "min_severity")
+
+
+def _settings(row) -> Dict[str, Any]:
+    return {k: getattr(row, k, None) for k in _SETTINGS}
+
+
+def _audit_source(session, actor, source_id, verb, old, new) -> None:
+    """Record a source change in the caller's transaction; a failure rolls it back."""
+    from core.storage.config_service import ConfigService
+
+    ConfigService(user_id=actor)._create_audit_log(
+        session,
+        config_type="federation",
+        config_key=f"federation.source:{source_id}",
+        action=verb,
+        old_value=old,
+        new_value=new,
+    )
+
+
 @default_on_error(None, level="warning")
-def upsert_source(source_id: str, defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def upsert_source(
+    source_id: str, defaults: Dict[str, Any], actor: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """Ensure a row exists; if missing, insert with ``defaults``.
 
     Returns the resulting row as dict. Used by the auto-seed step on daemon
-    boot — see :func:`core.federation.seed.seed_federation_sources`.
+    boot — see :func:`core.federation.seed.seed_federation_sources` — and by
+    the API, which names ``actor`` so an insert is recorded on the trail.
     """
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
@@ -173,13 +198,20 @@ def upsert_source(source_id: str, defaults: Dict[str, Any]) -> Optional[Dict[str
             row = FederationSource(source_id=source_id, **defaults)
             session.add(row)
             session.flush()
+            if actor:
+                _audit_source(session, actor, source_id, "create", None, _settings(row))
         dumped = FederationSourceSchema.dump(row)
     return read_source(source_id) or dumped
 
 
 @default_on_error(None, level="warning")
-def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Patch arbitrary columns on a source row. Caller validates fields."""
+def update_source(
+    source_id: str, fields: Dict[str, Any], actor: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Patch arbitrary columns on a source row. Caller validates fields.
+
+    With ``actor``, the change is recorded on the trail in the same transaction.
+    """
     from core.storage.connection import get_db_manager
     from core.storage.models import FederationSource
     from core.storage.schemas import FederationSourceSchema
@@ -188,10 +220,13 @@ def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, 
         row = session.get(FederationSource, source_id)
         if row is None:
             return None
+        old = _settings(row)
         for k, v in fields.items():
             if hasattr(row, k):
                 setattr(row, k, v)
         session.flush()
+        if actor:
+            _audit_source(session, actor, source_id, "update", old, _settings(row))
         dumped = FederationSourceSchema.dump(row)
     return read_source(source_id) or dumped
 

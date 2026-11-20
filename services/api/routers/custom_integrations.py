@@ -99,6 +99,7 @@ async def save_custom_integration(
         integration_id=request.integration_id,
         metadata=request.metadata,
         server_code=request.server_code,
+        actor=str(current_user.user_id),
     )
 
 
@@ -126,7 +127,9 @@ async def delete_custom_integration(
 ):
     """Delete a custom integration."""
     deny_unless(current_user.user_id, "integrations.install")
-    return await CustomIntegrationService().delete_integration(integration_id)
+    return await CustomIntegrationService().delete_integration(
+        integration_id, actor=str(current_user.user_id)
+    )
 
 
 @router.post("/{integration_id}/validate")
