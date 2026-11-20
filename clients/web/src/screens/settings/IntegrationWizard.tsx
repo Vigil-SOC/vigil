@@ -317,6 +317,7 @@ function VerifyStep({ probe, onRun }: { probe: Probe; onRun: () => void }) {
   }
   const { result } = probe
   if (result.reason === 'not_testable') return note('This integration has no server Vigil can test.')
+  if (result.reason === 'not_checked') return note(result.message || 'not checked: no read-only call exists')
   const servers = result.servers ?? []
   const cred = result.credentials
   const credState = cred?.success === true ? 'pass' : cred?.success === false ? 'fail' : 'skip'

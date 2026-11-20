@@ -112,9 +112,23 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 verify=tls_verify(verify, ca_cert_path),
                 timeout=30,
             )
-            # Parse XML response (simplified)
+            # A bad key often comes back as HTTP 403, or 200 with status="error".
+            # The body can echo the request, so the message stays the status only.
+            body = resp.text[:400]
+            refused = resp.status_code != 200 or 'status="error"' in body
+            if refused:
+                return result(
+                    {
+                        "error": f"Palo Alto answered HTTP {resp.status_code}",
+                        "status_code": resp.status_code,
+                    }
+                )
             return result(
-                {"success": True, "message": "Check Palo Alto console for threat logs"}
+                {
+                    "success": True,
+                    "status_code": resp.status_code,
+                    "message": "Read threat logs",
+                }
             )
 
         return result({"error": f"Unknown tool: {name}"})

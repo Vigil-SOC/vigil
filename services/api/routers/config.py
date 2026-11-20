@@ -1231,10 +1231,11 @@ async def test_integration(
     probe: enabled MCP servers are contacted, and if none are enabled every
     declared server is probed with a temporary session. The alert sources
     (Splunk, Elastic, OpenSearch, Sentinel, Security Hub, Defender, CrowdStrike)
-    and the lookup and sandbox integrations are also read with their saved
+    and the other integrations with a fixed read are also read with their saved
     credentials (``credentials`` in the answer): a server starts whatever it
-    is pointed at. A lookup whose tool server is off is ``not_checked``, not
-    a failure.
+    is pointed at. A read that does not run (no read-only call, no credential
+    saved, or the tool server is off) is ``not_checked``, not a failure, and
+    nothing is stored for it.
     """
     server_names = list(bridge.server_names_for(integration_id))
     integrations = bridge.load_integration_config().get("integrations", {})
@@ -1304,8 +1305,8 @@ async def test_integration(
     # the saved settings against the real service (read-only) before saying Good.
     # It runs whatever the probe said, as its own result: an alert source's
     # adapter reads with these settings directly, not through an MCP server
-    # that may need other config or a browser sign-in. A lookup whose tool
-    # server is off comes back not checked, which is not a failure.
+    # that may need other config or a browser sign-in. A read that did not
+    # run comes back not checked, which is not a failure.
     return _test_result(
         integration_id,
         success=success,

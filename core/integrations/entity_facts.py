@@ -252,6 +252,22 @@ def _not_found(facts: Dict[str, Any]) -> bool:
 
 _failed: Dict[str, Tuple[float, str]] = {}  # server -> (skip until, reason)
 _calls: Dict[str, Deque[float]] = {}
+# Entra and Okta have no separate credential check that a fact read would
+# duplicate. A successful read is the real check, written at most once a minute.
+_CHECK_ON_READ = frozenset({"azure-ad", "okta"})
+_check_marked: Dict[str, float] = {}
+
+
+def _mark_check(server: str) -> None:
+    if server not in _CHECK_ON_READ:
+        return
+    now = time.monotonic()
+    if now - _check_marked.get(server, 0.0) < 60:
+        return
+    _check_marked[server] = now
+    from core.storage.source_health import record_test
+
+    record_test(server, success=True, error=None, check=(True, "Read entity facts"))
 
 
 def _skipped(server: str) -> Optional[str]:
@@ -535,9 +551,10 @@ async def _fetch_one(
     deadline: float,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Reason], bool]:
     """(facts, reason, source failed) for one entity."""
-    from core.agents.mcp_tools import MCPFailure, execute_mcp_tool
+    from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, row_error
 
     facts: Dict[str, Any] = {}
+    read = False
     for tool, call in zip(tools, source.calls):
         if tool is None or _not_found(facts):
             continue
@@ -548,26 +565,17 @@ async def _fetch_one(
                 False,
             )
         try:
-            rows, _ = await execute_mcp_tool(
+            rows, handled = await execute_mcp_tool(
                 tool, call.args(value), max(0.1, _left(deadline)), registry
             )
-            rows = rows or []
-            error = next(
-                (r["error"] for r in rows if isinstance(r, dict) and r.get("error")),
-                None,
-            )
+            error = row_error(rows)
             if error:
-                detail = str(error)
-                if isinstance(error, str) and error.isidentifier():
-                    detail = str(
-                        next(
-                            (r.get("message") for r in rows if isinstance(r, dict)), ""
-                        )
-                        or error
-                    )
-                raise MCPFailure("backend_error", detail)
+                raise MCPFailure("backend_error", error[:200])
         except MCPFailure as exc:
             if "not found" in exc.detail.lower() or "404" in exc.detail:
+                # A missing entity, not a credential that worked. A token
+                # request that failed with HTTP 404 lands here too, so this
+                # branch does not mark the integration healthy.
                 facts = {"found": False}
                 continue
             if not call.required:
@@ -575,7 +583,11 @@ async def _fetch_one(
             if _refused(exc.detail):
                 return None, ("entity_refused", exc.detail[:200]), False
             return None, (exc.kind, exc.detail[:200]), True
-        facts.update(call.project(rows))
+        facts.update(call.project(rows or []))
+        if handled:
+            read = True
+    if read:
+        _mark_check(source.server)
     return (facts if _not_found(facts) else _clean(facts)), None, False
 
 

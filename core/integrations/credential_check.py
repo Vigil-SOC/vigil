@@ -8,10 +8,12 @@ list of at most one alert, or one fixed read-only MCP call. Nothing is written
 to the external system.
 
 Each source that federation pulls alerts from has a direct check, built on the
-client and credentials its adapter uses. Lookups and sandboxes that have no
-direct client are one row in ``_READ_ONLY``: a fixed tool and fixed arguments,
-called through ``execute_mcp_tool``. An id in ``_NO_READ_ONLY`` has nothing to
-call. Anything else returns ``None``, and the test stays what the MCP probe said.
+client and credentials its adapter uses. Anything else with a read-only call
+is one row in ``_READ_ONLY``: a fixed tool and fixed arguments, called through
+``execute_mcp_tool``. An id in ``_NO_READ_ONLY``, or a fixed call with no
+credential saved, is not checked: Test says so and stores nothing, and the
+judge does not withhold readiness. Anything left returns ``None``, and the
+test stays what the MCP probe said.
 """
 
 from __future__ import annotations
@@ -69,7 +71,26 @@ Check = Union[Outcome, NotChecked]
 # "no real check". #4872 adds ids here; the reason is the judge's text.
 _NO_READ_ONLY: Dict[str, str] = {
     "url-analysis": "no read-only call exists",
+    # The only tool each lists writes (teams_send_alert, atomic_red_team_execute).
+    "microsoft-teams": "no read-only call exists",
+    "atomic-red-team": "no read-only call exists",
 }
+
+# A fixed call with no saved credential is the same outcome. Jira signs in
+# through Atlassian's OAuth, not the stored api_token.
+_NO_CREDENTIAL_UNCHECKED = frozenset(
+    {
+        "sentinelone",
+        "carbon-black",
+        "okta",
+        "azure-ad",
+        "palo-alto",
+        "cloudflare",
+        "slack",
+        "pagerduty",
+        "vstrike",
+    }
+)
 
 # A public address and an empty file. Lookups of these prove the credential
 # without asking about a customer indicator.
@@ -579,8 +600,11 @@ class FixedCall:
     label: str
 
 
-# #4872 adds rows. Each call is the cheapest read that still needs the credential:
-# an account or quota call where the server has one, otherwise one benign lookup.
+# Each call is the cheapest read that still needs the credential: an account
+# or quota call where the server has one, otherwise one benign lookup.
+# 192.0.2.1 is TEST-NET-1 (RFC 5737). Taken from a live tools/list, except
+# Jira: its remote server does not list tools until the OAuth sign-in, and
+# atlassianUserInfo is that server's read of the account.
 _READ_ONLY: Dict[str, FixedCall] = {
     # relationships=[] is one GET. The default fans out into premium lookups.
     "virustotal": FixedCall(
@@ -621,6 +645,23 @@ _READ_ONLY: Dict[str, FixedCall] = {
     "cape-sandbox": FixedCall(
         "cape-sandbox", "cape_list_tasks", {"limit": 1}, "CAPE Sandbox"
     ),
+    "sentinelone": FixedCall("sentinelone", "list_alerts", {"first": 1}, "SentinelOne"),
+    "carbon-black": FixedCall(
+        "carbon-black", "cb_get_alerts", {"limit": 1}, "Carbon Black"
+    ),
+    "okta": FixedCall("okta", "list_okta_users", {"max_results": 1}, "Okta"),
+    "azure-ad": FixedCall("azure-ad", "aad_get_sign_ins", {"limit": 1}, "Entra"),
+    "palo-alto": FixedCall("palo-alto", "pan_get_threats", {"limit": 1}, "Palo Alto"),
+    "cloudflare": FixedCall(
+        "cloudflare",
+        "cf_lookup_ip_threat",
+        {"ip": "192.0.2.1"},
+        "Cloudflare",
+    ),
+    "jira": FixedCall("jira", "atlassianUserInfo", {}, "Jira"),
+    "slack": FixedCall("slack", "slack_auth_test", {}, "Slack"),
+    "pagerduty": FixedCall("pagerduty", "list_incidents", {"limit": 1}, "PagerDuty"),
+    "vstrike": FixedCall("vstrike", "vstrike_storyline_list", {}, "VStrike"),
 }
 
 
@@ -630,14 +671,6 @@ def _timeout_message() -> str:
 
 def _rejected(label: str) -> Outcome:
     return False, f"{label} rejected the call"
-
-
-def _error_row(rows: Any) -> bool:
-    if isinstance(rows, dict):
-        return bool(rows.get("error"))
-    if not isinstance(rows, list):
-        return False
-    return any(isinstance(row, dict) and row.get("error") for row in rows)
 
 
 def _from_connect(kind: str, label: str) -> Check:
@@ -662,9 +695,40 @@ def _from_mcp(label: str, kind: str) -> Outcome:
     return _rejected(label)
 
 
+def _no_credential(integration_id: str) -> bool:
+    """True when a fixed call has nothing saved to authenticate with."""
+    from core.integrations._base.descriptor import get_descriptor
+
+    if integration_id == "jira":
+        return False
+    desc = get_descriptor(integration_id)
+    if desc is None or not desc.secret_fields:
+        return desc is not None and not desc.secret_fields
+    try:
+        config = resolve(desc)
+    except Exception as exc:  # noqa: BLE001 - a failed read is not "no credential"
+        logger.warning(
+            "Could not read credentials for %s (%s)",
+            integration_id,
+            type(exc).__name__,
+        )
+        return False
+    return all(not config.get(name) for name in desc.secret_fields)
+
+
+def not_checked_reason(integration_id: str) -> Optional[str]:
+    """Why this id is not checked, or ``None`` when a check exists or might."""
+    reason = _NO_READ_ONLY.get(integration_id)
+    if reason:
+        return reason
+    if integration_id in _NO_CREDENTIAL_UNCHECKED and _no_credential(integration_id):
+        return "no read-only call exists"
+    return None
+
+
 async def _mcp_read(integration_id: str) -> Check:
     """One fixed call. Connecting and the call share ``CHECK_TIMEOUT``."""
-    from core.agents.mcp_tools import MCPFailure, execute_mcp_tool
+    from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, row_error
     from core.integrations.entity_facts import Source, _connect
 
     call = _READ_ONLY[integration_id]
@@ -691,7 +755,8 @@ async def _mcp_read(integration_id: str) -> Check:
         return _from_mcp(call.label, exc.kind)
     if not handled:
         return NotChecked("not checked: the read-only call is not available")
-    if _error_row(rows):
+    # An error row, or Okta's text-only "Error executing tool" reply.
+    if row_error(rows):
         logger.warning("Credential check for %s failed (error)", integration_id)
         return _rejected(call.label)
     return True, f"{call.label} accepted the call"
@@ -700,7 +765,7 @@ async def _mcp_read(integration_id: str) -> Check:
 async def check_credentials(integration_id: str) -> Optional[Check]:
     """``(ok, message)`` for the saved settings, ``NotChecked`` when nothing
     ran, or ``None`` when no check exists."""
-    skipped = _NO_READ_ONLY.get(integration_id)
+    skipped = not_checked_reason(integration_id)
     if skipped is not None:
         return NotChecked(f"not checked: {skipped}")
     if integration_id not in _CHECKS and integration_id not in _READ_ONLY:
@@ -729,8 +794,3 @@ async def check_credentials(integration_id: str) -> Optional[Check]:
 def has_check(integration_id: str) -> bool:
     """True when Test makes a real read for this integration."""
     return integration_id in _CHECKS or integration_id in _READ_ONLY
-
-
-def not_checked_reason(integration_id: str) -> Optional[str]:
-    """Why this id is never checked, or ``None`` when a check exists or might."""
-    return _NO_READ_ONLY.get(integration_id)

@@ -126,8 +126,9 @@ def judge(
     ``detection_source``. ``interval_seconds`` is set only while scheduled
     collection polls the source; a record older than that interval allows
     (backoff included) is no longer believed and reads "unknown".
-    ``unchecked`` is set when the integration has no read-only call: that
-    state does not withhold readiness.
+    ``unchecked`` is the reason an integration is not checked (no read-only
+    call, or a fixed call with no credential saved). That state does not
+    withhold readiness, and nothing is stored for it.
     """
     from core.federation.lag import overdue
 

@@ -36,6 +36,11 @@ def get_config():
 async def handle_list_tools():
     return [
         types.Tool(
+            name="slack_auth_test",
+            description="Check the saved bot token with Slack auth.test. Read-only.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        types.Tool(
             name="slack_send_alert",
             description="Send security alert to Slack channel",
             inputSchema={
@@ -61,6 +66,22 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return result({"error": "Slack not configured"})
 
     args = arguments or {}
+
+    if name == "slack_auth_test":
+        try:
+            resp = httpx.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
+            )
+            data = resp.json()
+        except Exception as e:
+            return result({"error": str(e)})
+        if data.get("ok"):
+            return result(
+                {"ok": True, "team": data.get("team"), "user": data.get("user")}
+            )
+        return result({"error": data.get("error") or "auth.test failed"})
 
     if name == "slack_send_alert":
         channel = args.get("channel")

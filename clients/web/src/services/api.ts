@@ -634,9 +634,11 @@ export const consoleApi = {
 }
 
 export interface IntegrationTestResult {
-  success: boolean
+  /** null is "not checked": neither a pass nor a fail, and nothing was stored */
+  success: boolean | null
   message?: string
-  // "not_testable": nothing to probe or check. "not_checked": a probe ran, the read did not.
+  // "not_testable": nothing to probe or check.
+  // "not_checked": no read-only call, no credential saved, or the read did not run.
   reason?: string
   servers?: { name: string; success: boolean; error?: string; missing_credentials?: string[] }[]
   /** the read-only check of the saved URL and credentials. success null: it did not run. */

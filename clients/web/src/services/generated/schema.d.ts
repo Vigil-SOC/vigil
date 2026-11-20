@@ -3407,10 +3407,11 @@ export interface paths {
          *     probe: enabled MCP servers are contacted, and if none are enabled every
          *     declared server is probed with a temporary session. The alert sources
          *     (Splunk, Elastic, OpenSearch, Sentinel, Security Hub, Defender, CrowdStrike)
-         *     and the lookup and sandbox integrations are also read with their saved
+         *     and the other integrations with a fixed read are also read with their saved
          *     credentials (``credentials`` in the answer): a server starts whatever it
-         *     is pointed at. A lookup whose tool server is off is ``not_checked``, not
-         *     a failure.
+         *     is pointed at. A read that does not run (no read-only call, no credential
+         *     saved, or the tool server is off) is ``not_checked``, not a failure, and
+         *     nothing is stored for it.
          */
         post: operations["post_api_config_integrations_integration_id_test"];
         delete?: never;
