@@ -46,8 +46,9 @@ _SEVERITY_MAP = {
     "high": "high",
     "medium": "medium",
     "low": "low",
-    "info": "low",
-    "informational": "low",
+    # Informational ranks below low, so a floor can tell it from a low finding.
+    "info": "info",
+    "informational": "info",
 }
 
 

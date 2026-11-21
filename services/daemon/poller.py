@@ -26,7 +26,10 @@ from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.integrations._base.ids import FINDING_ID_MAX, fit_id
-from core.integrations.crowdstrike.adapter import _confidence_to_score
+from core.integrations.crowdstrike.adapter import (
+    _confidence_to_score,
+    crowdstrike_severity,
+)
 from core.integrations.splunk.adapter import _splunk_event_to_finding
 from core.storage.push_health import DAEMON_SOURCE, note_dropped, note_success
 from core.storage.service import _mitre_prediction_items
@@ -532,16 +535,8 @@ class DataPoller:
 
         finding_id = fit_id("cs-", detection_id, FINDING_ID_MAX)
 
-        # Map severity
-        severity_raw = detection.get("max_severity_displayname", "Medium")
-        severity_map = {
-            "Critical": "critical",
-            "High": "high",
-            "Medium": "medium",
-            "Low": "low",
-            "Informational": "low",
-        }
-        severity = severity_map.get(severity_raw, "medium")
+        # Same map as federation. This converter still omits external_id.
+        severity = crowdstrike_severity(detection)
 
         # Extract behaviors and tactics
         behaviors = detection.get("behaviors", [])

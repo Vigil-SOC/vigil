@@ -225,6 +225,10 @@ export default function SourceCollection({
                 guard(() => patchSource(sourceId, { min_severity: v }), 'Could not save')
               }
             />
+            <span className="text-xs font-normal text-tx-3">
+              Only Any keeps informational findings, and only while Alert collection is collecting
+              this source.
+            </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

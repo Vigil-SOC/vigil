@@ -216,7 +216,16 @@ export default function FederationSection({ notify }: SectionProps) {
                   </th>
                   <th>On</th>
                   <th className="col-low">Poll every</th>
-                  <th className="col-low">Only alerts at or above</th>
+                  <th className="col-low">
+                    <span>
+                      Only alerts at or above{' '}
+                      <InfoTip
+                        label="What the severity floor keeps"
+                        align="start"
+                        text="Only Any keeps informational findings, and only while Alert collection is collecting that source."
+                      />
+                    </span>
+                  </th>
                   <th>Last poll</th>
                   <th className="col-low">Errors</th>
                   <th className="col-act"><span className="sr-only">Poll now</span></th>
