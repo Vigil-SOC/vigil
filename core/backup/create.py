@@ -368,38 +368,99 @@ def _locations(staging: Path, bifrost_data: str | None) -> list[Location]:
     settings = get_settings()
     locations = [
         Location("database", "included", path=str(staging / "db.dump")),
-        _existing("state_directory", vigil_path(), directory=True),
+        _existing("state_directory", vigil_path(), staging, directory=True),
         _existing(
             "orchestrator_workdir",
             Path(settings.orchestrator_workdir),
+            staging,
             directory=True,
         ),
         # Unset, skills sit in the State Directory and are copied with it.
-        _skills(settings.vigil_skills_path or ""),
-        _file_or_absent("intent", intent_file()),
+        _skills(settings.vigil_skills_path or "", staging),
+        _file_or_absent("intent", intent_file(), staging),
         _env(staging),
         _bifrost(staging, bifrost_data),
     ]
     return locations
 
 
-def _existing(name: str, path: Path, *, directory: bool) -> Location:
+def _existing(name: str, path: Path, staging: Path, *, directory: bool) -> Location:
     present = path.is_dir() if directory else path.exists()
     if present:
-        return Location(name, "included", path=str(path))
+        return Location(name, "included", path=_stage(name, path, staging))
     return Location(name, "skipped", reason="absent")
 
 
-def _skills(raw: str) -> Location:
+def _skills(raw: str, staging: Path) -> Location:
     if not raw.strip():
         return Location("skills", "skipped", reason="unset")
-    return _existing("skills", Path(raw), directory=False)
+    return _existing("skills", Path(raw), staging, directory=False)
 
 
-def _file_or_absent(name: str, path: Path) -> Location:
+def _file_or_absent(name: str, path: Path, staging: Path) -> Location:
     if path.is_file():
-        return Location(name, "included", path=str(path))
+        return Location(name, "included", path=_stage(name, path, staging))
     return Location(name, "skipped", reason="absent")
+
+
+def _stage(name: str, src: Path, staging: Path) -> str:
+    """Copy a host input into staging; the manifest records the copy.
+
+    restic's reads fail with EIO on host-created files over Docker Desktop's
+    VirtioFS bind mounts while plain read() works (#4919), so restic only ever
+    reads container-local copies. Restore places each location by its name.
+    """
+    dest = staging / name / src.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if src.is_dir():
+            _copy_tree(src, dest)
+        else:
+            _copy_file(src, dest)
+    except OSError as exc:
+        where = exc.filename or src
+        raise BackupError(
+            f"could not copy {name} for backup: {where}: {exc.strerror or exc}"
+        ) from exc
+    return str(dest)
+
+
+def _copy_tree(src: Path, dest: Path) -> None:
+    dest.mkdir(exist_ok=True)
+    with os.scandir(src) as entries:
+        for entry in sorted(entries, key=lambda e: e.name):
+            if entry.name.startswith(_RESTORE_ARTIFACT_PREFIXES):
+                continue
+            target = dest / entry.name
+            try:
+                if entry.is_symlink():
+                    os.symlink(os.readlink(entry.path), target)
+                elif entry.is_dir(follow_symlinks=False):
+                    _copy_tree(Path(entry.path), target)
+                elif entry.is_file(follow_symlinks=False):
+                    _copy_file(Path(entry.path), target)
+                # Sockets and FIFOs are not data; restic would store them empty.
+            except FileNotFoundError as exc:
+                # Gone between listing and copying (a rotated log); a read
+                # error on a file that is there still fails the backup.
+                if os.fspath(exc.filename or "") != entry.path:
+                    raise
+    _keep_meta(src, dest)
+
+
+def _copy_file(src: Path, dest: Path) -> None:
+    # Plain read/write: shutil's copies use sendfile, untested over VirtioFS.
+    with open(src, "rb") as fin, open(dest, "wb") as fout:
+        while chunk := fin.read(1 << 20):
+            fout.write(chunk)
+    _keep_meta(src, dest)
+
+
+def _keep_meta(src: Path, dest: Path) -> None:
+    # Mode and times only: never ownership, which a non-root uid cannot set.
+    st = os.stat(src)
+    os.chmod(dest, st.st_mode & 0o7777)
+    os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))
 
 
 def _env(staging: Path) -> Location:
