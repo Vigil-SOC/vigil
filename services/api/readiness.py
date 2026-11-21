@@ -20,6 +20,7 @@ from core.auth import trail_events
 from core.integrations.credential_check import NotChecked, check_credentials, has_check
 from core.integrations.readiness import NOT_READY, READY, evaluate
 from core.platform.process_health import ProcessHealth
+from core.reporting import day1
 from core.storage import source_health
 from core.storage.models import IntegrationConfig, SourceHealth
 from core.storage.unit_of_work import unit_of_work
@@ -51,18 +52,38 @@ async def run() -> None:
 
 
 async def tick(processes: ProcessHealth) -> None:
-    """One pass: the audit decision, then at most one credential re-check."""
+    """One pass: the audit decision, a Day 1 Report when one is due, then at most one re-check."""
     state = await evaluate(processes)
-    source_id = await asyncio.to_thread(_commit, state)
+    source_id, started = await asyncio.to_thread(_commit, state)
+    if started:
+        run_id, trigger = started
+        try:
+            record_id = await asyncio.to_thread(
+                day1.finish, run_id, trigger, None, state
+            )
+        except (
+            Exception
+        ):  # noqa: BLE001 - the start stays; the next tick does not retry it
+            logger.exception("day 1 report did not complete")
+        else:
+            await asyncio.to_thread(day1.notify_finished, trigger, None, record_id)
     if source_id:
         await _recheck(source_id)
 
 
-def _commit(state: dict) -> Optional[str]:
-    with unit_of_work() as session:
-        session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
-        _audit(session, state["state"])
-        return _claim(session)
+def _commit(state: dict) -> tuple[Optional[str], Optional[tuple[str, str]]]:
+    started: Optional[tuple[str, str]] = None
+    try:
+        with unit_of_work() as session:
+            session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
+            _audit(session, state["state"])
+            source_id = _claim(session)
+            started = day1.consider(session, state)
+        return source_id, started
+    except Exception:
+        if started is not None:
+            day1.abandon(started[0])
+        raise
 
 
 def _audit(session, status: str) -> None:

@@ -99,6 +99,7 @@ from core.storage.models.medic import (
     MedicLastSeen,
     MedicWatchState,
 )
+from core.storage.models.report import ReportRecord, ReportRun
 from core.storage.models.skill import SkillInstall, SkillRead, SkillScan
 from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
@@ -198,6 +199,8 @@ __all__ = [
     "MedicIncidentNotice",
     "MedicLastSeen",
     "MedicWatchState",
+    "ReportRecord",
+    "ReportRun",
     "Role",
     "SLAPolicy",
     "SharedIOC",

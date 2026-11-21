@@ -724,6 +724,20 @@
   overflow-wrap: anywhere;
 }
 
+.home-screen .home-report-line {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: var(--tx1);
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.home-screen .home-report-line .btn { white-space: normal; }
+
 /* reflow tier (.main under 700px): section heads wrap their actions under the title; the setup steps stack */
 @container main (max-width: 699px) {
   .home-screen { padding: 24px 16px; }

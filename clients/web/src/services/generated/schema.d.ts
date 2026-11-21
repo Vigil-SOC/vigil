@@ -3669,6 +3669,7 @@ export interface paths {
          * Put Setup State
          * @description Move the wizard on. Progress only grows: a step once passed stays passed,
          *     and the furthest step never moves back, so two admins cannot undo each other.
+         *     A finish, once recorded, stays recorded.
          */
         put: operations["put_api_config_setup-state"];
         post?: never;
@@ -3878,6 +3879,50 @@ export interface paths {
          * @description Validate a custom integration's server code.
          */
         post: operations["post_api_custom-integrations_integration_id_validate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Day1 Report
+         * @description The latest Day 1 Report, or the one named by ``record``.
+         */
+        get: operations["get_api_day1-report"];
+        put?: never;
+        /**
+         * Run Day1 Report
+         * @description Run the Day 1 Report now. Tells the person who started it.
+         */
+        post: operations["post_api_day1-report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Day1 Status
+         * @description Whether a report is being written, failed to finish, or is ready to open.
+         */
+        get: operations["get_api_day1-report_status"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12658,6 +12703,86 @@ export interface components {
             url: string;
             /** Webhook Secret */
             webhook_secret?: string | null;
+        };
+        /** Day1Check */
+        Day1Check: {
+            evidence?: components["schemas"]["Day1Evidence"];
+            /** Id */
+            id: string;
+            /** Module */
+            module: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "pass" | "fail" | "not_checked" | "needs_a_person";
+            /** Reason */
+            reason: string;
+        };
+        /** Day1Evidence */
+        Day1Evidence: {
+            /** Brings */
+            brings?: string | null;
+            /** Fix */
+            fix?: string | null;
+            /** Labels */
+            labels?: string[];
+            /** Last Data */
+            last_data?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            /** State */
+            state?: string | null;
+        };
+        /** Day1Listed */
+        Day1Listed: {
+            /** Brings */
+            brings: string;
+            /** Source Id */
+            source_id: string;
+        };
+        /** Day1Report */
+        Day1Report: {
+            /** Actor Id */
+            actor_id?: string | null;
+            /** Actor Name */
+            actor_name?: string | null;
+            /** Checks */
+            checks: components["schemas"]["Day1Check"][];
+            /** Id */
+            id: string;
+            /** Modules */
+            modules: string[];
+            /** Preface */
+            preface?: string | null;
+            /** Recorded At */
+            recorded_at: string;
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at: string;
+            /** Switched Off */
+            switched_off: components["schemas"]["Day1Listed"][];
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "readiness" | "fallback" | "on_demand";
+            /** Vigil Version */
+            vigil_version: string;
+            /** Withheld */
+            withheld: string[];
+        };
+        /** Day1Status */
+        Day1Status: {
+            /** Incomplete Since */
+            incomplete_since?: string | null;
+            /** Latest At */
+            latest_at?: string | null;
+            /** Latest Id */
+            latest_id?: string | null;
+            /** Running Since */
+            running_since?: string | null;
         };
         /** Decision */
         Decision: {
@@ -24299,6 +24424,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report": {
+        parameters: {
+            query?: {
+                record?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Report"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Report"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_status": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Status"];
                 };
             };
             /** @description Validation Error */

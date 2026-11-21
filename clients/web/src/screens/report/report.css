@@ -1,0 +1,105 @@
+.d1-page {
+  padding: 16px 22px 32px;
+  max-width: var(--page-max);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.d1-page h2,
+.d1-sub {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--tx0);
+}
+
+.d1-preface,
+.d1-meta,
+.d1-quiet,
+.d1-withheld {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-preface { color: var(--tx0); font-weight: 650; }
+.d1-meta, .d1-quiet { color: var(--tx2); }
+.d1-withheld { color: var(--tx1); }
+
+.d1-card {
+  background: var(--bg1);
+  border: 1px solid var(--ln0);
+  border-radius: 14px;
+  padding: 16px 18px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.d1-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.d1-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--ln0);
+  border-radius: 10px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.d1-row {
+  background: var(--bg2);
+  padding: 10px 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.d1-row p {
+  margin: 0;
+  color: var(--tx1);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-fix {
+  color: var(--ac);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-facts {
+  color: var(--tx2);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.d1-actions .btn { white-space: normal; }
+
+@container main (max-width: 699px) {
+  .d1-page { padding: 16px 16px 28px; }
+}
