@@ -190,6 +190,50 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.2.0 (2026-11-21)
+
+## What's Changed
+* Clear invite addresses when an account is erased by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4858
+* Index a finding's single src_ip, dst_ip or hostname as the plain value by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4856
+* Fence the answer under review in a vigil:answer block by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4854
+* Judge federation stall and silence against each source's poll interval by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4864
+* Keep directory sync from pushing reserved usernames by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4860
+* Delete notices other people received about an erased person by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4862
+* Send an intake-merged alert back to intake when it is taken off the case by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4867
+* Link or unlink one case alert without dropping a concurrent attach by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4865
+* Bind SSO account lookups to identifiers a provider user can't steer by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4863
+* Keep Custom Integration secrets out of the platform's secret names by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4879
+* Delete erased people's notices when a restore re-applies the erasure by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4882
+* Keep one Integration Health record per source by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4883
+* Keep refused directory deactivations and role changes listed until applied by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4881
+* Say when a saved custom integration is not running by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4889
+* Test threat-intel, sandbox, and lookup credentials with one fixed read by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4894
+* Refuse side-effecting SPL in Splunk searches by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4888
+* Keep erasures in start.sh backups and out of the restore notice by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4897
+* Keep every closed ticket of a history import in its own record by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4898
+* Count a dismissal's independent sources in code before a case can close as benign by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4899
+* docs(readme): GA status, badges, and What Vigil is not section by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/4906
+* Rewrite an erased person's username in every record that stores it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4902
+* Show a history import's full result, and offer it on "Connect your data" by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4905
+* Merge hunt sightings that mint the same Entity Key before the Distil writes them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4907
+* Keep usernames out of the principal-id namespace, and name trail actors by principal id by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4908
+* Show Install Readiness live on Home by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4904
+* Push sources write Integration Health by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4896
+* Fixed read-only Test calls for identity, EDR, network and notification integrations by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4895
+* Console health displays read the server's Integration Health by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4900
+* Let Stop and floor demotions land during a restore's write pause by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4909
+* Record alert-source, MCP server and custom-integration changes on the audit trail by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4910
+* Stamp the cases list's last_activity as UTC by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4920
+* Ask "Confirm it's you" in the setup wizard instead of a raw 403 by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4921
+* Deployment-wide operator instructions for every agent run by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4922
+* Let agents page through a finding's stored evidence records by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4923
+* Move the instance signing key out of the proof card into core.auth.signing_key by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4931
+* Add the cases.export permission by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4932
+* Stage host inputs before restic reads them (macOS VirtioFS EIO) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4933
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.4...v1.2.0
+
 ## 1.1.4 (2026-11-19)
 
 ## What's Changed
