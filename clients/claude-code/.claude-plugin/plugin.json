@@ -1,7 +1,7 @@
 {
   "name": "vigil-soc",
   "displayName": "Vigil SOC",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "Work your team's Vigil, the open source AI SOC you run yourself, from Claude Code. Start investigations and hunts that run in Vigil, share cases, hunts and verdicts with colleagues, and begin each run from what the team already concluded. Your roles, approvals and audit trail apply to each call.",
   "author": {
     "name": "Vigil-SOC",
