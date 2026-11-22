@@ -123,6 +123,18 @@ export interface RecalledVerdict extends RecalledProvenance {
   readonly window: ActivityWindow;
   readonly window_source: WindowSource;
   readonly sources: readonly RecalledVerdictSource[];
+  // The burst this row stands for (RecallRanking.collapse), null for a lone
+  // verdict. Absent on a payload journaled before collapse, and read as null.
+  readonly burst?: RecalledBurst | null;
+}
+
+// Same-outcome, same-trust verdicts on one queried key concluded in one fixed UTC
+// 10-minute bin, of which only the newest is carried. count includes it.
+export interface RecalledBurst {
+  readonly entity_key: string;
+  readonly count: number;
+  readonly first_concluded_at: string;
+  readonly last_concluded_at: string;
 }
 
 // No window, which is why a Gap is not a Verdict with an empty outcome.
@@ -145,9 +157,12 @@ export interface RecalledNote extends RecalledProvenance {
 // Per reason, because the two mean different things to a caller: per_key_cap
 // means one entity had more history than its share, overall means the read was
 // broad. A total is the sum and is not restated.
+// collapsed counts verdicts folded into a burst's representative, and is 0 for
+// the other kinds; absent on a payload journaled before collapse, read as 0.
 export interface DroppedRows {
   readonly per_key_cap: number;
   readonly overall_cap: number;
+  readonly collapsed?: number;
 }
 
 export interface RecallDropped {
@@ -168,6 +183,9 @@ export interface RecallRanking {
   readonly per_key_cap: number;
   // Rows across sightings, verdicts and gaps; notes are outside it.
   readonly overall_cap: number;
+  // The rule that folds verdict bursts before the per-key cap. Absent on a
+  // payload journaled before it existed.
+  readonly collapse?: string;
 }
 
 // Named as a value too, so recallOf can check for them at runtime, which is where
@@ -254,7 +272,7 @@ export interface RecallArgs {
 // The ranking is the read's own account of what chose the set. Nothing chose
 // anything here, so the caps are zero and the order is named for that.
 export const emptyRecall = (keys: readonly string[], asOf: string): RecallResult => {
-  const none = { per_key_cap: 0, overall_cap: 0 };
+  const none = { per_key_cap: 0, overall_cap: 0, collapsed: 0 };
   return {
     keys,
     as_of: asOf,
@@ -263,7 +281,7 @@ export const emptyRecall = (keys: readonly string[], asOf: string): RecallResult
     gaps: [],
     notes: [],
     dropped: { sightings: none, verdicts: none, gaps: none, notes: none },
-    ranking: { order: "none", per_key_cap: 0, overall_cap: 0 },
+    ranking: { order: "none", per_key_cap: 0, overall_cap: 0, collapse: "none" },
   };
 };
 
@@ -292,6 +310,13 @@ const verdictNote = (verdict: RecalledVerdict): string => {
   ];
   // The one thing a reader must not miss: a conclusion resting only on fields an
   // adversary could have written is not a conclusion to lean on.
+  // Missing on a payload journaled before collapse: a lone verdict, as it was.
+  const burst = verdict.burst;
+  if (burst != null && burst.count > 1) {
+    held.push(
+      `one of ${burst.count} same-outcome closes on ${burst.entity_key} between ${burst.first_concluded_at} and ${burst.last_concluded_at}, newest shown`,
+    );
+  }
   if (verdict.attacker_influenceable_only) held.push("rests only on attacker-influenceable evidence");
   if (verdict.rationale !== "") held.push(`because ${verdict.rationale}`);
   return held.join(" — ");
@@ -331,7 +356,12 @@ const droppedNote = (result: RecallResult): string | null => {
     if (per_key_cap > 0) held.push(`${per_key_cap} ${kind} past one entity's share`);
     if (overall_cap > 0) held.push(`${overall_cap} ${kind} past the read's own limit`);
   }
-  return held.length === 0 ? null : `Some history was not carried: ${held.join(", ")}.`;
+  // Not lost history: each was folded into a representative that says so on its own line.
+  const collapsed = result.dropped.verdicts.collapsed ?? 0;
+  const lines: string[] = [];
+  if (held.length > 0) lines.push(`Some history was not carried: ${held.join(", ")}.`);
+  if (collapsed > 0) lines.push(`${collapsed} verdicts were folded into the newest close of their burst.`);
+  return lines.length === 0 ? null : lines.join(" ");
 };
 
 // What a person on the team said first, then what an earlier investigation

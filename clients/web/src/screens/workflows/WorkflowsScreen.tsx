@@ -3666,7 +3666,12 @@ function droppedNote(recall: HuntRecall): string | null {
     if (rows.per_key_cap > 0) held.push(`${rows.per_key_cap} ${kind} past one entity's share`)
     if (rows.overall_cap > 0) held.push(`${rows.overall_cap} ${kind} past the read's own limit`)
   }
-  return held.length === 0 ? null : `Some history was not carried: ${held.join(', ')}.`
+  // Not lost: each burst's newest close says how many it stands for on its own row.
+  const collapsed = dropped.verdicts.collapsed ?? 0
+  const lines: string[] = []
+  if (held.length > 0) lines.push(`Some history was not carried: ${held.join(', ')}.`)
+  if (collapsed > 0) lines.push(`${collapsed} verdicts were folded into the newest close of their burst.`)
+  return lines.length === 0 ? null : lines.join(' ')
 }
 
 /** What the hunt was shown before its first decision. Rendered from the payload the
@@ -3753,6 +3758,12 @@ function HuntMemory({ recall }: { recall: HuntRecall }) {
                       <div className="muted text-[11px]">
                         activity {fmtWindow(v.window)}{v.window_source === 'asserted' ? ' (asserted)' : ''} · {v.trust}
                       </div>
+                      {v.burst != null && v.burst.count > 1 && (
+                        <div className="muted text-[11px]">
+                          One of {v.burst.count} same-outcome closes on <span className="mono">{v.burst.entity_key}</span>{' '}
+                          between {fmtStarted(v.burst.first_concluded_at)} and {fmtStarted(v.burst.last_concluded_at)}; the newest is shown.
+                        </div>
+                      )}
                     </td>
                     <td className="mono tight text-[11px]">{v.subject_entities.join(', ')}</td>
                     <td className="tight"><RecalledFromCell row={v} /></td>

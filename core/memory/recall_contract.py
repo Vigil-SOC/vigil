@@ -210,6 +210,17 @@ VERDICT_FIELDS: Tuple[str, ...] = _PROVENANCE + (
     "window",
     "window_source",
     "sources",
+    # A representative of a burst (RECALL_COLLAPSE), or null for a lone verdict.
+    "burst",
+)
+
+# The group one representative stands for: the queried key it was grouped under,
+# how many verdicts the group held (itself included), and their span.
+BURST_FIELDS: Tuple[str, ...] = (
+    "entity_key",
+    "count",
+    "first_concluded_at",
+    "last_concluded_at",
 )
 
 # `source_tier` carries #728's vocabulary and is not restated. `not_evidence`
@@ -238,11 +249,12 @@ NOTE_FIELDS: Tuple[str, ...] = _PROVENANCE + (
 
 WINDOW_FIELDS: Tuple[str, ...] = ("first_seen", "last_seen")
 
-# Per kind, and per reason: the two reasons mean different things to a caller.
+# Per kind, and per reason: the reasons mean different things to a caller.
 # A total is the sum and is not restated. Notes are capped per key only, so their
-# overall_cap is always 0.
+# overall_cap is always 0. `collapsed` counts verdicts folded into a burst's
+# representative (RECALL_COLLAPSE) and is 0 for every other kind.
 DROPPED_KINDS: Tuple[str, ...] = ("sightings", "verdicts", "gaps", "notes")
-DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap")
+DROPPED_REASONS: Tuple[str, ...] = ("per_key_cap", "overall_cap", "collapsed")
 
 # How a queried key is matched against a stored one. The rule is `defang` then
 # case-fold, in `services/agent/plugins/hunt/entities.ts`; Python reproduces
@@ -304,6 +316,17 @@ RECALL_ORDER = "concluded_at DESC, id ASC"
 # one entity present in every hunt would otherwise consume by itself.
 RECALL_PER_KEY_CAP = 20
 
+# Verdicts on one queried key sharing outcome and trust and concluded in the same
+# fixed UTC 10-minute bin are a burst -- a flapping detection closed 25 times in
+# five minutes -- and only the newest (RECALL_ORDER) is kept, before the per-key
+# cap, so a burst cannot push older history out of it. Every verdict stays stored.
+RECALL_COLLAPSE_BIN = "10 minutes"
+RECALL_COLLAPSE_ORIGIN = "2000-01-01T00:00:00Z"
+RECALL_COLLAPSE = (
+    "verdicts: newest per (entity key, outcome, trust, "
+    f"date_bin('{RECALL_COLLAPSE_BIN}', concluded_at, '{RECALL_COLLAPSE_ORIGIN}'))"
+)
+
 # Rows across sightings, verdicts and gaps, applied after the per-key cap. Notes
 # are outside it: a person wrote each one, and one entity's notes are few.
 RECALL_OVERALL_CAP = 100
@@ -313,7 +336,7 @@ RECALL_OVERALL_CAP = 100
 # *presented* in is a fold, so the harness's ranking may change without
 # invalidating a historical Ledger. Named `ranking` because #729 and #732 both
 # call it that.
-RANKING_KEYS: Tuple[str, ...] = ("order", "per_key_cap", "overall_cap")
+RANKING_KEYS: Tuple[str, ...] = ("order", "per_key_cap", "overall_cap", "collapse")
 
 UNKNOWN_CALLER = "unknown"
 
@@ -324,6 +347,7 @@ def recall_ranking() -> Dict[str, object]:
         "order": RECALL_ORDER,
         "per_key_cap": RECALL_PER_KEY_CAP,
         "overall_cap": RECALL_OVERALL_CAP,
+        "collapse": RECALL_COLLAPSE,
     }
 
 
