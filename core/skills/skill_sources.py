@@ -9,7 +9,15 @@ nothing, nothing overwritten, each scanned and held like any operator skill. Or 
 scans the picked ones in the clone without installing anything, and files each
 the hold rule holds as a Finding.
 
-A github.com clone carries the stored GitHub token, so private repos read.
+A github.com clone carries the stored GitHub token (``GITHUB_TOKEN``, Basic
+username ``x-access-token``), so private repos read. Any other allowed DNS host
+reads its Basic username and token from ``SKILL_SOURCE_<HOST>_USER`` and
+``SKILL_SOURCE_<HOST>_TOKEN`` through ``core.secrets.get_secret`` (encrypted
+store, then the environment): ``<HOST>`` is the hostname uppercased, with "."
+as ``_D_`` and "-" as ``_H_``, so ``gitlab.example.net`` reads
+``SKILL_SOURCE_GITLAB_D_EXAMPLE_D_NET_USER`` and ``..._TOKEN``. Both must be
+set; an IP literal gets no credential. A server behind an internal CA is
+trusted through ``GIT_SSL_CAINFO`` (or ``SSL_CERT_FILE``/``SSL_CERT_DIR``).
 
 Only hosts in ``vigil_skill_source_hosts`` are fetched from, over https only.
 Each installed skill keeps a ``skill_installs`` row: the repo, the commit, and
@@ -234,19 +242,84 @@ def _split_tree(url: str, host: str, segments: List[str]) -> tuple[str, List[str
     raise SkillError("The repo has no branch or tag matching that link")
 
 
-def _github_token() -> Optional[str]:
-    # Imported here: the secrets backend is only needed when github.com is read.
+def _secret(key: str) -> Optional[str]:
+    # Imported here: the secrets backend is only needed when a host is read.
     from core.secrets import get_secret
 
+    return (get_secret(key) or "").strip() or None
+
+
+def _github_token() -> Optional[str]:
     try:
-        return (get_secret("GITHUB_TOKEN") or "").strip() or None
+        return _secret("GITHUB_TOKEN")
     except Exception:  # noqa: BLE001 - no token readable: the clone is anonymous
         logger.warning("GitHub token could not be read; cloning anonymously")
         return None
 
 
+_HOSTNAME_RE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*$")
+_NUMERIC_RE = re.compile(r"^(?:[0-9]+|0x[0-9a-f]*)$")
+
+
+def _host_keys(host: Optional[str]) -> Optional[tuple[str, str]]:
+    """The USER and TOKEN secret names for a non-GitHub DNS host, else None.
+
+    "." is "_D_" and "-" is "_H_", so no two hostnames share a key.
+    """
+    if not host or host == GITHUB or not _HOSTNAME_RE.match(host):
+        return None
+    # An IP literal, in any form curl reads (127.1, 2130706433, 0x7f.0.0.1),
+    # ends in a numeric label; no DNS name does.
+    if _NUMERIC_RE.match(host.rsplit(".", 1)[-1]):
+        return None
+    stem = "SKILL_SOURCE_" + host.upper().replace(".", "_D_").replace("-", "_H_")
+    return f"{stem}_USER", f"{stem}_TOKEN"
+
+
+def _credential(host: Optional[str]) -> Optional[tuple[str, str]]:
+    """The Basic username and token for ``host``, when both are set."""
+    if host == GITHUB:
+        token = _github_token()
+        return ("x-access-token", token) if token else None
+    keys = _host_keys(host)
+    if not keys:
+        return None
+    try:
+        user, token = _secret(keys[0]), _secret(keys[1])
+    except Exception:  # noqa: BLE001 - unreadable: the clone is anonymous
+        logger.warning("Credential for %s could not be read; cloning anonymously", host)
+        return None
+    return (user, token) if user and token else None
+
+
+def _inherited(name: str) -> bool:
+    """An env var the git child must not inherit: a token, or config and
+    credential-helper or trace overrides that could leak or redirect it."""
+    return (
+        name == "GITHUB_TOKEN"
+        or name.startswith(("SKILL_SOURCE_", "GIT_CONFIG_", "GIT_TRACE"))
+        or name
+        in (
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_ASKPASS",
+            "SSH_ASKPASS",
+            "GIT_CURL_VERBOSE",
+            # A credential never goes out over unverified TLS; trust a private
+            # CA through GIT_SSL_CAINFO instead.
+            "GIT_SSL_NO_VERIFY",
+        )
+    )
+
+
 def _git_env(host: Optional[str] = None) -> dict:
-    env = dict(os.environ)  # noqa: ENV001 - child process env; keeps any proxy
+    # Keeps proxy and CA variables (GIT_SSL_CAINFO, SSL_CERT_FILE, SSL_CERT_DIR):
+    # a self-hosted git server often sits behind an internal CA.
+    env = {
+        k: v
+        for k, v in os.environ.items()  # noqa: ENV001 - child process env
+        if not _inherited(k)
+    }
     env.update(
         {
             # https only, whatever the host's git config allows.
@@ -259,15 +332,15 @@ def _git_env(host: Optional[str] = None) -> dict:
             "GIT_LFS_SKIP_SMUDGE": "1",
         }
     )
-    token = _github_token() if host == GITHUB else None
-    if token:
-        # The stored GitHub token, so private org repos read. Through the
-        # environment only, scoped to github.com: never argv, the URL or a message.
-        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    cred = _credential(host)
+    if cred:
+        # Through the environment only, scoped to the exact host: never argv,
+        # the URL, a log line or a message.
+        basic = base64.b64encode(f"{cred[0]}:{cred[1]}".encode()).decode()
         env.update(
             {
                 "GIT_CONFIG_COUNT": "1",
-                "GIT_CONFIG_KEY_0": f"http.https://{GITHUB}/.extraHeader",
+                "GIT_CONFIG_KEY_0": f"http.https://{host}/.extraHeader",
                 "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
             }
         )
@@ -298,6 +371,26 @@ _REFUSED = (
     "Repository not found",
     "Authentication failed",
     "Invalid username or token",
+    "HTTP Basic: Access denied",  # GitLab
+    "The requested URL returned error: 401",
+    "The requested URL returned error: 403",
+)
+# Transport failures, told apart without echoing stderr from a credentialed call.
+_TRANSPORT = (
+    (
+        ("SSL certificate problem", "server certificate verification failed"),
+        "the TLS certificate of {host} is not trusted",
+    ),
+    (
+        (
+            "Could not resolve host",
+            "Failed to connect",
+            "Connection refused",
+            "Connection timed out",
+            "Operation timed out",
+        ),
+        "could not connect to {host}",
+    ),
 )
 
 
@@ -310,9 +403,9 @@ def _git(
     """Run git; stop it past the time limit or once ``scratch`` outgrows the cap.
 
     ``scratch`` holds the clone and git's output files, so its size is what
-    the clone has written. A github.com call carries the stored token; if
-    GitHub refuses it (expired, or a placeholder), the call is tried once
-    without, so a bad token does not stop public repos from reading.
+    the clone has written. A call to a host with a stored credential carries
+    it; if the host refuses it (expired, or a placeholder), the call is tried
+    once without, so a bad token does not stop public repos from reading.
     """
     env = _git_env(host)
     tokened = "GIT_CONFIG_COUNT" in env
@@ -323,24 +416,45 @@ def _git(
         refused = code != 0 and any(r in err for r in _REFUSED)
         if code == 0:
             logger.warning(
-                "github.com refused the stored GitHub token; read anonymously"
+                "%s refused the stored skill-source credential; read anonymously",
+                host,
             )
     if code != 0:
         if refused:
-            raise SkillError(
-                "No repo by that name that Vigil can read: the GitHub token set "
-                "(Settings → Integrations → GitHub) was refused or cannot read it"
-                if tokened
-                else "No repo by that name that Vigil can read. For a private "
-                "github.com repo, set a GitHub token (Settings → Integrations → GitHub)"
-            )
+            raise SkillError(_refusal(host, tokened))
         if "Remote branch" in err and "not found" in err:
             raise SkillError("The repo has no branch or tag by that name")
+        for marks, message in _TRANSPORT:
+            if any(m in err for m in marks):
+                raise SkillError(
+                    "could not fetch the repo: " + message.format(host=host)
+                )
         lines = [line for line in err.strip().splitlines() if line.strip()]
-        raise SkillError(
-            f"could not fetch the repo: {lines[-1] if lines else 'git failed'}"
-        )
+        # Raw stderr only from an anonymous call: nothing secret was in play.
+        last = lines[-1] if lines and not tokened else "git failed"
+        raise SkillError(f"could not fetch the repo: {last}")
     return (scratch / ".git-out").read_text(errors="replace").strip()
+
+
+def _refusal(host: Optional[str], tokened: bool) -> str:
+    """Why a refused read failed, naming what the operator can set."""
+    if host == GITHUB:
+        return (
+            "No repo by that name that Vigil can read: the GitHub token set "
+            "(Settings → Integrations → GitHub) was refused or cannot read it"
+            if tokened
+            else "No repo by that name that Vigil can read. For a private "
+            "github.com repo, set a GitHub token (Settings → Integrations → GitHub)"
+        )
+    if tokened:
+        return (
+            f"The skill-source credential for {host} did not grant repository "
+            "access. Check token expiry and read permission."
+        )
+    keys = _host_keys(host)
+    if keys:
+        return f"No skill-source credential for {host}. Set {keys[0]} and {keys[1]}."
+    return "No repo by that name that Vigil can read"
 
 
 def _run_git(
