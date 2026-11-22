@@ -235,7 +235,6 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
   if (min_hypotheses !== undefined && (typeof min_hypotheses !== "number" || !Number.isInteger(min_hypotheses) || min_hypotheses < 1)) {
     throw new SpecError(`${where}: guard.min_hypotheses must be a positive integer`);
   }
-  const proposals_note = raw["proposals_note"] === undefined ? undefined : text_(raw, "proposals_note", `${where}: guard`);
   const min_sources = raw["min_sources"];
   if (min_sources !== undefined && (typeof min_sources !== "number" || !Number.isInteger(min_sources) || min_sources < 1)) {
     throw new SpecError(`${where}: guard.min_sources must be a positive integer`);
@@ -247,7 +246,6 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
     fallback,
     reviewer_prompt: text_(raw, "reviewer_prompt", `${where}: guard`),
     ...(min_hypotheses === undefined ? {} : { min_hypotheses: min_hypotheses as number }),
-    ...(proposals_note === undefined ? {} : { proposals_note }),
     ...(min_sources === undefined ? {} : { min_sources: min_sources as number }),
     ...(uncounted === undefined ? {} : { uncounted }),
   };
