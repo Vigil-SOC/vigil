@@ -292,6 +292,11 @@ class SourceHealth(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     last_dropped_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Federation poll counts under the same window; null until the first
+    # successful poll after upgrade restarts it (duplicates are derived on read).
+    returned_window: Mapped[Optional[int]] = mapped_column(Integer)
+    stored_window: Mapped[Optional[int]] = mapped_column(Integer)
+    filtered_window: Mapped[Optional[int]] = mapped_column(Integer)
     last_data_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     # Sender labels (a webhook data_source, a receiver's alert type) and when
     # each was last seen. Information only: the judge does not read this.

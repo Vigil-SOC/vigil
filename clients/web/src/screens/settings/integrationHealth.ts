@@ -195,6 +195,19 @@ export function keepConnected(rows: ServerRow[], kept: Set<string>): ServerRow[]
 /** The one definition of "Need attention": Poor. */
 export const needsAttention = (r: ServerRow) => r.level === 'poor'
 
+/** The federation poll counts of the current hour, e.g. "40 returned · 10 stored · …"; null when none are current.
+ * Each count keeps its label on one line, so the text wraps only between counts. */
+export function windowCounts(record: IntegrationHealthSource['record']): string | null {
+  if (!record || record.returned_window == null) return null
+  return [
+    `${record.returned_window} returned`,
+    `${record.stored_window ?? 0} stored`,
+    `${record.filtered_window ?? 0} filtered`,
+    `${record.duplicate_window ?? 0} duplicate`,
+    `${record.dropped_window ?? 0} dropped`,
+  ].map((c) => c.replace(' ', '\u00a0')).join(' · ')
+}
+
 /** "12 min ago", "3 h ago", "2 d ago". */
 export function relativeTime(iso: string, now = Date.now()): string {
   const t = Date.parse(iso)

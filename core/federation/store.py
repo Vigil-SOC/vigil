@@ -237,10 +237,14 @@ def record_success(
     cursor: Dict[str, Any],
     dropped: int = 0,
     received: int = 0,
+    returned: int = 0,
+    filtered: int = 0,
 ) -> None:
     """Advance the cursor, then record the poll on the source's health record.
 
-    Two transactions: a failed health write must not hold the cursor back.
+    ``received`` is the acknowledged (stored) count; ``returned`` and
+    ``filtered`` feed the record's window counts. Two transactions: a failed
+    health write must not hold the cursor back.
     """
     try:
         from core.storage.connection import get_db_manager
@@ -256,8 +260,12 @@ def record_success(
         return
     from core.integrations import health
 
-    health.record_collected(
-        health.health_id(source_id), dropped=max(dropped, 0), received=received
+    health.record_polled(
+        health.health_id(source_id),
+        returned=returned,
+        stored=received,
+        filtered=filtered,
+        dropped=dropped,
     )
 
 

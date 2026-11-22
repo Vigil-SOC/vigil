@@ -5,7 +5,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState, Select, TextInput, Toggle } from '../../shared/ui'
 import type { FederationSourceView, IntegrationHealthSource } from '../../services/api'
-import { healthId, healthLevel, healthPhrase } from './integrationHealth'
+import { healthId, healthLevel, healthPhrase, windowCounts } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
 import { useFederation } from './useSettings'
 import type { SectionProps } from './types'
@@ -113,17 +113,33 @@ function LastPoll({
   const lag = s.lag_seconds == null
     ? 'Lag is not measured yet: no poll has succeeded.'
     : `Lag is ${formatDuration(s.lag_seconds)} since the last successful poll.`
+  const counts = failed ? null : windowCounts(source?.record)
+  const windowStart = source?.record?.dropped_window_start ?? null
   return (
-    <span className="inline-flex items-center gap-2">
-      {failed ? <span className="int-neutral">Could not read</span> : <LevelBadge variant="pill" level={level} />}
-      <span className={level ? undefined : 'muted'}>{formatRelative(s.last_poll_at)}</span>
-      {phrase && <span className="muted">{phrase}</span>}
-      <InfoTip
-        label={`How ${name} collection is measured`}
-        source={`${name} poll results. Cursor: ${formatCursor(s.cursor)}.`}
-        calculation={`${lag} The badge reads Integration Health: Good when the source was last confirmed working, Poor when it is unhealthy or failing.`}
-        limit={`Expected every ${every}. A failed poll does not reset the lag. No level shows while the source is off, or when Integration Health has no Good or Poor state for it.`}
-      />
+    <span className="flex flex-col gap-0.5">
+      <span className="inline-flex items-center gap-2">
+        {failed ? <span className="int-neutral">Could not read</span> : <LevelBadge variant="pill" level={level} />}
+        <span className={level ? undefined : 'muted'}>{formatRelative(s.last_poll_at)}</span>
+        {phrase && <span className="muted">{phrase}</span>}
+        <InfoTip
+          label={`How ${name} collection is measured`}
+          source={`${name} poll results. Cursor: ${formatCursor(s.cursor)}.`}
+          calculation={`${lag} The badge reads Integration Health: Good when the source was last confirmed working, Poor when it is unhealthy or failing.`}
+          limit={`Expected every ${every}. A failed poll does not reset the lag. No level shows while the source is off, or when Integration Health has no Good or Poor state for it.`}
+        />
+      </span>
+      {counts && windowStart && (
+        <span className="text-xs text-tx-3 max-w-[34ch] whitespace-normal">
+          {counts}, since{' '}
+          <time dateTime={windowStart} title={windowStart}>{formatRelative(windowStart)}</time>
+          <InfoTip
+            label={`About ${name} counts this hour`}
+            source="Integration Health window counts for successful polls, from GET /api/integration-health."
+            calculation="Returned is what the source handed Vigil, its unreadable records included. Stored was acknowledged, filtered was below the severity floor, dropped was unreadable or had no ID, and duplicate is the rest: IDs Vigil already had."
+            limit="Resets an hour after the window starts. Failed polls add nothing. A negative duplicate count is an accounting error."
+          />
+        </span>
+      )}
     </span>
   )
 }

@@ -29,6 +29,7 @@ from core.storage.source_health import (  # noqa: F401 - the writers, re-exporte
     record_collected,
     record_failed,
     record_lookup,
+    record_polled,
     record_test,
     reset,
     seed,
@@ -237,6 +238,39 @@ def _integration_rows() -> List[Dict[str, Any]]:
         ]
 
 
+_POLL_COUNTS = ("returned_window", "stored_window", "filtered_window")
+
+
+def with_window(
+    record: Optional[Dict[str, Any]], now: datetime
+) -> Optional[Dict[str, Any]]:
+    """``record`` plus the derived ``duplicate_window``: records the runner's ID
+    dedup skipped. A negative remainder is an accounting error and shows as one.
+
+    A window older than ``DROP_WINDOW`` is not current, so its counts read null.
+    So do poll counts no successful federation poll has initialized (push
+    sources keep their drop window). ``dropped_total`` is untouched.
+    """
+    if record is None:
+        return None
+    start = record.get("dropped_window_start")
+    expired = start is None or now - start >= DROP_WINDOW
+    counted = not expired and all(record.get(f) is not None for f in _POLL_COUNTS)
+    out = {**record, "duplicate_window": None}
+    if expired:
+        out["dropped_window"] = None
+    if not counted:
+        out.update({f: None for f in _POLL_COUNTS})
+        return out
+    out["duplicate_window"] = (
+        record["returned_window"]
+        - record["stored_window"]
+        - record["filtered_window"]
+        - record["dropped_window"]
+    )
+    return out
+
+
 def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Every source with its record and state. A store read error raises."""
     from core.audit.feed import INTEGRATION_ID, WEBHOOK_INTEGRATION_ID
@@ -261,7 +295,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
                 **judge(
                     record, kind=kind, switched_on=switched_on, now=now, **judge_kw
                 ),
-                "record": record,
+                "record": with_window(record, now),
             }
         )
 

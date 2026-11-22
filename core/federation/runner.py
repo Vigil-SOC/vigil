@@ -259,8 +259,10 @@ class FederationRunner:
 
         candidates = []
         dropped = result.dropped
+        filtered = 0
         for finding in result.findings:
             if not _severity_passes(finding.get("severity"), min_severity):
+                filtered += 1
                 continue
             ext = finding.get("external_id") or finding.get("finding_id")
             if ext:
@@ -320,7 +322,13 @@ class FederationRunner:
                 prior_failures,
             )
         store.record_success(
-            source_id, cursor=result.cursor or {}, dropped=dropped, received=new_count
+            source_id,
+            cursor=result.cursor or {},
+            dropped=dropped,
+            received=new_count,
+            # The adapter's whole result, its pre-transform drops included.
+            returned=len(result.findings) + result.dropped,
+            filtered=filtered,
         )
 
     async def _enqueue(

@@ -4786,6 +4786,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column source_health.filtered_window": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
  "column source_health.labels": {
   "default": "'{}'::jsonb",
   "nullable": false,
@@ -4846,10 +4851,20 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column source_health.returned_window": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
  "column source_health.source_id": {
   "default": null,
   "nullable": false,
   "type": "character varying(128)"
+ },
+ "column source_health.stored_window": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
  },
  "column source_health.updated_at": {
   "default": "now()",
