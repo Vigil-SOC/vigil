@@ -65,9 +65,13 @@ integration id, or one of Vigil's own inputs under an id that can't collide with
 one: `kafka`, `webhook:daemon`, `webhook:darktrace`, `webhook:cloudflare`,
 `detection_source:<id>`. The record holds the last attempt with its outcome and
 error kind, consecutive failures, dropped records (cumulative and the current
-hour), last data received, the last real check, a reset mark, and the labels
+hour), how many findings its severity floor has skipped (``filtered_total``,
+cumulative, kept across a reset the way dropped records are), last data
+received, the last real check, a reset mark, and the labels
 senders put on webhook events (information only; the judge does not read
-them). Scheduled collection, Test, detection-source syncs and the push sources
+them). A floor skip is the operator's filter, not a drop and not an unreadable
+record: the judge does not read ``filtered_total``, and it never makes a source
+unhealthy. Scheduled collection, Test, detection-source syncs and the push sources
 (Kafka, the daemon webhook, the Darktrace and Cloudflare receivers) write it.
 A push source writes a change of state at once and its counts at most once a
 minute. Switching an integration on or changing its endpoint or credential

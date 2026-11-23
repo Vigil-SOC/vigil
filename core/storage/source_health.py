@@ -28,6 +28,7 @@ FIELDS = (
     "last_success_at",
     "consecutive_failures",
     "dropped_total",
+    "filtered_total",
     "dropped_window_start",
     "dropped_window",
     "returned_window",
@@ -213,6 +214,8 @@ def record_polled(
         row.returned_window += max(returned, 0)
         row.stored_window += max(stored, 0)
         row.filtered_window += max(filtered, 0)
+        # Floor skips are history, like dropped_total, and survive the window roll.
+        row.filtered_total = (row.filtered_total or 0) + max(filtered, 0)
         _counts(row, now, received=stored, dropped=max(dropped, 0), labels=None)
 
     _write(source_id, apply)
@@ -337,7 +340,8 @@ def record_test(
 def reset(source_id: str, session=None) -> None:
     """Back to "no attempt yet": switched on, or its credential or endpoint changed.
 
-    Cumulative drops and the last data time stay; they are history, not health.
+    Cumulative drops, floor skips and the last data time stay; they are history,
+    not health. Window counts are cleared.
     With ``session`` the reset joins the caller's transaction.
     """
 

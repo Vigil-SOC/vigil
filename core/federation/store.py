@@ -82,6 +82,7 @@ _NO_HEALTH = {
     "last_error_kind": None,
     "consecutive_errors": 0,
     "dropped_total": 0,
+    "filtered_total": 0,
 }
 
 
@@ -102,6 +103,7 @@ def health_fields(record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "last_error_kind": record.get("last_error_kind"),
         "consecutive_errors": record.get("consecutive_failures") or 0,
         "dropped_total": record.get("dropped_total") or 0,
+        "filtered_total": record.get("filtered_total") or 0,
     }
 
 
