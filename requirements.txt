@@ -37,7 +37,7 @@ email-validator>=2.3.0
 
 # Reads an attached PDF, image or Office file on this machine (Apache-2.0,
 # bundled OCR, no network call). Office types also need LibreOffice installed.
-liteparse>=2.15.1
+liteparse>=2.19.0
 
 # Database
 sqlalchemy>=2.1.8
