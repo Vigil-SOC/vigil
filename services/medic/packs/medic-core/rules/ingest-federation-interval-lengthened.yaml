@@ -1,0 +1,31 @@
+# A longer poll interval means findings arrive later. Compared with the
+# interval one window earlier; a shorter one reports nothing, and it opens no
+# stall incident. Same gate, window and hold as the floor rule.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.federation-interval-lengthened
+title: Federation source poll interval was lengthened
+revision: 1
+fault: {class: ingest, mode: I-6, causes: [I-6.c]}
+lane: 2
+detection: event
+signals:
+  federation: {sample: {signal: federation_sources, key: global.enabled}}
+  enabled:    {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
+  configured: {sample: {signal: federation_sources, key: sources.is_configured, by: [source]}}
+  interval:   {sample: {signal: federation_sources, key: sources.interval_seconds, by: [source]}}
+group_by: [source]
+when:
+  all:
+    - {fn: latest, signal: federation, op: "==", value: true}
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - {fn: latest, signal: configured, op: "==", value: true}
+    - {fn: increase, signal: interval, window: 70m, op: ">", value: 0}
+for: 10m
+keep_firing_for: 12h
+advice:
+  summary: This source's poll interval is longer, so findings arrive later.
+  fix: >-
+    A longer interval means findings arrive later. If that was intended, there
+    is nothing to do. Otherwise set the interval back in Settings, Alert
+    collection.

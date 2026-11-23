@@ -25,7 +25,8 @@ from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.coverage import produce as produce_coverage
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -145,12 +146,13 @@ def notify_finished(trigger: str, actor_id: Optional[str], record_id: str) -> No
 
 
 def build(state: dict) -> dict[str, Any]:
-    """Visibility from this readiness result, plus Vigil's own settings.
+    """Visibility, Vigil's own settings, then detection coverage.
 
     Daemon, model and collection come from ``state``, daemon first. Sources
-    come from integration health. A failed source read is one not-checked
-    check, and the report still completes. Settings are read on every run,
-    including unknown readiness and the desktop app. Demo findings are not read.
+    come from integration health. Settings are read on every run, including
+    unknown readiness and the desktop app. Coverage is the existing coverage,
+    gap and rule-check reads. A failed read is one not-checked check, and the
+    report still completes. Demo findings are not read.
     """
     checks: list[dict[str, Any]] = []
     checks.extend(_platform_checks(state))
@@ -170,9 +172,22 @@ def build(state: dict) -> dict[str, Any]:
         checks.extend(_source_checks(state, sources))
         switched_off = _switched_off(sources)
     checks.extend(_settings_checks())
+    try:
+        checks.extend(produce_coverage())
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read detection coverage: %s", type(exc).__name__
+        )
+        checks.append(
+            _check(
+                "coverage.technique",
+                NOT_CHECKED,
+                "Could not read detection coverage.",
+            )
+        )
     preface = PREFACE if is_demo_mode() else None
     return {
-        "modules": [VISIBILITY.id, SETTINGS.id],
+        "modules": [VISIBILITY.id, SETTINGS.id, COVERAGE.id],
         "checks": checks,
         "evidence": {"visibility": {"switched_off": switched_off}},
         "preface": preface,

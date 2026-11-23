@@ -14,6 +14,13 @@ and isn't read. Emits only the keys a rule reads (epic decision 1):
 rule can judge the source against its own poll interval. Absent when either is
 missing, including a source that has never succeeded. `last_error` is never
 read: its text can quote a remote system.
+
+`sources.min_severity` is the floor the runner applies, as an ordered gauge:
+no floor (null or "") ranks below `low`, then `low`, `medium`, `high`,
+`critical`. An unrecognised floor string ranks with `low`, which is the
+runner's default. `sources.interval_seconds` and `sources.max_items` are
+gauges of the saved settings. `sources.filtered_total` is how many findings
+that floor has skipped, a counter on the same epoch as `dropped_total`.
 """
 
 from __future__ import annotations
@@ -56,11 +63,26 @@ def _timestamp(raw: object) -> str | None:
     return out + "Z"
 
 
-# dropped_total is a column on the source's DB row: a backend restart doesn't
-# reset it, and rows are never deleted. Seeding a row isn't a restart either
-# (the synthetic row reads 0 too), so the epoch is fixed. An epoch change would
-# read as a backend restart in the upgrade watch.
+# dropped_total and filtered_total live on the source's health row: a backend
+# restart doesn't reset them, and rows are never deleted. Seeding a row isn't
+# a restart either (the synthetic row reads 0 too), so the epoch is fixed. An
+# epoch change would read as a backend restart in the upgrade watch.
 EPOCH = "federation_sources:db"
+
+# The runner's order (core/federation/runner.py). No floor ranks below low,
+# so setting a floor where there was none is a rise. Anything else the runner
+# doesn't know is rank 0, the same default it applies.
+_FLOOR_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+_NO_FLOOR = -1
+
+
+def _floor(raw: object) -> int | None:
+    """The floor as an ordered gauge, or None when it isn't a floor string."""
+    if raw is None or raw == "":
+        return _NO_FLOOR
+    if not isinstance(raw, str):
+        return None
+    return _FLOOR_RANK.get(raw.lower(), 0)
 
 
 def _due_at(row: Mapping[str, Any]) -> str | None:
@@ -85,6 +107,14 @@ def _source(row: Mapping[str, Any], source_id: str) -> list[Value]:
             "sources.consecutive_errors", _int(row.get("consecutive_errors")), labels
         ),
         Value.counter("sources.dropped_total", _int(row.get("dropped_total")), labels),
+        Value.counter(
+            "sources.filtered_total", _int(row.get("filtered_total")), labels
+        ),
+        Value.gauge(
+            "sources.interval_seconds", _int(row.get("interval_seconds")), labels
+        ),
+        Value.gauge("sources.max_items", _int(row.get("max_items")), labels),
+        Value.gauge("sources.min_severity", _floor(row.get("min_severity")), labels),
         Value.flag("sources.is_configured", _flag(row.get("is_configured")), labels),
     ]
 

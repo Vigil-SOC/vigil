@@ -10,7 +10,8 @@ is best-effort: a failed health write is logged and never fails the poll, test,
 tool call, push or save it describes. ``judge`` is the only place a state is
 computed; a record its writer stopped refreshing reads "unknown since <time>"
 there, never healthy. ``labels`` on the row is information only and is not read
-here.
+here. ``filtered_total`` counts findings the severity floor skipped. It is not
+a drop, and it is not read here.
 
 Keys are integration ids, plus prefixed ids for Vigil's own inputs that cannot
 collide with one: ``kafka``, ``webhook:<name>`` and

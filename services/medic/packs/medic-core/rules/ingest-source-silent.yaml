@@ -4,11 +4,17 @@
 # "Recent success" is the larger of 30 min (twice the longest default interval,
 # Security Hub 900 s) and this source's own interval plus a few minutes
 # (sources.due_at: one poll's run plus the sensor's minute).
+# A floor that skipped findings over the same quiet window is the operator's
+# filter, not a defect, so the rule stays quiet. The count is absent on an
+# older Vigil: absent_for is then true from the signal's own reads, and a bare
+# increase would make the whole rule unknown. A counter still at 0 has never
+# risen, so that is silence too, with no need to wait out the window. A higher
+# count keeps the rule quiet while it rose inside the window.
 apiVersion: medic.rules/v1
 kind: Rule
 id: ingest.source-silent
 title: Enabled source reports healthy polls but has delivered no findings
-revision: 2
+revision: 3
 fault: {class: ingest, mode: I-1, causes: [I-1.d]}
 lane: 3
 detection: absence
@@ -17,6 +23,7 @@ signals:
   last_success: {sample: {signal: federation_sources, key: sources.last_success_at, by: [source]}}
   due:          {sample: {signal: federation_sources, key: sources.due_at, by: [source]}}
   arrivals:     {sample: {signal: triage, key: sources.arrivals, by: [source]}}
+  filtered:     {sample: {signal: federation_sources, key: sources.filtered_total, by: [source]}}
 group_by: [source]
 when:
   all:
@@ -25,6 +32,10 @@ when:
         - {fn: age, signal: last_success, op: "<", value: 1800}
         - {fn: age, signal: due, op: "<", value: 300}
     - {fn: increase, signal: arrivals, window: {param: quiet_window}, op: "==", value: 0}
+    - any:
+        - {fn: absent_for, signal: filtered, window: {param: quiet_window}}
+        - {fn: latest, signal: filtered, op: "==", value: 0}
+        - {fn: increase, signal: filtered, window: {param: quiet_window}, op: "==", value: 0}
 for: 15m
 keep_firing_for: 30m
 params:

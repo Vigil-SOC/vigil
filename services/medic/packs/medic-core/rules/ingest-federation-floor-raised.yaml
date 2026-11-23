@@ -1,0 +1,33 @@
+# A higher severity floor lets fewer findings through. The gauge is the runner's
+# order, no floor below low, compared with its value one window earlier. A
+# lowering reports nothing. Only while scheduled collection is on: federation
+# on, and this source on and configured. The window outlasts an upgrade hold
+# (60 min), so a change inside one still fires when the hold ends. `for` opens
+# it within about 15 minutes; it then stays up under a day and resolves.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.federation-floor-raised
+title: Federation source severity floor was raised
+revision: 1
+fault: {class: ingest, mode: I-6, causes: [I-6.a]}
+lane: 2
+detection: event
+signals:
+  federation: {sample: {signal: federation_sources, key: global.enabled}}
+  enabled:    {sample: {signal: federation_sources, key: sources.enabled, by: [source]}}
+  configured: {sample: {signal: federation_sources, key: sources.is_configured, by: [source]}}
+  floor:      {sample: {signal: federation_sources, key: sources.min_severity, by: [source]}}
+group_by: [source]
+when:
+  all:
+    - {fn: latest, signal: federation, op: "==", value: true}
+    - {fn: latest, signal: enabled, op: "==", value: true}
+    - {fn: latest, signal: configured, op: "==", value: true}
+    - {fn: increase, signal: floor, window: 70m, op: ">", value: 0}
+for: 10m
+keep_firing_for: 12h
+advice:
+  summary: This source's severity floor is higher, so fewer findings arrive.
+  fix: >-
+    A higher floor means fewer findings arrive. If that was intended, there is
+    nothing to do. Otherwise set the floor back in Settings, Alert collection.
