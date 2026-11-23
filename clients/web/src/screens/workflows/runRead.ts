@@ -179,6 +179,8 @@ export interface RecalledVerdict extends RecalledFrom {
   trust: string
   window: RecalledWindow
   window_source: string
+  /** The burst this row stands for; absent on a ledger journaled before collapse. */
+  burst?: { entity_key: string; count: number; first_concluded_at: string; last_concluded_at: string } | null
 }
 export interface RecalledGap extends RecalledFrom {
   hypothesis_id: string
@@ -200,7 +202,8 @@ export interface RecalledNote extends RecalledFrom {
   statement: string
   written_by: string
 }
-interface DroppedRows { per_key_cap: number; overall_cap: number }
+/** `collapsed` is verdicts folded into a burst's newest close; absent before it existed. */
+interface DroppedRows { per_key_cap: number; overall_cap: number; collapsed?: number }
 /** The journaled read. `unavailable` means it could not be served; empty lists mean
  *  it ran and found nothing, which is a fact about the entities rather than about
  *  memory. The panel must not render the two alike. */

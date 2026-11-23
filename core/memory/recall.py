@@ -60,6 +60,8 @@ from core.memory.entity_keys import normalise_key, normalise_keys
 from core.memory.recall_contract import (
     DROPPED_KINDS,
     ENTITY_KEY_TYPES,
+    RECALL_COLLAPSE_BIN,
+    RECALL_COLLAPSE_ORIGIN,
     RECALL_IGNORED_ARGS,
     RECALL_KEY_ARGS,
     RECALL_ORDER,
@@ -119,26 +121,86 @@ def _order_by(alias: str) -> str:
 # to choose, and the dedup in _page -- that same Verdict, arriving twice -- would
 # keep whichever copy came first.
 def _statement(
-    table: str, predicate: str, matches_any: str, columns: str, scoped: bool = True
+    table: str,
+    predicate: str,
+    matches_any: str,
+    columns: str,
+    scoped: bool = True,
+    collapse: bool = False,
 ) -> Any:
     shown = f" AND {_OFFERED}" if scoped else ""
-    return text(f"""
-        SELECT m.total AS matched_total, {columns}
-        FROM unnest(CAST(:keys AS text[])) AS k(key)
-        CROSS JOIN LATERAL (
-            SELECT count(*) AS total
+    # A verdict returned through two keys keeps the copy with the larger burst, so
+    # the rows _page folds away are accounted for on the row it keeps.
+    copies = " r.burst_count DESC," if collapse else ""
+    if collapse:
+        matched, page = _collapsed_laterals(table, predicate, shown)
+    else:
+        # Nothing folds, so every matched row is its own representative.
+        matched = f"""
+            SELECT count(*) AS total, count(*) AS reps
             FROM {table} AS c
-            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of{shown.format(alias="c")}
-        ) AS m
-        CROSS JOIN LATERAL (
+            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of{shown.format(alias="c")}"""
+        page = f"""
             SELECT *
             FROM {table} AS p
-            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}
+            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}"""
+    return text(f"""
+        SELECT m.total AS matched_total, m.reps AS matched_reps, {columns}
+        FROM unnest(CAST(:keys AS text[])) AS k(key)
+        CROSS JOIN LATERAL ({matched}
+        ) AS m
+        CROSS JOIN LATERAL (
+            SELECT * FROM ({page}) AS p
             ORDER BY {_order_by("p")}
             LIMIT :per_key_cap
         ) AS r
-        ORDER BY {_order_by("r")}, k.key ASC
+        ORDER BY {_order_by("r")},{copies} k.key ASC
         """).bindparams(bindparam("keys", type_=PGArray(SAText)))
+
+
+def _burst_partition(alias: str) -> str:
+    """RECALL_COLLAPSE's group within one queried key: outcome, trust, UTC bin."""
+    return (
+        f"{alias}.outcome, {alias}.trust, date_bin(CAST('{RECALL_COLLAPSE_BIN}' AS interval), "
+        f"{alias}.concluded_at, CAST('{RECALL_COLLAPSE_ORIGIN}' AS timestamptz))"
+    )
+
+
+def _collapsed_laterals(table: str, predicate: str, shown: str) -> Tuple[str, str]:
+    """The total and page laterals with bursts folded to their newest row.
+
+    In SQL and before the LIMIT, so the per-key cap counts representatives. The
+    total reports two counts over distinct rows across all keys: every match, and
+    those that represent a burst under at least one key -- the rest were folded
+    away under every key that matched them, and are what ``collapsed`` reports.
+    """
+    matched = f"""
+            SELECT count(*) AS total, count(*) FILTER (WHERE t.rep) AS reps
+            FROM (
+                SELECT c.id, bool_or(c.burst_rank = 1) AS rep
+                FROM (
+                    SELECT c.id, row_number() OVER (
+                        PARTITION BY k.key, {_burst_partition("c")}
+                        ORDER BY {_order_by("c")}) AS burst_rank
+                    FROM unnest(CAST(:keys AS text[])) AS k(key)
+                    JOIN {table} AS c ON {predicate.format(alias="c")}
+                    WHERE c.concluded_at <= :as_of{shown.format(alias="c")}
+                ) AS c
+                GROUP BY c.id
+            ) AS t"""
+    page = f"""
+            SELECT * FROM (
+                SELECT p.*,
+                    row_number() OVER (b ORDER BY {_order_by("p")}) AS burst_rank,
+                    count(*) OVER b AS burst_count,
+                    min(p.concluded_at) OVER b AS burst_first,
+                    max(p.concluded_at) OVER b AS burst_last
+                FROM {table} AS p
+                WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}
+                WINDOW b AS (PARTITION BY {_burst_partition("p")})
+            ) AS p
+            WHERE p.burst_rank = 1"""
+    return matched, page
 
 
 # Restricted cases (#4358): an entry keyed to a case that names any reader is
@@ -187,7 +249,8 @@ _VERDICT_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
     "r.statement, r.outcome, r.rationale, r.subject_entities, "
     "r.attacker_influenceable_only, r.trust, r.first_seen, r.last_seen, "
-    "r.window_source, r.concluded_at"
+    "r.window_source, r.concluded_at, "
+    "k.key AS burst_key, r.burst_count, r.burst_first, r.burst_last"
 )
 _GAP_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
@@ -199,7 +262,7 @@ _NOTE_COLUMNS = "r.id, r.entity_key, r.statement, r.written_by, r.concluded_at"
 _QUERIES = {
     "sightings": _statement("episodic_sightings", _BY_KEY, _ANY_KEY, _SIGHTING_COLUMNS),
     "verdicts": _statement(
-        "episodic_verdicts", _BY_SUBJECT, _ANY_SUBJECT, _VERDICT_COLUMNS
+        "episodic_verdicts", _BY_SUBJECT, _ANY_SUBJECT, _VERDICT_COLUMNS, collapse=True
     ),
     "gaps": _statement("episodic_gaps", _BY_SUBJECT, _ANY_SUBJECT, _GAP_COLUMNS),
     # Notes are an analyst's, keyed to no case: install-wide (a stated limit).
@@ -344,9 +407,23 @@ def note_row(row: Mapping[str, Any]) -> Row:
     }
 
 
+def _recalled_verdict(row: Mapping[str, Any]) -> Row:
+    """A verdict as recall returns it: with the burst it represents, if any."""
+    count = int(row["burst_count"])
+    burst = None
+    if count > 1:
+        burst = {
+            "entity_key": row["burst_key"],
+            "count": count,
+            "first_concluded_at": iso(row["burst_first"]),
+            "last_concluded_at": iso(row["burst_last"]),
+        }
+    return {**verdict_row(row), "burst": burst}
+
+
 _SHAPES = {
     "sightings": _sighting,
-    "verdicts": verdict_row,
+    "verdicts": _recalled_verdict,
     "gaps": gap_row,
     "notes": note_row,
 }
@@ -369,7 +446,7 @@ class _Selected(NamedTuple):
 
 def _page(
     session: Session, kind: str, params: Mapping[str, Any]
-) -> Tuple[List[_Selected], int]:
+) -> Tuple[List[_Selected], int, int]:
     """One kind's rows, per-key capped, deduped, and what the cap withheld.
 
     A Verdict or Gap naming two of the queried keys matches twice and is returned
@@ -381,23 +458,28 @@ def _page(
     counted as withheld from each key it names, reporting ten rows lost where
     five conclusions were. Zero rows matched means the total was never observed,
     which is the same thing as nothing having been withheld.
+
+    Verdicts fold bursts first (RECALL_COLLAPSE): the cap's count is measured
+    against distinct representatives, and the rows folded under every key that
+    matched them are returned third, as ``collapsed``. Other kinds fold nothing.
     """
     shape = _SHAPES[kind]
     selected: List[_Selected] = []
     seen: set = set()
-    matched = 0
+    matched = reps = 0
 
     for row in session.execute(_QUERIES[kind], dict(params)).mappings():
         # Constant across every row -- the lateral that computes it joins on the
         # whole key list and is uncorrelated -- so this reads the same value each
         # time rather than accumulating one.
         matched = int(row["matched_total"])
+        reps = int(row["matched_reps"])
         if row["id"] in seen:
             continue
         seen.add(row["id"])
         selected.append(_Selected(row["concluded_at"], int(row["id"]), shape(row)))
 
-    return selected, max(0, matched - len(selected))
+    return selected, max(0, reps - len(selected)), max(0, matched - reps)
 
 
 def _apply_overall_cap(
@@ -543,8 +625,9 @@ def recall(
             }
             pages: Dict[str, List[_Selected]] = {}
             for kind in KINDS:
-                pages[kind], over = _page(db, kind, params)
+                pages[kind], over, folded = _page(db, kind, params)
                 result["dropped"][kind]["per_key_cap"] = over
+                result["dropped"][kind]["collapsed"] = folded
 
             kept, spent = _apply_overall_cap(pages)
             for kind in KINDS:
