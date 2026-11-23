@@ -29,9 +29,9 @@
 
     "loglm": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.6", "${LOGLM_MCP_URL}", "--header", "Authorization:$${LOGLM_AUTH_HEADER}"],
+      "args": ["-y", "mcp-remote@0.16.7", "${LOGLM_MCP_URL}", "--header", "Authorization:$${LOGLM_AUTH_HEADER}"],
       "env": {
-        "_security_note": "mcp-remote pinned to exactly 0.16.6. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
+        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
         "_header_note": "$$ is a literal $: mcp-remote expands ${LOGLM_AUTH_HEADER} from its own env, keeping the token off the command line, which other server uids in the runner can read.",
         "LOGLM_MCP_URL": "${LOGLM_MCP_URL}",
         "LOGLM_AUTH_HEADER": "Bearer ${LOGLM_MCP_TOKEN}"
@@ -61,19 +61,19 @@
 
     "azure-sentinel": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.6", "https://sentinelmcp.microsoft.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.16.7", "https://sentinelmcp.microsoft.com/v1/mcp"],
       "env": {
         "_setup_note": "Microsoft Sentinel MCP (GA Nov 2025). Requires: (1) Onboarding to Microsoft Sentinel data lake, (2) Microsoft Entra OAuth. See: https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-get-started",
-        "_security_note": "mcp-remote pinned to exactly 0.16.6. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
+        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
       }
     },
 
     "splunk": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.6", "${SPLUNK_MCP_URL}"],
+      "args": ["-y", "mcp-remote@0.16.7", "${SPLUNK_MCP_URL}"],
       "env": {
         "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html",
-        "_security_note": "mcp-remote pinned to exactly 0.16.6. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
+        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
         "SPLUNK_MCP_URL": "${SPLUNK_MCP_URL}"
       }
     },
@@ -144,10 +144,10 @@
 
     "jira": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.6", "https://mcp.atlassian.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@0.16.7", "https://mcp.atlassian.com/v1/mcp"],
       "env": {
         "_setup_note": "Atlassian Rovo MCP Server (official). Covers Jira + Confluence + Compass. Uses OAuth 2.1 via browser flow. See: https://github.com/atlassian/atlassian-mcp-server",
-        "_security_note": "mcp-remote pinned to exactly 0.16.6. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
+        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it."
       }
     },
 
@@ -165,7 +165,7 @@
 
     "virustotal": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-virustotal@1.0.38"],
+      "args": ["-y", "@burtthecoder/mcp-virustotal@1.0.40"],
       "env": {
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
       }
@@ -173,14 +173,14 @@
 
     "shodan": {
       "command": "npx",
-      "args": ["-y", "@burtthecoder/mcp-shodan@1.0.37"],
+      "args": ["-y", "@burtthecoder/mcp-shodan@1.0.41"],
       "env": {
         "SHODAN_API_KEY": "${SHODAN_API_KEY}"
       }
     },
     "firecrawl": {
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp@3.40.0"],
+      "args": ["-y", "firecrawl-mcp@3.41.0"],
       "env": {
         "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
