@@ -79,7 +79,7 @@ slowapi>=0.1.10
 itsdangerous>=2.2.0
 
 # The live connector suite (tests/live, connectors-live.yml)
-pytest>=9.1.1
+pytest>=9.2.0
 pytest-asyncio>=1.5.0
 pytest-cov>=7.1.0
 
