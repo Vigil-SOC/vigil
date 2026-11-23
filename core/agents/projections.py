@@ -92,6 +92,50 @@ async def read_projection(
     return await _read_fold(run_id, "projection", params)
 
 
+async def read_spend(run_id: str) -> Optional[Dict[str, Any]]:
+    """``{calls, unpriced_calls, cost_usd}`` for one run.
+
+    ``None`` is the agent layer's 404: the run has no spend events. That is
+    not a failed read. Anything else that is not the summary raises, so a
+    caller can count a missing run apart from a layer it could not reach.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/spend")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001 — unreachable is the caller's to count
+        _note_read(False, "could not read the spend for %s: %s", run_id, exc)
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+    if response.status_code == 404:
+        _note_read(True, "")
+        return None
+    if response.status_code != 200:
+        _note_read(False, "spend for %s answered %s", run_id, response.status_code)
+        raise RuntimeError(f"the agent layer answered {response.status_code}")
+    _note_read(True, "")
+    body = response.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("the agent layer returned no spend summary")
+    calls, unpriced, cost = (
+        body.get("calls"),
+        body.get("unpriced_calls"),
+        body.get("cost_usd"),
+    )
+    numbers = (calls, unpriced, cost)
+    if not all(
+        isinstance(part, (int, float)) and not isinstance(part, bool)
+        for part in numbers
+    ):
+        raise RuntimeError("the agent layer returned no spend summary")
+    return {
+        "calls": int(calls),
+        "unpriced_calls": int(unpriced),
+        "cost_usd": float(cost),
+    }
+
+
 # What episodic memory reads once a run has ended, folded on the side that owns
 # the events; see services/agent/plugins/hunt/distil.ts for why it is not the
 # projection. None reads as "nothing to distil yet", never as "this run saw
