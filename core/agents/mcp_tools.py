@@ -166,10 +166,12 @@ def _integration_for(server: str) -> Optional[str]:
 
 
 def _note_lookup(server: str, rows: Any) -> None:
-    """A successful read marks that integration's last success, at most once a minute.
+    """A successful read notes that integration, at most once a minute.
 
-    A bad indicator is not a health signal, so an error row writes nothing.
-    Nothing here raises into the tool call, and nothing from the row is logged.
+    A source scheduled collection polls ignores the note. Every other
+    integration records the read as a success. A bad indicator is not a health
+    signal, so an error row writes nothing. Nothing here raises into the tool
+    call, and nothing from the row is logged.
     """
     try:
         if _error_row(rows):

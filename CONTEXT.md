@@ -127,8 +127,9 @@ One entry in the check registry (`core/reporting/checks.py`): Vigil's own id,
 its module, the permission that gates its source, and its rule. A value check
 also carries the cited value, the source id, the clause, the link and the date
 it was checked, and has no field for quoted text. The registry holds the
-checks for what Vigil can see, for Vigil's own settings, and for detection
-coverage. Outcomes are not stored on the entry.
+checks for what Vigil can see, for Vigil's own settings, for detection
+coverage, and for what CrowdStrike, Defender and Wazuh still list. Outcomes
+are not stored on the entry.
 _Avoid_: rule check, credential check (those are other checks)
 
 **Check Outcome**:

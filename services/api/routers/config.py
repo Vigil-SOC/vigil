@@ -1,7 +1,9 @@
 """Configuration API endpoints."""
 
+import hmac
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -181,6 +183,9 @@ class PlatformDatabaseProxyConfig(BaseModel):
     ssh_private_key_path: str = ""
     ssh_key_passphrase: str = ""
     verify_proxy_tls: bool = True
+    # Not stored: proves the saver already holds the database login that a
+    # moved proxy would receive (see set_platform_database_config).
+    database_password: str = ""
 
 
 @router.get("/demo-mode", dependencies=_PLATFORM_READ)
@@ -529,6 +534,65 @@ def get_platform_database_config():
     return result
 
 
+def _require_proxy_credentials(
+    config: PlatformDatabaseProxyConfig, proxy_type: str
+) -> None:
+    """Refuse a save that sends stored credentials somewhere new, unless re-entered.
+
+    Through a proxy, Vigil logs in to its database with its own login (and, for
+    a password SSH tunnel, the stored SSH password). So a save that changes
+    where the proxy points, or turns its TLS verification off, must carry those
+    values again: a saved credential never goes to a destination its owner did
+    not choose, as on the integrations route.
+    """
+    if proxy_type == "none":
+        return
+    stored = {f: get_secret(k) or "" for f, k in _PLATFORM_DB_PROXY_KEYS.items()}
+    stored_type = (stored["proxy_type"] or "none").strip().lower()
+    stored_verify = stored["verify_proxy_tls"].lower() not in (
+        "false",
+        "0",
+        "no",
+        "off",
+    )
+    moved = (
+        proxy_type != stored_type
+        or (config.proxy_host or "") != stored["proxy_host"]
+        or (str(config.proxy_port) if config.proxy_port else "") != stored["proxy_port"]
+        or (proxy_type == "pgbouncer" and stored_verify and not config.verify_proxy_tls)
+    )
+    if not moved:
+        return
+
+    from core.storage.connection import DatabaseConfig
+
+    # A login without a stored password comes from libpq's own sources
+    # (PGPASSWORD, .pgpass); an empty entry never matches, so such a move is refused.
+    expected = DatabaseConfig().password or os.environ.get(
+        "PGPASSWORD", ""
+    )  # noqa: ENV001 - libpq var
+    missing = []
+    if not config.database_password or not hmac.compare_digest(
+        config.database_password.encode(), expected.encode()
+    ):
+        missing.append("database password")
+    if (
+        proxy_type == "ssh_tunnel"
+        and not config.ssh_private_key_path
+        and stored["proxy_password"]
+        and not config.proxy_password
+    ):
+        missing.append("proxy password")
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The proxy now points somewhere new or no longer verifies TLS; "
+                f"enter its credential again ({', '.join(missing)})"
+            ),
+        )
+
+
 @router.post("/platform-database", dependencies=_PLATFORM_WRITE)
 def set_platform_database_config(config: PlatformDatabaseProxyConfig):
     """Persist the platform-DB proxy config to the encrypted secrets
@@ -546,6 +610,8 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
                 "(http/socks5 are not supported for the platform DB)"
             ),
         )
+
+    _require_proxy_credentials(config, proxy_type)
 
     # Non-secret fields — always overwrite so disabling a setting
     # actually clears the stored value.

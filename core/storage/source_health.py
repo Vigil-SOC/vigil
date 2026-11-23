@@ -17,6 +17,23 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# Integration id -> federation source id, for the sources the older polling
+# loops collect. This is the one copy. ``core.integrations.health`` re-exports
+# both names: it already imports this module, and the storage tier cannot
+# import a capability domain.
+FEDERATION_INTEGRATION = {
+    "elastic": "elastic-siem",
+    "azure_sentinel": "azure-sentinel",
+    "aws_security_hub": "aws-security-hub",
+    "microsoft_defender": "microsoft-defender",
+}
+LEGACY_POLLED = {
+    "splunk": "splunk",
+    "crowdstrike": "crowdstrike",
+    "opensearch": "opensearch",
+    **{v: k for k, v in FEDERATION_INTEGRATION.items()},
+}
+
 DROP_WINDOW = timedelta(hours=1)
 _ERROR_MAX = 2000
 
@@ -260,12 +277,21 @@ def record_failed(
     _write(source_id, apply)
 
 
+def _collection_polled(source_id: str) -> bool:
+    """True when scheduled collection, not a lookup, owns this source's failure run."""
+    return source_id in LEGACY_POLLED
+
+
 def record_lookup(source_id: str) -> None:
     """A real MCP read succeeded.
 
-    Not a Test and not a collection: ``last_check_*`` stays Test's answer, and
-    the run of collection failures ends because the source just answered.
+    Not a Test and not a collection, so ``last_check_*`` stays as it is.
+    A source scheduled collection polls writes nothing: the read does not end
+    a collection failure run, and ``updated_at`` stays put. Every other
+    integration ends that run and stamps last success.
     """
+    if _collection_polled(source_id):
+        return
 
     def apply(row, now):
         _attempt(row, now, True, None, None)
@@ -282,19 +308,23 @@ def record_recheck(
     error: Optional[str],
     kind: Optional[str] = None,
 ) -> None:
-    """A daily re-check. Success ends the failure run; a failure adds one.
+    """A daily re-check. Both outcomes stamp ``last_check_*``.
 
-    Test's ``record_test`` leaves the run alone. This is the writer that moves
-    it, and both outcomes stamp ``last_check_*``.
+    A source scheduled collection polls keeps the failure run on success:
+    ``consecutive_failures``, ``last_attempt_*``, ``last_error*`` and
+    ``last_success_at`` stay as the last collection wrote them. A failed
+    re-check still adds one. Every other integration's success ends the run.
     """
+    polled = _collection_polled(source_id)
 
     def apply(row, now):
-        _attempt(row, now, success, error, None if success else (kind or "unknown"))
-        if success:
-            row.last_success_at = now
-            row.consecutive_failures = 0
-        else:
-            row.consecutive_failures = (row.consecutive_failures or 0) + 1
+        if not (polled and success):
+            _attempt(row, now, success, error, None if success else (kind or "unknown"))
+            if success:
+                row.last_success_at = now
+                row.consecutive_failures = 0
+            else:
+                row.consecutive_failures = (row.consecutive_failures or 0) + 1
         row.last_check_at = now
         row.last_check_ok = success
         row.last_check_error = None if success else _clip(error)

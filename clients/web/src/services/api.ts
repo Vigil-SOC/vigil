@@ -392,7 +392,8 @@ export const casesApi = {
   getRules: (id: string) =>
     api.get<Schema<'CaseRulesResponse'>>(`/cases/${id}/rules`),
 
-  closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
+  // take_ownership defaults to true on the server; only the edit dialog sends it.
+  closeCase: (id: string, data: Omit<Schema<'ClosureInfo'>, 'take_ownership'> & { take_ownership?: boolean }) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
 
   getEscalations: (id: string) =>
@@ -708,6 +709,7 @@ export const configApi = {
     ssh_private_key_path?: string
     ssh_key_passphrase?: string
     verify_proxy_tls?: boolean
+    database_password?: string
   }) => api.post('/config/platform-database', data),
 
   // Deployment-wide text every agent run appends to its system prompt (#4918).

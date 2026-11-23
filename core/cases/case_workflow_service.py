@@ -17,6 +17,7 @@ from core.cases.agent_closure import (
     activity_actor,
     actor_identity,
     close_channel,
+    closing_person,
     current_credential_id,
     record_close,
 )
@@ -24,6 +25,7 @@ from core.cases.case_collaboration_service import remove_watchers_who_cannot_rea
 from core.cases.case_handoff import (
     move_reopened_archived_team,
     note_owner,
+    owner_on_team,
     require_merge_source,
 )
 from core.cases.closure import (
@@ -409,6 +411,7 @@ class CaseWorkflowService:
         false_positive_cause: object = _CAUSE_OMITTED,
         on_trail: bool = True,
         by_model: bool = False,
+        take_ownership: bool = True,
     ):
         """Mark a case closed and record its closure metadata.
 
@@ -459,6 +462,11 @@ class CaseWorkflowService:
         close that states the field, including null, stores that. One that
         omits the field leaves a standing cause. A value outside the set raises
         ``ValueError`` before anything is written.
+
+        **A person's determining close takes the case** (#4983), unless the
+        same save named an owner (``take_ownership=False``). A closer who does
+        not resolve, cannot read the case, or is off its team leaves the owner
+        alone and the close still lands.
         """
         if false_positive_cause is _CAUSE_OMITTED:
             stated_cause: object = _CAUSE_OMITTED
@@ -567,7 +575,47 @@ class CaseWorkflowService:
                 sampled=closure.sampled_at is not None,
                 evidence_opened=closure.evidence_opened,
             )
+            if determining and take_ownership:
+                self._take_on_close(session, case)
         return closure
+
+    @staticmethod
+    def _take_on_close(session: Session, case: Case) -> None:
+        """Give the case to the person who closed it, appended after the close.
+
+        Every skip is silent: the close stands. A trail failure is not a skip.
+        """
+        from core.cases.assignee import (
+            AssigneeRefused,
+            owner_reads_case,
+            resolve_assignee,
+        )
+
+        closer = closing_person()
+        if not closer:
+            return
+        try:
+            new = resolve_assignee(session, closer, current=case.assignee)
+        except AssigneeRefused:
+            logger.info(
+                "Case %s closed by %r, who resolves to no account; owner left",
+                case.case_id,
+                closer,
+            )
+            return
+        previous = (case.assignee or "").strip() or None
+        new = (new or "").strip() or None
+        if new is None or new == previous:
+            return
+        if not owner_reads_case(session, case, new):
+            return
+        if case.team_id and not owner_on_team(session, new, case.team_id):
+            return
+        case.assignee = new
+        case.updated_at = utcnow()
+        case_trail.append_update(
+            session, case.case_id, {"assignee": previous}, {"assignee": new}
+        )
 
     def reopen_case(self, session: Session, case_id: str) -> None:
         """Retract what closing the Case determined, keeping what it wrote.

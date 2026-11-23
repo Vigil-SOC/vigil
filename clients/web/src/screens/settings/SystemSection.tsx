@@ -35,7 +35,12 @@ export default function SystemSection({ notify }: SectionProps) {
       await save(form)
       notify('ok', 'Platform DB proxy saved. Restart the backend for changes to take effect.')
     } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Failed to save platform DB proxy.')
+      const err = e as { message?: string; response?: { data?: { detail?: unknown } } }
+      const detail = err?.response?.data?.detail
+      notify(
+        'err',
+        (typeof detail === 'string' && detail) || err?.message || 'Failed to save platform DB proxy.',
+      )
     } finally {
       setSaving(false)
     }
@@ -124,11 +129,28 @@ export default function SystemSection({ notify }: SectionProps) {
               </>
             )}
 
-            <ToggleRow
-              label="Verify proxy TLS"
-              checked={form.verify_proxy_tls}
-              onChange={(v) => setForm({ ...form, verify_proxy_tls: v })}
-            />
+            {!isSsh && (
+              <ToggleRow
+                label="Verify proxy TLS"
+                hint={
+                  form.verify_proxy_tls
+                    ? 'Requires a certificate valid for the proxy host, trusted by PGSSLROOTCERT or the system store; the connection fails otherwise.'
+                    : 'Off: TLS follows POSTGRES_SSL_MODE (default prefer), which checks no certificate and may fall back to plaintext.'
+                }
+                checked={form.verify_proxy_tls}
+                onChange={(v) => setForm({ ...form, verify_proxy_tls: v })}
+              />
+            )}
+
+            <Field
+              label="Database Password"
+              hint="Required when the proxy type, host or port changes, or TLS verification is turned off: Vigil's database login is sent through the proxy. Checked, not stored."
+            >
+              <PasswordInput
+                value={form.database_password}
+                onChange={(e) => setForm({ ...form, database_password: e.target.value })}
+              />
+            </Field>
           </>
         )}
       </div>

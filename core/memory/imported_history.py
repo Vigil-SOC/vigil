@@ -304,17 +304,15 @@ def _keys(row: Mapping[str, Any]) -> List[str]:
     return keys
 
 
-def import_id(
-    rows: Iterable[Mapping[str, Any]], content: bytes, source: str = ""
-) -> str:
-    """``<source system>:<short hash of the file>``; the system is the one named,
-    else the rows' commonest, else ``file``."""
+def import_id(rows: Iterable[Mapping[str, Any]], digest: str, source: str = "") -> str:
+    """``<source system>:<short hash of the file>`` from the file's sha256 hex
+    digest; the system is the one named, else the rows' commonest, else ``file``."""
     if not source:
         named = Counter(
             str(s).strip() for r in rows if (s := _first(r, _SOURCE_KEYS))
         ).most_common(1)
         source = named[0][0] if named else "file"
-    return f"{source.strip()[:64]}:{hashlib.sha256(content).hexdigest()[:12]}"
+    return f"{source.strip()[:64]}:{digest[:12]}"
 
 
 def _sightings(

@@ -123,6 +123,11 @@ def require_owner_can_write(session: Session, username: str) -> None:
         raise OwnerCannotWrite(username)
 
 
+def owner_on_team(session: Session, username: str, team_id: str) -> bool:
+    """Whether ``username`` is a current member of ``team_id``, without refusing."""
+    return _current_member(session, username, team_id)
+
+
 def require_owner_on_team(
     session: Session, username: str, team_id: str, case_id: str
 ) -> None:
