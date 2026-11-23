@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { LevelBadge, type Level } from '../../shared/LevelBadge'
-import { configApi, type IntegrationTestResult } from '../../services/api'
+import { configApi, federationApi, type IntegrationTestResult } from '../../services/api'
 import { Field, NumberInput, OverlayPortal, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
 import { Banner, extractApiError } from '../../shared/formKit'
-import { relativeTime, type LastTest } from './integrationHealth'
+import { healthId, relativeTime, type LastTest } from './integrationHealth'
 import {
   SECTION_LABELS,
   fieldsWithProxy,
@@ -30,6 +30,9 @@ interface Props {
 }
 
 const STEPS = ['Add connection', 'Verify a read', 'Collect alerts', 'Automatic investigations'] as const
+// Collect alerts and Automatic investigations only mean something for a tool Alert
+// collection can pull alerts from; every other integration stops at Verify a read.
+const READ_ONLY_STEPS = STEPS.slice(0, 2)
 
 type Probe =
   | { state: 'idle' }
@@ -57,6 +60,21 @@ export default function IntegrationWizard({
   const [saved, setSaved] = useState<Record<string, unknown>>(existingConfig)
   const [probe, setProbe] = useState<Probe>({ state: 'idle' })
   const [tested, setTested] = useState<LastTest | undefined>(lastTest)
+  // Whether Alert collection lists this integration as a source; until it answers
+  // the drawer shows the first two steps, and a failed read keeps all four.
+  const [collectable, setCollectable] = useState(false)
+  useEffect(() => {
+    let live = true
+    federationApi.listSources().then(
+      (r) => live && setCollectable((r.data.sources || []).some((s) => healthId(s.source_id) === integration.id)),
+      () => live && setCollectable(true),
+    )
+    return () => {
+      live = false
+    }
+  }, [integration.id])
+  const steps = collectable ? STEPS : READ_ONLY_STEPS
+
   // a test run here is stored; once the parent has re-read it, show what it read
   useEffect(() => {
     if (lastTest) setTested(lastTest)
@@ -200,7 +218,7 @@ export default function IntegrationWizard({
           </div>
 
           <div className="int-steps" role="tablist" aria-label="Setup steps">
-            {STEPS.map((label, i) => (
+            {steps.map((label, i) => (
               <button
                 key={label}
                 role="tab"
