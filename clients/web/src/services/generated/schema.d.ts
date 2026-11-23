@@ -3950,6 +3950,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Selection
+         * @description The stored selection and the catalogue. A missing row is nothing selected.
+         */
+        get: operations["get_api_day1-report_selection"];
+        /**
+         * Put Selection
+         * @description Store a closed set of offered ids. Anything else is refused, unchanged.
+         */
+        put: operations["put_api_day1-report_selection"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/status": {
         parameters: {
             query?: never;
@@ -12284,6 +12308,35 @@ export interface components {
             /** Watchers */
             watchers: components["schemas"]["CaseWatcherSchema"][];
         };
+        /** Catalogue */
+        Catalogue: {
+            /** Jurisdictions */
+            jurisdictions: components["schemas"]["CatalogueJurisdiction"][];
+            /** Kinds */
+            kinds: components["schemas"]["CatalogueKind"][];
+        };
+        /** CatalogueJurisdiction */
+        CatalogueJurisdiction: {
+            /** Id */
+            id: string;
+            /** Parent */
+            parent?: string | null;
+            /** Sentence */
+            sentence: string;
+        };
+        /** CatalogueKind */
+        CatalogueKind: {
+            /** Brings */
+            brings: string[];
+            /** Excludes */
+            excludes: string[];
+            /** Id */
+            id: string;
+            /** Jurisdiction */
+            jurisdiction?: string | null;
+            /** Sentence */
+            sentence: string;
+        };
         /**
          * CeilingBody
          * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
@@ -14055,6 +14108,13 @@ export interface components {
             sha256: string;
             /** Skipped */
             skipped: number;
+        };
+        /** InactiveKind */
+        InactiveKind: {
+            /** Id */
+            id: string;
+            /** Notice */
+            notice: string;
         };
         /**
          * IngestionJobStatus
@@ -16303,6 +16363,25 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** SelectionView */
+        SelectionView: {
+            catalogue: components["schemas"]["Catalogue"];
+            /** Inactive */
+            inactive: components["schemas"]["InactiveKind"][];
+            /** Jurisdictions */
+            jurisdictions: string[];
+            /** Kinds */
+            kinds: string[];
+            /** Unoffered */
+            unoffered: components["schemas"]["UnofferedId"][];
+        };
+        /** SelectionWrite */
+        SelectionWrite: {
+            /** Jurisdictions */
+            jurisdictions: string[];
+            /** Kinds */
+            kinds: string[];
+        };
         /**
          * ServerEnabledRequest
          * @description Request body for enabling/disabling a server.
@@ -17581,6 +17660,16 @@ export interface components {
             count: number;
             /** Value */
             value: string;
+        };
+        /** UnofferedId */
+        UnofferedId: {
+            /**
+             * Axis
+             * @enum {string}
+             */
+            axis: "jurisdiction" | "kind";
+            /** Id */
+            id: string;
         };
         /**
          * UpdateConversationRequest
@@ -25085,6 +25174,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Day1Module"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_selection": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_selection": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectionWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionView"];
                 };
             };
             /** @description Validation Error */

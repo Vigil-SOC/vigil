@@ -112,6 +112,31 @@ to `platform.write` holders; an on-demand run notifies the person who started
 it.
 _Avoid_: Install Readiness (that decides when this runs; it is not a module)
 
+**Jurisdiction**:
+The operator's statement of whose rules they are subject to, stored with
+the Data or Organisation Kinds on one `system_config` row
+(`day1_report.selection`). This release offers the United States, New York,
+the European Union and Australia. New York's parent is the United States:
+selecting New York stores the United States, and clearing a jurisdiction
+clears its sub-jurisdictions and their kinds. Read at
+`GET /api/day1-report/selection` under `platform.read`; a `platform.write`
+holder changes it with `PUT`, which the settings service already audits.
+A missing row is no jurisdiction. A row that does not parse is a failed
+read, and is never replaced with the empty selection.
+_Avoid_: sector, region (where a provider processes)
+
+**Data or Organisation Kind**:
+The operator's statement of what this Vigil install handles, or what the
+organisation is, worded as its source names it. Eleven kinds ship in this
+release, each listed under the jurisdiction its source names; PCI DSS names
+none. The cardholder-data-environment kind brings the PCI DSS assessment
+kind. The two New York kinds exclude each other. Stored on the same row as
+Jurisdiction. A missing row is no kind. A stored id this release does not
+offer is kept and reported as no longer offered; a save of offered ids drops
+it. A stored kind whose jurisdiction is not selected is kept and flagged,
+and changes nothing.
+_Avoid_: sector, regulated activity
+
 **Report Record**:
 One completed Day 1 Report run (`report_records`), inserted once and never
 rewritten. `vigil_app` may insert and read it, not update, delete or truncate
