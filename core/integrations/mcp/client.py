@@ -29,6 +29,7 @@ except ImportError:
 
 from core.integrations._base.config import missing as missing_fields
 from core.integrations._base.config import resolve
+from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
 from core.integrations.mcp.child_env import stdio_env
 from core.integrations.mcp.runner import (
@@ -56,6 +57,27 @@ _DESCRIPTOR_GATED = {
     "wazuh": (WAZUH, WAZUH_REQUIRED),
     "opencti": (OPENCTI, OPENCTI_REQUIRED),
 }
+
+
+def _missing_crowdstrike() -> List[str]:
+    """Which of falcon-mcp's credentials are absent, under the names it reads.
+
+    A Client ID saved in Settings sits on the integration row (or
+    ``CROWDSTRIKE_CLIENT_ID``). The secret is already ``FALCON_CLIENT_SECRET``.
+    ``FALCON_CLIENT_ID`` set on the process still counts. The region is not a
+    credential: unset stays the catalog's US-1 URL.
+    """
+    fields: Dict[str, Any] = {}
+    try:
+        fields = resolve(CROWDSTRIKE)
+    except Exception as exc:  # noqa: BLE001 - a lookup failure is not configured
+        logger.warning("Config lookup for crowdstrike failed: %s", type(exc).__name__)
+    missing: List[str] = []
+    if not (fields.get("client_id") or get_secret("FALCON_CLIENT_ID")):
+        missing.append("FALCON_CLIENT_ID")
+    if not (fields.get("client_secret") or get_secret("FALCON_CLIENT_SECRET")):
+        missing.append("FALCON_CLIENT_SECRET")
+    return missing
 
 
 @asynccontextmanager
@@ -480,6 +502,8 @@ class MCPClient:
     def _missing_credentials_for(self, server) -> List[str]:
         # Resolves through get_secret, so a credential saved via the integration
         # wizard (encrypted store, not the process env) does not read as dormant.
+        if getattr(server, "name", None) == CROWDSTRIKE.id:
+            return _missing_crowdstrike()
         gated = _DESCRIPTOR_GATED.get(getattr(server, "name", None))
         if gated:
             descriptor, required = gated
