@@ -17,6 +17,23 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# Integration id -> federation source id, for the sources the older polling
+# loops collect. This is the one copy. ``core.integrations.health`` re-exports
+# both names: it already imports this module, and the storage tier cannot
+# import a capability domain.
+FEDERATION_INTEGRATION = {
+    "elastic": "elastic-siem",
+    "azure_sentinel": "azure-sentinel",
+    "aws_security_hub": "aws-security-hub",
+    "microsoft_defender": "microsoft-defender",
+}
+LEGACY_POLLED = {
+    "splunk": "splunk",
+    "crowdstrike": "crowdstrike",
+    "opensearch": "opensearch",
+    **{v: k for k, v in FEDERATION_INTEGRATION.items()},
+}
+
 DROP_WINDOW = timedelta(hours=1)
 _ERROR_MAX = 2000
 
@@ -258,13 +275,7 @@ def record_failed(
 
 
 def _collection_polled(source_id: str) -> bool:
-    """True when scheduled collection, not a lookup, owns this source's failure run.
-
-    Imported here, not at module level: ``core.integrations.health`` imports
-    this module, and the set is not copied into this file.
-    """
-    from core.integrations.health import LEGACY_POLLED
-
+    """True when scheduled collection, not a lookup, owns this source's failure run."""
     return source_id in LEGACY_POLLED
 
 
