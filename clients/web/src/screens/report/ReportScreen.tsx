@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { day1Api } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
@@ -18,6 +18,7 @@ type Trigger = Report['trigger']
 const MODULE_TITLE: Record<string, string> = {
   visibility: 'What Vigil can see',
   settings: "Vigil's own settings",
+  coverage: 'Detection coverage',
 }
 
 const SETTINGS_TIP = {
@@ -33,6 +34,24 @@ const TIP = {
     'A switched-on source passes when it is healthy, needs a person when it requires a test, is not checked when its health says so, and fails otherwise. One failure does not fail it. Last data and webhook labels are information.',
   limit: 'Hidden without integrations.read. Not checked is never a pass.',
 }
+
+const COVERAGE_TIP = {
+  source: 'The coverage map, the Rules listing, and the gap report',
+  calculation:
+    'Techniques that are not proven, blind spots, techniques covered on paper only, rules that fail to run or are data silent, and Quiet, Noisy or Silent results that are not a pass. A category with none passes.',
+  limit:
+    'Hidden without detections.read. Quiet and Sees refresh only as far as the hour\'s search budget. A missing result is not checked: search budget. Under 24 hours, or under 7 days for Noisy and Silent, is not checked: too new. Not checked is never a pass.',
+}
+
+const COVERAGE_GROUPS: { id: string; title: string }[] = [
+  { id: 'coverage.technique', title: 'Techniques' },
+  { id: 'coverage.blind_spot', title: 'Blind spots' },
+  { id: 'coverage.paper', title: 'Covered on paper' },
+  { id: 'coverage.run', title: "Rules that don't run" },
+  { id: 'coverage.quiet', title: 'Quiet' },
+  { id: 'coverage.noisy', title: 'Noisy' },
+  { id: 'coverage.silent', title: 'Silent' },
+]
 
 function outcomeWord(outcome: Outcome): string {
   switch (outcome) {
@@ -89,11 +108,18 @@ function isStatus(error: unknown, code: number): boolean {
 
 function facts(check: Check): string | null {
   const evidence = check.evidence
-  if (!evidence?.source_id) return null
-  const parts = [`Brings ${evidence.brings ?? 'lookups'}`]
-  parts.push(evidence.last_data ? `Last data ${reportStamp(evidence.last_data)}` : 'Nothing received yet')
-  if (evidence.labels && evidence.labels.length > 0) parts.push(`Labels ${evidence.labels.join(', ')}`)
-  return parts.join(' · ')
+  const parts: string[] = []
+  if (evidence?.source_id) {
+    parts.push(`Brings ${evidence.brings ?? 'lookups'}`)
+    parts.push(evidence.last_data ? `Last data ${reportStamp(evidence.last_data)}` : 'Nothing received yet')
+    if (evidence.labels && evidence.labels.length > 0) parts.push(`Labels ${evidence.labels.join(', ')}`)
+  }
+  if (evidence?.checked_at) parts.push(`Checked ${reportStamp(evidence.checked_at)}`)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function ofGroup(checks: Check[], id: string): Check[] {
+  return checks.filter((check) => check.id === id || check.id.startsWith(`${id}.`))
 }
 
 function pieces(value: string | null | undefined): string[] {
@@ -244,19 +270,29 @@ export default function ReportScreen() {
   }
 
   const checks = report?.checks ?? []
-  const visibility = checks.filter((check) => check.module !== 'settings')
+  const visibilityChecks = checks.filter((check) => check.module === 'visibility')
   const settings = checks.filter((check) => check.module === 'settings')
-  const problems = visibility.filter((check) => check.outcome !== 'pass')
-  const settled = visibility.filter(
+  const coverageChecks = checks.filter((check) => check.module === 'coverage')
+  const problems = visibilityChecks.filter((check) => check.outcome !== 'pass')
+  const settled = visibilityChecks.filter(
     (check) => check.outcome === 'pass' && !check.id.startsWith('visibility.source.'),
   )
-  const sources = visibility.filter(
+  const sources = visibilityChecks.filter(
     (check) => check.outcome === 'pass' && check.id.startsWith('visibility.source.'),
   )
   const settingProblems = settings.filter((check) => check.outcome !== 'pass')
   const settingSettled = settings.filter((check) => check.outcome === 'pass')
-  const withheld = (report?.withheld ?? []).filter((id) => id === 'visibility')
+  const withheld = (report?.withheld ?? []).filter((id) => id in MODULE_TITLE)
   const showVisibility = report !== null && !withheld.includes('visibility')
+  const coverageRan = (report?.modules ?? []).includes('coverage')
+  const showCoverage = coverageRan && !withheld.includes('coverage')
+  const coverageGrouped = COVERAGE_GROUPS.map((group) => ({
+    ...group,
+    checks: ofGroup(coverageChecks, group.id),
+  }))
+  const coverageRest = coverageChecks.filter(
+    (check) => !coverageGrouped.some((group) => group.checks.includes(check)),
+  )
 
   return (
     <div className="d1-page">
@@ -282,7 +318,7 @@ export default function ReportScreen() {
           </button>
         </div>
       )}
-      {report && withheld.length > 0 && (
+      {report && withheld.includes('visibility') && (
         <section className="d1-card" aria-label="What Vigil can see">
           <h2>What Vigil can see</h2>
           <p className="d1-withheld">Not included. This section needs integrations.read.</p>
@@ -357,6 +393,40 @@ export default function ReportScreen() {
               ))}
             </div>
           )}
+        </section>
+      )}
+      {coverageRan && withheld.includes('coverage') && (
+        <section className="d1-card" aria-label="Detection coverage">
+          <h2>Detection coverage</h2>
+          <p className="d1-withheld">Not included. This section needs detections.read.</p>
+        </section>
+      )}
+      {showCoverage && (
+        <section className="d1-card" aria-label="Detection coverage">
+          <div className="d1-card-head">
+            <h2>{MODULE_TITLE.coverage}</h2>
+            <InfoTip label="How detection coverage is judged" align="start" {...COVERAGE_TIP} />
+          </div>
+          {coverageGrouped.map((group) =>
+            group.checks.length === 0 ? null : (
+              <Fragment key={group.id}>
+                <p className="d1-sub">{group.title}</p>
+                <div className="d1-rows">
+                  {group.checks.map((check) => (
+                    <CheckRow key={check.id} check={check} />
+                  ))}
+                </div>
+              </Fragment>
+            ),
+          )}
+          {coverageRest.length > 0 && (
+            <div className="d1-rows">
+              {coverageRest.map((check) => (
+                <CheckRow key={check.id} check={check} />
+              ))}
+            </div>
+          )}
+          {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
         </section>
       )}
     </div>

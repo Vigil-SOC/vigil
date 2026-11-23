@@ -36,6 +36,7 @@ VISIBILITY = ReportModule("visibility", "integrations.read")
 # whole: a Manager holds audit.read and not sessions.manage, and still sees
 # retention. Each check's own permission is applied when the record is read.
 SETTINGS = ReportModule("settings", "platform.read")
+COVERAGE = ReportModule("coverage", "detections.read")
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -173,9 +174,55 @@ CHECKS: tuple[ReportCheck, ...] = (
         _NYCRR,
         _CHECKED,
     ),
+    ReportCheck(
+        "coverage.technique",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "A technique is proven only when an active SIEM copy passes Runs and Sees.",
+    ),
+    ReportCheck(
+        "coverage.blind_spot",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "A data source SIEM rules fail Sees on is a blind spot.",
+    ),
+    ReportCheck(
+        "coverage.paper",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "A technique is covered on paper only when every deployed SIEM rule on it fails Runs or Sees.",
+    ),
+    ReportCheck(
+        "coverage.run",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "A rule fails to run, or its data is silent.",
+    ),
+    ReportCheck(
+        "coverage.quiet",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "Quiet fails a rule over its alerts-per-day limit.",
+    ),
+    ReportCheck(
+        "coverage.noisy",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "Noisy fails a rule with far more alerts today than its usual.",
+    ),
+    ReportCheck(
+        "coverage.silent",
+        COVERAGE.id,
+        COVERAGE.permission,
+        "Silent fails a rule that fired regularly, then stopped.",
+    ),
 )
 
-MODULES = {VISIBILITY.id: VISIBILITY, SETTINGS.id: SETTINGS}
+MODULES = {
+    VISIBILITY.id: VISIBILITY,
+    SETTINGS.id: SETTINGS,
+    COVERAGE.id: COVERAGE,
+}
 
 
 def spec_for(check_id: str) -> ReportCheck:
