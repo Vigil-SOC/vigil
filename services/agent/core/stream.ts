@@ -22,7 +22,7 @@ import {
 import { ProviderError, stopCauseOf, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
 import { assemble, canonical, DEFAULT_FOLD, prefixOf, renderFacts, withInstructions, windowCeiling, type FoldPolicy, type Prefix } from "./context.js";
 import { createHash } from "node:crypto";
-import { redactCredentials, scannerFor, wrap } from "./security.js";
+import { redactCredentials, scannerFor, scrub, wrap } from "./security.js";
 import type { State } from "./seams.js";
 
 // Journaled from record without a checkpoint. An approvals entry would park
@@ -888,10 +888,55 @@ export function rebuiltInput(parts: InputParts): { messages: Message[]; input: s
 }
 
 // Names what was dropped rather than reproducing it: a summary that quotes the
-// middle back is the middle, and folds nothing.
+// middle back is the middle, and folds nothing. Each folded result is named by its ref
+// (call id where the transcript has none), tool and a one-line subject from the call's
+// arguments, never from the result, so an answer can say what it read and a structured
+// run can cite a folded ref. Pure in the slice, since rebuiltInput replays it.
 function summariseFolded(folded: readonly Message[]): string {
   const calls = folded.filter((one) => one.role === "tool").length;
-  return `[${folded.length} earlier messages folded away, including ${calls} tool results.]`;
+  const count = `[${folded.length} earlier messages folded away, including ${calls} tool results.]`;
+  return calls === 0 ? count : `${count}\nFolded results:\n${foldedList(folded)}`;
+}
+
+const FOLDED_ENTRIES = 20;
+const FOLDED_LIST_CHARS = 1_500;
+const SUBJECT_CHARS = 60;
+const OPENER = /^<vigil:tool_result((?:\s+[\w-]+="[^"]*")*)\s*>/;
+
+function foldedList(folded: readonly Message[]): string {
+  const asked = new Map<string, ToolCall>();
+  for (const one of folded) if (one.role === "assistant") for (const call of one.tool_calls) asked.set(call.id, call);
+  const lines = folded.flatMap((one) => {
+    if (one.role !== "tool") return [];
+    const attrs = Object.fromEntries([...(OPENER.exec(one.content)?.[1] ?? "").matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1]!, m[2]!]));
+    const call = asked.get(one.call_id);
+    const handle = (attrs["ref"] ?? one.call_id).replace(/[^\w.-]/g, "");
+    const tool = (attrs["tool"] ?? call?.tool ?? "tool").replace(/[^\w.-]/g, "");
+    const subject = call === undefined ? "" : subjectOf(call.args);
+    return [`${handle} ${tool}${subject === "" ? "" : `: ${subject}`}`];
+  });
+  // Newest kept: the oldest go first, to the entry cap and then to the character cap.
+  let kept = lines.slice(-FOLDED_ENTRIES);
+  const rendered = () => [...kept, ...(kept.length < lines.length ? [`and ${lines.length - kept.length} older folded results not named`] : [])].join("\n");
+  while (kept.length > 0 && rendered().length > FOLDED_LIST_CHARS) kept = kept.slice(1);
+  return rendered();
+}
+
+// The longest string argument (a command over its case id, a query, a finding id), else
+// the first as key=value; raw text when the arguments are not JSON. Scrubbed so it cannot
+// open a block. Ties keep the earlier key, so the pick depends only on the arguments.
+function subjectOf(args: string): string {
+  const parsed = parseArgs(args);
+  const entries = parsed === null ? [] : Object.entries(parsed);
+  const text = entries.map(([, value]) => value).filter((value): value is string => typeof value === "string");
+  const first = entries[0];
+  const raw =
+    parsed === null ? args
+    : text.length > 0 ? text.reduce((best, one) => (one.length > best.length ? one : best))
+    : first === undefined ? "" : `${first[0]}=${JSON.stringify(first[1])}`;
+  const line = scrub(raw.replace(/\s+/g, " ").trim(), Infinity);
+  const points = Array.from(line);
+  return points.length <= SUBJECT_CHARS ? line : `${points.slice(0, SUBJECT_CHARS).join("")}…`;
 }
 
 function schemaOf(tool: RegisteredTool): ToolSchema {
