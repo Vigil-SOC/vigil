@@ -104,6 +104,13 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     if (dismissals.length > 0 && (guard?.field !== field || !dismissals.every((one) => guard.guarded.includes(one)))) {
       throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which can close a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
     }
+    // An escalation guard reviews every alarm the enum can say, or an unreviewed one slips past it.
+    if (escalation_guard?.field === field) {
+      const alarms = ["malicious", "suspicious"].filter((one) => allowed.includes(one) && !escalation_guard.guarded.includes(one));
+      if (alarms.length > 0) {
+        throw new SpecError(`${where}: ${field} can say ${alarms.join(" and ")}, an alarm, so escalation_guard on ${field} must guard ${alarms.join(" and ")} too`);
+      }
+    }
   }
   const max_turns = raw["max_turns"];
   if (max_turns !== undefined && (typeof max_turns !== "number" || !Number.isInteger(max_turns) || max_turns < 1)) {
@@ -229,6 +236,10 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
   // A held dismissal must land somewhere that keeps the case open.
   if (field === conclusion.disposition_field && (fallback === "benign" || fallback === "false_positive")) {
     throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which can close the case`);
+  }
+  // A fallback is written with no review of its own, so it may not claim an attack either.
+  if (field === conclusion.disposition_field && (fallback === "malicious" || fallback === "suspicious")) {
+    throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, an alarm no review would stand behind; fall back to a hold such as needs_review`);
   }
   if (guarded.includes(fallback)) throw new SpecError(`${where}: guard.fallback ${fallback} is itself guarded`);
   const min_hypotheses = raw["min_hypotheses"];
