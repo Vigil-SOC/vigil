@@ -66,8 +66,11 @@ jobs:
 
       # One Alembic head, named by core/upgrade/versions/HEAD. Two revision PRs
       # on the same head both edit that line, so the second conflicts (#4901).
+      # Loading the revisions imports the app, so the lint tools are not enough.
       - name: Run schema head gate
-        run: python scripts/check_schema_head.py
+        run: |
+          pip install -r requirements.lock
+          python scripts/check_schema_head.py
 
       # No comment block over two lines in the agent layer. Advisory for now: #661
       # landed 33 that predate the gate, and they are its author's to rule on.
