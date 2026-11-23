@@ -1352,10 +1352,15 @@ def _checkpoint_fields(action: PendingAction) -> Dict[str, Any]:
     """
     params = action.parameters if isinstance(action.parameters, dict) else {}
     checkpoint = params.get("checkpoint_id")
+    tool, args = params.get("tool"), params.get("args")
     fields: Dict[str, Any] = {
         "checkpoint_id": checkpoint if isinstance(checkpoint, str) else None,
         "checkpoint_class": params.get("checkpoint_class") or None,
         "hypotheses": [],
+        # A gated call's tool and the exact arguments approving it releases: the
+        # invoke door runs only these, so the card must show them.
+        "tool": tool if isinstance(tool, str) and tool else None,
+        "args": args if isinstance(args, str) else None,
     }
     listed = params.get("hypotheses")
     if isinstance(listed, list):
@@ -1445,6 +1450,8 @@ def _restricted_item(action: PendingAction, kind: str) -> Dict[str, Any]:
         "checkpoint_id": None,
         "checkpoint_class": None,
         "hypotheses": [],
+        "tool": None,
+        "args": None,
         "restricted": True,
     }
 

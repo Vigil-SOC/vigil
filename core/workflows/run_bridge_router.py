@@ -1212,12 +1212,20 @@ def record_checkpoint(
         "run checkpoint", run_id, x_vigil_run_principal, authorization=authorization
     )
 
+    # A tool call's question carries its arguments, which the card shows whole from
+    # the parameters, so the title only names the tool rather than cutting them.
+    tool = (raised.context or {}).get("tool")
+    tool = tool if isinstance(tool, str) else ""
     # Idempotent per checkpoint inside raise_for_checkpoint, because a parked run
     # is announced on every sweep and would otherwise queue the question each time.
     raise_for_checkpoint(
         run_id=run_id,
         checkpoint_id=raised.checkpoint_id,
-        title=raised.question[:120] or raised.checkpoint_class,
+        title=(
+            f"Approve {tool}"
+            if tool
+            else raised.question[:120] or raised.checkpoint_class
+        ),
         description=raised.question,
         reason=_CHECKPOINT_REASONS.get(
             raised.checkpoint_class, "The run is waiting on your answer."

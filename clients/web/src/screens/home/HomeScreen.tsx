@@ -5,6 +5,8 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { approvalsApi, configApi, day1Api, ingestionApi, productionStartApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
+import { CallArgs } from '../../shared/CallArgs'
+import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
@@ -165,7 +167,8 @@ function DecisionCard({
         <span className="home-waited">{waited(item.created_at)}</span>
         <span className="home-kind">{KIND_LABEL[item.kind]}</span>
       </div>
-      <h3 title={ask.full}>{ask.text}</h3>
+      <h3 title={visibleText(ask.full)}>{visibleText(ask.text)}</h3>
+      <CallArgs tool={item.tool} args={item.args} />
       {meta && (
         <p className="home-card-meta" title={meta}>
           {meta}

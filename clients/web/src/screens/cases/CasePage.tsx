@@ -17,6 +17,8 @@ import { STOP_CAUSES } from '../../shared/stopCause'
 import { StopAction } from '../../shared/StopLine'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
+import { CallArgs } from '../../shared/CallArgs'
+import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
@@ -442,7 +444,8 @@ function CaseNeed(props: NeedProps) {
         <span className="needs-dot" aria-hidden="true" />
         Needs your decision{waited && ` · waiting ${waited}`}
       </span>
-      <h3>{item.title}</h3>
+      <h3>{visibleText(item.title)}</h3>
+      <CallArgs tool={item.tool} args={item.args} />
       {approving.length > 0 && (
         <ul className="needs-approving" aria-label="What you are approving">
           {approving.map((row, i) => (
@@ -529,7 +532,7 @@ function CaseNeedRow(props: NeedProps) {
   return (
     <li>
       <div className="needs-row">
-        <span className="needs-row-title">{item.title}</span>
+        <span className="needs-row-title">{visibleText(item.title)}</span>
         <span className={reversible ? 'needs-row-rev' : 'needs-row-rev irreversible'}>
           {reversible ? 'Reversible' : 'Cannot be undone'}
         </span>
@@ -547,6 +550,7 @@ function CaseNeedRow(props: NeedProps) {
           </button>
         </div>
       </div>
+      <CallArgs tool={item.tool} args={item.args} />
       {rejecting && <RejectForm {...props} />}
     </li>
   )

@@ -14957,6 +14957,11 @@ export interface components {
         /** NeedsYouItem */
         NeedsYouItem: {
             /**
+             * Args
+             * @description That call's arguments, verbatim: approving releases exactly these.
+             */
+            args?: string | null;
+            /**
              * Case Id
              * @description The first of case_ids: the case that asked.
              */
@@ -15013,6 +15018,11 @@ export interface components {
             source_id: string;
             /** Title */
             title: string;
+            /**
+             * Tool
+             * @description The gated tool call this approval releases.
+             */
+            tool?: string | null;
             /**
              * Waiting
              * @description Why it waits: no reader of its restricted case can approve it.
