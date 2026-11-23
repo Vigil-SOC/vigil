@@ -92,7 +92,10 @@ _ABBREVIATIONS = frozenset({"mr", "mrs", "ms", "dr", "vs", "etc", "inc", "approx
 def headline(value: Any, limit: int = 200) -> str:
     """A markdown report's first sentence as one plain line, cut at a word past ``limit``."""
     lines = str(value or "").strip().splitlines()
-    start = next((i for i, line in enumerate(lines) if line.strip() and not _LABEL.match(line)), None)
+    start = next(
+        (i for i, line in enumerate(lines) if line.strip() and not _LABEL.match(line)),
+        None,
+    )
     if start is None:  # nothing but labels: the first one is all there is
         return _flat(next((line for line in lines if line.strip()), ""))[:limit]
     # The first block only: up to a blank line, a label, or the next list item.
