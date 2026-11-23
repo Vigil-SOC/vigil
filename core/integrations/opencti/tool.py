@@ -97,12 +97,15 @@ async def handle_list_tools():
         types.Tool(
             name="opencti_get_related",
             description=(
-                "List the relationships going out of an OpenCTI entity (uses, targets, "
-                "attributed-to, ...), capped. entity_id is the id another OpenCTI tool "
-                "returned (a STIX id matches nothing); each target carries its own id, its "
-                "entity_type, its name (an intrusion set's or malware's name, an "
-                "observable's value such as the IP), and an attack-pattern target its "
-                "ATT&CK technique id as x_mitre_id. For a "
+                "List an OpenCTI entity's relationships in both directions, each capped: "
+                "relationships are the ones going out of it (what it uses, targets, is "
+                "attributed-to, ...), each with its target as `to`; incoming are the ones "
+                "pointing at it (who uses this malware, which indicator indicates it or is "
+                "based-on this observable), each with its source as `from`. entity_id is "
+                "the id another OpenCTI tool returned (a STIX id matches nothing); each "
+                "`to` and `from` carries its own id, its entity_type, its name (an "
+                "intrusion set's or malware's name, an observable's value such as the IP), "
+                "and an attack pattern its ATT&CK technique id as x_mitre_id. For a "
                 "report (or grouping, case) it also lists objects: the attack patterns, "
                 "intrusion sets, indicators, ... the report names, capped; object_count is "
                 "how many the report holds in all."
