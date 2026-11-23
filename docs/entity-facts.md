@@ -70,7 +70,7 @@ Vigil only reads. Give each source a credential that can do nothing else.
 |---|---|
 | Entra | Microsoft Graph application permissions `User.Read.All` (the user and their manager) and `GroupMember.Read.All` (group names). If `memberOf` is denied, the other fields still come back. |
 | Okta | An API token of a **Read-only Administrator**, or, for OAuth, `okta.users.read` and `okta.groups.read`. |
-| Falcon | An API client with **Hosts: Read** and nothing else. |
+| Falcon | **Hosts: Read** for host facts, and **Alerts: Read** for alert collection and the credential read. |
 
 ## How long it is kept
 
