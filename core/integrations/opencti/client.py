@@ -250,13 +250,18 @@ class OpenCTIService:
     async def get_related(self, entity_id: str, limit: Any = 20) -> Dict[str, Any]:
         if not _ID.match(entity_id or ""):
             raise OpenCTIError(f"Invalid entity id {entity_id!r}")
-        # A container's (report, grouping, case) contents are object refs, not
-        # relationships; ask for both in one round trip.
+        # Both directions, and a container's (report, grouping, case) contents,
+        # which are object refs rather than relationships, in one round trip. A
+        # malware's own relationships say what it uses; who uses it, and the
+        # indicators that point at it, are relationships into it.
         data = await self._query(
             "query($id: String!, $ids: [String], $n: Int) {"
             " stixCoreRelationships(fromId: $ids, first: $n) {"
             " edges { node { relationship_type confidence"
             " to {" + _TARGET_FIELDS + "} } } }"
+            " incoming: stixCoreRelationships(toId: $ids, first: $n) {"
+            " edges { node { relationship_type confidence"
+            " from {" + _TARGET_FIELDS + "} } } }"
             " stixDomainObject(id: $id) { ... on Container { objects(first: $n) {"
             " pageInfo { globalCount }"
             " edges { node {" + _TARGET_FIELDS + "} } } } } }",
@@ -266,10 +271,16 @@ class OpenCTIService:
             {**r, "to": _target(r.get("to") or {})}
             for r in _nodes(data.get("stixCoreRelationships"))
         ]
+        incoming = [
+            {**r, "from": _target(r.get("from") or {})}
+            for r in _nodes(data.get("incoming"))
+        ]
         out: Dict[str, Any] = {
             "id": entity_id,
             "count": len(relationships),
             "relationships": relationships,
+            "incoming_count": len(incoming),
+            "incoming": incoming,
         }
         container = data.get("stixDomainObject") or {}
         if "objects" in container:
