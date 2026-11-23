@@ -12807,12 +12807,22 @@ export interface components {
             comparison?: string | null;
             /** Coverage */
             coverage?: string | null;
+            /** Days 7 To 30 */
+            days_7_to_30?: number | null;
+            /** Degraded */
+            degraded?: number | null;
             /** Fix */
             fix?: string | null;
             /** Labels */
             labels?: string[];
             /** Last Data */
             last_data?: string | null;
+            /** Listed */
+            listed?: number | null;
+            /** Never Connected */
+            never_connected?: number | null;
+            /** Over 30 Days */
+            over_30_days?: number | null;
             /** Prerequisites */
             prerequisites?: string[];
             /** Screen */

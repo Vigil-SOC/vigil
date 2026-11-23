@@ -192,6 +192,95 @@ class CrowdStrikeService:
             self.last_error = str(e)
             return None
 
+    def device_total(self, filter_query: Optional[str] = None) -> Dict[str, Any]:
+        """Total from ``GET /devices/queries/devices/v1`` with ``limit`` 1.
+
+        Reads ``meta.pagination.total`` only. The host id in the body is not
+        returned. ``kind`` is ``ok``, ``http``, ``timeout``, ``parse`` or
+        ``unreachable``. ``status`` is set when the response had one.
+        ``self.timeout`` bounds this call, including the token exchange.
+        """
+        self.last_error = None
+        self.last_status = None
+        if not self._device_token():
+            kind = "http" if self.last_status is not None else "unreachable"
+            return {"total": None, "status": self.last_status, "kind": kind}
+        params: Dict[str, Any] = {"limit": 1}
+        if filter_query:
+            params["filter"] = filter_query
+        try:
+            response = self.session.get(
+                f"{self.base_url}/devices/queries/devices/v1",
+                params=params,
+                timeout=self.timeout,
+            )
+        except httpx.TimeoutException:
+            self.last_error = "devices query timed out"
+            return {"total": None, "status": None, "kind": "timeout"}
+        except httpx.HTTPError:
+            self.last_error = "devices query failed"
+            return {"total": None, "status": None, "kind": "unreachable"}
+        self.last_status = response.status_code
+        if response.status_code != 200:
+            self.last_error = f"devices query: HTTP {response.status_code}"
+            return {"total": None, "status": response.status_code, "kind": "http"}
+        try:
+            body = response.json()
+        except ValueError:
+            self.last_error = "devices query unreadable"
+            return {"total": None, "status": response.status_code, "kind": "parse"}
+        pagination = (body.get("meta") or {}).get("pagination") or {}
+        total = pagination.get("total") if isinstance(pagination, dict) else None
+        if isinstance(total, bool) or not isinstance(total, int):
+            self.last_error = "devices query returned no total"
+            return {"total": None, "status": response.status_code, "kind": "parse"}
+        return {"total": total, "status": response.status_code, "kind": "ok"}
+
+    def _device_token(self) -> bool:
+        """Token for a host-total read. Logs nothing from the error.
+
+        ``_authenticate`` records the exception text for other callers. This
+        read keeps the status only.
+        """
+        if self.access_token and self.token_expiry and utcnow() < self.token_expiry:
+            return True
+        try:
+            response = self.session.post(
+                f"{self.base_url}/oauth2/token",
+                data={"client_id": self.client_id, "client_secret": self.client_secret},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=self.timeout,
+            )
+        except httpx.TimeoutException:
+            self.last_status = None
+            self.last_error = "authentication timed out"
+            return False
+        except httpx.HTTPError:
+            self.last_status = None
+            self.last_error = "authentication failed"
+            return False
+        if response.status_code == 201:
+            try:
+                data = response.json()
+            except ValueError:
+                self.last_status = response.status_code
+                self.last_error = "authentication unreadable"
+                return False
+            self.access_token = data.get("access_token")
+            if not self.access_token:
+                self.last_status = response.status_code
+                self.last_error = "authentication unreadable"
+                return False
+            expires_in = data.get("expires_in", 1800)
+            self.token_expiry = utcnow() + timedelta(seconds=expires_in - 60)
+            self.session.headers.update(
+                {"Authorization": f"Bearer {self.access_token}"}
+            )
+            return True
+        self.last_status = response.status_code
+        self.last_error = f"authentication failed: HTTP {response.status_code}"
+        return False
+
     def lift_containment(self, host_id: str) -> Dict[str, Any]:
         """Remove containment from a host."""
         try:

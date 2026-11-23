@@ -8,6 +8,7 @@ import { InfoTip } from '../../shared/InfoTip'
 import { ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
+import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { reportStamp } from './stamp'
 import './report.css'
 
@@ -23,6 +24,7 @@ const MODULE_TITLE: Record<string, string> = {
   visibility: 'What Vigil can see',
   settings: "Vigil's own settings",
   coverage: 'Detection coverage',
+  estate: 'What CrowdStrike, Defender and Wazuh still list',
 }
 
 const SETTINGS_TIP = {
@@ -39,6 +41,14 @@ const TIP = {
   calculation:
     'A switched-on source passes when it is healthy, needs a person when it requires a test, is not checked when its health says so, and fails otherwise. One failure does not fail it. Last data and webhook labels are information.',
   limit: 'Hidden without integrations.read. Not checked is never a pass.',
+}
+
+const ESTATE_TIP = {
+  source: 'CrowdStrike, Defender and the Wazuh manager, with the credential already saved',
+  calculation:
+    'A host last heard 7 days or more ago needs a person. Degraded protection the tool itself states fails. Zero of either passes. A tool that lists nothing is not checked.',
+  limit:
+    "Hidden without integrations.read. A read that cannot cover the list is not checked, and no partial count is kept. Not checked is never a pass.",
 }
 
 const COVERAGE_TIP = {
@@ -250,7 +260,15 @@ function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string |
   )
 }
 
-function CheckRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+function CheckRow({
+  check,
+  comparedAt,
+  note,
+}: {
+  check: Check
+  comparedAt: string | null
+  note?: string
+}) {
   const tone = outcomeTone(check.outcome)
   const line = facts(check)
   return (
@@ -260,6 +278,11 @@ function CheckRow({ check, comparedAt }: { check: Check; comparedAt: string | nu
         {outcomeWord(check.outcome)}
       </span>
       <p>{check.reason}</p>
+      {note && (
+        <p className="d1-facts">
+          <span className="chip int-exp">Experimental</span> {note}
+        </p>
+      )}
       {check.evidence?.fix && <p className="d1-fix">{check.evidence.fix}</p>}
       {line && <p className="d1-facts">{line}</p>}
       <Versus check={check} comparedAt={comparedAt} />
@@ -460,6 +483,7 @@ export default function ReportScreen() {
   const visibilityChecks = checks.filter((check) => check.module === 'visibility')
   const settings = checks.filter((check) => check.module === 'settings')
   const coverageChecks = checks.filter((check) => check.module === 'coverage')
+  const estateChecks = checks.filter((check) => check.module === 'estate')
   const problems = visibilityChecks.filter((check) => check.outcome !== 'pass')
   const settled = visibilityChecks.filter(
     (check) => check.outcome === 'pass' && !check.id.startsWith('visibility.source.'),
@@ -474,6 +498,8 @@ export default function ReportScreen() {
     report !== null && !withheld.includes('visibility') && (report.modules ?? []).includes('visibility')
   const coverageRan = (report?.modules ?? []).includes('coverage')
   const showCoverage = coverageRan && !withheld.includes('coverage')
+  const estateRan = (report?.modules ?? []).includes('estate')
+  const showEstate = estateRan && !withheld.includes('estate')
   const coverageGrouped = COVERAGE_GROUPS.map((group) => ({
     ...group,
     checks: ofGroup(coverageChecks, group.id),
@@ -644,6 +670,38 @@ export default function ReportScreen() {
               </div>
             )}
             {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
+          </section>
+        )}
+        {estateRan && withheld.includes('estate') && (
+          <section className="d1-card" aria-label="What CrowdStrike, Defender and Wazuh still list">
+            <h2>What CrowdStrike, Defender and Wazuh still list</h2>
+            <p className="d1-withheld">Not included. This section needs integrations.read.</p>
+          </section>
+        )}
+        {showEstate && (
+          <section className="d1-card" aria-label="What CrowdStrike, Defender and Wazuh still list">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.estate}</h2>
+              <InfoTip
+                label="How hosts CrowdStrike, Defender and Wazuh still list are judged"
+                align="start"
+                {...ESTATE_TIP}
+              />
+            </div>
+            {estateChecks.length > 0 ? (
+              <div className="d1-rows">
+                {estateChecks.map((check) => (
+                  <CheckRow
+                    key={check.id}
+                    check={check}
+                    comparedAt={comparedAt}
+                    note={check.id.startsWith('estate.crowdstrike.') ? EXPERIMENTAL_NOTE : undefined}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="d1-quiet">Nothing to report in this section.</p>
+            )}
           </section>
         )}
       </div>

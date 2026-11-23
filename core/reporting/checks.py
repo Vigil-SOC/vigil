@@ -37,6 +37,8 @@ VISIBILITY = ReportModule("visibility", "integrations.read")
 # retention. Each check's own permission is applied when the record is read.
 SETTINGS = ReportModule("settings", "platform.read")
 COVERAGE = ReportModule("coverage", "detections.read")
+# Hosts CrowdStrike, Defender and Wazuh still list. Counts only.
+ESTATE = ReportModule("estate", "integrations.read")
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -216,12 +218,49 @@ CHECKS: tuple[ReportCheck, ...] = (
         COVERAGE.permission,
         "Silent fails a rule that fired regularly, then stopped.",
     ),
+    ReportCheck(
+        "estate.setup",
+        ESTATE.id,
+        ESTATE.permission,
+        "CrowdStrike, Defender or Wazuh is set up. With none of them, the read is not checked.",
+    ),
+    ReportCheck(
+        "estate.crowdstrike.unheard",
+        ESTATE.id,
+        ESTATE.permission,
+        "CrowdStrike hosts last seen 7 days or more before the read. Needs a person when any, pass when none.",
+    ),
+    ReportCheck(
+        "estate.crowdstrike.degraded",
+        ESTATE.id,
+        ESTATE.permission,
+        "CrowdStrike hosts in reduced functionality mode. Fail when any, pass when none. A blank value is not counted.",
+    ),
+    ReportCheck(
+        "estate.defender.unheard",
+        ESTATE.id,
+        ESTATE.permission,
+        "Onboarded Defender machines whose last full report is 7 days or more before the read. Needs a person when any, pass when none.",
+    ),
+    ReportCheck(
+        "estate.defender.degraded",
+        ESTATE.id,
+        ESTATE.permission,
+        "Onboarded Defender machines reporting impaired communication or no sensor data. Fail when any, pass when none.",
+    ),
+    ReportCheck(
+        "estate.wazuh.unheard",
+        ESTATE.id,
+        ESTATE.permission,
+        "Wazuh agents last heard 7 days or more before the read, and never-connected agents once registration is 7 days old. The manager is not counted.",
+    ),
 )
 
 MODULES = {
     VISIBILITY.id: VISIBILITY,
     SETTINGS.id: SETTINGS,
     COVERAGE.id: COVERAGE,
+    ESTATE.id: ESTATE,
 }
 
 
