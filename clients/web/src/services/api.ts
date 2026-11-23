@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { SelectionDraft, SelectionView } from '../screens/settings/selectionForm'
 import { basePath } from '../config/basePath'
 import type { Schema } from './apiTypes'
 import type { operations } from './generated/schema'
@@ -767,6 +768,11 @@ export const day1Api = {
   modules: () => api.get<Schema<'Day1Module'>[]>('/day1-report/modules'),
   setModule: (id: string, enabled: boolean) =>
     api.put<Schema<'Day1Module'>>(`/day1-report/modules/${encodeURIComponent(id)}`, { enabled }),
+  // Jurisdictions and data or organisation kinds (#5010). The catalogue in the
+  // response is the only copy of the closure rules the form uses.
+  selection: () => api.get<SelectionView>('/day1-report/selection'),
+  setSelection: (data: SelectionDraft) =>
+    api.put<SelectionView>('/day1-report/selection', data),
 }
 
 export interface PlatformDatabaseProxyConfig {
