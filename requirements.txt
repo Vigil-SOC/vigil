@@ -33,7 +33,7 @@ fastapi>=0.162.0
 fastapi-offline==1.7.7
 uvicorn[standard]>=0.54.0
 python-multipart>=0.0.32
-email-validator>=2.3.0
+email-validator>=2.4.0
 
 # Reads an attached PDF, image or Office file on this machine (Apache-2.0,
 # bundled OCR, no network call). Office types also need LibreOffice installed.
