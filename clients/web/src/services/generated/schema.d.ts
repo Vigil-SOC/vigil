@@ -6559,6 +6559,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/production-start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Production Start
+         * @description The declared production start, or both times null when unset.
+         */
+        get: operations["get_api_production-start"];
+        /**
+         * Set Production Start
+         * @description Declare a start of now or earlier, change it, or clear it.
+         */
+        put: operations["put_api_production-start"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -15631,6 +15655,18 @@ export interface components {
              * @enum {string}
              */
             medic: "off" | "running" | "down" | "unknown" | "starting" | "degraded" | "blind" | "not_recording" | "crash_looping";
+        };
+        /** ProductionStart */
+        ProductionStart: {
+            /** Declared At */
+            declared_at?: string | null;
+            /** Started At */
+            started_at?: string | null;
+        };
+        /** ProductionStartWrite */
+        ProductionStartWrite: {
+            /** Started At */
+            started_at: string | null;
         };
         /**
          * ProfileUpdateRequest
@@ -29684,6 +29720,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProcessStates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_production-start": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionStart"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_production-start": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductionStartWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionStart"];
                 };
             };
             /** @description Validation Error */

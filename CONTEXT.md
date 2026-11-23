@@ -97,6 +97,16 @@ On the desktop app, which has no background service, it reads "not available
 on the desktop app: no background service".
 _Avoid_: `/readyz`, `/api/health/ready` (those say whether this process is up)
 
+**Production Start**:
+The moment a person declares that Vigil works this install's live alerts as
+part of the real SOC process. It is never inferred. One system setting,
+`production.start`, holds `started_at` (the moment they name, now or earlier)
+and `declared_at` (when they wrote it). Clearing writes both empty. Home shows
+"In production since" that time, or "Not in production", and a person holding
+`platform.write` declares, changes, or clears it there. It is not a detection
+rule's live stage: "go live" and "live" belong to rule rollout.
+_Avoid_: live, go live
+
 **Day 1 Report**:
 A stored report of what a new install can see, run from the Install Readiness
 sweep (`services/api/readiness.py` calls `core/reporting/day1.py`). It runs
