@@ -290,6 +290,12 @@ class WorkflowRun(Base):
     # Why the model path stopped the run, for the console's table to word. Null on a
     # run a model call did not stop, and on every run that ended before this column.
     stop_cause: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # What the run's report stands on, from its terminal (#4962): whether the turn cap
+    # ended it, the cited refs it holds, and its review's grounding. Null is unsaid,
+    # never false: a run before these columns, or a plugin that does not cite or ground.
+    capped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    citation_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    grounded: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # How far a hunt has got and the ceiling it runs under, as the agent layer last
     # reported them. Null for a run that never has (compose, or a hunt before its first
     # iteration lands), which the case list then reads from the trigger context.

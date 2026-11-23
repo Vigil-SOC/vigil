@@ -104,7 +104,16 @@ export function composeHooks(mirror: Mirror): PluginHooks {
       const answered = summarise(ledger.answers);
       const note = answered === "" ? null : unwrittenNote(callsIn(await state(ctx).read(ctx.options.run_id)), ctx.options.spec.tools);
       const summary = note === null ? answered : `${answered}\n\n${note}`;
-      await mirror.terminal(ctx.options.run_id, { outcome: terminal.outcome, reason: terminal.reason, stop_cause: terminal.stop_cause, summary, cost_usd: ledger.spent });
+      await mirror.terminal(ctx.options.run_id, {
+        outcome: terminal.outcome,
+        reason: terminal.reason,
+        stop_cause: terminal.stop_cause,
+        summary,
+        cost_usd: ledger.spent,
+        ...(terminal.capped === undefined ? {} : { capped: terminal.capped }),
+        ...(terminal.citation_count === undefined ? {} : { citation_count: terminal.citation_count }),
+        ...(terminal.grounded === undefined ? {} : { grounded: terminal.grounded }),
+      });
     },
   };
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -219,6 +219,7 @@ class WorkflowRunService:
         reason: Optional[str] = None,
         stop_cause: Optional[str] = None,
         finished_at: Optional[datetime] = None,
+        facts: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         """Mark a run terminal. ``status`` must be one of the check-
         constrained values: completed | failed | cancelled.
@@ -232,6 +233,10 @@ class WorkflowRunService:
 
         ``finished_at`` is the instant the agent sealed the report. Absent, the
         row is stamped when this write lands.
+
+        ``facts`` is what the report stands on (``capped``, ``citation_count``,
+        ``grounded``), from the bridge's terminal. When given, all three follow it,
+        None included; a caller that finalizes the run itself leaves them as they are.
         """
         if status not in ("completed", "failed", "cancelled"):
             logger.error("finalize_run: invalid status %r", status)
@@ -264,6 +269,10 @@ class WorkflowRunService:
                 if reason is not None:
                     row.reason = str(reason)[:5_000]
                 row.stop_cause = str(stop_cause)[:80] if stop_cause else None
+                if facts is not None:
+                    row.capped = facts.get("capped")
+                    row.citation_count = facts.get("citation_count")
+                    row.grounded = facts.get("grounded")
                 if cost_usd is not None:
                     row.total_cost_usd = cost_usd
                 if row.started_at is not None:

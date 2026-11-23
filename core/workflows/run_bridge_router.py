@@ -111,6 +111,30 @@ class TerminalUpdate(BaseModel):
     # When the agent sealed the report. The row's finished_at, so Ended and the
     # history agree. Absent, or unreadable, and the row is stamped on arrival.
     finished_at: Optional[str] = None
+    # What the report stands on, for the case's choice of run (#4962). Loose: a
+    # wrong type is stored as unsaid, never grounds to refuse the terminal.
+    capped: Optional[Any] = None
+    citation_count: Optional[Any] = None
+    grounded: Optional[Any] = None
+
+    def facts(self) -> Dict[str, Any]:
+        """The three facts as the row stores them; None where unsaid or unreadable."""
+
+        def flag(value: Any) -> Optional[bool]:
+            return value if isinstance(value, bool) else None
+
+        count = self.citation_count
+        # Within the INTEGER column, or the whole terminal's write would fail.
+        readable = (
+            isinstance(count, int)
+            and not isinstance(count, bool)
+            and 0 <= count < 2**31
+        )
+        return {
+            "capped": flag(self.capped),
+            "citation_count": count if readable else None,
+            "grounded": flag(self.grounded),
+        }
 
 
 class CitedFindings(BaseModel):
@@ -284,6 +308,7 @@ def record_terminal(
         reason=update.reason or None,
         stop_cause=update.stop_cause,
         finished_at=_parse_finished_at(update.finished_at),
+        facts=update.facts(),
     )
 
     # The case the run was started from, so its report reaches the case rather than

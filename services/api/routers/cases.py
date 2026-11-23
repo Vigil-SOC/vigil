@@ -33,7 +33,7 @@ from core.cases.case_handoff import ESCALATE_REPLACED
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_record import merge_record, unread_row
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
-from core.cases.case_state import case_run_refs, primary_ref
+from core.cases.case_state import case_run_refs, primary_choice, run_ids
 from core.documents.extract import ACCEPTED_TYPES, DocumentRefused, spool_upload
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
@@ -726,7 +726,8 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
     concurrently; a run that cannot be read is one row saying why, not a failed
     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
     the table has no ``case_id`` column. ``run_id`` is the case's run
-    (``primary_ref``), which Replay, Verify chain and Export audit read.
+    (``primary_choice``), which Replay, Verify chain and Export audit read, and
+    ``primary_basis`` names what picked it.
     """
     if data_service.is_demo_mode():
         from core.platform.demo_data_service import DemoDataService
@@ -749,14 +750,13 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    refs = [
-        ref
-        for ref, _ in case_run_refs(
-            case_records_service.list_case_investigations(session, case_id),
-            case_records_service.list_case_runs(session, case_id),
-        )
-    ]
-    primary = primary_ref(refs)
+    investigations = case_records_service.list_case_investigations(session, case_id)
+    case_runs = case_records_service.list_case_runs(session, case_id)
+    facts = case_records_service.list_run_facts(
+        session, run_ids(investigations, case_runs)
+    )
+    refs = [ref for ref, _ in case_run_refs(investigations, case_runs, facts=facts)]
+    primary, basis = primary_choice(refs)
     reads = await asyncio.gather(*(_run_events(ref) for ref in refs))
     runs, unread = [], []
     for ref, (events, reason) in zip(refs, reads):
@@ -770,6 +770,7 @@ async def get_case_record(case_id: str, session: OptionalUnitOfWorkSession):
     return {
         "run_id": primary["run_id"] if primary else None,
         "investigation_id": primary["investigation_id"] if primary else None,
+        "primary_basis": basis,
         "rows": merge_record(
             runs,
             audits,

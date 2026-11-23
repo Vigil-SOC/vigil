@@ -147,6 +147,11 @@ class CaseInvestigationRef(BaseModel):
     created_at: Optional[str] = None
     # The case's run: the one the page reads, not a follow-up a handoff started.
     primary: bool = False
+    # What the run's report stands on, from its terminal; absent where unsaid (#4962).
+    outcome: Optional[str] = None
+    capped: Optional[bool] = None
+    citation_count: Optional[int] = None
+    grounded: Optional[bool] = None
 
 
 class CaseClosureView(BaseModel):
@@ -176,6 +181,8 @@ class CaseDetailResponse(CaseSchema):
 
     combined_state: str
     investigations: list[CaseInvestigationRef] = []
+    # What picked the primary run (``case_state.PRIMARY_BASIS``); null with no run.
+    primary_basis: Optional[str] = None
     closure: Optional[CaseClosureView] = None
     linked_findings: list[CaseLinkedFinding] = []
     # The finding the case was opened from: the first one linked to it.
@@ -240,6 +247,8 @@ class CaseRecordResponse(BaseModel):
 
     run_id: Optional[str] = None
     investigation_id: Optional[str] = None
+    # What picked ``run_id`` (``case_state.PRIMARY_BASIS``); absent with no run.
+    primary_basis: Optional[str] = None
     rows: list[CaseRecordRow] = []
 
 

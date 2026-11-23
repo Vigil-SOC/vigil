@@ -5331,6 +5331,16 @@
   "nullable": false,
   "type": "character varying(16)"
  },
+ "column workflow_runs.capped": {
+  "default": null,
+  "nullable": true,
+  "type": "boolean"
+ },
+ "column workflow_runs.citation_count": {
+  "default": null,
+  "nullable": true,
+  "type": "integer"
+ },
  "column workflow_runs.deleted_at": {
   "default": null,
   "nullable": true,
@@ -5350,6 +5360,11 @@
   "default": null,
   "nullable": true,
   "type": "timestamp without time zone"
+ },
+ "column workflow_runs.grounded": {
+  "default": null,
+  "nullable": true,
+  "type": "boolean"
  },
  "column workflow_runs.iteration_count": {
   "default": null,

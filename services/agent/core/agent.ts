@@ -1557,9 +1557,10 @@ async function end(
   // As every workflow does: a failure with nothing to deliver leaves the summary
   // unset, since its reason is already the error column.
   let deliver = summary === null ? undefined : (summary ?? (outcome === "failed" ? undefined : reason));
+  const events = await ctx.harness.state.read(ctx.options.run_id);
   // Only under an answer the run gave: a bare reason claims no save.
   if (typeof summary === "string" && summary.trim() !== "" && typeof deliver === "string") {
-    const note = unwrittenNote(callsIn(await ctx.harness.state.read(ctx.options.run_id)), ctx.options.spec.tools);
+    const note = unwrittenNote(callsIn(events), ctx.options.spec.tools);
     if (note !== null) deliver = `${deliver}\n\n${note}`;
   }
   // After every charge this ending still takes, so the sealed header and the row agree.
@@ -1580,10 +1581,32 @@ async function end(
     ...(disposition === undefined ? {} : { disposition }),
     ...(title === undefined ? {} : { title }),
     ...(confidence === undefined ? {} : { confidence }),
+    ...standing(ctx.options.plugin, events),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);
   return report(ctx, outcome, reason, null);
+}
+
+// What the report stands on, for the case to rank its runs by (#4962): the last
+// conclusion's cap, its cited refs the run holds (as reviewOf counts `real`), and the
+// last review's grounding. A fact the run never had is left out, not false; a run with
+// no conclusion was not capped.
+export function standing(
+  plugin: PluginManifest,
+  events: readonly { kind: string; payload: unknown }[],
+): Pick<TerminalPayload, "capped" | "citation_count" | "grounded"> {
+  const last = (kind: string) => events.findLast((one) => one.kind === kind)?.payload;
+  const conclusion = last("conclusion") as ConclusionPayload | undefined;
+  const review = last("review") as ReviewPayload | undefined;
+  const field = isStructured(plugin.conclusion) ? plugin.conclusion.citations_field : undefined;
+  const held = new Set(callsIn(events).map((call) => call.ref));
+  return {
+    capped: conclusion?.capped === true,
+    // No conclusion cited nothing it could be held to: unsaid, not zero.
+    ...(field === undefined || conclusion === undefined ? {} : { citation_count: citedRefs(conclusion.value[field]).filter((ref) => held.has(ref)).length }),
+    ...(typeof review?.grounded === "boolean" ? { grounded: review.grounded } : {}),
+  };
 }
 
 async function report(

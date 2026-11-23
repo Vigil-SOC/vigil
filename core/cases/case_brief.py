@@ -14,7 +14,12 @@ from typing import Any, Callable, List
 
 from core.agents.projections import read_projection
 from core.cases import case_records_service
-from core.cases.case_state import case_run_refs, combined_state, primary_ref
+from core.cases.case_state import (
+    case_run_refs,
+    combined_state,
+    primary_choice,
+    run_ids,
+)
 from core.storage.database_data_service import get_database_data_service
 from core.storage.unit_of_work import unit_of_work
 from core.workflows import catalog
@@ -306,10 +311,12 @@ def _case_reads(case_id: str) -> tuple:
         return None, [], []
     alerts = data_service.get_findings_by_case(case_id) or []
     with unit_of_work() as session:
-        refs = case_run_refs(
-            case_records_service.list_case_investigations(session, case_id),
-            case_records_service.list_case_runs(session, case_id),
+        investigations = case_records_service.list_case_investigations(session, case_id)
+        runs = case_records_service.list_case_runs(session, case_id)
+        facts = case_records_service.list_run_facts(
+            session, run_ids(investigations, runs)
         )
+        refs = case_run_refs(investigations, runs, facts=facts)
     return case, alerts, refs
 
 
@@ -327,10 +334,11 @@ async def case_brief(case_id: str, workflows: Any) -> str:
         head = f"Case {case_id}: {_line(case.get('title'))} (state: {state})"
         next_lines = _next(case)
         listed = [ref for ref, _ in refs]
-        # The run the case page and its record read (primary_ref), not the newest:
+        # The run the case page and its record read (primary_choice), not the newest:
         # a hunt's handoff starts a root-cause run that is newer and holds none of
-        # the hunt's evidence. The others follow, newest first.
-        run = primary_ref(listed)
+        # the hunt's evidence, and a capped or uncited run does not displace one that
+        # stands. The others follow, newest first.
+        run, basis = primary_choice(listed)
         ordered = [run, *(ref for ref in listed if ref is not run)] if run else []
         reads = await asyncio.gather(*(_read(ref, workflows) for ref in ordered))
 
@@ -341,7 +349,9 @@ async def case_brief(case_id: str, workflows: Any) -> str:
                     lines += _run_state(
                         ref, read["row"], read["view"] or {}, read["hunt"]
                     )
-                    lines.append(_header("The case's run", ref, read, workflows))
+                    # The basis rides with the label, so a weak report reads as one.
+                    label = f"The case's run ({basis})"
+                    lines.append(_header(label, ref, read, workflows))
                     lines += _rows(read, run_rows)
                 else:
                     # The primary keeps the most rows; the others share half its count.

@@ -2880,7 +2880,8 @@ export interface paths {
          *     concurrently; a run that cannot be read is one row saying why, not a failed
          *     record. Audit rows are ``entity_type == case`` and ``entity_id`` this case —
          *     the table has no ``case_id`` column. ``run_id`` is the case's run
-         *     (``primary_ref``), which Replay, Verify chain and Export audit read.
+         *     (``primary_choice``), which Replay, Verify chain and Export audit read, and
+         *     ``primary_basis`` names what picked it.
          */
         get: operations["get_api_cases_case_id_record"];
         put?: never;
@@ -11082,6 +11083,8 @@ export interface components {
             owner_on_team?: boolean | null;
             /** Owner State */
             owner_state: ("current" | "not_current") | null;
+            /** Primary Basis */
+            primary_basis?: string | null;
             /** Priority */
             priority?: string | null;
             /** Reader Teams */
@@ -11314,6 +11317,10 @@ export interface components {
              * @default healthy
              */
             budget_health: string;
+            /** Capped */
+            capped?: boolean | null;
+            /** Citation Count */
+            citation_count?: number | null;
             /**
              * Cost Usd
              * @default 0
@@ -11321,6 +11328,8 @@ export interface components {
             cost_usd: number;
             /** Created At */
             created_at?: string | null;
+            /** Grounded */
+            grounded?: boolean | null;
             /** Investigation Id */
             investigation_id?: string | null;
             /**
@@ -11338,6 +11347,8 @@ export interface components {
              * @default 0
              */
             max_cost_usd: number;
+            /** Outcome */
+            outcome?: string | null;
             /**
              * Primary
              * @default false
@@ -11622,6 +11633,8 @@ export interface components {
         CaseRecordResponse: {
             /** Investigation Id */
             investigation_id?: string | null;
+            /** Primary Basis */
+            primary_basis?: string | null;
             /**
              * Rows
              * @default []
@@ -16768,12 +16781,18 @@ export interface components {
         };
         /** TerminalUpdate */
         TerminalUpdate: {
+            /** Capped */
+            capped?: unknown | null;
+            /** Citation Count */
+            citation_count?: unknown | null;
             /** Cost Usd */
             cost_usd?: number | null;
             /** Disposition */
             disposition?: string | null;
             /** Finished At */
             finished_at?: string | null;
+            /** Grounded */
+            grounded?: unknown | null;
             /** Handoffs */
             handoffs?: components["schemas"]["TerminalHandoff"][];
             /** Outcome */
