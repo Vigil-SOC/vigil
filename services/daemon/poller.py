@@ -25,10 +25,9 @@ from typing import Any, Callable, Dict, Optional
 from core.config import get_settings
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
-from core.integrations._base.ids import FINDING_ID_MAX, fit_id
 from core.integrations.crowdstrike.adapter import (
-    _confidence_to_score,
-    crowdstrike_severity,
+    _alert_to_finding,
+    endpoint_alert_filter,
 )
 from core.integrations.splunk.adapter import _splunk_event_to_finding
 from core.storage.push_health import DAEMON_SOURCE, note_dropped, note_success
@@ -468,14 +467,14 @@ class DataPoller:
                 pass
 
     async def _poll_crowdstrike(self):
-        """Poll CrowdStrike for new detections."""
+        """Poll CrowdStrike for new alerts."""
         if not self._crowdstrike_service:
             return
         if self._federation.is_active_for("crowdstrike"):
             return
 
         self.stats["crowdstrike_polls"] += 1
-        logger.debug("Polling CrowdStrike for new detections...")
+        logger.debug("Polling CrowdStrike for new alerts...")
 
         try:
             lookback = self._crowdstrike_state.lookback_minutes(
@@ -483,26 +482,26 @@ class DataPoller:
             )
             since = utcnow() - timedelta(minutes=lookback)
 
-            detections = await asyncio.to_thread(
-                self._crowdstrike_service.get_detections,
-                filter_query=f"created_timestamp:>='{since.isoformat()}Z'",
+            alerts = await asyncio.to_thread(
+                self._crowdstrike_service.get_alerts,
+                filter_query=endpoint_alert_filter(since),
                 limit=100,
             )
 
             # None means the query failed; raise so the loop counts an error
             # and leaves last_poll_time alone. [] is a clean empty poll.
-            if detections is None:
+            if alerts is None:
                 detail = getattr(self._crowdstrike_service, "last_error", None)
                 raise RuntimeError(
-                    "CrowdStrike detections query failed"
+                    "CrowdStrike alerts query failed"
                     + (f": {detail}" if detail else "")
                 )
-            if not detections:
+            if not alerts:
                 return
 
             new_count = 0
-            for detection in detections:
-                finding = self._crowdstrike_detection_to_finding(detection)
+            for alert in alerts:
+                finding = _alert_to_finding(alert)
                 if finding and not await self._crowdstrike_dedup.is_processed(
                     finding["finding_id"]
                 ):
@@ -518,57 +517,12 @@ class DataPoller:
                         new_count += 1
 
             if new_count > 0:
-                logger.info(f"Polled {new_count} new detections from CrowdStrike")
+                logger.info(f"Polled {new_count} new alerts from CrowdStrike")
                 self.stats["crowdstrike_findings"] += new_count
 
         except Exception as e:
             logger.error(f"CrowdStrike API error: {e}")
             raise
-
-    def _crowdstrike_detection_to_finding(
-        self, detection: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Convert CrowdStrike detection to finding format."""
-        detection_id = detection.get("detection_id", "")
-        if not detection_id:
-            return None
-
-        finding_id = fit_id("cs-", detection_id, FINDING_ID_MAX)
-
-        # Same map as federation. This converter still omits external_id.
-        severity = crowdstrike_severity(detection)
-
-        # Extract behaviors and tactics
-        behaviors = detection.get("behaviors", [])
-        mitre_predictions = {}
-        for behavior in behaviors:
-            technique = behavior.get("technique")
-            if technique:
-                mitre_predictions[technique] = None
-
-        # Entity context
-        device = detection.get("device", {})
-        entity_context = {
-            "src_ips": [device.get("local_ip")] if device.get("local_ip") else [],
-            "hostnames": [device.get("hostname")] if device.get("hostname") else [],
-            "usernames": (
-                [detection.get("user_name")] if detection.get("user_name") else []
-            ),
-            "device_id": device.get("device_id"),
-        }
-
-        return {
-            "finding_id": finding_id,
-            "data_source": "crowdstrike",
-            "timestamp": detection.get("created_timestamp") or utcnow().isoformat(),
-            "severity": severity,
-            "title": detection.get("scenario") or "CrowdStrike Detection",
-            "description": detection.get("description", ""),
-            "entity_context": entity_context,
-            "raw_data": detection,
-            "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
-            "mitre_predictions": mitre_predictions,
-        }
 
     async def _run_webhook_server(self, shutdown_event: asyncio.Event):
         """Run a simple webhook server for external ingestion."""

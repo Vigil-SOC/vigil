@@ -28,12 +28,26 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 
-def _confidence_to_score(max_confidence: Any) -> Optional[float]:
-    """CrowdStrike ``max_confidence`` is 0–100. Scale only a parsed number."""
-    parsed = _optional_float(max_confidence)
+def _confidence_to_score(confidence: Any) -> Optional[float]:
+    """CrowdStrike ``confidence`` is 0–100. Scale only a parsed number."""
+    parsed = _optional_float(confidence)
     if parsed is None:
         return None
     return parsed / 100.0
+
+
+# Alerts query default order is newest first. Oldest-first is one page of the
+# backlog; the cursor walks the rest.
+_OLDEST_FIRST = "created_timestamp|asc"
+
+
+def endpoint_alert_filter(since: datetime) -> str:
+    """Endpoint alerts created at or after ``since`` (naive UTC).
+
+    FQL AND is ``+``. Other Falcon products stay out: this is the endpoint
+    alerts the Detects API used to return.
+    """
+    return f"product:'epp'+created_timestamp:>='{since.isoformat()}Z'"
 
 
 _SEVERITY_MAP = {
@@ -46,14 +60,14 @@ _SEVERITY_MAP = {
 }
 
 
-def crowdstrike_severity(detection: Dict[str, Any]) -> str:
-    """Stored severity for one CrowdStrike detection.
+def crowdstrike_severity(alert: Dict[str, Any]) -> str:
+    """Stored severity for one CrowdStrike alert.
 
-    ``max_severity_displayname`` is matched case-sensitively. ``Informational``
-    is ``info``. A missing name is Medium, and any other unrecognised value
+    ``severity_name`` is matched case-sensitively. ``Informational`` is
+    ``info``. A missing name is Medium, and any other unrecognised value
     is ``medium``. Federation and the older poll both call this.
     """
-    raw = detection.get("max_severity_displayname", "Medium")
+    raw = alert.get("severity_name", "Medium")
     return _SEVERITY_MAP.get(raw, "medium")
 
 
@@ -104,87 +118,102 @@ class CrowdStrikeAdapter:
             # First run: small window, no backfill.
             cutoff = now - timedelta(minutes=1)
 
-        # The Detects ID query cannot sort on created_timestamp (its documented
-        # sort keys are first_behavior, last_behavior, max_severity,
-        # max_confidence, adversary_id, devices.hostname), so "oldest first" is
-        # done here: read every detection in the window (limit=None pages the
-        # IDs and summarises them in chunks), sort by created_timestamp, and
-        # keep the oldest max_items. When the window overflows, the ones left
-        # out are the newest, and the cursor stops at the newest one kept.
-        detections = await asyncio.to_thread(
-            svc.get_detections,
-            filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
-            limit=None,
+        # One oldest page. A full page leaves the rest of the window for the
+        # next tick (full_batch_cursor). Reading newest-first would skip it.
+        alerts = await asyncio.to_thread(
+            svc.get_alerts,
+            filter_query=endpoint_alert_filter(cutoff),
+            limit=max_items,
+            sort=_OLDEST_FIRST,
         )
-        if detections is None:
+        if alerts is None:
             # Raised so the runner records a failure and keeps the cursor.
             detail = getattr(svc, "last_error", None)
             raise RuntimeError(
-                "CrowdStrike detections query failed"
-                + (f": {detail}" if detail else "")
+                "CrowdStrike alerts query failed" + (f": {detail}" if detail else "")
             )
 
-        # An unreadable time sorts first: the cursor cannot track it, so it
-        # must not be the one left behind.
-        by_time = sorted(
-            ((parse_alert_time(d.get("created_timestamp")), d) for d in detections),
-            key=lambda td: td[0] or datetime.min,
-        )
-        truncated = len(by_time) >= max_items
-        by_time = by_time[:max_items]
+        truncated = len(alerts) >= max_items
+        alerts = alerts[:max_items]
 
         findings = []
-        for _, det in by_time:
-            f = _detection_to_finding(det)
-            if f is not None:
-                findings.append(f)
+        for alert in alerts:
+            finding = _alert_to_finding(alert)
+            if finding is not None:
+                findings.append(finding)
 
         cursor_out = truncated and full_batch_cursor(
-            [t for t, _ in by_time],
+            [parse_alert_time(alert.get("created_timestamp")) for alert in alerts],
             start=cutoff,
             now=now,
             source=self.name,
-            count=len(by_time),
+            count=len(alerts),
         )
         return FetchResult(findings=findings, cursor=cursor_out or fresh_cursor())
 
 
-def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    detection_id = detection.get("detection_id", "")
-    if not detection_id:
+def _technique_keys(alert: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """``technique``, plus each ``mitre_attack`` entry's technique and id."""
+    keys: Dict[str, Optional[float]] = {}
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value:
+            keys[value] = None
+
+    add(alert.get("technique"))
+    for entry in alert.get("mitre_attack") or []:
+        if isinstance(entry, str):
+            add(entry)
+            continue
+        if isinstance(entry, dict):
+            add(entry.get("technique"))
+            add(entry.get("technique_id"))
+    return keys
+
+
+def _alert_value(alert: Dict[str, Any], name: str) -> Any:
+    """Flat field, else the same field on ``device``.
+
+    Endpoint alerts still nest hostname, local IP and device id on ``device``.
+    """
+    value = alert.get(name)
+    if value:
+        return value
+    device = alert.get("device")
+    if isinstance(device, dict):
+        nested = device.get(name)
+        if nested:
+            return nested
+    return None
+
+
+def _alert_to_finding(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    composite_id = str(alert.get("composite_id") or "")
+    if not composite_id:
         return None
 
-    external_id = str(detection_id)[:128]
-    finding_id = fit_id("cs-", str(detection_id), FINDING_ID_MAX)
-
-    severity = crowdstrike_severity(detection)
-
-    mitre_predictions: Dict[str, Optional[float]] = {}
-    for behavior in detection.get("behaviors", []) or []:
-        technique = behavior.get("technique")
-        if technique:
-            mitre_predictions[technique] = None
-
-    device = detection.get("device") or {}
-    entity_context = {
-        "src_ips": [device.get("local_ip")] if device.get("local_ip") else [],
-        "hostnames": [device.get("hostname")] if device.get("hostname") else [],
-        "usernames": [detection.get("user_name")] if detection.get("user_name") else [],
-        "device_id": device.get("device_id"),
-    }
-
+    hostname = _alert_value(alert, "hostname")
+    local_ip = _alert_value(alert, "local_ip")
+    user_name = _alert_value(alert, "user_name")
+    # The whole composite_id. findings.external_id is 255, wide enough to
+    # keep it, and (data_source, external_id) dedups on that id.
     return {
-        "finding_id": finding_id,
+        "finding_id": fit_id("cs-", composite_id, FINDING_ID_MAX),
         "data_source": "crowdstrike",
-        "external_id": external_id,
-        "timestamp": detection.get("created_timestamp") or utcnow().isoformat(),
-        "severity": severity,
-        "title": detection.get("scenario") or "CrowdStrike Detection",
-        "description": detection.get("description", ""),
-        "entity_context": entity_context,
-        "raw_data": detection,
-        "anomaly_score": _confidence_to_score(detection.get("max_confidence")),
-        "mitre_predictions": mitre_predictions,
+        "external_id": composite_id,
+        "timestamp": alert.get("created_timestamp") or utcnow().isoformat(),
+        "severity": crowdstrike_severity(alert),
+        "title": alert.get("display_name") or alert.get("name") or "CrowdStrike Alert",
+        "description": alert.get("description", ""),
+        "entity_context": {
+            "src_ips": [local_ip] if local_ip else [],
+            "hostnames": [hostname] if hostname else [],
+            "usernames": [user_name] if user_name else [],
+            "device_id": _alert_value(alert, "device_id"),
+        },
+        "raw_data": alert,
+        "anomaly_score": _confidence_to_score(alert.get("confidence")),
+        "mitre_predictions": _technique_keys(alert),
     }
 
 

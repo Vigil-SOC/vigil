@@ -12498,6 +12498,11 @@ export interface components {
             recommendations?: string | null;
             /** Root Cause */
             root_cause?: string | null;
+            /**
+             * Take Ownership
+             * @default true
+             */
+            take_ownership: boolean;
         };
         /**
          * CommentAdd
@@ -12807,12 +12812,22 @@ export interface components {
             comparison?: string | null;
             /** Coverage */
             coverage?: string | null;
+            /** Days 7 To 30 */
+            days_7_to_30?: number | null;
+            /** Degraded */
+            degraded?: number | null;
             /** Fix */
             fix?: string | null;
             /** Labels */
             labels?: string[];
             /** Last Data */
             last_data?: string | null;
+            /** Listed */
+            listed?: number | null;
+            /** Never Connected */
+            never_connected?: number | null;
+            /** Over 30 Days */
+            over_30_days?: number | null;
             /** Prerequisites */
             prerequisites?: string[];
             /** Screen */
@@ -15129,6 +15144,11 @@ export interface components {
          *     Empty-string secrets on POST mean "leave existing value untouched".
          */
         PlatformDatabaseProxyConfig: {
+            /**
+             * Database Password
+             * @default
+             */
+            database_password: string;
             /**
              * Proxy Host
              * @default

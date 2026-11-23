@@ -62,6 +62,10 @@ ROUTER_META = RouterMeta(
 _FINDINGS_WRITE = [permission_gate("findings.write")]
 
 MAX_UPLOAD_SIZE_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
+# A history import holds every row in memory, so it takes the smaller cap.
+MAX_HISTORY_UPLOAD_BYTES = min(
+    MAX_UPLOAD_SIZE_BYTES, get_settings().max_in_memory_import_mb * 1024 * 1024
+)
 
 EXTENSION_FORMATS = {
     ".json": "json",
@@ -140,7 +144,9 @@ async def _admit(job: IngestionJob) -> None:
         )
 
 
-async def _spool_upload(file: UploadFile, suffix: str) -> Path:
+async def _spool_upload(
+    file: UploadFile, suffix: str, limit: int = MAX_UPLOAD_SIZE_BYTES
+) -> Path:
     """Stream an upload to a temp file, enforcing the size cap as it goes."""
 
     with tempfile.NamedTemporaryFile(
@@ -153,12 +159,12 @@ async def _spool_upload(file: UploadFile, suffix: str) -> Path:
             if not chunk:
                 break
             total_size += len(chunk)
-            if total_size > MAX_UPLOAD_SIZE_BYTES:
+            if total_size > limit:
                 temp_file.close()
                 temp_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB.",
+                    detail=f"File too large. Maximum upload size is {limit // (1024*1024)}MB.",
                 )
             temp_file.write(chunk)
     return temp_path
@@ -206,7 +212,11 @@ async def upload_and_ingest_file(
     if _can_create_cases(data_type, format):
         _require_cases_write(current_user)
 
-    temp_path = await _spool_upload(file, f".{format}")
+    temp_path = await _spool_upload(
+        file,
+        f".{format}",
+        MAX_HISTORY_UPLOAD_BYTES if data_type == HISTORY else MAX_UPLOAD_SIZE_BYTES,
+    )
 
     job = IngestionJob(
         filename=filename,
@@ -316,8 +326,9 @@ async def ingest_from_string(
         _require_cases_write(current_user)
 
     ingestion_service = IngestionService()
-    stats = ingestion_service.ingest_from_string(
-        data, format=format, data_type=data_type
+    # The import is synchronous; on the event loop it would stall every request.
+    stats = await run_in_threadpool(
+        ingestion_service.ingest_from_string, data, format, data_type
     )
     await run_in_threadpool(signal_new_findings, ingestion_service.stored_ids)
     success, message = summarize_stats(stats)

@@ -56,8 +56,15 @@ class Day1Evidence(BaseModel):
     screen: Optional[str] = None
     prerequisites: List[str] = Field(default_factory=list)
     coverage: Optional[str] = None
-    # When a coverage check was stored. The section shows it as the result's age.
+    # When a coverage check was stored, or when a host-count read finished.
+    # The section shows it as the result's age.
     checked_at: Optional[str] = None
+    # Host-count integers. Unset when that read did not cover the list.
+    listed: Optional[int] = None
+    days_7_to_30: Optional[int] = None
+    over_30_days: Optional[int] = None
+    never_connected: Optional[int] = None
+    degraded: Optional[int] = None
 
 
 class Day1Comparison(BaseModel):

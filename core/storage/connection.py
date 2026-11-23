@@ -249,6 +249,14 @@ def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
     # Bounded so validating an unreachable host fails in seconds rather than
     # hanging a worker thread for the OS TCP timeout (~75s).
     args: Dict[str, Any] = {"connect_timeout": 5}
+    proxy = getattr(config, "proxy", None)
+    if proxy is not None and proxy.enabled and proxy.proxy_type == "pgbouncer":
+        if proxy.verify_proxy_tls:
+            # "Verify proxy TLS" means a verified certificate for the pooler's
+            # name, failing closed. The CA is PGSSLROOTCERT, else the system store.
+            args["sslmode"] = "verify-full"
+            if not os.environ.get("PGSSLROOTCERT"):  # noqa: ENV001 - libpq var
+                args["sslrootcert"] = "system"
     options = _session_timeout_options(config)
     if options:
         # An explicit ``options`` replaces libpq's PGOPTIONS fallback. Carry it

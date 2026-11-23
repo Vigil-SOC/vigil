@@ -31,6 +31,23 @@ def result(data):
     return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
 
 
+def user_path(user: str) -> str | None:
+    """One Graph path segment for a user id or UPN, or None when it cannot be one.
+
+    The value can come from an alert, so it must not reach another Graph path
+    or add its own query: quoting keeps ``/ ? # %`` inside the segment, and a
+    bare dot segment would still be resolved away by the HTTP client.
+    """
+    if user in (".", ".."):
+        return None
+    return quote(user, safe="@")
+
+
+def odata_string(value: str) -> str:
+    """An OData string literal: a quote inside it is escaped by doubling it."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def get_token():
     """Access token, or None when credentials are not configured.
 
@@ -107,9 +124,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 return result({"error": "user required"})
             # Named fields only, never the whole profile: identity, title, type,
             # account state, manager and group names (#4741).
-            # Quoted: the name can come from an alert, and must not reach another
-            # Graph path or add its own query.
-            path = quote(user, safe="@")
+            path = user_path(user)
+            if path is None:
+                return result({"error": "invalid user"})
             resp = httpx.get(
                 f"https://graph.microsoft.com/v1.0/users/{path}",
                 headers=headers,
@@ -125,7 +142,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
             resp.raise_for_status()
             data = resp.json()
             manager = data.get("manager") or {}
-            path = quote(data.get("id") or user, safe="@")
+            path = user_path(data.get("id") or user)
             groups = httpx.get(
                 f"https://graph.microsoft.com/v1.0/users/{path}/memberOf",
                 headers=headers,
@@ -168,8 +185,11 @@ async def handle_call_tool(name: str, arguments: dict | None):
             uid = args.get("user_id")
             if not uid:
                 return result({"error": "user_id required"})
+            path = user_path(uid)
+            if path is None:
+                return result({"error": "invalid user_id"})
             resp = httpx.patch(
-                f"https://graph.microsoft.com/v1.0/users/{uid}",
+                f"https://graph.microsoft.com/v1.0/users/{path}",
                 headers=headers,
                 json={"accountEnabled": False},
                 timeout=30,
@@ -182,7 +202,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
             # and httpx renders a None param as "$top=" where requests dropped it.
             params = {"$top": args.get("limit") or 20}
             if user := args.get("user"):
-                params["$filter"] = f"userPrincipalName eq '{user}'"
+                params["$filter"] = f"userPrincipalName eq {odata_string(user)}"
             resp = httpx.get(
                 "https://graph.microsoft.com/v1.0/auditLogs/signIns",
                 headers=headers,

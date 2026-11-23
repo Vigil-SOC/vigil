@@ -100,6 +100,7 @@ interface PlatformDbForm {
   ssh_private_key_path: string
   ssh_key_passphrase: string
   verify_proxy_tls: boolean
+  database_password: string
 }
 
 const EMPTY_PLATFORM_DB: PlatformDbForm = {
@@ -111,6 +112,7 @@ const EMPTY_PLATFORM_DB: PlatformDbForm = {
   ssh_private_key_path: '',
   ssh_key_passphrase: '',
   verify_proxy_tls: true,
+  database_password: '',
 }
 
 export function usePlatformDatabase() {
@@ -143,6 +145,7 @@ export function usePlatformDatabase() {
           ssh_private_key_path: d.ssh_private_key_path || '',
           ssh_key_passphrase: '',
           verify_proxy_tls: d.verify_proxy_tls ?? true,
+          database_password: '',
         })
         setHasPassword(Boolean(d.has_proxy_password))
         setHasPassphrase(Boolean(d.has_ssh_key_passphrase))
@@ -170,12 +173,18 @@ export function usePlatformDatabase() {
           ssh_private_key_path: f.ssh_private_key_path,
           ssh_key_passphrase: f.ssh_key_passphrase,
           verify_proxy_tls: f.verify_proxy_tls,
+          database_password: f.database_password,
         })
         .then(() => {
           // clear secret inputs so a later save doesn't overwrite with stale UI state
           if (f.proxy_password) setHasPassword(true)
           if (f.ssh_key_passphrase) setHasPassphrase(true)
-          setForm((prev) => ({ ...prev, proxy_password: '', ssh_key_passphrase: '' }))
+          setForm((prev) => ({
+            ...prev,
+            proxy_password: '',
+            ssh_key_passphrase: '',
+            database_password: '',
+          }))
         }),
     [],
   )

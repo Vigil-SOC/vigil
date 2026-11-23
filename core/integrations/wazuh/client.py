@@ -44,6 +44,17 @@ class WazuhAuthError(WazuhError):
     """The manager refused the username and password."""
 
 
+def _as_int(value: Any) -> Optional[int]:
+    """An int id. A role may be the id or ``{"id": n}``. Bool is not an id."""
+    raw = value.get("id") if isinstance(value, dict) else value
+    if isinstance(raw, bool) or (isinstance(raw, str) and not raw.strip().isdigit()):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rule_ids_param(rule_ids: Any) -> Optional[str]:
     """``rule_ids`` as the manager's comma list: an int, a list of ints or digit
     strings, or a comma-separated string. None / "" / [] mean no filter."""
@@ -252,6 +263,58 @@ class WazuhService:
                 break
             agents.extend(items)
         return agents
+
+    async def current_user_access(self) -> Tuple[Optional[int], List[int]]:
+        """``(user id, role ids)`` from ``GET /security/users/me``.
+
+        The username is not returned.
+        """
+        data = await self._request("GET", "/security/users/me")
+        items = data.get("affected_items") or []
+        user = items[0] if isinstance(items, list) and items else {}
+        if not isinstance(user, dict):
+            raise WazuhError("Wazuh user record was unreadable")
+        user_id = _as_int(user.get("id"))
+        roles = [role for role in (_as_int(item) for item in user.get("roles") or [])]
+        roles = [role for role in roles if role is not None]
+        return user_id, roles
+
+    async def rbac_mode(self) -> str:
+        """``white`` or ``black`` from ``GET /security/config``."""
+        data = await self._request("GET", "/security/config")
+        items = data.get("affected_items")
+        row = items[0] if isinstance(items, list) and items else data
+        mode = row.get("rbac_mode") if isinstance(row, dict) else None
+        if not isinstance(mode, str) or not mode:
+            raise WazuhError("Wazuh security config was unreadable")
+        return mode
+
+    async def my_policies(self) -> Dict[str, Any]:
+        """Effective policies for the signed-in user.
+
+        ``GET /security/users/me/policies``. On the 4.9 manager this is
+        ``{action: {resource: effect}, "rbac_mode": ...}``.
+        """
+        data = await self._request("GET", "/security/users/me/policies")
+        if not isinstance(data, dict):
+            raise WazuhError("Wazuh policies were unreadable")
+        return data
+
+    async def agent_total(self, query: str) -> int:
+        """``total_affected_items`` for ``query``, with ``limit`` 1 and ``select`` id.
+
+        The id is discarded here. ``list_agents`` is unchanged.
+        """
+        data = await self._request(
+            "GET",
+            "/agents",
+            params={"limit": 1, "select": "id", "q": query},
+        )
+        data.pop("affected_items", None)
+        total = data.get("total_affected_items")
+        if isinstance(total, bool) or not isinstance(total, int):
+            raise WazuhError("Wazuh agent total was missing")
+        return total
 
     async def agent_log_collection(self, agent_id: str) -> Any:
         """The agent's active ``localfile`` entries (logcollector config)."""
