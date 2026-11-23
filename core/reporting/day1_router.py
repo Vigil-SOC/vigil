@@ -1,10 +1,10 @@
 """Day 1 Report: the latest record, Home's line, an on-demand run, and module switches.
 
 The page is read under ``platform.read``. The visibility module is included
-only when the caller holds ``integrations.read``. Each settings check is
-included only when the caller holds that check's permission. The stored
-record stays complete. Running one, and turning a module on or off, takes
-``platform.write``.
+only when the caller holds ``integrations.read``, and coverage only with
+``detections.read``. Each settings check is included only when the caller
+holds that check's permission. The stored record stays complete. Running one,
+and turning a module on or off, takes ``platform.write``.
 """
 
 from __future__ import annotations
@@ -55,6 +55,8 @@ class Day1Evidence(BaseModel):
     screen: Optional[str] = None
     prerequisites: List[str] = Field(default_factory=list)
     coverage: Optional[str] = None
+    # When a coverage check was stored. The section shows it as the result's age.
+    checked_at: Optional[str] = None
 
 
 class Day1Comparison(BaseModel):

@@ -65,9 +65,13 @@ integration id, or one of Vigil's own inputs under an id that can't collide with
 one: `kafka`, `webhook:daemon`, `webhook:darktrace`, `webhook:cloudflare`,
 `detection_source:<id>`. The record holds the last attempt with its outcome and
 error kind, consecutive failures, dropped records (cumulative and the current
-hour), last data received, the last real check, a reset mark, and the labels
+hour), how many findings its severity floor has skipped (``filtered_total``,
+cumulative, kept across a reset the way dropped records are), last data
+received, the last real check, a reset mark, and the labels
 senders put on webhook events (information only; the judge does not read
-them). Scheduled collection, Test, detection-source syncs and the push sources
+them). A floor skip is the operator's filter, not a drop and not an unreadable
+record: the judge does not read ``filtered_total``, and it never makes a source
+unhealthy. Scheduled collection, Test, detection-source syncs and the push sources
 (Kafka, the daemon webhook, the Darktrace and Cloudflare receivers) write it.
 A push source writes a change of state at once and its counts at most once a
 minute. Switching an integration on or changing its endpoint or credential
@@ -123,8 +127,8 @@ One entry in the check registry (`core/reporting/checks.py`): Vigil's own id,
 its module, the permission that gates its source, and its rule. A value check
 also carries the cited value, the source id, the clause, the link and the date
 it was checked, and has no field for quoted text. The registry holds the
-checks for what Vigil can see and for Vigil's own settings. Outcomes are not
-stored on the entry.
+checks for what Vigil can see, for Vigil's own settings, and for detection
+coverage. Outcomes are not stored on the entry.
 _Avoid_: rule check, credential check (those are other checks)
 
 **Check Outcome**:
@@ -139,7 +143,12 @@ rules), when data last arrived, and the labels seen on webhook events, all as
 information, plus switched-off integrations and the state of collection, the
 background service and the model. Vigil's own settings compares each live
 session and retention value with its cited value, and shows that comparison,
-the citation, a link to the setting and, for MFA, a count of accounts. The
+the citation, a link to the setting and, for MFA, a count of accounts.
+Detection coverage (`detections.read`) lists techniques that are not proven,
+blind spots, techniques covered on paper only, rules that fail to run or whose
+data is silent, and Quiet, Noisy and Silent results that are not a pass. A
+category with none of those passes. A result the sweep did not store reads not
+checked: search budget; a rule that is too new reads not checked: too new. The
 stored record stays complete; a reader who lacks the module's permission is
 not shown that section. On a demo-data install the report's first line says
 it describes the install, not the demo data. Demo findings are not read as

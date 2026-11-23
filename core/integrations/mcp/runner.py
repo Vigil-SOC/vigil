@@ -49,6 +49,12 @@ def _env_value(value) -> str:
     return str(value).lower() if isinstance(value, bool) else str(value)
 
 
+# falcon-mcp reads these. env_var_for stays CROWDSTRIKE_* so Helm, Compose and
+# env.example still resolve; a saved client id and base URL are copied here.
+# An empty base URL leaves the catalog's https://api.crowdstrike.com literal.
+_FALCON_ENV = {"client_id": "FALCON_CLIENT_ID", "base_url": "FALCON_BASE_URL"}
+
+
 def runner_env(server) -> Dict[str, str]:
     """The env block the runner starts ``server`` with, resolved here.
 
@@ -85,6 +91,11 @@ def runner_env(server) -> Dict[str, str]:
         for field, value in fields.items():
             if value is not None and value != "":
                 env[env_var_for(descriptor.id, field)] = _env_value(value)
+        if descriptor.id == "crowdstrike":
+            for field, target in _FALCON_ENV.items():
+                value = fields.get(field)
+                if value is not None and value != "":
+                    env[target] = _env_value(value)
     return env
 
 

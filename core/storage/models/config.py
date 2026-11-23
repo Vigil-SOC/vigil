@@ -287,6 +287,11 @@ class SourceHealth(Base):
     dropped_total: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Findings the severity floor skipped. Cumulative, kept across a reset.
+    # Not a drop: the judge does not read it.
+    filtered_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     dropped_window_start: Mapped[Optional[datetime]] = mapped_column(DateTime)
     dropped_window: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"

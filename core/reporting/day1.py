@@ -25,7 +25,8 @@ from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import disabled_module_ids
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
@@ -150,10 +151,11 @@ def build(state: dict) -> dict[str, Any]:
 
     A listed id is left out, and ``modules`` names only what ran. Daemon,
     model and collection come from ``state``, daemon first. Sources come
-    from integration health. A failed source read is one not-checked check,
-    and the report still completes. Settings are read on a run that includes
-    them, including unknown readiness and the desktop app. Demo findings
-    are not read.
+    from integration health. A failed read is one not-checked check, and the
+    report still completes. Settings and coverage are read on a run that
+    includes them, including unknown readiness and the desktop app. Coverage
+    is the existing coverage, gap and rule-check reads. Demo findings are
+    not read.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
@@ -165,6 +167,9 @@ def build(state: dict) -> dict[str, Any]:
     if SETTINGS.id not in disabled:
         modules.append(SETTINGS.id)
         checks.extend(_settings_checks())
+    if COVERAGE.id not in disabled:
+        modules.append(COVERAGE.id)
+        checks.extend(_coverage_checks())
     preface = PREFACE if is_demo_mode() else None
     return {
         "modules": modules,
@@ -192,6 +197,22 @@ def _visibility_checks(state: dict, evidence: dict[str, Any]) -> list[dict[str, 
     checks.extend(_source_checks(state, sources))
     evidence[VISIBILITY.id] = {"switched_off": _switched_off(sources)}
     return checks
+
+
+def _coverage_checks() -> list[dict[str, Any]]:
+    try:
+        return produce_coverage()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read detection coverage: %s", type(exc).__name__
+        )
+        return [
+            _check(
+                "coverage.technique",
+                NOT_CHECKED,
+                "Could not read detection coverage.",
+            )
+        ]
 
 
 def status() -> dict[str, Any]:

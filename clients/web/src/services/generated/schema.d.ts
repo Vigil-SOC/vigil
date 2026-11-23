@@ -4934,7 +4934,8 @@ export interface paths {
          *     Includes adapters that don't yet have a row (so the UI can show "configure
          *     me" entries without the daemon being up). Adapters whose integration is
          *     not configured are still listed but flagged ``is_configured=false``. The
-         *     health fields (``last_poll_at`` .. ``dropped_total``) are read from each
+         *     health fields (``last_poll_at`` .. ``dropped_total``, plus ``filtered_total``)
+         *     are read from each
          *     source's Integration Health record. Each
          *     row carries ``lag_seconds`` (null until a poll has succeeded) and ``quiet``
          *     from :func:`core.federation.lag.source_collection_lag`. Any failed store
@@ -12800,6 +12801,8 @@ export interface components {
         Day1Evidence: {
             /** Brings */
             brings?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
             /** Comparison */
             comparison?: string | null;
             /** Coverage */
