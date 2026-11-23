@@ -175,11 +175,9 @@ def apply(
     if proxy_type == "pgbouncer":
         if not proxy.proxy_host or not proxy.proxy_port:
             raise ValueError("pgbouncer proxy requires proxy_host and proxy_port")
-        return AppliedProxy(
-            host=proxy.proxy_host,
-            port=proxy.proxy_port,
-            ssl_disabled=not proxy.verify_proxy_tls,
-        )
+        # TLS to the pooler is enforced by the platform engine's connect args
+        # (core.storage.connection._engine_connect_args).
+        return AppliedProxy(host=proxy.proxy_host, port=proxy.proxy_port)
 
     if proxy_type in ("http", "socks5"):
         if not proxy.proxy_host or not proxy.proxy_port:
