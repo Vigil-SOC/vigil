@@ -86,7 +86,7 @@ dnspython==2.8.0
     # via email-validator
 docstring-parser==0.18.0
     # via anthropic
-email-validator==2.3.0
+email-validator==2.4.0
     # via -r requirements.txt
 fastapi==0.162.2
     # via
@@ -156,7 +156,7 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 limits==5.8.0
     # via slowapi
-liteparse==2.15.1
+liteparse==2.21.0
     # via -r requirements.txt
 mako==1.4.3
     # via alembic
@@ -320,7 +320,7 @@ pyotp==2.10.0
     # via -r requirements.txt
 pysocks==1.7.1
     # via -r requirements.txt
-pytest==9.1.1
+pytest==9.2.0
     # via
     #   -r requirements.txt
     #   pytest-asyncio
