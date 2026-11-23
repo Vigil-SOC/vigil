@@ -1513,7 +1513,21 @@ def create_approval_action(
     The caller's ``confidence`` is its own claim, so it never releases the
     action: the row waits in the queue for a person.
     """
-    if not 0.0 <= confidence <= 1.0:
+    from core.response.proposal_targets import (
+        REASON_SENTENCES,
+        TARGET_RULES,
+        check_confidence,
+        check_target,
+    )
+
+    # A containment kind's target must fit it and its confidence be above zero.
+    if action_type in TARGET_RULES:
+        checked, code = check_target(action_type, target)
+        code = code or check_confidence({"confidence": confidence})
+        if code:
+            return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
+        target = checked
+    elif not 0.0 <= confidence <= 1.0:
         return jdump({"error": "confidence must be between 0 and 1"})
     try:
         svc = ApprovalService()
