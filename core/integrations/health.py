@@ -19,6 +19,7 @@ collide with one: ``kafka``, ``webhook:<name>`` and
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +36,8 @@ from core.storage.source_health import (  # noqa: F401 - the writers, re-exporte
     seed,
 )
 from core.time import utcnow
+
+logger = logging.getLogger(__name__)
 
 # Federation adapters named apart from their integration.
 FEDERATION_INTEGRATION = {
@@ -223,6 +226,41 @@ def _push_inputs() -> List[Tuple[str, str, bool]]:
     ]
 
 
+def _server_switches() -> Optional[Dict[str, bool]]:
+    """The saved MCP server switches, read once per collect; None when the file
+    can't be read, and then no integration is taken as switched off."""
+    from core.integrations.mcp.service import MCPService
+
+    try:
+        switches = MCPService.enabled_state()
+    except (OSError, ValueError, AttributeError) as exc:
+        logger.warning("MCP server switches unreadable, health ignores them: %s", exc)
+        return None
+    if not isinstance(switches, dict):
+        logger.warning("MCP server switches are not a mapping; health ignores them")
+        return None
+    return switches
+
+
+def _servers_switched_off(
+    integration_id: str, switches: Optional[Dict[str, bool]]
+) -> bool:
+    """True when the integration has MCP servers and every one is switched off.
+
+    For an integration that is not an extension, the Connected row's only switch
+    is its server's: off, agents hold none of its tools, so its last check says
+    nothing about an integration in use. One with no server, or no descriptor,
+    has no such switch."""
+    from core.integrations._base.descriptor import get_descriptor
+    from core.integrations.mcp.service import MCPService
+
+    descriptor = get_descriptor(integration_id)
+    servers = descriptor.mcp_server_names if descriptor else ()
+    if switches is None or not servers:
+        return False
+    return not any(MCPService.is_server_enabled(s, switches) for s in servers)
+
+
 def _integration_rows() -> List[Dict[str, Any]]:
     """``{integration_id, enabled}`` per saved integration; a store error raises
     (the config service's list reads an error as no integrations)."""
@@ -283,6 +321,7 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     fed_on = bool(fed_store.read_global_settings().get("enabled"))
     fed_rows = {r["source_id"]: r for r in fed_store.read_sources(with_health=False)}
     integrations = _integration_rows()
+    switches = _server_switches()
     out: List[Dict[str, Any]] = []
 
     def add(source_id: str, kind: str, switched_on: bool, **judge_kw) -> None:
@@ -306,10 +345,14 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         fed_id = LEGACY_POLLED.get(iid)
         fed_row = fed_rows.get(fed_id) if fed_id else None
         scheduled = bool(fed_on and fed_row and fed_row.get("enabled"))
+        # A pulled source is judged on collection, which runs without its server.
+        on = bool(row.get("enabled")) and (
+            bool(fed_id) or not _servers_switched_off(iid, switches)
+        )
         add(
             iid,
             "pulled" if fed_id else "integration",
-            bool(row.get("enabled")),
+            on,
             has_check=has_check(iid),
             unchecked=not_checked_reason(iid),
             legacy=bool(fed_id) and not scheduled,
