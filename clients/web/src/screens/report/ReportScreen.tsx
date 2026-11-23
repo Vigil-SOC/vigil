@@ -195,6 +195,24 @@ function ofGroup(checks: Check[], id: string): Check[] {
   return checks.filter((check) => check.id === id || check.id.startsWith(`${id}.`))
 }
 
+/** Host-count integers the estate module stored. Zero is a count; an unset field is not. */
+const ESTATE_COUNTS: { key: keyof Evidence; label: string }[] = [
+  { key: 'listed', label: 'listed' },
+  { key: 'days_7_to_30', label: 'in the last 7–30 days' },
+  { key: 'over_30_days', label: 'over 30 days' },
+  { key: 'never_connected', label: 'never connected' },
+  { key: 'degraded', label: 'degraded' },
+]
+
+function countParts(evidence: Evidence): string[] {
+  const parts: string[] = []
+  for (const { key, label } of ESTATE_COUNTS) {
+    const value = evidence[key]
+    if (typeof value === 'number') parts.push(`${value} ${label}`)
+  }
+  return parts
+}
+
 /** The evidence a record stored, beside new, fixed, or unchanged. */
 function storedLine(evidence: Evidence | null | undefined): string | null {
   if (!evidence) return null
@@ -210,6 +228,7 @@ function storedLine(evidence: Evidence | null | undefined): string | null {
     parts.push(evidence.last_data ? `Last data ${reportStamp(evidence.last_data)}` : 'Nothing received yet')
     if (evidence.labels && evidence.labels.length > 0) parts.push(`Labels ${evidence.labels.join(', ')}`)
   }
+  parts.push(...countParts(evidence))
   if (evidence.checked_at) parts.push(`Checked ${reportStamp(evidence.checked_at)}`)
   return parts.length > 0 ? parts.join(' · ') : null
 }
@@ -581,14 +600,34 @@ function summaryActions(report: Report): Check[] {
 
 function Summary({ report }: { report: Report }) {
   const hidden = new Set(report.withheld ?? [])
-  const areas = (report.modules ?? []).filter((id) => !hidden.has(id) && !REPORT_SECTIONS.has(id))
+  const modules = report.modules ?? []
+  // Visibility and estate share one row and one "can't see" block. Estate is not its own row.
+  // History sections have figures and no outcomes, so they stay out of this grid.
+  const seeVisibility = modules.includes('visibility') && !hidden.has('visibility')
+  const seeEstate = modules.includes('estate') && !hidden.has('estate')
+  const seeRan = seeVisibility || seeEstate
+  const neitherRan = !modules.includes('visibility') && !modules.includes('estate')
+  const areas: string[] = []
+  let placedSee = false
+  for (const id of modules) {
+    if (hidden.has(id) || REPORT_SECTIONS.has(id)) continue
+    if (id === 'visibility' || id === 'estate') {
+      if (!placedSee && seeRan) {
+        areas.push('visibility')
+        placedSee = true
+      }
+      continue
+    }
+    areas.push(id)
+  }
   const actions = summaryActions(report)
-  const visibilityHidden = hidden.has('visibility')
-  const visibilityRan = (report.modules ?? []).includes('visibility')
-  const unmet = visibilityHidden
-    ? []
-    : report.checks.filter((check) => check.module === 'visibility' && check.outcome !== 'pass')
-  const switchedOff = visibilityHidden ? [] : (report.switched_off ?? [])
+  const unmet = report.checks.filter(
+    (check) =>
+      check.outcome !== 'pass' &&
+      ((seeVisibility && check.module === 'visibility') || (seeEstate && check.module === 'estate')),
+  )
+  const switchedOff = seeVisibility ? (report.switched_off ?? []) : []
+  const showCantSee = neitherRan || seeRan
   return (
     <section className="d1-card d1-print" aria-label="Summary">
       <h2 className="d1-print-title">Summary</h2>
@@ -628,7 +667,12 @@ function Summary({ report }: { report: Report }) {
               {areas.map((id) => {
                 const counts = { pass: 0, fail: 0, not_checked: 0, needs_a_person: 0 }
                 for (const check of report.checks) {
-                  if (check.module === id) counts[check.outcome] += 1
+                  const included =
+                    id === 'visibility'
+                      ? (seeVisibility && check.module === 'visibility') ||
+                        (seeEstate && check.module === 'estate')
+                      : check.module === id
+                  if (included) counts[check.outcome] += 1
                 }
                 return (
                   <tr key={id}>
@@ -647,11 +691,11 @@ function Summary({ report }: { report: Report }) {
           <p className="d1-quiet">None.</p>
         )}
       </div>
-      {!visibilityHidden && (
+      {showCantSee && (
         <div className="d1-print-block">
           <h2>What Vigil can&apos;t see</h2>
-          {!visibilityRan && <p className="d1-quiet">What Vigil can see did not run.</p>}
-          {visibilityRan && unmet.length === 0 && switchedOff.length === 0 && (
+          {neitherRan && <p className="d1-quiet">What Vigil can see did not run.</p>}
+          {seeRan && unmet.length === 0 && switchedOff.length === 0 && (
             <p className="d1-quiet">None.</p>
           )}
           {(unmet.length > 0 || switchedOff.length > 0) && (
