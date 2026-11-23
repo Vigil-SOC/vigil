@@ -25,9 +25,18 @@ from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.checks import (
+    COVERAGE,
+    FORECAST,
+    MODULES,
+    SETTINGS,
+    VISIBILITY,
+    spec_for,
+)
 from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.forecast import failed as forecast_failed
+from core.reporting.forecast import produce as produce_forecast
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -170,6 +179,9 @@ def build(state: dict) -> dict[str, Any]:
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
+    if FORECAST.id not in disabled:
+        modules.append(FORECAST.id)
+        evidence[FORECAST.id] = _forecast(state)
     preface = PREFACE if is_demo_mode() else None
     return {
         "modules": modules,
@@ -197,6 +209,17 @@ def _visibility_checks(state: dict, evidence: dict[str, Any]) -> list[dict[str, 
     checks.extend(_source_checks(state, sources))
     evidence[VISIBILITY.id] = {"switched_off": _switched_off(sources)}
     return checks
+
+
+def _forecast(state: dict) -> dict[str, Any]:
+    """The cost forecast. A failure here is not checked; the report still completes."""
+    try:
+        return produce_forecast(state)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Day 1 Report could not build the cost forecast: %s", type(exc).__name__
+        )
+        return forecast_failed("not checked: could not build the cost forecast.")
 
 
 def _coverage_checks() -> list[dict[str, Any]]:
@@ -299,6 +322,11 @@ def _present(
     switched_off = []
     if VISIBILITY.id not in hidden:
         switched_off = (evidence.get(VISIBILITY.id) or {}).get("switched_off") or []
+    forecast = None
+    if FORECAST.id not in hidden:
+        stored = evidence.get(FORECAST.id)
+        if isinstance(stored, dict):
+            forecast = stored
     return {
         "id": record.record_id,
         "run_id": record.run_id,
@@ -314,6 +342,7 @@ def _present(
         "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
         "switched_off": switched_off,
+        "forecast": forecast,
     }
 
 

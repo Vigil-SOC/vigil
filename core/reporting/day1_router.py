@@ -30,6 +30,7 @@ from core.reporting.day1 import (
     status,
 )
 from core.reporting.enablement import disabled_module_ids, set_module_enabled
+from core.reporting.forecast import Day1Forecast
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
@@ -101,6 +102,7 @@ class Day1Report(BaseModel):
     compared_at: Optional[str] = None
     checks: List[Day1Check]
     switched_off: List[Day1Listed]
+    forecast: Optional[Day1Forecast] = None
 
 
 class Day1Module(BaseModel):

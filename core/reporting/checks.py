@@ -32,6 +32,8 @@ class ReportCheck:
 
 
 VISIBILITY = ReportModule("visibility", "integrations.read")
+# Figures and lists, no outcomes. The page already requires platform.read.
+FORECAST = ReportModule("history.forecast", "platform.read")
 # The page already requires platform.read. The section is not hidden as a
 # whole: a Manager holds audit.read and not sessions.manage, and still sees
 # retention. Each check's own permission is applied when the record is read.
@@ -222,6 +224,7 @@ MODULES = {
     VISIBILITY.id: VISIBILITY,
     SETTINGS.id: SETTINGS,
     COVERAGE.id: COVERAGE,
+    FORECAST.id: FORECAST,
 }
 
 

@@ -16,6 +16,10 @@ type Check = Schema<'Day1Check'>
 type Evidence = Schema<'Day1Evidence'>
 type Comparison = Schema<'Day1Comparison'>
 type ModuleSetting = Schema<'Day1Module'>
+type Forecast = Schema<'Day1Forecast'>
+type ForecastSource = Schema<'Day1ForecastSource'>
+type ForecastLimits = Schema<'Day1ForecastLimits'>
+type ForecastSpend = Schema<'Day1ForecastSpend'>
 type Outcome = Check['outcome']
 type Trigger = Report['trigger']
 
@@ -23,7 +27,11 @@ const MODULE_TITLE: Record<string, string> = {
   visibility: 'What Vigil can see',
   settings: "Vigil's own settings",
   coverage: 'Detection coverage',
+  'history.forecast': 'Cost forecast',
 }
+
+// A report section has figures and no outcomes, so it stays out of the summary grid.
+const SECTIONS = new Set(['history.forecast'])
 
 const SETTINGS_TIP = {
   source: 'The session policy and the audit-trail retention period',
@@ -39,6 +47,14 @@ const TIP = {
   calculation:
     'A switched-on source passes when it is healthy, needs a person when it requires a test, is not checked when its health says so, and fails otherwise. One failure does not fail it. Last data and webhook labels are information.',
   limit: 'Hidden without integrations.read. Not checked is never a pass.',
+}
+
+const FORECAST_TIP = {
+  source: 'Imported ticket history, the saved investigation limits, and priced investigation runs',
+  calculation:
+    "A normal week is the median day's openings times 7. The hourly cap covers the hourly limit divided by the full per-investigation cost. From 20 wholly priced investigations the cost is their median; under 20 it is the range.",
+  limit:
+    'With the background service stopped, arrivals only. Dollars come only from priced calls. An unpriced model is not $0.',
 }
 
 const COVERAGE_TIP = {
@@ -174,7 +190,246 @@ function pieces(value: string | null | undefined): string[] {
 }
 
 function screenName(path: string): string {
+  if (path.includes('section=data')) return 'Data & uploads'
   return path.includes('section=audit') ? 'Audit trail' : 'Session settings'
+}
+
+function figure(value: number): string {
+  if (Number.isInteger(value)) return String(value)
+  return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function noun(value: number, singular: string, plural: string): string {
+  return `${figure(value)} ${figure(value) === '1' ? singular : plural}`
+}
+
+function money(value: number): string {
+  const text = value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+  return `$${text}`
+}
+
+function busiestLine(hour: number, at: string | null | undefined): string {
+  const when = at ? ` (${reportStamp(at)})` : ''
+  return `The busiest hour had ${noun(hour, 'alert', 'alerts')}${when}, a lower bound summed across sources.`
+}
+
+function findingsLine(source: ForecastSource): string | null {
+  switch (source.findings_status) {
+    case 'not_connected':
+      return null
+    case 'measured':
+      return `${noun(source.findings ?? 0, 'finding', 'findings')} stored on this install, measured here.`
+    case 'not_checked':
+      return source.findings_reason
+        ? `Findings on this install: not checked. ${source.findings_reason}`
+        : 'Findings on this install: not checked.'
+    default: {
+      const never: never = source.findings_status
+      return never
+    }
+  }
+}
+
+function SourceRow({ source, showCalls }: { source: ForecastSource; showCalls: boolean }) {
+  const measured = findingsLine(source)
+  const alerts = `A normal week is ${noun(source.week, 'alert', 'alerts')}, estimated`
+  const week = showCalls
+    ? `${alerts}, and ${figure(source.week)} to ${figure(source.week * 2)} triage calls.`
+    : `${alerts}.`
+  return (
+    <div className="d1-row">
+      <p>
+        {source.source}: {noun(source.opened, 'ticket', 'tickets')} the old process opened and later closed: a lower
+        bound on alerts.
+      </p>
+      {source.opened_missing > 0 && (
+        <p className="d1-facts">
+          {noun(source.opened_missing, 'ticket', 'tickets')} had no open time and{' '}
+          {figure(source.opened_missing) === '1' ? 'was' : 'were'} left out.
+        </p>
+      )}
+      <p className="d1-facts">
+        {reportStamp(source.window_start)} to {reportStamp(source.window_end)}.
+      </p>
+      {source.outside > 0 && (
+        <p className="d1-facts">
+          {noun(source.outside, 'older closure', 'older closures')}{' '}
+          {figure(source.outside) === '1' ? 'is' : 'are'} outside this window.
+        </p>
+      )}
+      <p className="d1-facts">{week}</p>
+      {measured && <p className="d1-facts">{measured}</p>}
+    </div>
+  )
+}
+
+function LimitsBlock({
+  limits,
+  hour,
+  at,
+  known,
+}: {
+  limits: ForecastLimits
+  hour: number | null | undefined
+  at: string | null | undefined
+  known: boolean
+}) {
+  if (limits.status === 'omitted') return null
+  if (limits.status === 'not_checked') {
+    return (
+      <div className="d1-rows">
+        <div className="d1-row">
+          <p>{limits.reason}</p>
+        </div>
+      </div>
+    )
+  }
+  const note = limitsNote(limits.service)
+  return (
+    <>
+      <p className="d1-sub">Saved limits</p>
+      <div className="d1-rows">
+        <div className="d1-row">
+          {note && <p>{note}</p>}
+          {limits.enabled === false && <p>Investigations are not started on their own.</p>}
+          <p>
+            At most {noun(limits.concurrent ?? 0, 'investigation', 'investigations')} at once, each up to{' '}
+            {noun(limits.minutes ?? 0, 'minute', 'minutes')}, and alerts beyond that wait.
+          </p>
+          {limits.covers == null ? (
+            <p>The hourly cap could not be stated from the saved per-investigation cost.</p>
+          ) : (
+            <>
+              <p>
+                The hourly cap covers {noun(limits.covers, 'investigation', 'investigations')} at the full{' '}
+                {money(limits.per_investigation ?? 0)} per investigation.
+              </p>
+              <p>If more than {figure(limits.covers)} were investigated at full cost, intake would pause.</p>
+            </>
+          )}
+          {known && hour != null && <p>{busiestLine(hour, at)}</p>}
+          {limits.triage === false && <p>No triage calls are made.</p>}
+          {limits.triage == null && <p>Whether triage calls are made was not checked.</p>}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function limitsNote(service: ForecastLimits['service']): string | null {
+  switch (service) {
+    case 'running':
+    case 'stopped':
+    case 'unavailable':
+      return null
+    case 'unknown':
+      return 'The saved limits are stated, but whether the background service is running was not checked.'
+    case 'not_serving':
+      return 'The background service is not serving.'
+    default: {
+      const never: never = service
+      return never
+    }
+  }
+}
+
+function SpendBlock({ spend }: { spend: ForecastSpend }) {
+  if (spend.status === 'omitted') return null
+  if (spend.status === 'not_checked') {
+    return (
+      <>
+        <p className="d1-sub">Measured spend</p>
+        <div className="d1-rows">
+          <div className="d1-row">
+            <p>{spend.reason}</p>
+          </div>
+        </div>
+      </>
+    )
+  }
+  const count = noun(spend.wholly_priced, 'wholly priced investigation', 'wholly priced investigations')
+  return (
+    <>
+      <p className="d1-sub">Measured spend</p>
+      <div className="d1-rows">
+        <div className="d1-row">
+          {spend.wholly_priced >= 20 && spend.median != null && (
+            <p>From {count}: {money(spend.median)}.</p>
+          )}
+          {spend.wholly_priced > 0 && spend.wholly_priced < 20 && spend.low != null && spend.high != null && (
+            <p>
+              From {count}: {money(spend.low)} to {money(spend.high)}.
+            </p>
+          )}
+          {spend.wholly_priced === 0 && <p>No wholly priced investigations.</p>}
+          {spend.not_counted > 0 && (
+            <p className="d1-facts">{noun(spend.not_counted, 'run', 'runs')} not counted.</p>
+          )}
+          {spend.unpriced_model > 0 && <p>The cap does not limit that model.</p>}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function ForecastSection({ forecast }: { forecast: Forecast }) {
+  const arrivals = forecast.arrivals
+  const limits = forecast.limits
+  const arrivalsOnly = limits.service === 'stopped' || limits.service === 'unavailable'
+  const showCalls = limits.status === 'ok' && limits.triage === true
+  const busiestWithArrivals = arrivals.status === 'ok' && (arrivalsOnly || limits.status !== 'ok')
+  return (
+    <section className="d1-card" aria-label="Cost forecast">
+      <div className="d1-card-head">
+        <h2>{MODULE_TITLE['history.forecast']}</h2>
+        <InfoTip label="How the cost forecast is judged" align="start" {...FORECAST_TIP} />
+      </div>
+      {arrivalsOnly && (
+        <div className="d1-rows">
+          <div className="d1-row">
+            <p>No automatic triage and no hourly cap run.</p>
+          </div>
+        </div>
+      )}
+      <p className="d1-sub">Arrivals</p>
+      <div className="d1-rows">
+        {arrivals.status === 'not_checked' ? (
+          <div className="d1-row">
+            <p>{arrivals.reason}</p>
+            {arrivals.fix && (
+              <p className="d1-fix">
+                {arrivals.fix}
+                {arrivals.screen && (
+                  <>
+                    {' '}
+                    <Link to={arrivals.screen}>{screenName(arrivals.screen)}</Link>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            {(arrivals.sources ?? []).map((source) => (
+              <SourceRow key={source.source} source={source} showCalls={showCalls} />
+            ))}
+            {busiestWithArrivals && arrivals.busiest_hour != null && (
+              <div className="d1-row">
+                <p>{busiestLine(arrivals.busiest_hour, arrivals.busiest_at)}</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <LimitsBlock
+        limits={limits}
+        hour={arrivals.busiest_hour}
+        at={arrivals.busiest_at}
+        known={arrivals.status === 'ok'}
+      />
+      <SpendBlock spend={forecast.spend} />
+    </section>
+  )
 }
 
 function Citation({ check }: { check: Check }) {
@@ -274,7 +529,7 @@ function summaryActions(report: Report): Check[] {
 
 function Summary({ report }: { report: Report }) {
   const hidden = new Set(report.withheld ?? [])
-  const areas = (report.modules ?? []).filter((id) => !hidden.has(id))
+  const areas = (report.modules ?? []).filter((id) => !hidden.has(id) && !SECTIONS.has(id))
   const actions = summaryActions(report)
   const visibilityHidden = hidden.has('visibility')
   const visibilityRan = (report.modules ?? []).includes('visibility')
@@ -645,6 +900,9 @@ export default function ReportScreen() {
             )}
             {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
           </section>
+        )}
+        {report?.forecast && (report.modules ?? []).includes('history.forecast') && (
+          <ForecastSection forecast={report.forecast} />
         )}
       </div>
     </div>
