@@ -2,7 +2,8 @@
 
 The ``source_health`` row (``core/storage/source_health.py``) is the only
 stored copy of a source's health. Its writers are scheduled collection (``core/federation/store.py``), Test
-(``services/api/routers/config.py``), a successful MCP read (``core/agents/mcp_tools.py``),
+(``services/api/routers/config.py``), a successful MCP read for an integration that
+scheduled collection does not poll (``core/agents/mcp_tools.py``),
 detection-source syncs (``core/detections/detection_rules_service.py``), the push sources
 (``core/storage/push_health.py``: Kafka, the daemon webhook, and the Darktrace
 and Cloudflare receivers) and the integration save path (a reset). Every writer
