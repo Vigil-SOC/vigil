@@ -156,6 +156,20 @@ it describes the install, not the demo data. Demo findings are not read as
 data received.
 _Avoid_: Visibility Gap, Declared Gap (those are run-scoped)
 
+**Report Section**:
+A Report Module whose output is figures and lists, with no checks and no
+outcome. It is absent from the one-page summary and from comparison. Your
+"before" (`history.before`), the re-check list (`history.recheck`) and tuning
+candidates (`history.tuning`) are Report Sections, each read under
+`findings.read`. Their figures, counts and ticket references are stored on the
+Report Record's evidence, under the module id. Titles, entity values and
+unmapped disposition text are read from the import when the report is viewed,
+and only for a reader who holds `automation.read`. A section that cannot be
+read says not checked and the reason, and the rest of the report completes.
+The stored record stays complete; a reader who lacks `findings.read` is not
+shown the section.
+_Avoid_: Report Check (a section has no checks)
+
 **Workflow** (`workflows`):
 The user-facing product noun — a named, multi-agent procedure an analyst runs
 from the Workflows screen. Authored as a **Playbook**, executed by **Compose**.

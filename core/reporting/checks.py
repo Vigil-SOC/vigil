@@ -41,6 +41,11 @@ SETTINGS = ReportModule("settings", "platform.read")
 COVERAGE = ReportModule("coverage", "detections.read")
 # Hosts CrowdStrike, Defender and Wazuh still list. Counts only.
 ESTATE = ReportModule("estate", "integrations.read")
+# Report Sections: figures and lists, no checks. Stored under evidence.
+HISTORY_BEFORE = ReportModule("history.before", "findings.read")
+HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
+HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
+HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -263,6 +268,9 @@ MODULES = {
     SETTINGS.id: SETTINGS,
     COVERAGE.id: COVERAGE,
     ESTATE.id: ESTATE,
+    HISTORY_BEFORE.id: HISTORY_BEFORE,
+    HISTORY_RECHECK.id: HISTORY_RECHECK,
+    HISTORY_TUNING.id: HISTORY_TUNING,
     FORECAST.id: FORECAST,
 }
 

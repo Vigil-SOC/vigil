@@ -29,6 +29,7 @@ from core.reporting.checks import (
     COVERAGE,
     ESTATE,
     FORECAST,
+    HISTORY,
     MODULES,
     SETTINGS,
     VISIBILITY,
@@ -39,6 +40,8 @@ from core.reporting.enablement import disabled_module_ids
 from core.reporting.estate import produce as produce_estate
 from core.reporting.forecast import failed as forecast_failed
 from core.reporting.forecast import produce as produce_forecast
+from core.reporting.history_sections import present as present_history
+from core.reporting.history_sections import produce as produce_history
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -194,6 +197,7 @@ def build(state: dict) -> dict[str, Any]:
     if ESTATE.id not in disabled:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
+    _append_history(modules, evidence, disabled)
     if FORECAST.id not in disabled:
         modules.append(FORECAST.id)
         evidence[FORECAST.id] = _forecast(state)
@@ -226,6 +230,28 @@ def _visibility_checks(
     checks.extend(_source_checks(state, sources))
     evidence[VISIBILITY.id] = {"switched_off": _switched_off(sources)}
     return checks
+
+
+def _append_history(
+    modules: list[str], evidence: dict[str, Any], disabled: set[str]
+) -> None:
+    """The three history sections. A failed read is not-checked on each of them."""
+    pending = [module.id for module in HISTORY if module.id not in disabled]
+    if not pending:
+        return
+    try:
+        produced = produce_history()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read imported history: %s", type(exc).__name__
+        )
+        produced = {
+            module_id: {"not_checked": "not checked: could not read imported history."}
+            for module_id in pending
+        }
+    for module_id in pending:
+        modules.append(module_id)
+        evidence[module_id] = produced[module_id]
 
 
 def _forecast(state: dict) -> dict[str, Any]:
@@ -360,6 +386,16 @@ def _present(
         "checks": checks,
         "switched_off": switched_off,
         "forecast": forecast,
+        **present_history(
+            session,
+            evidence,
+            list(record.modules or []),
+            hidden,
+            record.recorded_at,
+            record.record_id,
+            record.run_id,
+            user_id,
+        ),
     }
 
 

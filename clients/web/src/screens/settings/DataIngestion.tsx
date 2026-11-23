@@ -16,6 +16,7 @@ import {
 } from '../../shared/ui'
 import {
   configApi,
+  day1Api,
   federationApi,
   importsApi,
   ingestionApi,
@@ -23,6 +24,7 @@ import {
   type HistoryImport,
   type IngestionJob,
 } from '../../services/api'
+import { stepUpDetailOf } from '../../services/stepUp'
 import {
   useDarktrace,
   useIngestionJob,
@@ -463,6 +465,31 @@ const connectedPull = (row: HistoryImport) =>
 const needsAttention = (row: HistoryImport) => stopped(row) || row.unmapped.length > 0 || !row.has_ticket_detail
 
 // rerun: a stopped connected pull's Re-run; absent without findings.write or once its source is unconfigured
+function ReportAgain({
+  exists,
+  canRun,
+  busy,
+  onRun,
+}: {
+  exists: boolean | null
+  canRun: boolean
+  busy: boolean
+  onRun: () => void
+}) {
+  if (exists === null) return null
+  if (!exists) return <p className="data-history-line">The Day 1 Report will include this history.</p>
+  if (!canRun) {
+    return <p className="data-history-line">Ask someone who can run the Day 1 Report to re-run it.</p>
+  }
+  return (
+    <p className="data-history-line">
+      <button type="button" className="data-link" disabled={busy} onClick={onRun}>
+        {busy ? 'Running…' : 'Run the Day 1 Report again'}
+      </button>
+    </p>
+  )
+}
+
 function ImportDetails({ row, canWrite, rerun }: { row: HistoryImport; canWrite: boolean; rerun?: ReactNode }) {
   const window = row.pull_days != null
     ? `Last ${row.pull_days} days${row.status === 'done' && row.pulled_at ? `, pulled ${utcDayClock(row.pulled_at)}` : ''}`
@@ -543,7 +570,11 @@ export function HistoryImportCard({
   leadConnected?: boolean
 }) {
   const { job, attaching, upload, start } = useIngestionJob('history')
-  const canWrite = useAuth().hasPermission('findings.write')
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('findings.write')
+  const canRunReport = hasPermission('platform.write')
+  const [reportExists, setReportExists] = useState<boolean | null>(null)
+  const [runningReport, setRunningReport] = useState(false)
   const configured = useConnectedHistorySources()
   const [imports, setImports] = useState<HistoryImport[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -562,6 +593,27 @@ export function HistoryImportCard({
   }, [])
   // on open, and again when an import finishes, so it lists without a reload
   useEffect(load, [load, job?.job_id, running])
+  useEffect(() => {
+    let cancelled = false
+    day1Api.status().then(
+      (res) => { if (!cancelled) setReportExists(Boolean(res.data.latest_id)) },
+      () => { if (!cancelled) setReportExists(null) },
+    )
+    return () => { cancelled = true }
+  }, [imports])
+
+  const runReport = async () => {
+    setRunningReport(true)
+    try {
+      await day1Api.run()
+      setReportExists(true)
+      notify('ok', 'Day 1 Report is ready.')
+    } catch (err) {
+      if (!stepUpDetailOf(err)) notify('err', errorText(err, 'Could not run the Day 1 Report'))
+    } finally {
+      setRunningReport(false)
+    }
+  }
 
   const toggle = (id: string) =>
     setToggled((s) => {
@@ -676,6 +728,14 @@ export function HistoryImportCard({
                         <Icon name={open ? 'chevD' : 'chevR'} size={13} />
                         <b>{name}</b>
                       </button>
+                      {row.status === 'done' && (
+                        <ReportAgain
+                          exists={reportExists}
+                          canRun={canRunReport}
+                          busy={runningReport}
+                          onRun={() => void runReport()}
+                        />
+                      )}
                     </td>
                     <td><span className={`level-pill ${status.level}`}>{status.text}</span></td>
                     <td className="num">{row.rows_read}</td>

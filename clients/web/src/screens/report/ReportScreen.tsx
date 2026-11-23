@@ -9,6 +9,7 @@ import { ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
+import { HistorySections } from './HistorySections'
 import { reportStamp } from './stamp'
 import './report.css'
 
@@ -29,11 +30,30 @@ const MODULE_TITLE: Record<string, string> = {
   settings: "Vigil's own settings",
   coverage: 'Detection coverage',
   estate: 'What CrowdStrike, Defender and Wazuh still list',
+  'history.before': 'Your "before"',
+  'history.recheck': 'Re-check list',
+  'history.tuning': 'Tuning candidates',
   'history.forecast': 'Cost forecast',
 }
 
+const MODULE_PERMISSION: Record<string, string> = {
+  visibility: 'integrations.read',
+  settings: 'platform.read',
+  coverage: 'detections.read',
+  estate: 'integrations.read',
+  'history.before': 'findings.read',
+  'history.recheck': 'findings.read',
+  'history.tuning': 'findings.read',
+  'history.forecast': 'platform.read',
+}
+
 // A report section has figures and no outcomes, so it stays out of the summary grid.
-const SECTIONS = new Set(['history.forecast'])
+const REPORT_SECTIONS = new Set([
+  'history.before',
+  'history.recheck',
+  'history.tuning',
+  'history.forecast',
+])
 
 const SETTINGS_TIP = {
   source: 'The session policy and the audit-trail retention period',
@@ -515,6 +535,15 @@ function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string |
   )
 }
 
+function Withheld({ id }: { id: string }) {
+  return (
+    <section className="d1-card" aria-label={MODULE_TITLE[id] ?? id}>
+      <h2>{MODULE_TITLE[id] ?? id}</h2>
+      <p className="d1-withheld">Not included. This section needs {MODULE_PERMISSION[id] ?? id}.</p>
+    </section>
+  )
+}
+
 function CheckRow({
   check,
   comparedAt,
@@ -552,7 +581,7 @@ function summaryActions(report: Report): Check[] {
 
 function Summary({ report }: { report: Report }) {
   const hidden = new Set(report.withheld ?? [])
-  const areas = (report.modules ?? []).filter((id) => !hidden.has(id) && !SECTIONS.has(id))
+  const areas = (report.modules ?? []).filter((id) => !hidden.has(id) && !REPORT_SECTIONS.has(id))
   const actions = summaryActions(report)
   const visibilityHidden = hidden.has('visibility')
   const visibilityRan = (report.modules ?? []).includes('visibility')
@@ -816,12 +845,7 @@ export default function ReportScreen() {
       </div>
       {report && <Summary report={report} />}
       <div className="d1-screen">
-        {report && withheld.includes('visibility') && (
-          <section className="d1-card" aria-label="What Vigil can see">
-            <h2>What Vigil can see</h2>
-            <p className="d1-withheld">Not included. This section needs integrations.read.</p>
-          </section>
-        )}
+        {report && withheld.includes('visibility') && <Withheld id="visibility" />}
         {showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">
             <div className="d1-card-head">
@@ -893,12 +917,7 @@ export default function ReportScreen() {
             )}
           </section>
         )}
-        {coverageRan && withheld.includes('coverage') && (
-          <section className="d1-card" aria-label="Detection coverage">
-            <h2>Detection coverage</h2>
-            <p className="d1-withheld">Not included. This section needs detections.read.</p>
-          </section>
-        )}
+        {coverageRan && withheld.includes('coverage') && <Withheld id="coverage" />}
         {showCoverage && (
           <section className="d1-card" aria-label="Detection coverage">
             <div className="d1-card-head">
@@ -927,12 +946,11 @@ export default function ReportScreen() {
             {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
           </section>
         )}
-        {estateRan && withheld.includes('estate') && (
-          <section className="d1-card" aria-label="What CrowdStrike, Defender and Wazuh still list">
-            <h2>What CrowdStrike, Defender and Wazuh still list</h2>
-            <p className="d1-withheld">Not included. This section needs integrations.read.</p>
-          </section>
-        )}
+        {report && withheld.includes('history.before') && <Withheld id="history.before" />}
+        {report && withheld.includes('history.recheck') && <Withheld id="history.recheck" />}
+        {report && withheld.includes('history.tuning') && <Withheld id="history.tuning" />}
+        {report && <HistorySections report={report} />}
+        {estateRan && withheld.includes('estate') && <Withheld id="estate" />}
         {showEstate && (
           <section className="d1-card" aria-label="What CrowdStrike, Defender and Wazuh still list">
             <div className="d1-card-head">
