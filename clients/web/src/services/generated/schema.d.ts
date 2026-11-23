@@ -3368,7 +3368,8 @@ export interface paths {
          *     treated as "keep existing secret" (matches the S3 endpoint convention)
          *     so editing non-secret fields without re-typing the password doesn't
          *     clobber stored credentials, unless a destination field (URL, host, ...) also
-         *     changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+         *     changed or TLS trust was loosened (verify_ssl off, ca_cert_path or proxy_type
+         *     changed): then every stored secret must be re-entered (HTTP 400 otherwise),
          *     so a saved credential is never carried to a destination its owner did not
          *     choose. A failed secret write or integration-config
          *     row is HTTP 500; the detail names the integration and field, never the value.

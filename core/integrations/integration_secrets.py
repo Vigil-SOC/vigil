@@ -371,6 +371,42 @@ def _same_destination(old: object, new: object) -> bool:
     return norm(old) == norm(new)
 
 
+def _verifies(value: object) -> bool:
+    # Unset reads as "verify" in every integration; anything else not plainly
+    # true is treated as off, the way the clients would read it.
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _trust_widened(
+    stored_config: Mapping[str, object], new_config: Mapping[str, object]
+) -> bool:
+    """Whether the save loosens which server the stored credential will trust.
+
+    Turning ``verify_ssl`` off, or any change to ``ca_cert_path`` (a blank one
+    trusts the whole default store) or ``proxy_type``, lets a different server
+    receive the credential. The save replaces the stored config, so an omitted
+    key is a cleared one.
+    """
+    if _verifies(stored_config.get("verify_ssl")) and not _verifies(
+        new_config.get("verify_ssl")
+    ):
+        return True
+    if not _same_destination(
+        stored_config.get("ca_cert_path"), new_config.get("ca_cert_path")
+    ):
+        return True
+
+    def proxy(config: Mapping[str, object]) -> str:
+        value = str(config.get("proxy_type") or "").strip().lower()
+        return "" if value == "none" else value  # the form's default
+
+    return proxy(stored_config) != proxy(new_config)
+
+
 def credentials_to_resupply(
     integration_id: str,
     stored_config: Mapping[str, object],
@@ -382,9 +418,10 @@ def credentials_to_resupply(
     changing where an integration connects must not carry the old credential
     to the new host. When a destination field differs from the stored one,
     every secret that is currently set has to be present and non-empty in
-    ``new_config``; the names of those that are not are returned.
+    ``new_config``; the names of those that are not are returned. Loosening
+    TLS trust (see ``_trust_widened``) counts as a move.
     """
-    moved = any(
+    moved = _trust_widened(stored_config, new_config) or any(
         _DESTINATION_KEY.search(key)
         and not _same_destination(stored_config.get(key), value)
         for key, value in new_config.items()
