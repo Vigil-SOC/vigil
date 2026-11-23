@@ -709,6 +709,7 @@ export const configApi = {
     ssh_private_key_path?: string
     ssh_key_passphrase?: string
     verify_proxy_tls?: boolean
+    database_password?: string
   }) => api.post('/config/platform-database', data),
 
   // Deployment-wide text every agent run appends to its system prompt (#4918).

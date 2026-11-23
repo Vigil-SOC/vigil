@@ -15022,6 +15022,11 @@ export interface components {
          */
         PlatformDatabaseProxyConfig: {
             /**
+             * Database Password
+             * @default
+             */
+            database_password: string;
+            /**
              * Proxy Host
              * @default
              */
