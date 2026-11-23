@@ -3,6 +3,9 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from core.config import is_integration_enabled
+from core.integrations._base.config import resolve
+from core.integrations.cloudflare.descriptor import CLOUDFLARE
 from core.response.approval_service import (
     EXECUTABLE_ACTION_TYPES,
     ActionStatus,
@@ -136,11 +139,6 @@ class AutonomousResponseService:
         parameters: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Execute an approved Cloudflare action via the REST helpers in core/integrations/cloudflare/tool.py."""
-        try:
-            from core.config import get_integration_config, is_integration_enabled
-        except Exception as e:  # noqa: BLE001
-            return {"success": False, "error": f"config import failed: {e}"}
-
         if not is_integration_enabled("cloudflare"):
             return {
                 "success": False,
@@ -148,7 +146,7 @@ class AutonomousResponseService:
                 "message": "Enable the Cloudflare integration in Settings to execute this action.",
             }
 
-        cfg = get_integration_config("cloudflare") or {}
+        cfg = resolve(CLOUDFLARE)
         api_token = cfg.get("api_token")
         account_id = cfg.get("account_id")
         if not api_token:
