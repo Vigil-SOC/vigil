@@ -4,6 +4,8 @@ import hmac
 import json
 import logging
 import os
+import re
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -63,7 +65,7 @@ from core.skills.skill_library import (
     operator_skills_root,
     skill_roots,
 )
-from core.storage.config_service import get_config_service
+from core.storage.config_service import get_config_service, write_config_audit
 from core.storage.models import (
     AIModelConfig,
     HistoryImport,
@@ -99,6 +101,31 @@ logger = logging.getLogger(__name__)
 def _for_user(user: User):
     """Config service stamped with the signed-in user for the audit row."""
     return get_config_service(user_id=str(user.user_id))
+
+
+@contextmanager
+def _audited(
+    user: User,
+    config_type: str,
+    config_key: str,
+    old_value: Optional[Dict[str, Any]],
+    new_value: Optional[Dict[str, Any]],
+):
+    """Record a change whose state lives outside the settings service (the
+    secrets store, a State Directory file), then let the caller make it. The
+    entry is written first, so a refused one stops the change; an exception
+    in the block rolls the entry back."""
+    with unit_of_work() as session:
+        write_config_audit(
+            session,
+            config_type=config_type,
+            config_key=config_key,
+            action="update",
+            old_value=old_value,
+            new_value=new_value,
+            changed_by=str(user.user_id),
+        )
+        yield
 
 
 def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
@@ -211,7 +238,10 @@ def get_demo_mode():
 
 
 @router.post("/demo-mode", dependencies=_PLATFORM_WRITE)
-def set_demo_mode(config: DemoModeConfig):
+def set_demo_mode(
+    config: DemoModeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set demo mode configuration.
 
@@ -233,11 +263,13 @@ def set_demo_mode(config: DemoModeConfig):
         with open(source_file, "r") as f:
             existing = json.load(f)
 
-    # Update demo_mode setting
+    old = {"demo_mode": existing.get("demo_mode")}
     existing["demo_mode"] = config.enabled
-
-    with open(config_file, "w") as f:
-        json.dump(existing, f, indent=2)
+    with _audited(
+        current_user, "general", "demo_mode", old, {"demo_mode": config.enabled}
+    ):
+        with open(config_file, "w") as f:
+            json.dump(existing, f, indent=2)
 
     # Takes effect at once; DEMO_MODE in the environment still wins, so report the
     # effective mode rather than the one asked for.
@@ -299,7 +331,10 @@ def get_claude_config():
 
 
 @router.post("/claude", dependencies=_PLATFORM_WRITE)
-def set_claude_config(config: ClaudeConfig):
+def set_claude_config(
+    config: ClaudeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set Claude API configuration.
 
@@ -309,13 +344,20 @@ def set_claude_config(config: ClaudeConfig):
     Returns:
         Success status
     """
-    # Use standard environment variable name
-    success = set_secret("CLAUDE_API_KEY", config.api_key)
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail=secret_write_failure_detail("Failed to save API key"),
-        )
+    # The key's value never reaches the entry, only that it changed.
+    with _audited(
+        current_user,
+        "llm_provider",
+        "CLAUDE_API_KEY",
+        {"configured": bool(get_secret("CLAUDE_API_KEY"))},
+        {"configured": True, "key_change": "set"},
+    ):
+        # Use standard environment variable name
+        if not set_secret("CLAUDE_API_KEY", config.api_key):
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail("Failed to save API key"),
+            )
 
     # GH #88: keep the new llm_provider_configs table in sync so the
     # Settings "AI Config" tab and the legacy endpoint agree on the
@@ -594,7 +636,10 @@ def _require_proxy_credentials(
 
 
 @router.post("/platform-database", dependencies=_PLATFORM_WRITE)
-def set_platform_database_config(config: PlatformDatabaseProxyConfig):
+def set_platform_database_config(
+    config: PlatformDatabaseProxyConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
     can't be hot-swapped safely.
@@ -629,10 +674,19 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
         values["proxy_password"] = config.proxy_password
     if config.ssh_key_passphrase:
         values["ssh_key_passphrase"] = config.ssh_key_passphrase
-    _set_secrets_or_raise(
-        {_PLATFORM_DB_PROXY_KEYS[k]: v for k, v in values.items()},
-        "platform DB proxy configuration",
-    )
+    # Settings only; a re-entered secret is named, never copied.
+    old = {
+        f: get_secret(k) or ""
+        for f, k in _PLATFORM_DB_PROXY_KEYS.items()
+        if f not in _PLATFORM_DB_SECRET_FIELDS
+    }
+    new = {f: v for f, v in values.items() if f not in _PLATFORM_DB_SECRET_FIELDS}
+    new["rotated"] = sorted(_PLATFORM_DB_SECRET_FIELDS & values.keys())
+    with _audited(current_user, "database", "PLATFORM_DB_PROXY", old, new):
+        _set_secrets_or_raise(
+            {_PLATFORM_DB_PROXY_KEYS[k]: v for k, v in values.items()},
+            "platform DB proxy configuration",
+        )
 
     return {
         "success": True,
@@ -1542,6 +1596,18 @@ def set_operator_instructions(
     return {"text": text, "max_bytes": MAX_SYSTEM_PROMPT_BYTES}
 
 
+def _connection_preview(conn_str: Optional[str]) -> Optional[str]:
+    """The host part of a connection string, with its login and database masked."""
+    if not conn_str:
+        return None
+    if "://" not in conn_str:
+        return "***"
+    # Format: postgresql://user:pass@host:port/db
+    scheme, rest = conn_str.split("://", 1)
+    host = re.split(r"[/?]", rest.split("@")[-1])[0]
+    return f"{scheme}://***@{host}/***"
+
+
 @router.get("/postgresql", dependencies=_PLATFORM_READ)
 def get_postgresql_config():
     """
@@ -1554,27 +1620,20 @@ def get_postgresql_config():
         conn_str = get_secret("POSTGRESQL_CONNECTION_STRING")
         has_config = bool(conn_str)
 
-        # Extract host from connection string for preview (if exists)
-        preview = None
-        if conn_str and "postgresql://" in conn_str:
-            try:
-                # Format: postgresql://user:pass@host:port/db
-                parts = conn_str.split("@")
-                if len(parts) > 1:
-                    host_part = parts[1].split("/")[0]
-                    preview = f"postgresql://***@{host_part}/***"
-            except Exception as e:
-                logger.debug(f"Error parsing connection string preview: {e}")
-                preview = "postgresql://***:***@***/***"
-
-        return {"configured": has_config, "connection_preview": preview}
+        return {
+            "configured": has_config,
+            "connection_preview": _connection_preview(conn_str),
+        }
     except Exception as e:
         logger.error(f"Error getting PostgreSQL config: {e}")
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/postgresql", dependencies=_PLATFORM_WRITE)
-def set_postgresql_config(config: PostgreSQLConfig):
+def set_postgresql_config(
+    config: PostgreSQLConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set PostgreSQL database backend configuration.
 
@@ -1584,19 +1643,24 @@ def set_postgresql_config(config: PostgreSQLConfig):
     Returns:
         Success status
     """
-    success = set_secret("POSTGRESQL_CONNECTION_STRING", config.connection_string)
-    if success:
-        return {
-            "success": True,
-            "message": "PostgreSQL connection string saved securely",
-        }
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail=secret_write_failure_detail(
-                "Failed to save PostgreSQL connection string"
-            ),
-        )
+    with _audited(
+        current_user,
+        "database",
+        "POSTGRESQL_CONNECTION_STRING",
+        {"connection": _connection_preview(get_secret("POSTGRESQL_CONNECTION_STRING"))},
+        {"connection": _connection_preview(config.connection_string)},
+    ):
+        if not set_secret("POSTGRESQL_CONNECTION_STRING", config.connection_string):
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail(
+                    "Failed to save PostgreSQL connection string"
+                ),
+            )
+    return {
+        "success": True,
+        "message": "PostgreSQL connection string saved securely",
+    }
 
 
 class AIOperationsSettingsConfig(BaseModel):

@@ -56,6 +56,7 @@ from core.llm.providers.base_url import (
 from core.llm.providers.registry import VALID_PROVIDER_TYPES
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
+from core.storage.config_service import get_config_service, redacted_config_copy
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
 
@@ -143,6 +144,60 @@ def _is_masked(value: Any) -> bool:
     if isinstance(value, dict):
         return True
     return isinstance(value, str) and "*" in value
+
+
+# Body fields that carry a credential; never copied onto the audit trail.
+_SECRET_BODY_FIELDS = frozenset(
+    {
+        "value",
+        "auth_credentials",
+        "api_key",
+        "access_key",
+        "secret_key",
+        "session_token",
+        "password",
+        "token",
+    }
+)
+_AUDIT_ACTIONS = {"POST": "create", "PUT": "update", "DELETE": "delete"}
+
+
+def _without_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _without_secrets(v)
+            for k, v in value.items()
+            if str(k).lower() not in _SECRET_BODY_FIELDS
+        }
+    if isinstance(value, list):
+        return [_without_secrets(v) for v in value]
+    return value
+
+
+def _audit_gateway_write(
+    user: User, method: str, path: str, body: Optional[Dict[str, Any]]
+) -> None:
+    """Record an accepted gateway write: who, what path, and what was sent.
+
+    The gateway's store is outside Vigil's transaction and has already taken
+    the write, so a refused entry cannot undo it; it is logged loudly instead.
+    """
+    sent = redacted_config_copy("bifrost", path, _without_secrets(body or {}))
+    try:
+        get_config_service(user_id=str(user.user_id)).record_audit(
+            config_type="bifrost",
+            config_key=path,
+            action=_AUDIT_ACTIONS[method],
+            old_value={"path": path} if method == "DELETE" else None,
+            new_value=None if method == "DELETE" else sent,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Bifrost proxy: %s %s by %s was not recorded on the audit trail",
+            method,
+            path,
+            user.user_id,
+        )
 
 
 def _require_settings_admin(current_user: User) -> None:
@@ -663,6 +718,8 @@ async def proxy(
         routability_changed = True
     if routability_changed:
         path_health.reset()
+    if request.method in _WRITE_METHODS and upstream.status_code < 400:
+        _audit_gateway_write(current_user, request.method, path, body)
 
     return Response(
         content=upstream.content,
