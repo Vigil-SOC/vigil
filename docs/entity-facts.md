@@ -70,7 +70,7 @@ Vigil only reads. Give each source a credential that can do nothing else.
 |---|---|
 | Entra | Microsoft Graph application permissions `User.Read.All` (the user and their manager) and `GroupMember.Read.All` (group names). If `memberOf` is denied, the other fields still come back. |
 | Okta | An API token of a **Read-only Administrator**, or, for OAuth, `okta.users.read` and `okta.groups.read`. |
-| Falcon | **Hosts: Read** for host facts, and **Alerts: Read** for alert collection and the credential read. |
+| Falcon | **Hosts: Read** for host facts, and **Alerts: Read** for alert collection and the credential read. Hosts: Read is also optional for the Day 1 Report's counts of hosts CrowdStrike still lists, and it lets agents search Falcon hosts. |
 
 For Falcon, that same API client is also the CrowdStrike tool server's credential: agents can call that server's other tools (for example `falcon_search_detects`, which the hunt resolver prefers), and each tool needs its own scope in CrowdStrike and is refused without it.
 

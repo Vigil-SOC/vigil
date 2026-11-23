@@ -25,9 +25,17 @@ from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.checks import (
+    COVERAGE,
+    ESTATE,
+    MODULES,
+    SETTINGS,
+    VISIBILITY,
+    spec_for,
+)
 from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.estate import produce as produce_estate
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -155,21 +163,34 @@ def build(state: dict) -> dict[str, Any]:
     report still completes. Settings and coverage are read on a run that
     includes them, including unknown readiness and the desktop app. Coverage
     is the existing coverage, gap and rule-check reads. Demo findings are
-    not read.
+    not read. Host counts for CrowdStrike, Defender and Wazuh follow coverage,
+    and only for a tool that is switched on. That read is the same health
+    result visibility uses.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
     evidence: dict[str, Any] = {}
     modules: list[str] = []
+    sources: Optional[list] = None
+    health_failed = False
+    if VISIBILITY.id not in disabled or ESTATE.id not in disabled:
+        try:
+            sources = health.collect()
+        except Exception as exc:  # noqa: BLE001 - the report still completes
+            health_failed = True
+            logger.error("Day 1 Report could not read health: %s", type(exc).__name__)
     if VISIBILITY.id not in disabled:
         modules.append(VISIBILITY.id)
-        checks.extend(_visibility_checks(state, evidence))
+        checks.extend(_visibility_checks(state, evidence, sources, health_failed))
     if SETTINGS.id not in disabled:
         modules.append(SETTINGS.id)
         checks.extend(_settings_checks())
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
+    if ESTATE.id not in disabled:
+        modules.append(ESTATE.id)
+        checks.extend(produce_estate(sources, health_failed))
     preface = PREFACE if is_demo_mode() else None
     return {
         "modules": modules,
@@ -179,12 +200,14 @@ def build(state: dict) -> dict[str, Any]:
     }
 
 
-def _visibility_checks(state: dict, evidence: dict[str, Any]) -> list[dict[str, Any]]:
+def _visibility_checks(
+    state: dict,
+    evidence: dict[str, Any],
+    sources: Optional[list],
+    health_failed: bool,
+) -> list[dict[str, Any]]:
     checks = _platform_checks(state)
-    try:
-        sources = health.collect()
-    except Exception as exc:  # noqa: BLE001 - the report still completes
-        logger.error("Day 1 Report could not read health: %s", type(exc).__name__)
+    if health_failed or sources is None:
         checks.append(
             _check(
                 "visibility.source",
