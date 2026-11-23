@@ -158,6 +158,7 @@ class CaseClosureView(BaseModel):
     """What the closed summary shows. ``verdict`` is the stated reason."""
 
     closure_category: str
+    false_positive_cause: Optional[str] = None
     closed_by: str
     closed_by_kind: str
     closed_at: Optional[str] = None
