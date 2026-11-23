@@ -130,10 +130,11 @@ class MCPService:
 
     # ---- Enabled / Disabled state persistence ----
 
-    def _load_enabled_state(self) -> Dict[str, bool]:
+    @classmethod
+    def _load_enabled_state(cls) -> Dict[str, bool]:
         """Load the enabled/disabled state from disk. Returns empty dict if no file."""
         try:
-            with open(vigil_path(self._STATE_FILENAME)) as f:
+            with open(vigil_path(cls._STATE_FILENAME)) as f:
                 return json.load(f).get("enabled", {})
         except FileNotFoundError:
             return {}
@@ -162,17 +163,26 @@ class MCPService:
         "splunk-selfhosted",
     }
 
+    @classmethod
+    def enabled_state(cls) -> Dict[str, bool]:
+        """Every saved server switch, read once, for a caller asking about many
+        servers; pass it to is_server_enabled as ``state``."""
+        return cls._load_enabled_state()
+
+    @classmethod
     def is_server_enabled(
-        self, server_name: str, state: Optional[Dict[str, bool]] = None
+        cls, server_name: str, state: Optional[Dict[str, bool]] = None
     ) -> bool:
         """Check whether a server is enabled. Internal platform servers default to True; all others default to False.
 
         Read from the file on every check: the other API worker and the daemon
         toggle the same file, and share the runner's one copy of each server.
+        A class method, so a reader with no service of its own (integration
+        health) reads the same file the same way.
         """
         if state is None:
-            state = self._load_enabled_state()
-        return state.get(server_name, server_name in self._DEFAULT_ENABLED)
+            state = cls._load_enabled_state()
+        return state.get(server_name, server_name in cls._DEFAULT_ENABLED)
 
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
         """
