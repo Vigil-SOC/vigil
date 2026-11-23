@@ -751,6 +751,13 @@ export const configApi = {
   },
 }
 
+export const day1Api = {
+  status: () => api.get<Schema<'Day1Status'>>('/day1-report/status'),
+  get: (record?: string) =>
+    api.get<Schema<'Day1Report'>>('/day1-report', { params: record ? { record } : {} }),
+  run: () => api.post<Schema<'Day1Report'>>('/day1-report'),
+}
+
 export interface PlatformDatabaseProxyConfig {
   proxy_type: string
   proxy_host: string

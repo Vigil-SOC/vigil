@@ -43,6 +43,7 @@ import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
 import MedicScreen from '../screens/medic/MedicScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
+import ReportScreen from '../screens/report/ReportScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import { AUTONOMY_CHANGED, DEMO_MODE_CHANGED } from '../screens/settings/useSettings'
@@ -79,6 +80,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   workflows: WorkflowsScreen,
   health: HealthScreen,
   medic: MedicScreen,
+  report: ReportScreen,
   settings: SettingsScreen,
 }
 
