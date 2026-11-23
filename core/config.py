@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     demo_mode: Optional[bool] = None
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    # Uploads parsed whole in the API process (a history import, or a findings
+    # JSON file the streaming reader rejects) are held to this smaller cap.
+    max_in_memory_import_mb: int = 25
     # os.pathsep-separated roots beyond the home directory that local detection
     # rule sources may live under.
     vigil_detection_local_roots: str = ""
