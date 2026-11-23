@@ -1428,6 +1428,10 @@ export function heldBecause(review: ReviewPayload): string | null {
   const guarded = review.guarded;
   if (guarded === undefined || guarded.asked === guarded.final) return null;
   if (review.stance === "uphold" && review.grounded === false) return "no cited result is linked to a claim on the record";
+  // Without a required record, an uphold still needs a cited result this run holds.
+  if (review.stance === "uphold" && review.grounded === undefined && review.cited.every((ref) => review.unknown_refs.includes(ref))) {
+    return `no cited result this run holds stands behind ${guarded.asked}`;
+  }
   if (review.stance === "uphold" && review.sources !== undefined && review.sources.counted.length < review.sources.required) {
     return `it cites ${review.sources.counted.length} independent source${review.sources.counted.length === 1 ? "" : "s"} that found something, and ${review.sources.required} are needed`;
   }

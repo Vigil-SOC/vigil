@@ -185,43 +185,59 @@ guard:
     contradicts a fact the dismissal rests on, such as the host, account, time
     window or process.
 
-# An escalation is reviewed too: a malicious answer, and the containment it
+# An alarm is reviewed too: a malicious answer, and the containment it
 # proposes, stands only when the record names a fitting benign explanation and a
-# cited result rules it out. Otherwise it goes out as suspicious and files no
-# proposals; the conclusion and review events keep what was asked and why.
+# cited result rules it out; a suspicious answer stands only over a cited result
+# that leaves a concern the record does not explain. Otherwise it is held as
+# needs_review for a person and files no proposals; the conclusion and review
+# events keep what was asked and why. A fallback may not be an alarm word: it
+# would be written with no review of its own.
 escalation_guard:
   field: disposition
-  guarded: [malicious]
-  fallback: suspicious
+  guarded: [malicious, suspicious]
+  fallback: needs_review
   min_hypotheses: 2
   reviewer_prompt: |
-    The agent wants to call this case malicious and may propose containment,
-    such as isolating a host. Acting on a wrong malicious call takes a
-    legitimate system offline: an authorised scanner, a monitoring job, a
-    security team's own test. Holding a well-grounded malicious call as
-    suspicious is a cost too: it still reaches an analyst, without the verdict.
+    The agent wants to call this case malicious or suspicious; the answer under
+    review says which. Either one holds the case open as an alarm, and a held
+    answer is handed to a person as needs_review.
 
-    Uphold when the cited results show the malicious activity itself, and the
-    record names the most likely benign explanation that fits that activity and
-    a cited result rules it out. For scanning, probing or repeated logins, the
-    benign explanation to rule out is an authorised scanner, vulnerability
-    management or asset discovery, or a sanctioned test. A scanner's own probes
-    do not rule it out: banner grabs, default-credential tries, exploit checks,
-    and requests naming well-known public sites sent to test for an open proxy
-    are what scanners send. They identify a tool, not an intent; reading them as
-    disguise or evasion is not supported. What rules it out is activity that
-    succeeds or carries on: a login that works, data moved, the source reaching
-    on into other hosts afterwards. So does a record that the source is not a
-    scanner. An explanation that does not fit the activity, put down only to be
-    dismissed, does not count.
+    For malicious: the agent may propose containment, such as isolating a host.
+    Acting on a wrong malicious call takes a legitimate system offline: an
+    authorised scanner, a monitoring job, a security team's own test. Holding a
+    well-grounded malicious call is a cost too: it still reaches an analyst,
+    without the verdict.
 
-    Answer insufficient when no fitting benign explanation is on the record,
-    when none is ruled out by a cited result, or when the verdict rests on the
-    detector's score, severity, a finding's triage verdict, the shape of the
-    traffic alone, an empty search, or a threat named from general knowledge
-    rather than a cited record. Overturn when a cited result shows the activity
-    is expected: an inventory, owner or change record naming the source as a
-    scanner, or the activity matching a known job.
+    Uphold malicious when the cited results show the malicious activity itself,
+    and the record names the most likely benign explanation that fits that
+    activity and a cited result rules it out. For scanning, probing or repeated
+    logins, the benign explanation to rule out is an authorised scanner,
+    vulnerability management or asset discovery, or a sanctioned test. A
+    scanner's own probes do not rule it out: banner grabs, default-credential
+    tries, exploit checks, and requests naming well-known public sites sent to
+    test for an open proxy are what scanners send. They identify a tool, not an
+    intent; reading them as disguise or evasion is not supported. What rules it
+    out is activity that succeeds or carries on: a login that works, data moved,
+    the source reaching on into other hosts afterwards. So does a record that
+    the source is not a scanner. An explanation that does not fit the activity,
+    put down only to be dismissed, does not count.
+
+    Answer insufficient for malicious when no fitting benign explanation is on
+    the record, when none is ruled out by a cited result, or when the verdict
+    rests on the detector's score, severity, a finding's triage verdict, the
+    shape of the traffic alone, an empty search, or a threat named from general
+    knowledge rather than a cited record. Overturn when a cited result shows the
+    activity is expected: an inventory, owner or change record naming the source
+    as a scanner, or the activity matching a known job.
+
+    For suspicious: do not demand proof of malice. Uphold when a cited result
+    shows a concrete concern the record does not explain: activity on a named
+    host, account or process that no cited result accounts for. Answer
+    insufficient when the suspicion rests on no cited result, on an empty
+    search, on the detector's score, severity or a finding's triage verdict
+    alone, or on a concern named from general knowledge rather than a cited
+    record. Overturn when a cited result explains the concern away: an owner,
+    inventory, ticket or change record, or a known job, accounting for it.
 
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:
