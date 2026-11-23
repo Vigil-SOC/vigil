@@ -27,6 +27,7 @@ from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOW
 from core.platform import notices
 from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
 from core.reporting.coverage import produce as produce_coverage
+from core.reporting.enablement import disabled_module_ids
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -146,17 +147,40 @@ def notify_finished(trigger: str, actor_id: Optional[str], record_id: str) -> No
 
 
 def build(state: dict) -> dict[str, Any]:
-    """Visibility, Vigil's own settings, then detection coverage.
+    """Each module that is switched on.
 
-    Daemon, model and collection come from ``state``, daemon first. Sources
-    come from integration health. Settings are read on every run, including
-    unknown readiness and the desktop app. Coverage is the existing coverage,
-    gap and rule-check reads. A failed read is one not-checked check, and the
-    report still completes. Demo findings are not read.
+    A listed id is left out, and ``modules`` names only what ran. Daemon,
+    model and collection come from ``state``, daemon first. Sources come
+    from integration health. A failed read is one not-checked check, and the
+    report still completes. Settings and coverage are read on a run that
+    includes them, including unknown readiness and the desktop app. Coverage
+    is the existing coverage, gap and rule-check reads. Demo findings are
+    not read.
     """
+    disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
-    checks.extend(_platform_checks(state))
-    switched_off: list[dict[str, str]] = []
+    evidence: dict[str, Any] = {}
+    modules: list[str] = []
+    if VISIBILITY.id not in disabled:
+        modules.append(VISIBILITY.id)
+        checks.extend(_visibility_checks(state, evidence))
+    if SETTINGS.id not in disabled:
+        modules.append(SETTINGS.id)
+        checks.extend(_settings_checks())
+    if COVERAGE.id not in disabled:
+        modules.append(COVERAGE.id)
+        checks.extend(_coverage_checks())
+    preface = PREFACE if is_demo_mode() else None
+    return {
+        "modules": modules,
+        "checks": checks,
+        "evidence": evidence,
+        "preface": preface,
+    }
+
+
+def _visibility_checks(state: dict, evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    checks = _platform_checks(state)
     try:
         sources = health.collect()
     except Exception as exc:  # noqa: BLE001 - the report still completes
@@ -168,30 +192,27 @@ def build(state: dict) -> dict[str, Any]:
                 "Could not read integration health.",
             )
         )
-    else:
-        checks.extend(_source_checks(state, sources))
-        switched_off = _switched_off(sources)
-    checks.extend(_settings_checks())
+        evidence[VISIBILITY.id] = {"switched_off": []}
+        return checks
+    checks.extend(_source_checks(state, sources))
+    evidence[VISIBILITY.id] = {"switched_off": _switched_off(sources)}
+    return checks
+
+
+def _coverage_checks() -> list[dict[str, Any]]:
     try:
-        checks.extend(produce_coverage())
+        return produce_coverage()
     except Exception as exc:  # noqa: BLE001 - the report still completes
         logger.error(
             "Day 1 Report could not read detection coverage: %s", type(exc).__name__
         )
-        checks.append(
+        return [
             _check(
                 "coverage.technique",
                 NOT_CHECKED,
                 "Could not read detection coverage.",
             )
-        )
-    preface = PREFACE if is_demo_mode() else None
-    return {
-        "modules": [VISIBILITY.id, SETTINGS.id, COVERAGE.id],
-        "checks": checks,
-        "evidence": {"visibility": {"switched_off": switched_off}},
-        "preface": preface,
-    }
+        ]
 
 
 def status() -> dict[str, Any]:
@@ -252,11 +273,28 @@ def _present(
         is not None
     ]
     hidden = set(withheld)
-    checks = [
-        _annotate(check)
-        for check in record.checks or []
-        if check.get("module") not in hidden and _allowed(session, user_id, check)
-    ]
+    compared = _compared(session, record)
+    prior = (
+        _visible_checks(session, user_id, compared, hidden)
+        if compared is not None
+        else {}
+    )
+    checks = []
+    for check in record.checks or []:
+        if check.get("module") in hidden or not _allowed(session, user_id, check):
+            continue
+        shown = _annotate(
+            {
+                "id": check.get("id"),
+                "module": check.get("module"),
+                "outcome": check.get("outcome"),
+                "reason": check.get("reason") or "",
+                "evidence": dict(check.get("evidence") or {}),
+            }
+        )
+        if compared is not None:
+            shown["comparison"] = _comparison(check, prior.get(check.get("id")))
+        checks.append(shown)
     evidence = record.evidence or {}
     switched_off = []
     if VISIBILITY.id not in hidden:
@@ -273,6 +311,7 @@ def _present(
         "preface": record.preface,
         "modules": list(record.modules or []),
         "withheld": withheld,
+        "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
         "switched_off": switched_off,
     }
@@ -305,6 +344,66 @@ def _annotate(check: dict) -> dict:
         "link": spec.link,
         "date_checked": spec.date_checked,
     }
+
+
+def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
+    """The run this record is read against. The earliest record has none.
+
+    The latest completed record strictly earlier than this one whose trigger
+    is readiness or fallback. When that record does not exist, the earliest
+    completed record. Nothing is stored.
+    """
+    before = ReportRecord.recorded_at < record.recorded_at
+    day1 = (
+        session.query(ReportRecord)
+        .filter(before, ReportRecord.trigger.in_((READINESS, FALLBACK)))
+        .order_by(ReportRecord.recorded_at.desc())
+        .first()
+    )
+    if day1 is not None:
+        return day1
+    return (
+        session.query(ReportRecord)
+        .filter(before)
+        .order_by(ReportRecord.recorded_at.asc())
+        .first()
+    )
+
+
+def _visible_checks(
+    session: Session, user_id: str, record: ReportRecord, hidden: set[str]
+) -> dict[str, dict]:
+    return {
+        check.get("id"): check
+        for check in record.checks or []
+        if check.get("module") not in hidden and _allowed(session, user_id, check)
+    }
+
+
+def _comparison(current: dict, prior: Optional[dict]) -> dict[str, Any]:
+    """How ``current`` reads against the same check on the compared run.
+
+    New and fixed only when both outcomes are pass or fail. Anything else
+    names both outcomes. A check the compared run did not have, including
+    one whose module was off, is not in that run. Evidence is the record's
+    own, and only beside new, fixed, or unchanged.
+    """
+    if prior is None:
+        return {"kind": "not_in_compared_run"}
+    before = prior.get("outcome")
+    after = current.get("outcome")
+    if before in (PASS, FAIL) and after in (PASS, FAIL):
+        if before == after:
+            kind = "unchanged"
+        elif before == FAIL:
+            kind = "fixed"
+        else:
+            kind = "new"
+        return {"kind": kind, "prior_evidence": dict(prior.get("evidence") or {})}
+    named: dict[str, Any] = {"kind": "named"}
+    if before in (PASS, FAIL, NOT_CHECKED, NEEDS_A_PERSON):
+        named["prior_outcome"] = before
+    return named
 
 
 def _due(session: Session, readiness: Optional[str], now: datetime) -> Optional[str]:

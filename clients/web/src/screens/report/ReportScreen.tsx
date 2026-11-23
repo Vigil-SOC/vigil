@@ -5,6 +5,7 @@ import type { Schema } from '../../services/apiTypes'
 import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { InfoTip } from '../../shared/InfoTip'
+import { ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { reportStamp } from './stamp'
@@ -12,6 +13,9 @@ import './report.css'
 
 type Report = Schema<'Day1Report'>
 type Check = Schema<'Day1Check'>
+type Evidence = Schema<'Day1Evidence'>
+type Comparison = Schema<'Day1Comparison'>
+type ModuleSetting = Schema<'Day1Module'>
 type Outcome = Check['outcome']
 type Trigger = Report['trigger']
 
@@ -27,6 +31,8 @@ const SETTINGS_TIP = {
     'A value passes when it is at or stricter than the cited value. An unset period fails. The MFA count is shown beside the setting and does not change the outcome.',
   limit: 'Session checks need sessions.manage. Retention needs audit.read. Not checked is never a pass.',
 }
+
+const OUTCOMES: Outcome[] = ['pass', 'fail', 'not_checked', 'needs_a_person']
 
 const TIP = {
   source: 'Integration Health and the install readiness read',
@@ -102,6 +108,27 @@ function triggerWord(trigger: Trigger, name: string | null): string {
   }
 }
 
+function comparisonWord(comparison: Comparison, outcome: Outcome): string {
+  switch (comparison.kind) {
+    case 'new':
+      return 'New'
+    case 'fixed':
+      return 'Fixed'
+    case 'unchanged':
+      return 'Unchanged'
+    case 'not_in_compared_run':
+      return 'Not in the compared run'
+    case 'named':
+      return comparison.prior_outcome
+        ? `${outcomeWord(comparison.prior_outcome)} then ${outcomeWord(outcome)}`
+        : outcomeWord(outcome)
+    default: {
+      const never: never = comparison.kind
+      return never
+    }
+  }
+}
+
 function isStatus(error: unknown, code: number): boolean {
   return (error as { response?: { status?: number } } | null)?.response?.status === code
 }
@@ -120,6 +147,25 @@ function facts(check: Check): string | null {
 
 function ofGroup(checks: Check[], id: string): Check[] {
   return checks.filter((check) => check.id === id || check.id.startsWith(`${id}.`))
+}
+
+/** The evidence a record stored, beside new, fixed, or unchanged. */
+function storedLine(evidence: Evidence | null | undefined): string | null {
+  if (!evidence) return null
+  const parts: string[] = []
+  if (evidence.fix) parts.push(evidence.fix)
+  if (evidence.comparison) parts.push(evidence.comparison)
+  if (evidence.coverage) parts.push(evidence.coverage)
+  for (const line of evidence.prerequisites ?? []) parts.push(line)
+  if (evidence.source_id) {
+    parts.push(evidence.source_id)
+    parts.push(`Brings ${evidence.brings ?? 'lookups'}`)
+    if (evidence.state) parts.push(evidence.state.replace(/_/g, ' '))
+    parts.push(evidence.last_data ? `Last data ${reportStamp(evidence.last_data)}` : 'Nothing received yet')
+    if (evidence.labels && evidence.labels.length > 0) parts.push(`Labels ${evidence.labels.join(', ')}`)
+  }
+  if (evidence.checked_at) parts.push(`Checked ${reportStamp(evidence.checked_at)}`)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function pieces(value: string | null | undefined): string[] {
@@ -158,7 +204,23 @@ function Citation({ check }: { check: Check }) {
   )
 }
 
-function SettingsRow({ check }: { check: Check }) {
+function Versus({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+  const comparison = check.comparison
+  if (!comparison) return null
+  const showEvidence =
+    comparison.kind === 'new' || comparison.kind === 'fixed' || comparison.kind === 'unchanged'
+  const currentEvidence = showEvidence ? storedLine(check.evidence) : null
+  const priorEvidence = showEvidence ? storedLine(comparison.prior_evidence) : null
+  return (
+    <div className="d1-versus">
+      <p className="d1-versus-kind">{comparisonWord(comparison, check.outcome)}</p>
+      {currentEvidence && <p className="d1-facts">This report: {currentEvidence}</p>}
+      {priorEvidence && comparedAt && <p className="d1-facts">{reportStamp(comparedAt)}: {priorEvidence}</p>}
+    </div>
+  )
+}
+
+function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
   const tone = outcomeTone(check.outcome)
   const screen = check.evidence?.screen
   const prerequisites = check.evidence?.prerequisites ?? []
@@ -182,12 +244,13 @@ function SettingsRow({ check }: { check: Check }) {
           {line}
         </p>
       ))}
+      <Versus check={check} comparedAt={comparedAt} />
       {screen && <Link to={screen}>{screenName(screen)}</Link>}
     </div>
   )
 }
 
-function CheckRow({ check }: { check: Check }) {
+function CheckRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
   const tone = outcomeTone(check.outcome)
   const line = facts(check)
   return (
@@ -199,7 +262,106 @@ function CheckRow({ check }: { check: Check }) {
       <p>{check.reason}</p>
       {check.evidence?.fix && <p className="d1-fix">{check.evidence.fix}</p>}
       {line && <p className="d1-facts">{line}</p>}
+      <Versus check={check} comparedAt={comparedAt} />
     </div>
+  )
+}
+
+/** The first three non-pass checks, in the order the checklist shows them. */
+function summaryActions(report: Report): Check[] {
+  return report.checks.filter((check) => check.outcome !== 'pass').slice(0, 3)
+}
+
+function Summary({ report }: { report: Report }) {
+  const hidden = new Set(report.withheld ?? [])
+  const areas = (report.modules ?? []).filter((id) => !hidden.has(id))
+  const actions = summaryActions(report)
+  const visibilityHidden = hidden.has('visibility')
+  const visibilityRan = (report.modules ?? []).includes('visibility')
+  const unmet = visibilityHidden
+    ? []
+    : report.checks.filter((check) => check.module === 'visibility' && check.outcome !== 'pass')
+  const switchedOff = visibilityHidden ? [] : (report.switched_off ?? [])
+  return (
+    <section className="d1-card d1-print" aria-label="Summary">
+      <h2 className="d1-print-title">Summary</h2>
+      <p className="d1-print-line">
+        Describes this install&apos;s security gaps as of {reportStamp(report.recorded_at)}.
+      </p>
+      <div className="d1-print-block">
+        <h2>Actions</h2>
+        {actions.length > 0 ? (
+          <ol className="d1-actions-list">
+            {actions.map((check) => (
+              <li key={check.id}>
+                <span>{check.reason}</span>
+                {check.evidence?.fix && <span className="d1-fix">{check.evidence.fix}</span>}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="d1-quiet">None.</p>
+        )}
+      </div>
+      <div className="d1-print-block">
+        <h2>Area by outcome</h2>
+        {areas.length > 0 ? (
+          <table className="d1-grid">
+            <thead>
+              <tr>
+                <th scope="col">Area</th>
+                {OUTCOMES.map((outcome) => (
+                  <th key={outcome} scope="col">
+                    {outcomeWord(outcome)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {areas.map((id) => {
+                const counts = { pass: 0, fail: 0, not_checked: 0, needs_a_person: 0 }
+                for (const check of report.checks) {
+                  if (check.module === id) counts[check.outcome] += 1
+                }
+                return (
+                  <tr key={id}>
+                    <th scope="row">{MODULE_TITLE[id] ?? id}</th>
+                    {OUTCOMES.map((outcome) => (
+                      <td key={outcome} data-label={outcomeWord(outcome)}>
+                        {counts[outcome]}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="d1-quiet">None.</p>
+        )}
+      </div>
+      {!visibilityHidden && (
+        <div className="d1-print-block">
+          <h2>What Vigil can&apos;t see</h2>
+          {!visibilityRan && <p className="d1-quiet">What Vigil can see did not run.</p>}
+          {visibilityRan && unmet.length === 0 && switchedOff.length === 0 && (
+            <p className="d1-quiet">None.</p>
+          )}
+          {(unmet.length > 0 || switchedOff.length > 0) && (
+            <ul className="d1-gaps">
+              {unmet.map((check) => (
+                <li key={check.id}>{check.reason}</li>
+              ))}
+              {switchedOff.map((row) => (
+                <li key={row.source_id}>
+                  {row.source_id}: switched off. Brings {row.brings}.
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -210,6 +372,8 @@ export default function ReportScreen() {
   const canRun = hasPermission('platform.write')
   const { notify } = useToast()
   const [report, setReport] = useState<Report | null>(null)
+  const [modules, setModules] = useState<ModuleSetting[] | null>(null)
+  const [savingModule, setSavingModule] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runningSince, setRunningSince] = useState<string | null>(null)
@@ -225,6 +389,10 @@ export default function ReportScreen() {
       (res) => ({ ok: true as const, data: res.data }),
       (err: unknown) => ({ ok: false as const, err }),
     )
+    const moduleRead = day1Api.modules().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
     let lineError: string | null = null
     try {
       const line = await statusRead
@@ -234,6 +402,11 @@ export default function ReportScreen() {
       setRunningSince(null)
       setIncompleteSince(null)
       lineError = errorText(err, 'Could not load the Day 1 Report')
+    }
+    const moduleBody = await moduleRead
+    if (moduleBody.ok) setModules(moduleBody.data)
+    else if (!isStatus(moduleBody.err, 403)) {
+      lineError = lineError ?? errorText(moduleBody.err, 'Could not load report modules')
     }
     const body = await reportRead
     if (body.ok) {
@@ -269,6 +442,20 @@ export default function ReportScreen() {
     }
   }
 
+  const setModule = async (id: string, enabled: boolean) => {
+    setSavingModule(id)
+    setModules((rows) => rows?.map((row) => (row.id === id ? { ...row, enabled } : row)) ?? rows)
+    try {
+      const { data } = await day1Api.setModule(id, enabled)
+      setModules((rows) => rows?.map((row) => (row.id === data.id ? data : row)) ?? rows)
+    } catch (err) {
+      setModules((rows) => rows?.map((row) => (row.id === id ? { ...row, enabled: !enabled } : row)) ?? rows)
+      if (!stepUpDetailOf(err)) notify('err', errorText(err, 'Could not save the report module'))
+    } finally {
+      setSavingModule(null)
+    }
+  }
+
   const checks = report?.checks ?? []
   const visibilityChecks = checks.filter((check) => check.module === 'visibility')
   const settings = checks.filter((check) => check.module === 'settings')
@@ -283,7 +470,8 @@ export default function ReportScreen() {
   const settingProblems = settings.filter((check) => check.outcome !== 'pass')
   const settingSettled = settings.filter((check) => check.outcome === 'pass')
   const withheld = (report?.withheld ?? []).filter((id) => id in MODULE_TITLE)
-  const showVisibility = report !== null && !withheld.includes('visibility')
+  const showVisibility =
+    report !== null && !withheld.includes('visibility') && (report.modules ?? []).includes('visibility')
   const coverageRan = (report?.modules ?? []).includes('coverage')
   const showCoverage = coverageRan && !withheld.includes('coverage')
   const coverageGrouped = COVERAGE_GROUPS.map((group) => ({
@@ -293,142 +481,172 @@ export default function ReportScreen() {
   const coverageRest = coverageChecks.filter(
     (check) => !coverageGrouped.some((group) => group.checks.includes(check)),
   )
+  const comparedAt = report?.compared_at ?? null
 
   return (
     <div className="d1-page">
-      {report?.preface && <p className="d1-preface">{report.preface}</p>}
-      {report && (
-        <p className="d1-meta">
-          {reportStamp(report.recorded_at)} · Vigil {report.vigil_version} ·{' '}
-          {triggerWord(report.trigger, report.actor_name ?? null)}
-        </p>
-      )}
-      {(runningSince || incompleteSince) && (
-        <p className="d1-quiet" role="status">
-          {runningSince && <>Running since {reportStamp(runningSince)}. </>}
-          {incompleteSince && <>Didn't complete.</>}
-        </p>
-      )}
-      {error && <p role="alert">{error}</p>}
-      {missing && !report && <p className="d1-quiet">No Day 1 Report yet.</p>}
-      {canRun && (
-        <div className="d1-actions">
-          <button type="button" className="btn primary" onClick={() => void run()} disabled={busy}>
-            {busy ? 'Running…' : 'Run report'}
-          </button>
-        </div>
-      )}
-      {report && withheld.includes('visibility') && (
-        <section className="d1-card" aria-label="What Vigil can see">
-          <h2>What Vigil can see</h2>
-          <p className="d1-withheld">Not included. This section needs integrations.read.</p>
-        </section>
-      )}
-      {showVisibility && (
-        <section className="d1-card" aria-label="What Vigil can see">
-          <div className="d1-card-head">
-            <h2>{MODULE_TITLE.visibility}</h2>
-            <InfoTip label="How what Vigil can see is judged" align="start" {...TIP} />
+      <div className="d1-screen">
+        {report?.preface && <p className="d1-preface">{report.preface}</p>}
+        {report && (
+          <p className="d1-meta">
+            {reportStamp(report.recorded_at)} · Vigil {report.vigil_version} ·{' '}
+            {triggerWord(report.trigger, report.actor_name ?? null)}
+          </p>
+        )}
+        {comparedAt && <p className="d1-meta">Compared with {reportStamp(comparedAt)}</p>}
+        {(runningSince || incompleteSince) && (
+          <p className="d1-quiet" role="status">
+            {runningSince && <>Running since {reportStamp(runningSince)}. </>}
+            {incompleteSince && <>Didn't complete.</>}
+          </p>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {missing && !report && <p className="d1-quiet">No Day 1 Report yet.</p>}
+        {(canRun || report) && (
+          <div className="d1-actions">
+            {canRun && (
+              <button type="button" className="btn primary" onClick={() => void run()} disabled={busy}>
+                {busy ? 'Running…' : 'Run report'}
+              </button>
+            )}
+            {report && (
+              <button type="button" className="btn" onClick={() => window.print()}>
+                Print summary
+              </button>
+            )}
           </div>
-          {problems.length > 0 && (
-            <div className="d1-rows">
-              {problems.map((check) => (
-                <CheckRow key={check.id} check={check} />
-              ))}
+        )}
+        {modules && modules.length > 0 && (
+          <section className="d1-card" aria-label="Report modules">
+            <h2>Report modules</h2>
+            <p className="d1-quiet">A switched-off module is left out of the next run.</p>
+            {modules.map((row) => (
+              <ToggleRow
+                key={row.id}
+                label={MODULE_TITLE[row.id] ?? row.id}
+                hint={row.enabled ? 'On for the next run' : 'Switched off'}
+                checked={row.enabled}
+                disabled={!canRun || savingModule !== null}
+                onChange={(enabled) => void setModule(row.id, enabled)}
+              />
+            ))}
+          </section>
+        )}
+      </div>
+      {report && <Summary report={report} />}
+      <div className="d1-screen">
+        {report && withheld.includes('visibility') && (
+          <section className="d1-card" aria-label="What Vigil can see">
+            <h2>What Vigil can see</h2>
+            <p className="d1-withheld">Not included. This section needs integrations.read.</p>
+          </section>
+        )}
+        {showVisibility && (
+          <section className="d1-card" aria-label="What Vigil can see">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.visibility}</h2>
+              <InfoTip label="How what Vigil can see is judged" align="start" {...TIP} />
             </div>
-          )}
-          {settled.length > 0 && (
-            <div className="d1-rows">
-              {settled.map((check) => (
-                <CheckRow key={check.id} check={check} />
-              ))}
-            </div>
-          )}
-          {sources.length > 0 && (
-            <>
-              <p className="d1-sub">Sources</p>
+            {problems.length > 0 && (
               <div className="d1-rows">
-                {sources.map((check) => (
-                  <CheckRow key={check.id} check={check} />
+                {problems.map((check) => (
+                  <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
                 ))}
               </div>
-            </>
-          )}
-          {(report.switched_off ?? []).length > 0 && (
-            <>
-              <p className="d1-sub">Switched off</p>
+            )}
+            {settled.length > 0 && (
               <div className="d1-rows">
-                {report.switched_off.map((row) => (
-                  <div className="d1-row" key={row.source_id}>
-                    <p>
-                      {row.source_id}: switched off. Brings {row.brings}.
-                    </p>
-                  </div>
+                {settled.map((check) => (
+                  <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
                 ))}
               </div>
-            </>
-          )}
-          {problems.length === 0 && settled.length === 0 && sources.length === 0 && (
-            <p className="d1-quiet">Nothing to report in this section.</p>
-          )}
-        </section>
-      )}
-      {settings.length > 0 && (
-        <section className="d1-card" aria-label="Vigil's own settings">
-          <div className="d1-card-head">
-            <h2>{MODULE_TITLE.settings}</h2>
-            <InfoTip label="How Vigil's own settings are judged" align="start" {...SETTINGS_TIP} />
-          </div>
-          {settingProblems.length > 0 && (
-            <div className="d1-rows">
-              {settingProblems.map((check) => (
-                <SettingsRow key={check.id} check={check} />
-              ))}
-            </div>
-          )}
-          {settingSettled.length > 0 && (
-            <div className="d1-rows">
-              {settingSettled.map((check) => (
-                <SettingsRow key={check.id} check={check} />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-      {coverageRan && withheld.includes('coverage') && (
-        <section className="d1-card" aria-label="Detection coverage">
-          <h2>Detection coverage</h2>
-          <p className="d1-withheld">Not included. This section needs detections.read.</p>
-        </section>
-      )}
-      {showCoverage && (
-        <section className="d1-card" aria-label="Detection coverage">
-          <div className="d1-card-head">
-            <h2>{MODULE_TITLE.coverage}</h2>
-            <InfoTip label="How detection coverage is judged" align="start" {...COVERAGE_TIP} />
-          </div>
-          {coverageGrouped.map((group) =>
-            group.checks.length === 0 ? null : (
-              <Fragment key={group.id}>
-                <p className="d1-sub">{group.title}</p>
+            )}
+            {sources.length > 0 && (
+              <>
+                <p className="d1-sub">Sources</p>
                 <div className="d1-rows">
-                  {group.checks.map((check) => (
-                    <CheckRow key={check.id} check={check} />
+                  {sources.map((check) => (
+                    <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
                   ))}
                 </div>
-              </Fragment>
-            ),
-          )}
-          {coverageRest.length > 0 && (
-            <div className="d1-rows">
-              {coverageRest.map((check) => (
-                <CheckRow key={check.id} check={check} />
-              ))}
+              </>
+            )}
+            {(report.switched_off ?? []).length > 0 && (
+              <>
+                <p className="d1-sub">Switched off</p>
+                <div className="d1-rows">
+                  {report.switched_off.map((row) => (
+                    <div className="d1-row" key={row.source_id}>
+                      <p>
+                        {row.source_id}: switched off. Brings {row.brings}.
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {problems.length === 0 && settled.length === 0 && sources.length === 0 && (
+              <p className="d1-quiet">Nothing to report in this section.</p>
+            )}
+          </section>
+        )}
+        {settings.length > 0 && (
+          <section className="d1-card" aria-label="Vigil's own settings">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.settings}</h2>
+              <InfoTip label="How Vigil's own settings are judged" align="start" {...SETTINGS_TIP} />
             </div>
-          )}
-          {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
-        </section>
-      )}
+            {settingProblems.length > 0 && (
+              <div className="d1-rows">
+                {settingProblems.map((check) => (
+                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                ))}
+              </div>
+            )}
+            {settingSettled.length > 0 && (
+              <div className="d1-rows">
+                {settingSettled.map((check) => (
+                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+        {coverageRan && withheld.includes('coverage') && (
+          <section className="d1-card" aria-label="Detection coverage">
+            <h2>Detection coverage</h2>
+            <p className="d1-withheld">Not included. This section needs detections.read.</p>
+          </section>
+        )}
+        {showCoverage && (
+          <section className="d1-card" aria-label="Detection coverage">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.coverage}</h2>
+              <InfoTip label="How detection coverage is judged" align="start" {...COVERAGE_TIP} />
+            </div>
+            {coverageGrouped.map((group) =>
+              group.checks.length === 0 ? null : (
+                <Fragment key={group.id}>
+                  <p className="d1-sub">{group.title}</p>
+                  <div className="d1-rows">
+                    {group.checks.map((check) => (
+                      <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
+                    ))}
+                  </div>
+                </Fragment>
+              ),
+            )}
+            {coverageRest.length > 0 && (
+              <div className="d1-rows">
+                {coverageRest.map((check) => (
+                  <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
+                ))}
+              </div>
+            )}
+            {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
+          </section>
+        )}
+      </div>
     </div>
   )
 }

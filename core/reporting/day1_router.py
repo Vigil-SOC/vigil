@@ -1,10 +1,10 @@
-"""Day 1 Report: the latest record, Home's line, and an on-demand run.
+"""Day 1 Report: the latest record, Home's line, an on-demand run, and module switches.
 
 The page is read under ``platform.read``. The visibility module is included
 only when the caller holds ``integrations.read``, and coverage only with
 ``detections.read``. Each settings check is included only when the caller
-holds that check's permission. The stored record stays complete. Running one
-takes ``platform.write``.
+holds that check's permission. The stored record stays complete. Running one,
+and turning a module on or off, takes ``platform.write``.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from core.auth.permissions import require_permission
 from core.deps import provide_process_health
 from core.integrations.readiness import evaluate
 from core.platform.process_health import ProcessHealth
+from core.reporting.checks import MODULES
 from core.reporting.day1 import (
     ON_DEMAND,
     begin_on_demand,
@@ -28,6 +29,7 @@ from core.reporting.day1 import (
     read_record,
     status,
 )
+from core.reporting.enablement import disabled_module_ids, set_module_enabled
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
@@ -57,12 +59,21 @@ class Day1Evidence(BaseModel):
     checked_at: Optional[str] = None
 
 
+class Day1Comparison(BaseModel):
+    kind: Literal["new", "fixed", "unchanged", "not_in_compared_run", "named"]
+    prior_outcome: Optional[
+        Literal["pass", "fail", "not_checked", "needs_a_person"]
+    ] = None
+    prior_evidence: Optional[Day1Evidence] = None
+
+
 class Day1Check(BaseModel):
     id: str
     module: str
     outcome: Literal["pass", "fail", "not_checked", "needs_a_person"]
     reason: str
     evidence: Day1Evidence = Field(default_factory=Day1Evidence)
+    comparison: Optional[Day1Comparison] = None
     cited_value: Optional[str] = None
     source_id: Optional[str] = None
     clause: Optional[str] = None
@@ -87,8 +98,18 @@ class Day1Report(BaseModel):
     preface: Optional[str] = None
     modules: List[str]
     withheld: List[str]
+    compared_at: Optional[str] = None
     checks: List[Day1Check]
     switched_off: List[Day1Listed]
+
+
+class Day1Module(BaseModel):
+    id: str
+    enabled: bool
+
+
+class Day1ModuleBody(BaseModel):
+    enabled: bool
 
 
 class Day1Status(BaseModel):
@@ -103,6 +124,33 @@ def _report(user_id: str, record_id: Optional[str]) -> Day1Report:
     if body is None:
         raise HTTPException(status_code=404, detail="No Day 1 Report yet.")
     return Day1Report.model_validate(body)
+
+
+@router.get("/modules", response_model=List[Day1Module])
+def day1_modules(
+    _user: User = Depends(require_permission("platform.read")),
+) -> List[Day1Module]:
+    """Which report modules the next run includes. No row means every module."""
+    disabled = disabled_module_ids()
+    return [
+        Day1Module(id=module_id, enabled=module_id not in disabled)
+        for module_id in MODULES
+    ]
+
+
+@router.put("/modules/{module_id}", response_model=Day1Module)
+def set_day1_module(
+    module_id: str,
+    body: Day1ModuleBody,
+    user: User = Depends(require_permission("platform.write")),
+) -> Day1Module:
+    """Turn a report module on or off for the next run. The record stays as written."""
+    if module_id not in MODULES:
+        raise HTTPException(status_code=404, detail="Unknown report module.")
+    saved = set_module_enabled(module_id, body.enabled, str(user.user_id))
+    if not saved:
+        raise HTTPException(status_code=500, detail="Could not save the report module.")
+    return Day1Module(id=module_id, enabled=body.enabled)
 
 
 @router.get("/status", response_model=Day1Status)
