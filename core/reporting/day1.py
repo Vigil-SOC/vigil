@@ -25,9 +25,18 @@ from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import COVERAGE, MODULES, SETTINGS, VISIBILITY, spec_for
+from core.reporting.checks import (
+    COVERAGE,
+    HISTORY,
+    MODULES,
+    SETTINGS,
+    VISIBILITY,
+    spec_for,
+)
 from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.history_sections import present as present_history
+from core.reporting.history_sections import produce as produce_history
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -170,6 +179,7 @@ def build(state: dict) -> dict[str, Any]:
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
+    _append_history(modules, evidence, disabled)
     preface = PREFACE if is_demo_mode() else None
     return {
         "modules": modules,
@@ -197,6 +207,28 @@ def _visibility_checks(state: dict, evidence: dict[str, Any]) -> list[dict[str, 
     checks.extend(_source_checks(state, sources))
     evidence[VISIBILITY.id] = {"switched_off": _switched_off(sources)}
     return checks
+
+
+def _append_history(
+    modules: list[str], evidence: dict[str, Any], disabled: set[str]
+) -> None:
+    """The three history sections. A failed read is not-checked on each of them."""
+    pending = [module.id for module in HISTORY if module.id not in disabled]
+    if not pending:
+        return
+    try:
+        produced = produce_history()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read imported history: %s", type(exc).__name__
+        )
+        produced = {
+            module_id: {"not_checked": "not checked: could not read imported history."}
+            for module_id in pending
+        }
+    for module_id in pending:
+        modules.append(module_id)
+        evidence[module_id] = produced[module_id]
 
 
 def _coverage_checks() -> list[dict[str, Any]]:
@@ -314,6 +346,16 @@ def _present(
         "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
         "switched_off": switched_off,
+        **present_history(
+            session,
+            evidence,
+            list(record.modules or []),
+            hidden,
+            record.recorded_at,
+            record.record_id,
+            record.run_id,
+            user_id,
+        ),
     }
 
 

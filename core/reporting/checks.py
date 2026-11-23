@@ -37,6 +37,11 @@ VISIBILITY = ReportModule("visibility", "integrations.read")
 # retention. Each check's own permission is applied when the record is read.
 SETTINGS = ReportModule("settings", "platform.read")
 COVERAGE = ReportModule("coverage", "detections.read")
+# Report Sections: figures and lists, no checks. Stored under evidence.
+HISTORY_BEFORE = ReportModule("history.before", "findings.read")
+HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
+HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
+HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -222,6 +227,9 @@ MODULES = {
     VISIBILITY.id: VISIBILITY,
     SETTINGS.id: SETTINGS,
     COVERAGE.id: COVERAGE,
+    HISTORY_BEFORE.id: HISTORY_BEFORE,
+    HISTORY_RECHECK.id: HISTORY_RECHECK,
+    HISTORY_TUNING.id: HISTORY_TUNING,
 }
 
 

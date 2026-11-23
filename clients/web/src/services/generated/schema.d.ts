@@ -12851,6 +12851,9 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            history_before?: components["schemas"]["HistoryBefore"] | null;
+            history_recheck?: components["schemas"]["HistoryRecheck"] | null;
+            history_tuning?: components["schemas"]["HistoryTuning"] | null;
             /** Id */
             id: string;
             /** Modules */
@@ -13504,6 +13507,291 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /** HistoryBand */
+        HistoryBand: {
+            /** Count */
+            count: number;
+            /** Label */
+            label: string;
+        };
+        /** HistoryBefore */
+        HistoryBefore: {
+            /** How */
+            how?: string | null;
+            /** Imports */
+            imports?: components["schemas"]["HistoryImportRead"][];
+            /** Not Checked */
+            not_checked?: string | null;
+            /** Notes */
+            notes?: string[];
+            /** Sources */
+            sources?: components["schemas"]["HistorySource"][];
+            /** Windows */
+            windows?: components["schemas"]["HistoryWindow"][];
+        };
+        /** HistoryBulk */
+        HistoryBulk: {
+            /** Definition */
+            definition: string;
+            /** High */
+            high?: number | null;
+            /** K */
+            k: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "measured" | "estimated";
+            /** Label */
+            label: string;
+            /** Low */
+            low?: number | null;
+            /** N */
+            n: number;
+            /** Not Tested */
+            not_tested?: string[];
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryFigure */
+        HistoryFigure: {
+            /** Definition */
+            definition: string;
+            /** High */
+            high?: number | null;
+            /** K */
+            k: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "measured" | "estimated";
+            /** Label */
+            label: string;
+            /** Low */
+            low?: number | null;
+            /** N */
+            n: number;
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryImportRead */
+        HistoryImportRead: {
+            /** Bulk Not Tested */
+            bulk_not_tested?: number | null;
+            /** Has Ticket Detail */
+            has_ticket_detail: boolean;
+            /** Id */
+            id: string;
+            /** Imported At */
+            imported_at: string;
+            /** Included */
+            included: boolean;
+            /** Left Out */
+            left_out?: string[];
+            /** Note */
+            note?: string | null;
+            /** Source */
+            source: string;
+            /** Unmapped */
+            unmapped?: string[];
+            /**
+             * Unmapped Count
+             * @default 0
+             */
+            unmapped_count: number;
+            /** Unmapped Note */
+            unmapped_note?: string | null;
+        };
+        /** HistoryPerDay */
+        HistoryPerDay: {
+            /** Count */
+            count: number;
+            /** Definition */
+            definition: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "measured" | "estimated";
+            /** Per Day */
+            per_day?: number | null;
+            /** Span Days */
+            span_days: number;
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryRecheck */
+        HistoryRecheck: {
+            /** Entries */
+            entries?: components["schemas"]["HistoryRecheckEntry"][];
+            /** How */
+            how?: string | null;
+            /** Imports */
+            imports?: components["schemas"]["HistoryImportRead"][];
+            /** Not Checked */
+            not_checked?: string | null;
+            /** Notes */
+            notes?: string[];
+            /** Total */
+            total?: number | null;
+            /** Windows */
+            windows?: components["schemas"]["HistoryWindow"][];
+        };
+        /** HistoryRecheckEntry */
+        HistoryRecheckEntry: {
+            /** Closed At */
+            closed_at: string;
+            /** Disposition */
+            disposition: string;
+            /** Reasons */
+            reasons?: string[];
+            /** Severity */
+            severity: string;
+            /** Source */
+            source: string;
+            /** Text Note */
+            text_note?: string | null;
+            /** Ticket */
+            ticket: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** HistorySeverity */
+        HistorySeverity: {
+            bulk: components["schemas"]["HistoryBulk"];
+            /** Closures */
+            closures: number;
+            /** Dispositions */
+            dispositions?: components["schemas"]["HistoryFigure"][];
+            per_day: components["schemas"]["HistoryPerDay"];
+            /** Severity */
+            severity: string;
+            /** Time To Close */
+            time_to_close?: components["schemas"]["HistoryTime"][];
+        };
+        /** HistorySource */
+        HistorySource: {
+            bulk: components["schemas"]["HistoryBulk"];
+            /** By Severity */
+            by_severity?: components["schemas"]["HistorySeverity"][];
+            /** Closures */
+            closures: number;
+            /** Dispositions */
+            dispositions?: components["schemas"]["HistoryFigure"][];
+            /** Outside */
+            outside: number;
+            per_day: components["schemas"]["HistoryPerDay"];
+            /** Source */
+            source: string;
+            /** Time To Close */
+            time_to_close?: components["schemas"]["HistoryTime"][];
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryTime */
+        HistoryTime: {
+            /** Bands */
+            bands?: components["schemas"]["HistoryBand"][] | null;
+            /** Count */
+            count: number;
+            /** Definition */
+            definition: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "measured" | "estimated";
+            /** Median */
+            median?: string | null;
+            /** Opened Missing */
+            opened_missing: number;
+            /** P90 */
+            p90?: string | null;
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryTuning */
+        HistoryTuning: {
+            /** Candidates */
+            candidates?: components["schemas"]["HistoryTuningEntry"][];
+            /** How */
+            how?: string | null;
+            /** Imports */
+            imports?: components["schemas"]["HistoryImportRead"][];
+            /** Not Checked */
+            not_checked?: string | null;
+            /** Notes */
+            notes?: string[];
+            /** Windows */
+            windows?: components["schemas"]["HistoryWindow"][];
+        };
+        /** HistoryTuningEntry */
+        HistoryTuningEntry: {
+            /** Definition */
+            definition: string;
+            /** Entity Type */
+            entity_type?: string | null;
+            /** Exclude Link */
+            exclude_link?: string | null;
+            /** Exclude Note */
+            exclude_note?: string | null;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "rule" | "title" | "entity";
+            /** High */
+            high?: number | null;
+            /** Judged */
+            judged: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "measured" | "estimated";
+            /** Label */
+            label?: string | null;
+            /** Low */
+            low?: number | null;
+            /** Rule Id */
+            rule_id?: string | null;
+            /** Source */
+            source: string;
+            /** Text Note */
+            text_note?: string | null;
+            /** Ticket */
+            ticket?: string | null;
+            /** True Positives */
+            true_positives: number;
+            /** Where */
+            where: string;
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** HistoryWindow */
+        HistoryWindow: {
+            /** End */
+            end: string;
+            /** Outside */
+            outside: number;
+            /** Source */
+            source: string;
+            /** Start */
+            start: string;
         };
         /**
          * HuntCoverageRequest
