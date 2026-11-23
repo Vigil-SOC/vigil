@@ -3910,6 +3910,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Day1 Modules
+         * @description Which report modules the next run includes. No row means every module.
+         */
+        get: operations["get_api_day1-report_modules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/modules/{module_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Day1 Module
+         * @description Turn a report module on or off for the next run. The record stays as written.
+         */
+        put: operations["put_api_day1-report_modules_module_id"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/status": {
         parameters: {
             query?: never;
@@ -12721,6 +12761,7 @@ export interface components {
         };
         /** Day1Check */
         Day1Check: {
+            comparison?: components["schemas"]["Day1Comparison"] | null;
             evidence?: components["schemas"]["Day1Evidence"];
             /** Id */
             id: string;
@@ -12733,6 +12774,17 @@ export interface components {
             outcome: "pass" | "fail" | "not_checked" | "needs_a_person";
             /** Reason */
             reason: string;
+        };
+        /** Day1Comparison */
+        Day1Comparison: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "new" | "fixed" | "unchanged" | "not_in_compared_run" | "named";
+            prior_evidence?: components["schemas"]["Day1Evidence"] | null;
+            /** Prior Outcome */
+            prior_outcome?: ("pass" | "fail" | "not_checked" | "needs_a_person") | null;
         };
         /** Day1Evidence */
         Day1Evidence: {
@@ -12756,6 +12808,18 @@ export interface components {
             /** Source Id */
             source_id: string;
         };
+        /** Day1Module */
+        Day1Module: {
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: string;
+        };
+        /** Day1ModuleBody */
+        Day1ModuleBody: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** Day1Report */
         Day1Report: {
             /** Actor Id */
@@ -12764,6 +12828,8 @@ export interface components {
             actor_name?: string | null;
             /** Checks */
             checks: components["schemas"]["Day1Check"][];
+            /** Compared At */
+            compared_at?: string | null;
             /** Id */
             id: string;
             /** Modules */
@@ -24509,6 +24575,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Day1Report"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_modules": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Module"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_modules_module_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                module_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Day1ModuleBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Module"];
                 };
             };
             /** @description Validation Error */

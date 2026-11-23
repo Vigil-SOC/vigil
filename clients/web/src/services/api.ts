@@ -756,6 +756,9 @@ export const day1Api = {
   get: (record?: string) =>
     api.get<Schema<'Day1Report'>>('/day1-report', { params: record ? { record } : {} }),
   run: () => api.post<Schema<'Day1Report'>>('/day1-report'),
+  modules: () => api.get<Schema<'Day1Module'>[]>('/day1-report/modules'),
+  setModule: (id: string, enabled: boolean) =>
+    api.put<Schema<'Day1Module'>>(`/day1-report/modules/${encodeURIComponent(id)}`, { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {

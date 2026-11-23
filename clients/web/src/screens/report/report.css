@@ -100,6 +100,173 @@
 
 .d1-actions .btn { white-space: normal; }
 
+.d1-compare {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.d1-compare-kind {
+  color: var(--tx0);
+  font-weight: 650;
+}
+
+.d1-print-line {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  color: var(--tx0);
+  overflow-wrap: anywhere;
+}
+
+.d1-print-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.d1-actions-list,
+.d1-gaps {
+  margin: 0;
+  padding-left: 1.2em;
+  min-width: 0;
+}
+
+.d1-actions-list li,
+.d1-gaps li {
+  color: var(--tx1);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-actions-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+}
+
+.d1-grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.d1-grid th,
+.d1-grid td {
+  text-align: left;
+  vertical-align: top;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--tx1);
+  padding: 4px 8px 4px 0;
+  overflow-wrap: break-word;
+}
+
+.d1-grid td {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--tx0);
+}
+
 @container main (max-width: 699px) {
   .d1-page { padding: 16px 16px 28px; }
+
+  /* Five outcome columns do not fit. Each count keeps its word on one line. */
+  .d1-grid thead { display: none; }
+  .d1-grid,
+  .d1-grid tbody,
+  .d1-grid tr,
+  .d1-grid th,
+  .d1-grid td { display: block; width: auto; }
+  .d1-grid tr { display: flex; flex-direction: column; gap: 4px; }
+  .d1-grid th,
+  .d1-grid td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0;
+  }
+  .d1-grid td::before {
+    content: attr(data-label);
+    font-family: var(--font);
+    font-weight: 650;
+    color: var(--tx1);
+  }
+}
+
+@media print {
+  .soc-console {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    height: auto !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  .soc-console .vg-shell,
+  .soc-console .vg-shell > .main,
+  .soc-console .view,
+  .soc-console .screen,
+  .shell,
+  .main {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .vg-header,
+  .vg-nav,
+  .vg-page-head,
+  .demo-banner,
+  .chat,
+  .toast-viewport,
+  .d1-screen,
+  .d1-print-title {
+    display: none !important;
+  }
+
+  .d1-page {
+    padding: 0;
+    max-width: none;
+    gap: 0;
+  }
+
+  .d1-print {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    background: #fff !important;
+    gap: 8px;
+  }
+
+  .d1-print,
+  .d1-print * {
+    color: #111 !important;
+    background: transparent !important;
+  }
+
+  .d1-print h2,
+  .d1-print-line,
+  .d1-actions-list li,
+  .d1-gaps li,
+  .d1-grid th,
+  .d1-grid td {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .d1-actions-list li { margin-bottom: 3px; }
+
+  @page { margin: 12mm; }
 }
