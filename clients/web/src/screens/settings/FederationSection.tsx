@@ -210,8 +210,9 @@ export default function FederationSection({ notify }: SectionProps) {
                 Alert collection is {globalEnabled ? 'on' : 'off'}
               </span>
               <span className="toggle-row-hint">
-                Master switch. Turning it off stops every poll; each source keeps its settings.
-                Collected alerts go to triage like any other.
+                Master switch. Turning it off stops scheduled collection; each source keeps its
+                settings. A source whose integration is on is still collected by the older polling
+                path, without its floor, interval or cap. Collected alerts go to triage like any other.
               </span>
             </div>
             <Toggle checked={globalEnabled} onChange={onToggleGlobal} label="Alert collection" />
