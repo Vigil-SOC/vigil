@@ -93,6 +93,59 @@ On the desktop app, which has no background service, it reads "not available
 on the desktop app: no background service".
 _Avoid_: `/readyz`, `/api/health/ready` (those say whether this process is up)
 
+**Day 1 Report**:
+A stored report of what a new install can see, run from the Install Readiness
+sweep (`services/api/readiness.py` calls `core/reporting/day1.py`). It runs
+once when readiness is first reached, or 24 hours after the later of setup's
+recorded finish (or the earliest person account, when setup was not finished)
+and the upgrade that added the report. One run when both fall due together,
+marked readiness. A report that ran earlier runs again on first readiness.
+Someone holding `platform.write` can run it on demand. The page is
+`/report`, read at `GET /api/day1-report` under `platform.read`. Home shows a
+run this process is still writing, a start that didn't complete (with Re-run),
+and a link to the latest report. An automatic run sends one link-only notice
+to `platform.write` holders; an on-demand run notifies the person who started
+it.
+_Avoid_: Install Readiness (that decides when this runs; it is not a module)
+
+**Report Record**:
+One completed Day 1 Report run (`report_records`), inserted once and never
+rewritten. `vigil_app` may insert and read it, not update, delete or truncate
+it. It holds the modules that ran, each check's outcome with its evidence and
+reason, what started the run (readiness, the fallback time, or a person's
+account id), the time and Vigil's version. The run's start is its own row
+(`report_runs`), so a start with no record can be shown. People are stored as
+account ids and shown by name when the record is read.
+_Avoid_: result store (outcomes live only here)
+
+**Report Check**:
+One entry in the check registry (`core/reporting/checks.py`): Vigil's own id,
+its module, the permission that gates its source, and its rule. A value check
+also carries the cited value, the source id, the clause, the link and the date
+it was checked, and has no field for quoted text. The registry holds the
+checks for what Vigil can see and for Vigil's own settings. Outcomes are not
+stored on the entry.
+_Avoid_: rule check, credential check (those are other checks)
+
+**Check Outcome**:
+What one Report Check returned on one Report Record: pass, fail, not checked
+(with the reason), or needs a person. Not checked never reads as a pass.
+_Avoid_: result, finding
+
+**Report Module**:
+One section of the Day 1 Report. What Vigil can see (`integrations.read`)
+lists each source's health and reason, what it brings in (alerts, lookups or
+rules), when data last arrived, and the labels seen on webhook events, all as
+information, plus switched-off integrations and the state of collection, the
+background service and the model. Vigil's own settings compares each live
+session and retention value with its cited value, and shows that comparison,
+the citation, a link to the setting and, for MFA, a count of accounts. The
+stored record stays complete; a reader who lacks the module's permission is
+not shown that section. On a demo-data install the report's first line says
+it describes the install, not the demo data. Demo findings are not read as
+data received.
+_Avoid_: Visibility Gap, Declared Gap (those are run-scoped)
+
 **Workflow** (`workflows`):
 The user-facing product noun — a named, multi-agent procedure an analyst runs
 from the Workflows screen. Authored as a **Playbook**, executed by **Compose**.

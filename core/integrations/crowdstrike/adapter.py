@@ -41,8 +41,20 @@ _SEVERITY_MAP = {
     "High": "high",
     "Medium": "medium",
     "Low": "low",
-    "Informational": "low",
+    # Informational ranks below low. Matched as CrowdStrike sends it.
+    "Informational": "info",
 }
+
+
+def crowdstrike_severity(detection: Dict[str, Any]) -> str:
+    """Stored severity for one CrowdStrike detection.
+
+    ``max_severity_displayname`` is matched case-sensitively. ``Informational``
+    is ``info``. A missing name is Medium, and any other unrecognised value
+    is ``medium``. Federation and the older poll both call this.
+    """
+    raw = detection.get("max_severity_displayname", "Medium")
+    return _SEVERITY_MAP.get(raw, "medium")
 
 
 class CrowdStrikeAdapter:
@@ -145,9 +157,7 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
     external_id = str(detection_id)[:128]
     finding_id = fit_id("cs-", str(detection_id), FINDING_ID_MAX)
 
-    severity = _SEVERITY_MAP.get(
-        detection.get("max_severity_displayname", "Medium"), "medium"
-    )
+    severity = crowdstrike_severity(detection)
 
     mitre_predictions: Dict[str, Optional[float]] = {}
     for behavior in detection.get("behaviors", []) or []:

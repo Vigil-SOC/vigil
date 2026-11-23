@@ -173,7 +173,11 @@ export default function SourceCollection({
       <div className="flex flex-col gap-3 su-collect">
         {!globalEnabled && (
           <div className="flex items-center justify-between gap-3 text-xs text-tx-2">
-            <span>Alert collection is off for this install, so no source polls.</span>
+            <span className="min-w-0">
+              Alert collection is off for this install, so scheduled collection stops and each source
+              keeps its settings. A source whose integration is on is still collected by the older
+              polling path, without its floor, interval or cap.
+            </span>
             <span className="flex items-center gap-2 shrink-0">
               <span className="text-tx-3">Turn on</span>
               <Toggle
@@ -225,6 +229,10 @@ export default function SourceCollection({
                 guard(() => patchSource(sourceId, { min_severity: v }), 'Could not save')
               }
             />
+            <span className="text-xs font-normal text-tx-3">
+              Only Any keeps informational findings, and only while Alert collection is collecting
+              this source.
+            </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">

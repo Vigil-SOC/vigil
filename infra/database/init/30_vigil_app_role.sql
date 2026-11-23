@@ -31,3 +31,20 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 
 GRANT SELECT, INSERT ON TABLE agent_events TO vigil_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON TABLE agent_events FROM vigil_app;
+
+-- Day 1 Report rows are insert-only (0108_report_records). The tables are
+-- created by that revision, which is after this file on a fresh install and
+-- on adoption, so the revoke runs only once they exist. Re-applying this
+-- file grants every table above, and this puts the two back.
+DO $$
+BEGIN
+  IF to_regclass('public.report_runs') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE public.report_runs TO vigil_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.report_runs FROM vigil_app;
+  END IF;
+  IF to_regclass('public.report_records') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE public.report_records TO vigil_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.report_records FROM vigil_app;
+  END IF;
+END
+$$;
