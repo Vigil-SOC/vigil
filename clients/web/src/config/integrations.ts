@@ -834,8 +834,8 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         label: 'Username',
         type: 'text',
         required: true,
-        placeholder: 'wazuh-wui',
-        helpText: 'A Wazuh API user with read access to rules, agents and logtest.',
+        placeholder: 'vigil-reader',
+        helpText: 'A dedicated Wazuh server API user for Vigil, with a custom role holding only agent:read on agent:id:*, rules:read on rule:file:*, and logtest:run on *:*:*. Do not use wazuh or wazuh-wui. Wazuh\'s built-in readonly role has no logtest permission. Steps: docs/wazuh-api-user.md.',
       },
       {
         name: 'password',
