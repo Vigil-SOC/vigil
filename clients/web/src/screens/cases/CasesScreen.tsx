@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { analyticsApi, caseSearchApi, casesApi, workflowApi, type AgreementTally } from '../../services/api'
@@ -1122,6 +1122,8 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
   const [err, setErr] = useState('')
   // The stored owner a save was refused over (OWNER_NOT_CURRENT); fixed with the picker above.
   const [staleOwner, setStaleOwner] = useState('')
+  // An owner this dialog already saved stands over a close retried after it (#4983).
+  const namedOwner = useRef(false)
   const canAssign = useAuth().hasPermission('cases.assign')
   const { people } = usePeople()
   const set = (field: CaseEditField) => (value: string) => setValues((v) => ({ ...v, [field]: value }))
@@ -1165,12 +1167,18 @@ function EditCaseForm({ c, onClose, onSaved, onStale, onOffTeam, onAssignToMe }:
     try {
       // A close that changes nothing else sends no PATCH: the close endpoint judges it.
       if (Object.keys(update).length > 1) await casesApi.update(c.id, update)
+      if ('assignee' in update) namedOwner.current = true
       setSeen(landed)
       // Second, so a close that fails leaves the edits saved and the Case open,
       // rather than closed under a title that never landed.
       if (isClosing) {
         // `category` is set: a close with none returned before the save began
-        await casesApi.closeCase(c.id, { ...closurePayload(category as ClosureCategory, reason, cause), expected: { status: stored.status } })
+        // An owner this save named stands: the close does not take the case (#4983).
+        await casesApi.closeCase(c.id, {
+          ...closurePayload(category as ClosureCategory, reason, cause),
+          expected: { status: stored.status },
+          ...(namedOwner.current ? { take_ownership: false } : {}),
+        })
       }
       onSaved()
       onClose()

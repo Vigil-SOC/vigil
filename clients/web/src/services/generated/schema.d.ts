@@ -12498,6 +12498,11 @@ export interface components {
             recommendations?: string | null;
             /** Root Cause */
             root_cause?: string | null;
+            /**
+             * Take Ownership
+             * @default true
+             */
+            take_ownership: boolean;
         };
         /**
          * CommentAdd

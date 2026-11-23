@@ -33,10 +33,12 @@ def record_status_change(
     *,
     closed_by: str,
     by_model: bool = False,
+    take_ownership: bool = True,
 ) -> None:
     """Record a status edit's close with no category stated, or its reopen.
 
-    ``by_model`` is a close that passed the autonomy check (#4819)."""
+    ``by_model`` is a close that passed the autonomy check (#4819).
+    ``take_ownership`` is false when the same save named an owner (#4983)."""
     from core.cases.case_workflow_service import CaseWorkflowService
 
     workflow = CaseWorkflowService()
@@ -47,6 +49,7 @@ def record_status_change(
             closure_category=ClosureCategory.UNSPECIFIED,
             closed_by=closed_by,
             by_model=by_model,
+            take_ownership=take_ownership,
         )
     else:
         workflow.reopen_case(session, case_id)
