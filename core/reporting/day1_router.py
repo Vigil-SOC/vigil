@@ -1,8 +1,9 @@
 """Day 1 Report: the latest record, Home's line, and an on-demand run.
 
 The page is read under ``platform.read``. The visibility module is included
-only when the caller holds ``integrations.read``; the stored record stays
-complete. Running one takes ``platform.write``.
+only when the caller holds ``integrations.read``. Each settings check is
+included only when the caller holds that check's permission. The stored
+record stays complete. Running one takes ``platform.write``.
 """
 
 from __future__ import annotations
@@ -47,6 +48,10 @@ class Day1Evidence(BaseModel):
     state: Optional[str] = None
     last_data: Optional[str] = None
     labels: List[str] = Field(default_factory=list)
+    comparison: Optional[str] = None
+    screen: Optional[str] = None
+    prerequisites: List[str] = Field(default_factory=list)
+    coverage: Optional[str] = None
 
 
 class Day1Check(BaseModel):
@@ -55,6 +60,11 @@ class Day1Check(BaseModel):
     outcome: Literal["pass", "fail", "not_checked", "needs_a_person"]
     reason: str
     evidence: Day1Evidence = Field(default_factory=Day1Evidence)
+    cited_value: Optional[str] = None
+    source_id: Optional[str] = None
+    clause: Optional[str] = None
+    link: Optional[str] = None
+    date_checked: Optional[str] = None
 
 
 class Day1Listed(BaseModel):
