@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -538,30 +538,32 @@ PROPOSAL_TITLES = {
 }
 
 
-def _proposal(raw: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return None
-    action_type, target, reason = (
-        raw.get("action_type"),
-        raw.get("target"),
-        raw.get("reason"),
+# A proposal or why it was refused, as (code, target_kind). The target must fit
+# its action (core/response/proposal_targets.py) and the confidence be a stated
+# view above zero; neither rule reaches ApprovalService, whose checkpoints and
+# rule deploys pass 0.0 on purpose.
+def _proposal(raw: Any) -> Union[Dict[str, Any], Tuple[str, str]]:
+    from core.response.proposal_targets import (
+        check_confidence,
+        check_target,
+        target_kind,
     )
-    if action_type not in PROPOSAL_TITLES:
-        return None
-    if not isinstance(target, str) or not target.strip():
-        return None
-    if not isinstance(reason, str) or not reason.strip():
-        return None
-    confidence = raw.get("confidence", 0.0)
-    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-        return None
-    if not 0.0 <= confidence <= 1.0:
-        return None
+
+    if not isinstance(raw, dict):
+        return "action_type_unknown", "missing"
+    action_type, reason = raw.get("action_type"), raw.get("reason")
+    kind = target_kind(raw.get("target"))
+    target, code = check_target(action_type, raw.get("target"))
+    if code is None and (not isinstance(reason, str) or not reason.strip()):
+        code = "reason_missing"
+    code = code or check_confidence(raw)
+    if code:
+        return code, kind
     return {
         "action_type": action_type,
-        "target": target.strip(),
+        "target": target,
         "reason": reason.strip(),
-        "confidence": float(confidence),
+        "confidence": float(raw["confidence"]),
     }
 
 
@@ -587,13 +589,15 @@ def _propose_actions(
     created: List[Tuple[str, str]] = []  # (title, target) newly filed in this call
     for index, raw in enumerate(proposals):
         proposal = _proposal(raw)
-        if proposal is None:
+        if isinstance(proposal, tuple):
             logger.warning(
-                "dropped proposed action %d of %s: not a valid proposal: %r",
+                "dropped proposed action %d of %s: %s: %r",
                 index,
                 run_id,
+                proposal[0],
                 raw,
             )
+            _record_rejection(case_id, run_id, index, raw, *proposal)
             continue
         action_type, target = proposal["action_type"], proposal["target"]
         title = f"{PROPOSAL_TITLES[action_type]} {target}"
@@ -684,6 +688,44 @@ def _note_shared(case_id: str, description: str, details: Dict[str, Any]) -> Non
         _add_activity(case_id, "action_already_requested", description, details)
     except Exception:  # noqa: BLE001 — the ask stands either way
         logger.exception("could not note %r on case %s", description, case_id)
+
+
+# Once per run and index, so a re-sent terminal says nothing new. Neither the
+# target nor any text from it is copied: the case reads an activity as fact, and
+# the run's conclusion already holds what was asked.
+def _record_rejection(
+    case_id: str, run_id: str, index: int, raw: Any, code: str, kind: str
+) -> None:
+    from core.response.proposal_targets import ACTION_PHRASES, REASON_SENTENCES
+    from core.storage.database_data_service import DatabaseDataService
+
+    action_type = raw.get("action_type") if isinstance(raw, dict) else None
+    if not isinstance(action_type, str) or action_type not in ACTION_PHRASES:
+        action_type = None
+    try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            a.get("activity_type") == "proposal_rejected"
+            and (a.get("details") or {}).get("run_id") == run_id
+            and (a.get("details") or {}).get("index") == index
+            for a in case.get("activities") or []
+        ):
+            return
+        asked = ACTION_PHRASES.get(action_type or "", "propose an action")
+        _add_activity(
+            case_id,
+            "proposal_rejected",
+            f"The run asked to {asked} and nothing was filed: {REASON_SENTENCES[code]}",
+            {
+                "run_id": run_id,
+                "index": index,
+                "action_type": action_type,
+                "reason_code": code,
+                "target_kind": kind,
+            },
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception("could not record a refused proposal of %s", run_id)
 
 
 # Once per run: a re-sent terminal finds the same approvals, and the case already
