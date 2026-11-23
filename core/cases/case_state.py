@@ -96,6 +96,7 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     verdict = _verdict(closure)
     return {
         "closure_category": closure.closure_category,
+        "false_positive_cause": closure.false_positive_cause,
         "closed_by": shown or closure.closed_by or "",
         "closed_by_kind": kind,
         "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,

@@ -781,7 +781,7 @@ def _already_closed(case_id: str) -> bool:
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
-    from core.cases.closure import ClosureCategory
+    from core.cases.closure import DISMISSAL_CAUSES, ClosureCategory
     from core.response.ceiling import close_held
     from core.storage.models import Case
 
@@ -809,6 +809,8 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
             # Checked again on the session that closes: it may have closed since.
             if case is None or case.status == "closed":
                 return
+            # A cause only where the disposition names one; omitted, it stores null.
+            cause = DISMISSAL_CAUSES.get(disposition)
             CaseWorkflowService().close_case(
                 session,
                 case_id,
@@ -816,12 +818,19 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 closed_by=run_id,
                 closure_notes=update.summary or None,
                 by_model=True,
+                **({"false_positive_cause": cause.value} if cause else {}),
             )
+        recorded = "expected activity" if cause else "a false positive"
         _add_activity(
             case_id,
             "agent_run_closed",
-            f"Closed as a false positive: the investigation concluded {disposition}",
-            {"run_id": run_id, "disposition": disposition},
+            f"Closed as {recorded}: the investigation concluded {disposition}",
+            {
+                "run_id": run_id,
+                "disposition": disposition,
+                "closure_category": ClosureCategory.FALSE_POSITIVE.value,
+                "false_positive_cause": cause.value if cause else None,
+            },
         )
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception(

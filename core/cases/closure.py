@@ -83,6 +83,13 @@ CLOSURE_OUTCOMES: Mapping[ClosureCategory, VerdictOutcome] = {
     ClosureCategory.UNSPECIFIED: VerdictOutcome.INCONCLUSIVE,
 }
 
+# The cause an agent's dismissal records, keyed on the disposition the run returned.
+# ``benign`` was real, authorised activity: a false alarm over it is ``expected``.
+# ``false_positive`` said the alert was wrong without saying which way, so no entry.
+DISMISSAL_CAUSES: Mapping[str, FalsePositiveCause] = {
+    "benign": FalsePositiveCause.EXPECTED,
+}
+
 # ``close_channel`` values. Trust is derived; the client cannot send either.
 CHANNEL_COOKIE = "cookie"
 CHANNEL_AGENT = "agent"

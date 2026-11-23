@@ -10939,6 +10939,8 @@ export interface components {
             closed_by_kind: string;
             /** Closure Category */
             closure_category: string;
+            /** False Positive Cause */
+            false_positive_cause?: string | null;
             /**
              * Verdict
              * @default
