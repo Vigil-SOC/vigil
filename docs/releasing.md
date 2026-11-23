@@ -45,6 +45,8 @@ Only that one commit is copied. A fix that depends on earlier commits that are n
 - changes anything under `core/upgrade/versions/` or `core/upgrade/head_schema.json` (no migration or schema change in a fix release), or
 - changes more than 300 lines, added plus deleted (too big to be a fix).
 
+A revision on `main` also writes its id, alone, into `core/upgrade/versions/HEAD`. Two revisions from the same head change that same line, so the second conflicts until it is rebased onto the new head or carries a merge revision.
+
 Release PRs go through the same check; they only touch the manifest and changelog.
 
 ## Repository settings
