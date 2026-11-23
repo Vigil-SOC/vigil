@@ -8,13 +8,17 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from redis.exceptions import RedisError
 
+from core.config import is_integration_enabled
 from core.findings import triage_citations as citations
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.triage_signal import CHANNEL as TRIAGE_SIGNAL_CHANNEL
 from core.integrations import entity_facts
+from core.integrations._base.config import resolve
 from core.integrations.entity_facts import FactRead as EntityFactRead
+from core.integrations.shodan.descriptor import SHODAN
+from core.integrations.virustotal.descriptor import VIRUSTOTAL
 from core.llm.gateway.gateway import JOB_TIMEOUT
 from core.llm.outage import report_outage, report_recovered
 from core.llm.security import alert_text
@@ -398,12 +402,10 @@ class FindingProcessor:
 
     def _init_enrichment_services(self):
         """Initialize threat intelligence enrichment services."""
-        from core.config import get_integration_config, is_integration_enabled
-
         # VirusTotal
         if is_integration_enabled("virustotal"):
             try:
-                config = get_integration_config("virustotal")
+                config = resolve(VIRUSTOTAL)
                 self._enrichment_services["virustotal"] = {
                     "api_key": config.get("api_key"),
                     "enabled": True,
@@ -415,7 +417,7 @@ class FindingProcessor:
         # Shodan
         if is_integration_enabled("shodan"):
             try:
-                config = get_integration_config("shodan")
+                config = resolve(SHODAN)
                 self._enrichment_services["shodan"] = {
                     "api_key": config.get("api_key"),
                     "enabled": True,

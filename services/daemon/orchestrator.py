@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
+import httpx
 from sqlalchemy import func, select
 
 from core.agents.builtins import ORCHESTRATOR_ACTOR
@@ -26,7 +27,9 @@ from core.agents.lost_runs import Cursor, end_lost_start_jobs
 from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
-from core.config import get_settings
+from core.config import get_settings, is_integration_enabled
+from core.integrations._base.config import resolve
+from core.integrations.slack.descriptor import SLACK
 from core.storage.case_insert import insert_case
 from core.storage.intake_queue import SEVERITY_BANDS, intake_severity_band
 from core.time import utcnow
@@ -2820,14 +2823,13 @@ class Orchestrator:
         try:
             if get_settings().daemon_slack_enabled is not True:
                 return
+            # resolve returns secrets even when the integration is disabled.
+            if not is_integration_enabled("slack"):
+                return
 
-            import httpx
-
-            from core.config import get_integration_config
-
-            config = get_integration_config("slack")
+            config = resolve(SLACK)
             token = config.get("bot_token")
-            channel = config.get("default_channel", "#soc-alerts")
+            channel = config.get("default_channel") or "#soc-alerts"
             if not token:
                 return
 
