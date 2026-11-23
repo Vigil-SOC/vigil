@@ -12837,6 +12837,118 @@ export interface components {
             /** State */
             state?: string | null;
         };
+        /** Day1Forecast */
+        Day1Forecast: {
+            arrivals: components["schemas"]["Day1ForecastArrivals"];
+            limits: components["schemas"]["Day1ForecastLimits"];
+            spend: components["schemas"]["Day1ForecastSpend"];
+        };
+        /** Day1ForecastArrivals */
+        Day1ForecastArrivals: {
+            /** Busiest At */
+            busiest_at?: string | null;
+            /** Busiest Hour */
+            busiest_hour?: number | null;
+            /** Fix */
+            fix?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Screen */
+            screen?: string | null;
+            /** Sources */
+            sources?: components["schemas"]["Day1ForecastSource"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "not_checked";
+        };
+        /** Day1ForecastLimits */
+        Day1ForecastLimits: {
+            /** Concurrent */
+            concurrent?: number | null;
+            /** Covers */
+            covers?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Hourly */
+            hourly?: number | null;
+            /** Minutes */
+            minutes?: number | null;
+            /** Per Investigation */
+            per_investigation?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Service
+             * @enum {string}
+             */
+            service: "running" | "stopped" | "unavailable" | "unknown" | "not_serving";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "not_checked" | "omitted";
+            /** Triage */
+            triage?: boolean | null;
+        };
+        /** Day1ForecastSource */
+        Day1ForecastSource: {
+            /** Findings */
+            findings?: number | null;
+            /** Findings Reason */
+            findings_reason?: string | null;
+            /**
+             * Findings Status
+             * @enum {string}
+             */
+            findings_status: "measured" | "not_connected" | "not_checked";
+            /** Opened */
+            opened: number;
+            /** Opened Missing */
+            opened_missing: number;
+            /** Outside */
+            outside: number;
+            /** Source */
+            source: string;
+            /** Week */
+            week: number;
+            /** Window End */
+            window_end: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** Day1ForecastSpend */
+        Day1ForecastSpend: {
+            /** High */
+            high?: number | null;
+            /** Low */
+            low?: number | null;
+            /** Median */
+            median?: number | null;
+            /**
+             * Not Counted
+             * @default 0
+             */
+            not_counted: number;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "not_checked" | "omitted";
+            /**
+             * Unpriced Model
+             * @default 0
+             */
+            unpriced_model: number;
+            /**
+             * Wholly Priced
+             * @default 0
+             */
+            wholly_priced: number;
+        };
         /** Day1Listed */
         Day1Listed: {
             /** Brings */
@@ -12866,6 +12978,7 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            forecast?: components["schemas"]["Day1Forecast"] | null;
             history_before?: components["schemas"]["HistoryBefore"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
             history_tuning?: components["schemas"]["HistoryTuning"] | null;

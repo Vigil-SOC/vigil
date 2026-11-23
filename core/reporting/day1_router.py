@@ -30,6 +30,7 @@ from core.reporting.day1 import (
     status,
 )
 from core.reporting.enablement import disabled_module_ids, set_module_enabled
+from core.reporting.forecast import Day1Forecast
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 
@@ -257,6 +258,7 @@ class Day1Report(BaseModel):
     history_before: Optional[HistoryBefore] = None
     history_recheck: Optional[HistoryRecheck] = None
     history_tuning: Optional[HistoryTuning] = None
+    forecast: Optional[Day1Forecast] = None
 
 
 class Day1Module(BaseModel):
