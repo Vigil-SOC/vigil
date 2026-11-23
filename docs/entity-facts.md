@@ -72,6 +72,8 @@ Vigil only reads. Give each source a credential that can do nothing else.
 | Okta | An API token of a **Read-only Administrator**, or, for OAuth, `okta.users.read` and `okta.groups.read`. |
 | Falcon | **Hosts: Read** for host facts, and **Alerts: Read** for alert collection and the credential read. |
 
+For Falcon, that same API client is also the CrowdStrike tool server's credential: agents can call that server's other tools (for example `falcon_search_detects`, which the hunt resolver prefers), and each tool needs its own scope in CrowdStrike and is refused without it.
+
 ## How long it is kept
 
 - **Time to live: 24 hours** (`ttl_hours`). Past it a row is not served; the next read fetches it again.
