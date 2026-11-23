@@ -12,9 +12,9 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "import-linter==2.16",
+    "import-linter==2.17",
     "pytest>=8",
-    "ruff==0.17.5",
+    "ruff==0.17.6",
 ]
 
 [tool.uv]
