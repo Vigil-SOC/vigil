@@ -122,8 +122,9 @@ _Avoid_: result store (outcomes live only here)
 One entry in the check registry (`core/reporting/checks.py`): Vigil's own id,
 its module, the permission that gates its source, and its rule. A value check
 also carries the cited value, the source id, the clause, the link and the date
-it was checked, and has no field for quoted text. The registry currently holds
-the checks for what Vigil can see. Outcomes are not stored on the entry.
+it was checked, and has no field for quoted text. The registry holds the
+checks for what Vigil can see and for Vigil's own settings. Outcomes are not
+stored on the entry.
 _Avoid_: rule check, credential check (those are other checks)
 
 **Check Outcome**:
@@ -136,10 +137,13 @@ One section of the Day 1 Report. What Vigil can see (`integrations.read`)
 lists each source's health and reason, what it brings in (alerts, lookups or
 rules), when data last arrived, and the labels seen on webhook events, all as
 information, plus switched-off integrations and the state of collection, the
-background service and the model. The stored record stays complete; a reader
-who lacks the module's permission is not shown that section. On a demo-data
-install the report's first line says it describes the install, not the demo
-data. Demo findings are not read as data received.
+background service and the model. Vigil's own settings compares each live
+session and retention value with its cited value, and shows that comparison,
+the citation, a link to the setting and, for MFA, a count of accounts. The
+stored record stays complete; a reader who lacks the module's permission is
+not shown that section. On a demo-data install the report's first line says
+it describes the install, not the demo data. Demo findings are not read as
+data received.
 _Avoid_: Visibility Gap, Declared Gap (those are run-scoped)
 
 **Workflow** (`workflows`):
