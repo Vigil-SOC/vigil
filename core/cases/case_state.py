@@ -154,31 +154,88 @@ def spawned_by(triggered_by: Optional[str]) -> Optional[str]:
     return parts[1] if len(parts) >= 3 and parts[0] == "handoff" and parts[1] else None
 
 
-def primary_ref(refs: Sequence[dict]) -> Optional[dict]:
-    """The case's run: the newest ref no run on the case started.
+# A run's terminal that says its report does not stand, though status may read completed.
+_SHORT_OUTCOMES = ("data_starved", "budget_exhausted", "aborted", "abandoned")
+# What picked the case's run, by the tier of the run it picked.
+PRIMARY_BASIS = (
+    "newest grounded",
+    "newest, grounding unread",
+    "newest, no run on the case stands",
+)
+
+
+def _tier(ref: Mapping) -> int:
+    """0 stands, 1 unread, 2 does not stand; checked 2, then 0, then 1.
+
+    A missing fact is unread, never bad: a live run, a row from before the facts
+    were written, a plugin that does not cite all land in 1.
+    """
+    count = ref.get("citation_count")
+    if (
+        ref.get("outcome") in _SHORT_OUTCOMES
+        or ref.get("status") in ("failed", "cancelled")
+        or ref.get("capped") is True
+        or count == 0
+        or ref.get("grounded") is False
+    ):
+        return 2
+    if (
+        ref.get("outcome") == "completed"
+        and ref.get("capped") is False
+        and count is not None
+        and count >= 1
+    ):
+        return 0
+    return 1
+
+
+def primary_choice(refs: Sequence[dict]) -> tuple[Optional[dict], Optional[str]]:
+    """The case's run and what picked it, the one place either is decided.
 
     A hunt's handoff starts a root-cause run on the case it escalates, and that run
-    is newer than the hunt; it is the hunt's follow-up, not the case's run. A ref
-    whose starter is not on the case counts as unstarted. Newest first in, as
-    ``case_run_refs`` returns them.
+    is newer than the hunt; it is the hunt's follow-up, not the case's run. So only
+    refs whose starter is not on the case are eligible, or every ref when a chain of
+    handoffs leaves none. Among those, the newest of the best tier: a report that
+    stands, then one unread, then one that does not stand. Newest first in, as
+    ``case_run_refs`` returns them. ``(None, None)`` only when there is no ref.
     """
     listed = {ref["run_id"] for ref in refs}
-    for ref in refs:
-        if ref.get("spawned_by") not in listed:
-            return ref
-    return refs[0] if refs else None
+    eligible = [ref for ref in refs if ref.get("spawned_by") not in listed] or list(
+        refs
+    )
+    if not eligible:
+        return None, None
+    tier = min(_tier(ref) for ref in eligible)
+    picked = next(ref for ref in eligible if _tier(ref) == tier)
+    return picked, PRIMARY_BASIS[tier]
+
+
+def primary_ref(refs: Sequence[dict]) -> Optional[dict]:
+    """The case's run, as ``primary_choice`` picks it."""
+    return primary_choice(refs)[0]
+
+
+def run_ids(
+    investigations: Sequence[Investigation], runs: Sequence[WorkflowRun]
+) -> list[str]:
+    """Every run id ``case_run_refs`` lists, for ``list_run_facts``."""
+    return [run_id_for(item.investigation_id) for item in investigations] + [
+        run.run_id for run in runs
+    ]
 
 
 def case_run_refs(
     investigations: Sequence[Investigation],
     runs: Sequence[WorkflowRun],
     steps: Mapping[str, int] = {},
+    facts: Mapping[str, Mapping] = {},
 ) -> list[tuple[dict, str]]:
     """Investigation and run refs together, newest first, each with its state word.
 
     An investigation's run is ``run_id_for`` of it, which may also be a
     ``workflow_runs`` row; that run is listed once, as the investigation. ``steps``
-    is phases recorded per run id, for a run that reports no iteration.
+    is phases recorded per run id, for a run that reports no iteration. ``facts`` is
+    ``list_run_facts`` of the same ids: what each run's report stands on, merged in.
     """
     items: list[tuple[datetime, dict, str]] = [
         (item.created_at or datetime.min, investigation_ref(item), item.status)
@@ -194,6 +251,8 @@ def case_run_refs(
         for run in runs
         if run.run_id not in seen
     ]
+    for _, ref, _ in items:
+        ref.update(facts.get(ref["run_id"], {}))
     items.sort(key=lambda item: (item[0], item[1]["run_id"]), reverse=True)
     return [(ref, state) for _, ref, state in items]
 
@@ -204,14 +263,16 @@ def detail_fields(
     closure: Optional[CaseClosureInfo],
     runs: Sequence[WorkflowRun] = (),
     steps: Mapping[str, int] = {},
+    facts: Mapping[str, Mapping] = {},
 ) -> dict:
     """Extras on ``GET /cases/{id}``. Inputs are newest first; so is the output."""
-    refs = case_run_refs(investigations, runs, steps)
-    primary = primary_ref([ref for ref, _ in refs])
+    refs = case_run_refs(investigations, runs, steps, facts)
+    primary, basis = primary_choice([ref for ref, _ in refs])
     for ref, _ in refs:
         ref["primary"] = ref is primary
     return {
         "combined_state": combined_state(case_status, [state for _, state in refs]),
         "investigations": [ref for ref, _ in refs],
+        "primary_basis": basis,
         "closure": closure_view(closure),
     }

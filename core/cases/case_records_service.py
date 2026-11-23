@@ -214,6 +214,27 @@ def list_case_runs(session: Session, case_id: str) -> List[WorkflowRun]:
     )
 
 
+def list_run_facts(session: Session, run_ids: Sequence[str]) -> Dict[str, dict]:
+    """What each run's report stands on, in one query: ``outcome``, ``capped``,
+    ``citation_count``, ``grounded``. A null column is left out; so is a run with none.
+    """
+    if not run_ids:
+        return {}
+    rows = session.query(
+        WorkflowRun.run_id,
+        WorkflowRun.outcome,
+        WorkflowRun.capped,
+        WorkflowRun.citation_count,
+        WorkflowRun.grounded,
+    ).filter(WorkflowRun.run_id.in_(run_ids))
+    keys = ("outcome", "capped", "citation_count", "grounded")
+    facts = {
+        run_id: {key: value for key, value in zip(keys, values) if value is not None}
+        for run_id, *values in rows
+    }
+    return {run_id: kept for run_id, kept in facts.items() if kept}
+
+
 def run_step_counts(session: Session, run_ids: Sequence[str]) -> Dict[str, int]:
     """Phases recorded per run, in one query. A run with none is absent."""
     if not run_ids:

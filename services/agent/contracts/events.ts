@@ -210,6 +210,12 @@ export interface TerminalPayload {
   // When the run finished, chosen as the terminal was sealed. The workflow row
   // stores this as finished_at, and the hunt report's Ended line is the same instant.
   finished_at?: string;
+  // What the report stands on (#4962). capped is false on a run with no conclusion;
+  // citation_count is absent when the plugin declares no citations field, and
+  // grounded when its last review did not say. Older ledgers carry none of them.
+  capped?: boolean;
+  citation_count?: number;
+  grounded?: boolean;
 }
 
 // How sure a run may say it is of its verdict.

@@ -56,7 +56,7 @@ from core.cases.case_handoff import (
 )
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_sla_service import open_case
-from core.cases.case_state import detail_fields
+from core.cases.case_state import detail_fields, run_ids
 from core.cases.case_status import (
     CLOSED,
     CaseStatus,
@@ -729,7 +729,7 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
     # Copy: a demo-mode case is the stored dict, and this read must not write it.
     case = dict(loaded)
     if session is None:
-        investigations, closure, runs, steps = [], None, [], {}
+        investigations, closure, runs, steps, facts = [], None, [], {}, {}
     else:
         investigations = case_records_service.list_case_investigations(session, case_id)
         closure = session.get(CaseClosureInfo, case_id)
@@ -737,7 +737,12 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
         steps = case_records_service.run_step_counts(
             session, [run.run_id for run in runs]
         )
-    case.update(detail_fields(case.get("status"), investigations, closure, runs, steps))
+        facts = case_records_service.list_run_facts(
+            session, run_ids(investigations, runs)
+        )
+    case.update(
+        detail_fields(case.get("status"), investigations, closure, runs, steps, facts)
+    )
     with_owner_state(session, [case])
     if session is not None:
         case["alerts_since_last_run"] = case_records_service.alerts_since_last_run(

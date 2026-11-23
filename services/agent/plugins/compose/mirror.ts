@@ -40,6 +40,10 @@ export interface TerminalResult {
   handoffs?: TerminalHandoff[];
   proposed_actions?: ProposedAction[];
   disposition?: string;
+  // What the report stands on, from the terminal; absent where the run did not say.
+  capped?: boolean;
+  citation_count?: number;
+  grounded?: boolean;
 }
 
 // Where a run stands while it is still open. paused is a run waiting on someone
