@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { exclusionsApi, type IpExclusion } from '../../services/api'
 import { apiError, useExclusions } from './useExclusions'
@@ -36,10 +37,23 @@ export default function ExclusionsSection({
   onShowExcluded: () => void
 }) {
   const { notify } = useToast()
-  const [open, setOpen] = useState(false)
+  const [params] = useSearchParams()
+  const exclude = params.get('exclude') ?? ''
+  const reportId = params.get('report') ?? ''
+  const runId = params.get('run') ?? ''
+  const presetReason = reportId
+    ? `Day 1 Report ${reportId}${runId ? `, run ${runId}` : ''}`
+    : ''
+  const [open, setOpen] = useState(exclude.length > 0)
   const { rows, hiddenTotal: hidden, phase, error, reload, history, setHistory } = useExclusions(refreshKey)
-  const [ip, setIp] = useState('')
-  const [reason, setReason] = useState('')
+  const [ip, setIp] = useState(exclude)
+  const [reason, setReason] = useState(presetReason)
+  useEffect(() => {
+    if (!exclude) return
+    setOpen(true)
+    setIp(exclude)
+    if (presetReason) setReason(presetReason)
+  }, [exclude, presetReason])
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
