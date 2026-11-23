@@ -423,6 +423,9 @@ class ClosureInfo(BaseModel):
     # close stores null even when the field is sent.
     evidence_opened: Optional[bool] = None
     expected: Optional[CaseExpected] = None
+    # False when the same save already named an owner: the close then leaves
+    # it. Can only narrow (#4983).
+    take_ownership: bool = True
 
 
 class MergeRequest(BaseModel):
@@ -1039,6 +1042,7 @@ def update_case(
             case_id,
             change,
             closed_by=current_user.username,
+            take_ownership="assignee" not in updates,
         )
 
     # Fire upstream SIEM status sync when status changes
@@ -1381,6 +1385,7 @@ def close_case(
         false_positive_reason=data.false_positive_reason,
         closure_notes=data.closure_notes,
         evidence_opened=data.evidence_opened,
+        take_ownership=data.take_ownership,
         **(
             {
                 "false_positive_cause": (

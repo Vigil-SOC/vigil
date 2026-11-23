@@ -3352,6 +3352,11 @@
               }
             ],
             "title": "Root Cause"
+          },
+          "take_ownership": {
+            "default": true,
+            "title": "Take Ownership",
+            "type": "boolean"
           }
         },
         "required": [

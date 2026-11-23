@@ -2,7 +2,8 @@
 
 The ``source_health`` row (``core/storage/source_health.py``) is the only
 stored copy of a source's health. Its writers are scheduled collection (``core/federation/store.py``), Test
-(``services/api/routers/config.py``), a successful MCP read (``core/agents/mcp_tools.py``),
+(``services/api/routers/config.py``), a successful MCP read for an integration that
+scheduled collection does not poll (``core/agents/mcp_tools.py``),
 detection-source syncs (``core/detections/detection_rules_service.py``), the push sources
 (``core/storage/push_health.py``: Kafka, the daemon webhook, and the Darktrace
 and Cloudflare receivers) and the integration save path (a reset). Every writer
@@ -26,6 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.storage.source_health import (  # noqa: F401 - the writers, re-exported
     DROP_WINDOW,
+    FEDERATION_INTEGRATION,
+    LEGACY_POLLED,
     read,
     read_all,
     record_collected,
@@ -39,21 +42,6 @@ from core.storage.source_health import (  # noqa: F401 - the writers, re-exporte
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
-
-# Federation adapters named apart from their integration.
-FEDERATION_INTEGRATION = {
-    "elastic": "elastic-siem",
-    "azure_sentinel": "azure-sentinel",
-    "aws_security_hub": "aws-security-hub",
-    "microsoft_defender": "microsoft-defender",
-}
-# Integration ids the older polling loops in services/daemon/poller.py collect.
-LEGACY_POLLED = {
-    "splunk": "splunk",
-    "crowdstrike": "crowdstrike",
-    "opensearch": "opensearch",
-    **{v: k for k, v in FEDERATION_INTEGRATION.items()},
-}  # integration id -> federation source id
 
 KAFKA = "kafka"
 RECEIVERS = ("webhook:daemon", "webhook:darktrace", "webhook:cloudflare")

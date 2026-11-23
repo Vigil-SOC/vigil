@@ -488,18 +488,19 @@ async def _crowdstrike() -> Outcome:
     )
 
     def read() -> Outcome:
-        # The adapter's token exchange, then its detections ID query for one
-        # ID. last_error is a status or a connection error, never the secret.
+        # The adapter's token exchange, then its alerts ID query for one ID
+        # and no product filter. HTTP 200, including an empty list, passes.
+        # last_error is a status or a connection error, never the secret.
         if not service._ensure_authenticated():
             return failed(
                 f"CrowdStrike {service.last_error or 'authentication failed'}",
                 status=service.last_status,
             )
-        if service._query_detection_ids(None, 1) is None:
+        if service._query_alert_ids(None, 1) is None:
             return failed(
                 f"CrowdStrike {service.last_error}", status=service.last_status
             )
-        return True, "Read CrowdStrike detections"
+        return True, "Read CrowdStrike alerts"
 
     try:
         return await asyncio.to_thread(read)

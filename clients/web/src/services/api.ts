@@ -392,7 +392,8 @@ export const casesApi = {
   getRules: (id: string) =>
     api.get<Schema<'CaseRulesResponse'>>(`/cases/${id}/rules`),
 
-  closeCase: (id: string, data: Schema<'ClosureInfo'>) =>
+  // take_ownership defaults to true on the server; only the edit dialog sends it.
+  closeCase: (id: string, data: Omit<Schema<'ClosureInfo'>, 'take_ownership'> & { take_ownership?: boolean }) =>
     api.post<Schema<'CaseCloseResponse'>>(`/cases/${id}/close`, data),
 
   getEscalations: (id: string) =>
