@@ -68,6 +68,33 @@ export function costOf(events: readonly { kind: string; seq?: number; payload: u
   }, 0);
 }
 
+// One run's spend events, for every run kind. Null when the run journaled none:
+// that is not a priced zero. A call nobody could price is counted and adds nothing.
+export interface SpendAccount {
+  calls: number;
+  unpriced_calls: number;
+  cost_usd: number;
+}
+
+export function spendOf(events: readonly { kind: string; payload: unknown }[]): SpendAccount | null {
+  let calls = 0;
+  let unpriced = 0;
+  let cost = 0;
+  for (const event of events) {
+    if (event.kind !== "spend") continue;
+    calls += 1;
+    const payload = event.payload;
+    const priced =
+      typeof payload === "object" && payload !== null
+        ? (payload as SpendPayload).cost_usd
+        : null;
+    if (typeof priced === "number") cost += priced;
+    else unpriced += 1;
+  }
+  if (calls === 0) return null;
+  return { calls, unpriced_calls: unpriced, cost_usd: roundCost(cost) };
+}
+
 // A value, never a throw: the exhaustiveness argument applies here or nowhere.
 // unpriced is a ceiling that cannot be measured rather than one that was reached.
 export type Refusal =
