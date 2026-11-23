@@ -753,6 +753,12 @@ export const configApi = {
   },
 }
 
+export const productionStartApi = {
+  get: () => api.get<Schema<'ProductionStart'>>('/production-start'),
+  set: (started_at: string | null) =>
+    api.put<Schema<'ProductionStart'>>('/production-start', { started_at }),
+}
+
 export const day1Api = {
   status: () => api.get<Schema<'Day1Status'>>('/day1-report/status'),
   get: (record?: string) =>

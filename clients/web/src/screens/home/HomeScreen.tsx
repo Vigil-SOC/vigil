@@ -3,7 +3,7 @@ import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, day1Api, ingestionApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, day1Api, ingestionApi, productionStartApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
@@ -30,6 +30,14 @@ import { caseLabel } from '../../shared/caseLabel'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
+
+/** datetime-local is the viewer's zone; the server takes UTC. Seconds stay, so the minute setup finished in can still be declared. */
+function dateTimeLocal(iso: string | null): string {
+  const d = iso ? new Date(iso) : new Date()
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
 const STEP_ACTION: Record<string, string> = {
   connect_tools: 'Set up',
@@ -260,6 +268,12 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const [reportLine, setReportLine] = useState<Schema<'Day1Status'> | null>(null)
   const [reportError, setReportError] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
+  const [production, setProduction] = useState<Schema<'ProductionStart'> | null>(null)
+  const [productionError, setProductionError] = useState<string | null>(null)
+  const [declareOpen, setDeclareOpen] = useState(false)
+  const [declareAt, setDeclareAt] = useState('')
+  const [declaring, setDeclaring] = useState(false)
+  const [declareError, setDeclareError] = useState<string | null>(null)
   const [closing, setClosing] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -287,12 +301,17 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       (res) => ({ ok: true as const, data: res.data }),
       (err: unknown) => ({ ok: false as const, err }),
     )
-    const [needsResult, pickup, readyResult, setupResult, reportResult] = await Promise.all([
+    const productionRead = productionStartApi.get().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const [needsResult, pickup, readyResult, setupResult, reportResult, productionResult] = await Promise.all([
       needs,
       shareRead,
       readyRead,
       setupRead,
       reportRead,
+      productionRead,
     ])
     if (ticket !== loadTicket.current) return
     setShare(pickup)
@@ -316,6 +335,15 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       setReportError(null)
     } else {
       setReportError(errorText(reportResult.err, 'Could not load the Day 1 Report'))
+    }
+    if (productionResult.ok) {
+      setProduction(productionResult.data)
+      setProductionError(null)
+    } else if ((productionResult.err as { response?: { status?: number } })?.response?.status === 403) {
+      setProduction(null)
+      setProductionError(null)
+    } else {
+      setProductionError(errorText(productionResult.err, 'Could not load the production start'))
     }
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
@@ -453,6 +481,38 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const shownChips = fillCommand ? LIVE_COMMANDS : []
   const boardClear = shownCount !== null && !error && shown.length === 0 && !noAlerts
 
+  const openDeclare = () => {
+    setDeclareError(null)
+    setDeclareOpen((open) => {
+      if (open) return false
+      setDeclareAt(dateTimeLocal(production?.started_at ?? null))
+      return true
+    })
+  }
+
+  const saveProduction = async (startedAt: string | null) => {
+    setDeclaring(true)
+    setDeclareError(null)
+    try {
+      await productionStartApi.set(startedAt)
+      setDeclareOpen(false)
+      await load()
+    } catch (err) {
+      if (!stepUpDetailOf(err)) setDeclareError(errorText(err, 'Could not save the production start'))
+    } finally {
+      setDeclaring(false)
+    }
+  }
+
+  const declareProduction = () => {
+    const started = new Date(declareAt)
+    if (Number.isNaN(started.getTime())) {
+      setDeclareError('Enter a time.')
+      return
+    }
+    void saveProduction(started.toISOString())
+  }
+
   const rerunReport = async () => {
     setRerunning(true)
     try {
@@ -521,6 +581,64 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
           </div>
         )}
         {error && <p role="alert">{error}</p>}
+        {(production !== null || productionError !== null) && (
+          <section aria-label="Production start">
+            {productionError && <p role="alert">{productionError}</p>}
+            {production && (
+              <div className="home-readiness">
+                <p className="home-report-line">
+                  {production.started_at
+                    ? `In production since ${reportStamp(production.started_at)}`
+                    : 'Not in production'}
+                  {canRunReport && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      aria-expanded={declareOpen}
+                      onClick={openDeclare}
+                      disabled={declaring}
+                    >
+                      Declare
+                    </button>
+                  )}
+                </p>
+                {declareOpen && canRunReport && (
+                  <form
+                    className="home-production-form"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      declareProduction()
+                    }}
+                  >
+                    <input
+                      type="datetime-local"
+                      className="field-input"
+                      aria-label="Production start time"
+                      step={1}
+                      value={declareAt}
+                      disabled={declaring}
+                      onChange={(event) => setDeclareAt(event.target.value)}
+                    />
+                    <button type="submit" className="btn ghost" disabled={declaring || !declareAt}>
+                      {declaring ? 'Saving…' : 'Declare'}
+                    </button>
+                    {production.started_at && (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        disabled={declaring}
+                        onClick={() => void saveProduction(null)}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </form>
+                )}
+                {declareError && <p role="alert">{declareError}</p>}
+              </div>
+            )}
+          </section>
+        )}
         {(readiness !== null || readinessError !== null) && (
           <section aria-label="Install readiness">
             {sectionHead(
