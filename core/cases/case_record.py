@@ -65,12 +65,56 @@ def _short(value: Any) -> str:
     return text if len(text) <= 280 else text[:277] + "..."
 
 
-_MARKUP = re.compile(r"(^|\s)(#{1,6}|[-*+]|\d+[.)])\s+|\*\*|__|`")
+# Line-leading heading and list markers, bold and code ticks. Anchored to a line
+# start so a number or dash inside a sentence ("port 443. Then") stays.
+_MARKUP = re.compile(r"(?m)^[ \t]*(?:#{1,6}|[-*+]|\d+[.)])[ \t]+|\*\*|__|`")
+
+
+def _flat(value: Any) -> str:
+    return " ".join(_MARKUP.sub("", str(value or "")).split())
 
 
 def _plain(value: Any) -> str:
     """A description written as markdown (a run's report) as one plain line."""
-    return _short(_MARKUP.sub(lambda m: m.group(1) or "", str(value or "")))
+    return _short(_flat(value))
+
+
+# A line that is only a heading or only bold, such as "### What happened" or "**Summary**".
+_LABEL = re.compile(r"\s*(#{1,6}\s.*|\*\*[^*]+\*\*:?)\s*$")
+_ITEM = re.compile(r"\s*([-*+]|\d+[.)])\s")
+# A sentence ends at . ! or ? before a space, unless the word is an abbreviation:
+# single letters with dots (U.S., e.g.) or a common short form. A domain or IP ends one.
+_SENTENCE_END = re.compile(r"(\S+)[.!?](?=\s|$)")
+_INITIALS = re.compile(r"(?:\w\.){0,2}\w")
+_ABBREVIATIONS = frozenset({"mr", "mrs", "ms", "dr", "vs", "etc", "inc", "approx"})
+
+
+def headline(value: Any, limit: int = 200) -> str:
+    """A markdown report's first sentence as one plain line, cut at a word past ``limit``."""
+    lines = str(value or "").strip().splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.strip() and not _LABEL.match(line)),
+        None,
+    )
+    if start is None:  # nothing but labels: the first one is all there is
+        return _flat(next((line for line in lines if line.strip()), ""))[:limit]
+    # The first block only: up to a blank line, a label, or the next list item.
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if not line.strip() or _LABEL.match(line) or _ITEM.match(line):
+            break
+        block.append(line)
+    text = _flat("\n".join(block))
+    for match in _SENTENCE_END.finditer(text):
+        word = match.group(1).lower()
+        if _INITIALS.fullmatch(word) or word in _ABBREVIATIONS:
+            continue
+        text = text[: match.end()]
+        break
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0] or text[: limit - 1]
+    return cut.rstrip(" ,;:—-") + "…"
 
 
 def _join(*parts: Any) -> str:

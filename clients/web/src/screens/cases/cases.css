@@ -721,12 +721,13 @@
   overflow-wrap: anywhere;
 }
 
-.case-page .case-closed h3 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  line-height: 1.3;
+/* An agent's headline, or an analyst's note kept whole with its line breaks. */
+.case-page .case-closed .case-closed-verdict {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
   color: var(--tx0);
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 
@@ -840,9 +841,9 @@
   overflow: hidden;
 }
 
-/* The run's report: plain text as written, a few lines until opened. */
-.case-page .case-report { font-size: 13px; line-height: 1.5; color: var(--tx1); white-space: pre-wrap; overflow-wrap: anywhere; }
-.case-page .case-report-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+/* The run's report as Markdown at a prose measure; a very long one is cut by height until opened. */
+.case-page .case-report { max-width: var(--text-max); font-size: 13px; line-height: 1.5; color: var(--tx1); overflow-wrap: anywhere; }
+.case-page .case-report-clamped { max-height: 40em; overflow: hidden; }
 .case-page .case-report-toggle { align-self: flex-start; }
 
 /* Paused or stopped: the Now card's place, without its accent or breathing dot. */

@@ -12,6 +12,7 @@ from typing import Mapping, Optional, Sequence
 from sqlalchemy.orm import object_session
 
 from core.agents.projections import run_id_for
+from core.cases.case_record import headline
 from core.cases.closure import trust_word
 from core.cases.combined_state import budget_health as _budget_health
 from core.cases.combined_state import combined_state as _combined_state
@@ -91,12 +92,15 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     if session is not None and closure.closed_by and shown == closure.closed_by:
         principal = session.get(Principal, closure.closed_by)
         shown = (principal.label if principal else None) or shown
+    kind = trust_word(getattr(closure, "close_channel", None))
+    verdict = _verdict(closure)
     return {
         "closure_category": closure.closure_category,
         "closed_by": shown or closure.closed_by or "",
-        "closed_by_kind": trust_word(getattr(closure, "close_channel", None)),
+        "closed_by_kind": kind,
         "closed_at": closure.closed_at.isoformat() if closure.closed_at else None,
-        "verdict": _verdict(closure),
+        # An agent's note is its whole report, shown below; the banner gets its first sentence.
+        "verdict": headline(verdict) if kind == "agent" else verdict,
     }
 
 

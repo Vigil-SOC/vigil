@@ -22,6 +22,7 @@ import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
 import { EmptyState } from '../../shared/ui'
+import { Markdown } from '../../shared/Markdown'
 import { useAuth } from '../../contexts/AuthContext'
 import type { CaseRecord } from '../../data/data'
 import { RestrictedMark, useReaderNames } from './RestrictCase'
@@ -923,14 +924,14 @@ function OutcomeCard({ ended, watch, onAsk }: { ended: EndedRun; watch: ReactNod
   )
 }
 
-/** What the latest concluded run reported, in full: collapsed to a few lines when long. */
+/** What the latest concluded run reported, as Markdown: a typical report in full, a very long one cut until opened. */
 function ReportCard({ report }: { report: string }) {
   const [open, setOpen] = useState(false)
-  const long = report.length > 400 || report.split('\n').length > 6
+  const long = report.length > 4000 || report.split('\n').length > 50
   return (
     <section className="case-card" aria-label="Report">
       <h3>Report</h3>
-      <div className={`case-report${long && !open ? ' case-report-clamped' : ''}`}>{report}</div>
+      <div className={`case-report${long && !open ? ' case-report-clamped' : ''}`}><Markdown>{report}</Markdown></div>
       {long && (
         <button type="button" className="btn neutral case-report-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
           {open ? 'Show less' : 'Show all'}
@@ -1831,9 +1832,9 @@ export function CasePage({
                   <span className="case-closed-line">
                     {closedLine(closure)}
                   </span>
-                  <h3>{closure?.verdict || '—'}</h3>
+                  <p className="case-closed-verdict">{closure?.verdict || '—'}</p>
                   {verdict && closureFlag(closure, verdict.word) && <VerdictBlock verdict={verdict} card={false} />}
-                  <ClosedRows fold={fold} phase={foldPhase} />
+                  <ClosedRows fold={fold} phase={foldPhase} shown={[report, closure?.verdict ?? '']} />
                   {(canWrite || assessed) && (
                     <div className="case-assess">
                       {(reviewable || assessed) && <span>Your assessment</span>}
@@ -2378,11 +2379,25 @@ function LaterRow({ title, line }: { title: string; line: string }) {
   )
 }
 
-function ClosedRows({ fold, phase }: { fold: RunFold | null; phase: Phase }) {
+/** Markdown and spacing dropped, so the same text compares equal however it was written. */
+const flat = (text: string) => plainLine(text).replace(/\s+/g, ' ').trim()
+// The disposition word answerText puts before a conclusion's summary.
+const VERDICT_PREFIX = /^(?:Malicious|Suspicious|Benign|False positive|Inconclusive|Needs review) — /
+
+function ClosedRows({ fold, phase, shown }: { fold: RunFold | null; phase: Phase; shown: string[] }) {
   if (phase === 'loading') return <p className="muted">Loading the run…</p>
   if (phase === 'error') return <p className="muted">The run could not be read.</p>
-  const rows = strongestRows(fold)
-  if (rows.length === 0) return <p className="muted">No findings yet.</p>
+  const all = strongestRows(fold)
+  if (all.length === 0) return <p className="muted">No findings yet.</p>
+  // A step-less row is the run's summary under its verdict word; the report or banner already says it.
+  const said = shown.map(flat).filter(Boolean)
+  const rows = all.filter((row) => {
+    if (row.step !== '—') return true
+    const text = flat(row.text.replace(VERDICT_PREFIX, ''))
+    // Short answers ("No", "Benign") appear in any report; only a whole repeated summary is dropped.
+    return text.length < 40 || !said.some((one) => one.includes(text))
+  })
+  if (rows.length === 0) return null
   return (
     <ul className="case-closed-rows">
       {rows.map((row, i) => (

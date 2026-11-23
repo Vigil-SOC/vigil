@@ -103,7 +103,10 @@ conclusion:
     properties:
       summary:
         type: string
-        description: What happened, in a paragraph a reader can act on.
+        description: >-
+          What happened, for a reader who must act on it. Open with one plain sentence, under 180 characters,
+          no heading and no bold, naming the disposition and the core event. Then a blank line and short Markdown
+          sections: ### headings, - bullets, and backticks around hosts, users, paths, commands, hashes and domains.
       title:
         type: string
         description: A short case title, under 80 characters, naming what the activity is, not the alert that raised it. Omit when nothing found supports one.
