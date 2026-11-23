@@ -1,0 +1,90 @@
+# A throwaway OpenCTI platform for the opencti live check (tests/live/ci/opencti.sh).
+# Trimmed from OpenCTI-Platform/docker: no worker and no connectors (the check seeds
+# its intel through the GraphQL API, which writes synchronously), small heaps, and only
+# the platform published, on 127.0.0.1. Every credential comes from opencti.sh, which
+# makes them up per run.
+name: vigil-live-opencti
+services:
+  redis:
+    image: redis:8.10.1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.21
+    environment:
+      - discovery.type=single-node
+      - xpack.ml.enabled=false
+      - xpack.security.enabled=false
+      - thread_pool.search.queue_size=5000
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://elasticsearch:9200/_cluster/health?wait_for_status=yellow >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
+  minio:
+    # MinIO-compatible store the upstream compose uses; pinned by digest (no release tags).
+    image: pgsty/silo@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
+    environment:
+      MINIO_ROOT_USER: ${OPENCTI_LIVE_S3_USER}
+      MINIO_ROOT_PASSWORD: ${OPENCTI_LIVE_S3_PASSWORD}
+    command: server /data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    environment:
+      - RABBITMQ_DEFAULT_USER=${OPENCTI_LIVE_AMQP_USER}
+      - RABBITMQ_DEFAULT_PASS=${OPENCTI_LIVE_AMQP_PASSWORD}
+      - RABBITMQ_NODENAME=rabbit01@localhost
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 30s
+      retries: 10
+  opencti:
+    image: opencti/platform:7.261103.0
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=2048
+      - APP__PORT=8080
+      - APP__BASE_URL=http://127.0.0.1:${OPENCTI_LIVE_PORT}
+      - APP__ADMIN__EMAIL=admin@vigil-live.invalid
+      - APP__ADMIN__PASSWORD=${OPENCTI_LIVE_ADMIN_PASSWORD}
+      - APP__ADMIN__TOKEN=${OPENCTI_LIVE_ADMIN_TOKEN}
+      - APP__ENCRYPTION_KEY=${OPENCTI_LIVE_ENCRYPTION_KEY}
+      - APP__HEALTH_ACCESS_KEY=${OPENCTI_LIVE_HEALTH_KEY}
+      - APP__TELEMETRY__METRICS__ENABLED=false
+      - REDIS__HOSTNAME=redis
+      - REDIS__PORT=6379
+      - ELASTICSEARCH__URL=http://elasticsearch:9200
+      - ELASTICSEARCH__NUMBER_OF_REPLICAS=0
+      - MINIO__ENDPOINT=minio
+      - MINIO__PORT=9000
+      - MINIO__USE_SSL=false
+      - MINIO__ACCESS_KEY=${OPENCTI_LIVE_S3_USER}
+      - MINIO__SECRET_KEY=${OPENCTI_LIVE_S3_PASSWORD}
+      - RABBITMQ__HOSTNAME=rabbitmq
+      - RABBITMQ__PORT=5672
+      - RABBITMQ__PORT_MANAGEMENT=15672
+      - RABBITMQ__MANAGEMENT_SSL=false
+      - RABBITMQ__USERNAME=${OPENCTI_LIVE_AMQP_USER}
+      - RABBITMQ__PASSWORD=${OPENCTI_LIVE_AMQP_PASSWORD}
+      - SMTP__HOSTNAME=localhost
+      - SMTP__PORT=25
+      - PROVIDERS__LOCAL__STRATEGY=LocalStrategy
+    ports:
+      - "127.0.0.1:${OPENCTI_LIVE_PORT}:8080"
+    depends_on:
+      redis: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }

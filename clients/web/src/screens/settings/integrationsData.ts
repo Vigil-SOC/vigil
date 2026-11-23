@@ -37,7 +37,7 @@ export const WIP_SERVERS = new Set([
 export const EXPERIMENTAL_SERVERS = new Set([
   'crowdstrike', 'sentinelone', 'azure-sentinel', 'splunk',
   'gcp-secops', 'gcp-threat-intel', 'joe-sandbox', 'vstrike',
-  'atomic-red-team', 'cape-sandbox', 'opencti', 'amazon-security-lake',
+  'atomic-red-team', 'cape-sandbox', 'amazon-security-lake',
 ])
 
 export const EXPERIMENTAL_NOTE = 'Not yet tested against a live instance. It may not work; please report what you find.'
