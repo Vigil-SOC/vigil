@@ -58,13 +58,14 @@ _TLD = re.compile(r"[A-Za-z]{2,63}|xn--[A-Za-z0-9-]{1,59}")
 _HASH = re.compile(r"[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64}")
 _UUID = re.compile(r"[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}")
 _SID = re.compile(r"S-1-\d+(-\d+)+", re.IGNORECASE)
-_UPN = re.compile(r"[^@\s/\\]+@[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+")
-_DOWN_LEVEL = re.compile(r"[^\\\s/@]+\\[^\\\s/@]+")
+_UPN = re.compile(r"^[^@\s/\\]+@[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+")
+_DOWN_LEVEL = re.compile(r"^[^\\\s/@]+\\[^\\\s/@]+")
 _ACCOUNT = re.compile(r"[A-Za-z0-9._-]{1,64}")
-_POSIX = re.compile(r"/(?!/)[^\x00-\x1f]*[A-Za-z0-9][^\x00-\x1f]*")
-_WINDOWS = re.compile(r"[A-Za-z]:[\\/][^\x00-\x1f]*[A-Za-z0-9][^\x00-\x1f]*")
-_UNC = re.compile(r"\\\\[^\\\x00-\x1f]+\\[^\x00-\x1f]+")
-_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
+# The run before the first alphanumeric excludes it, so a match has one split.
+_POSIX = re.compile(r"^/(?!/)[^\x00-\x1fA-Za-z0-9]*[A-Za-z0-9][^\x00-\x1f]*")
+_WINDOWS = re.compile(r"^[A-Za-z]:[\\/][^\x00-\x1fA-Za-z0-9]*[A-Za-z0-9][^\x00-\x1f]*")
+_UNC = re.compile(r"^\\\\[^\\\x00-\x1f]+\\[^\x00-\x1f]+")
+_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]{0,63}://")
 
 
 def _is_ip(value: str) -> bool:
@@ -183,6 +184,9 @@ def target_kind(target: Any) -> str:
     if not isinstance(target, str) or not target.strip():
         return "missing"
     t = target.strip()
+    # Longer than any action allows: name it without reading it.
+    if len(t) > max(limit for limit, _ in TARGET_RULES.values()):
+        return "oversized"
     bare = " ".join(t.strip(_EDGE).lower().split())
     if (
         any(m in t.lower() for m in _TEMPLATE_MARKERS)
