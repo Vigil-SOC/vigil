@@ -12748,6 +12748,8 @@ export interface components {
         Day1Evidence: {
             /** Brings */
             brings?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
             /** Comparison */
             comparison?: string | null;
             /** Coverage */
