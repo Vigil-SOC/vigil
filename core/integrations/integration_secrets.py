@@ -70,7 +70,6 @@ _CATALOG_ONLY_SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     "gcp-threat-intel": ("api_key",),
     "firecrawl": ("api_key",),
     "cribl-stream": ("password",),
-    "cloudforce_one": ("api_token",),
 }
 
 

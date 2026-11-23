@@ -28,10 +28,11 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Uni
 import httpx
 
 from core.federation.error_kind import kind_of
-from core.integrations._base.config import missing, resolve, resolve_fields
+from core.integrations._base.config import missing, resolve
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+from core.integrations.cloudforce_one.descriptor import CLOUDFORCE_ONE
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
@@ -509,11 +510,8 @@ async def _crowdstrike() -> Outcome:
 
 
 async def _cloudforce_one() -> Outcome:
-    # No descriptor and no MCP server: the poller reads the same fields. The
-    # token is a secret, so it is not in the stored config dict.
-    config = resolve_fields(
-        "cloudforce_one", ("api_token", "taxii_server_url", "collection_ids")
-    )
+    # Same descriptor the poller resolves, so Test and the poll see one config.
+    config = resolve(CLOUDFORCE_ONE)
     collection_ids = [
         part.strip()
         for part in str(config.get("collection_ids") or "").split(",")
@@ -587,7 +585,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     AMAZON_SECURITY_LAKE.id: _security_lake,
     MICROSOFT_DEFENDER.id: _defender,
     CROWDSTRIKE.id: _crowdstrike,
-    "cloudforce_one": _cloudforce_one,
+    CLOUDFORCE_ONE.id: _cloudforce_one,
 }
 
 
