@@ -1861,6 +1861,20 @@ export interface IntegrationHealthSource {
   state: IntegrationHealthState
   reason: string | null
   since: string | null
+  /** The stored record; window counts read null when expired or not yet counted. */
+  record?: IntegrationHealthRecord | null
+}
+
+export interface IntegrationHealthRecord {
+  dropped_window_start: string | null
+  returned_window: number | null
+  stored_window: number | null
+  filtered_window: number | null
+  dropped_window: number | null
+  /** returned − stored − filtered − dropped; negative is an accounting error */
+  duplicate_window: number | null
+  dropped_total: number
+  [key: string]: unknown
 }
 
 export interface IntegrationHealthResponse {

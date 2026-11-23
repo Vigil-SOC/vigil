@@ -30,6 +30,9 @@ FIELDS = (
     "dropped_total",
     "dropped_window_start",
     "dropped_window",
+    "returned_window",
+    "stored_window",
+    "filtered_window",
     "last_dropped_at",
     "last_data_at",
     "labels",
@@ -115,6 +118,18 @@ LABEL_CAP = 32
 _LABEL_MAX = 128
 
 
+# Federation poll counts kept under the drop window's anchor.
+POLL_COUNTS = ("returned_window", "stored_window", "filtered_window")
+
+
+def _restart_window(row, now) -> None:
+    """A fresh window: the drop count, and poll counts already being kept."""
+    row.dropped_window_start, row.dropped_window = now, 0
+    for f in POLL_COUNTS:
+        if getattr(row, f) is not None:
+            setattr(row, f, 0)
+
+
 def _counts(
     row,
     now,
@@ -128,7 +143,7 @@ def _counts(
     if dropped > 0:
         start = row.dropped_window_start
         if start is None or now - start >= DROP_WINDOW:
-            row.dropped_window_start, row.dropped_window = now, 0
+            _restart_window(row, now)
         row.dropped_window += dropped
         row.dropped_total = (row.dropped_total or 0) + dropped
         row.last_dropped_at = now
@@ -163,6 +178,42 @@ def record_collected(
         row.last_success_at = now
         row.consecutive_failures = 0
         _counts(row, now, received=received, dropped=dropped, labels=labels)
+
+    _write(source_id, apply)
+
+
+def record_polled(
+    source_id: str,
+    *,
+    returned: int,
+    stored: int,
+    filtered: int,
+    dropped: int,
+) -> None:
+    """A successful federation poll: a collection plus its window counts.
+
+    The window rolls over before counting every batch, even an empty one, and
+    the first poll after upgrade (counts still null) restarts it so earlier
+    drops are not mixed in.
+    """
+
+    def apply(row, now):
+        _attempt(row, now, True, None, None)
+        row.last_success_at = now
+        row.consecutive_failures = 0
+        start = row.dropped_window_start
+        if (
+            start is None
+            or now - start >= DROP_WINDOW
+            or any(getattr(row, f) is None for f in POLL_COUNTS)
+        ):
+            row.dropped_window_start, row.dropped_window = now, 0
+            for f in POLL_COUNTS:
+                setattr(row, f, 0)
+        row.returned_window += max(returned, 0)
+        row.stored_window += max(stored, 0)
+        row.filtered_window += max(filtered, 0)
+        _counts(row, now, received=stored, dropped=max(dropped, 0), labels=None)
 
     _write(source_id, apply)
 
@@ -296,6 +347,8 @@ def reset(source_id: str, session=None) -> None:
         row.last_success_at = None
         row.consecutive_failures = 0
         row.dropped_window_start, row.dropped_window = None, 0
+        for f in POLL_COUNTS:
+            setattr(row, f, None)
         row.last_dropped_at = None
         row.last_check_at = row.last_check_ok = row.last_check_error = None
         row.reset_at = now
