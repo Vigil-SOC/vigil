@@ -153,11 +153,20 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const phrase = judgement ? healthPhrase(judgement) : ''
     // the health cell is taken by a level, the server's wording, or a failed read of this integration
     const cellTaken = Boolean((failed && integration) || level || phrase)
+    // An alert source's switch is its agent tools'; Alert collection runs on its own
+    // schedule, which the health cell reports. Say so, or Good reads wrong beside Off.
+    // Not while health can't vouch for the schedule (unknown: overdue), and after any
+    // fault, so a Poor row still leads with what needs fixing.
+    const collecting =
+      !isEnabled &&
+      judgement?.kind === 'pulled' &&
+      !['not_checked', 'switched_off', 'unknown'].includes(judgement.state)
     const notes = [
       level === 'poor' ? phrase : '',
       cellTaken && runtime ? runtime : '',
       setup?.reason || '',
       ...faults,
+      collecting ? 'Agent tools off · alert collection still on' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx)
     // a server nobody connected has no health to report
     const connected = isEnabled || configured || extConfigured
