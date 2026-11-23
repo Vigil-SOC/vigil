@@ -93,6 +93,26 @@ def close_channel() -> str:
     return CHANNEL_AGENT
 
 
+def closing_person() -> Optional[str]:
+    """The person a close is on behalf of, or None when no person is behind it.
+
+    The access cookie, or a console chat turn whose signed claims name the chat
+    assistant. A run a person started carries the case-working agent, not chat,
+    so it is not that person's close (#4983).
+    """
+    if close_channel() == CHANNEL_COOKIE:
+        actor = _http.get()
+        return actor.username if actor is not None else None
+    # Lazy: tool_principal reads the JWT secret on import, which an upgrade lacks.
+    from core.auth.principals import CHAT_PLUGIN_ID, agent_principal_id
+    from core.auth.tool_principal import current_claims
+
+    claims = current_claims()
+    if claims is not None and claims.agent_id == agent_principal_id(CHAT_PLUGIN_ID):
+        return claims.username or None
+    return None
+
+
 def run_agent() -> tuple[Optional[str], Optional[str]]:
     """``(agent principal, run id)`` of the run whose signed claims are bound.
 
