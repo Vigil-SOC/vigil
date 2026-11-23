@@ -167,6 +167,13 @@ class NeedsYouItem(BaseModel):
         default_factory=list,
         description="A hypothesis approval's explanations, each with where it came from; base_rate is the benign one to beat.",
     )
+    tool: Optional[str] = Field(
+        default=None, description="The gated tool call this approval releases."
+    )
+    args: Optional[str] = Field(
+        default=None,
+        description="That call's arguments, verbatim: approving releases exactly these.",
+    )
     restricted: bool = Field(
         default=False,
         description="An item on a restricted case the caller can't read: no case, run or content.",

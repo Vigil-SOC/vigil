@@ -1,0 +1,17 @@
+/* A gated call's arguments on an approval card: shown whole, wrapped, never scrolled sideways. */
+.approval-call { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.approval-call-label { color: var(--tx2); font-size: 12px; overflow-wrap: anywhere; }
+.approval-call-label code { font-family: var(--mono); color: var(--tx1); }
+.approval-call pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border: 1px solid var(--ln0);
+  border-radius: 8px;
+  color: var(--tx0);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
