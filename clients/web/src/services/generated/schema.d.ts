@@ -12761,10 +12761,18 @@ export interface components {
         };
         /** Day1Check */
         Day1Check: {
+            /** Cited Value */
+            cited_value?: string | null;
+            /** Clause */
+            clause?: string | null;
             comparison?: components["schemas"]["Day1Comparison"] | null;
+            /** Date Checked */
+            date_checked?: string | null;
             evidence?: components["schemas"]["Day1Evidence"];
             /** Id */
             id: string;
+            /** Link */
+            link?: string | null;
             /** Module */
             module: string;
             /**
@@ -12774,6 +12782,8 @@ export interface components {
             outcome: "pass" | "fail" | "not_checked" | "needs_a_person";
             /** Reason */
             reason: string;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** Day1Comparison */
         Day1Comparison: {
@@ -12790,12 +12800,20 @@ export interface components {
         Day1Evidence: {
             /** Brings */
             brings?: string | null;
+            /** Comparison */
+            comparison?: string | null;
+            /** Coverage */
+            coverage?: string | null;
             /** Fix */
             fix?: string | null;
             /** Labels */
             labels?: string[];
             /** Last Data */
             last_data?: string | null;
+            /** Prerequisites */
+            prerequisites?: string[];
+            /** Screen */
+            screen?: string | null;
             /** Source Id */
             source_id?: string | null;
             /** State */

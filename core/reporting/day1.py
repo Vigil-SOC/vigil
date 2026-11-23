@@ -18,12 +18,14 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.audit.retention import view as retention_view
+from core.auth import mfa_coverage, security_keys, session_policy
 from core.auth.permissions import holders, missing_permission
 from core.config import is_demo_mode
 from core.integrations import health
 from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import MODULES, VISIBILITY, spec_for
+from core.reporting.checks import MODULES, SETTINGS, VISIBILITY, spec_for
 from core.reporting.enablement import disabled_module_ids
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
@@ -144,12 +146,14 @@ def notify_finished(trigger: str, actor_id: Optional[str], record_id: str) -> No
 
 
 def build(state: dict) -> dict[str, Any]:
-    """Each module that is switched on, from this readiness result.
+    """Each module that is switched on.
 
     A listed id is left out, and ``modules`` names only what ran. Daemon,
     model and collection come from ``state``, daemon first. Sources come
     from integration health. A failed source read is one not-checked check,
-    and the report still completes. Demo findings are not read.
+    and the report still completes. Settings are read on a run that includes
+    them, including unknown readiness and the desktop app. Demo findings
+    are not read.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
@@ -158,6 +162,9 @@ def build(state: dict) -> dict[str, Any]:
     if VISIBILITY.id not in disabled:
         modules.append(VISIBILITY.id)
         checks.extend(_visibility_checks(state, evidence))
+    if SETTINGS.id not in disabled:
+        modules.append(SETTINGS.id)
+        checks.extend(_settings_checks())
     preface = PREFACE if is_demo_mode() else None
     return {
         "modules": modules,
@@ -246,18 +253,24 @@ def _present(
     ]
     hidden = set(withheld)
     compared = _compared(session, record)
-    prior = _visible_checks(compared, hidden) if compared is not None else {}
+    prior = (
+        _visible_checks(session, user_id, compared, hidden)
+        if compared is not None
+        else {}
+    )
     checks = []
     for check in record.checks or []:
-        if check.get("module") in hidden:
+        if check.get("module") in hidden or not _allowed(session, user_id, check):
             continue
-        shown = {
-            "id": check.get("id"),
-            "module": check.get("module"),
-            "outcome": check.get("outcome"),
-            "reason": check.get("reason") or "",
-            "evidence": dict(check.get("evidence") or {}),
-        }
+        shown = _annotate(
+            {
+                "id": check.get("id"),
+                "module": check.get("module"),
+                "outcome": check.get("outcome"),
+                "reason": check.get("reason") or "",
+                "evidence": dict(check.get("evidence") or {}),
+            }
+        )
         if compared is not None:
             shown["comparison"] = _comparison(check, prior.get(check.get("id")))
         checks.append(shown)
@@ -280,6 +293,35 @@ def _present(
         "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
         "switched_off": switched_off,
+    }
+
+
+def _allowed(session: Session, user_id: str, check: dict) -> bool:
+    """Settings checks follow their own permission. The stored row stays."""
+    if check.get("module") != SETTINGS.id:
+        return True
+    try:
+        spec = spec_for(str(check.get("id") or ""))
+    except KeyError:
+        return False
+    return missing_permission(user_id, spec.permission, session) is None
+
+
+def _annotate(check: dict) -> dict:
+    """Value checks carry the registry citation. It is not stored on the record."""
+    try:
+        spec = spec_for(str(check.get("id") or ""))
+    except KeyError:
+        return check
+    if spec.cited_value is None:
+        return check
+    return {
+        **check,
+        "cited_value": spec.cited_value,
+        "source_id": spec.source_id,
+        "clause": spec.clause,
+        "link": spec.link,
+        "date_checked": spec.date_checked,
     }
 
 
@@ -307,11 +349,13 @@ def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
     )
 
 
-def _visible_checks(record: ReportRecord, hidden: set[str]) -> dict[str, dict]:
+def _visible_checks(
+    session: Session, user_id: str, record: ReportRecord, hidden: set[str]
+) -> dict[str, dict]:
     return {
         check.get("id"): check
         for check in record.checks or []
-        if check.get("module") not in hidden
+        if check.get("module") not in hidden and _allowed(session, user_id, check)
     }
 
 
@@ -659,15 +703,282 @@ def _check(
     *,
     fix: Optional[str] = None,
     source: Optional[dict] = None,
+    extra: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    spec_for(check_id)  # a produced id has to be one the registry knows
+    spec = spec_for(check_id)  # a produced id has to be one the registry knows
+    evidence = _evidence(source, fix)
+    for key, value in (extra or {}).items():
+        if value is None or value == [] or value == "":
+            continue
+        evidence[key] = value
     return {
         "id": check_id,
-        "module": VISIBILITY.id,
+        "module": spec.module,
         "outcome": outcome,
         "reason": reason,
-        "evidence": _evidence(source, fix),
+        "evidence": evidence,
     }
+
+
+_AT = "at the cited value"
+_STRICTER = "stricter than the cited value"
+_WEAKER = "weaker than the cited value"
+_SESSIONS_SCREEN = "/settings?section=sessions"
+_AUDIT_SCREEN = "/settings?section=audit"
+# One year is 365 days, the same length as the retention minimum.
+_THREE_YEARS = 365 * 3
+_UNREADABLE_SESSION = "Could not read the session settings."
+_HOSTNAME = (
+    "Set VIGIL_CONSOLE_HOSTNAME and VIGIL_COOKIE_SECURE in Compose's .env, "
+    "or in the Helm chart's config, then restart the API."
+)
+_KEY_HOLDER = "A person who holds a key has to raise this."
+
+_SESSION_IDS = (
+    "settings.idle",
+    "settings.length",
+    "settings.lockout",
+    "settings.dormancy",
+    "settings.unused",
+    "settings.mfa_privileged",
+    "settings.phishing_resistant",
+    "settings.mfa_everyone",
+)
+
+
+def _settings_checks() -> list[dict[str, Any]]:
+    return [*_session_checks(), _retention_check()]
+
+
+def _session_checks() -> list[dict[str, Any]]:
+    """Eight session checks from the stored row. Defaults are not a substitute."""
+    try:
+        with unit_of_work() as session:
+            policy = session_policy.read_row(session)[0].policy
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read session settings: %s", type(exc).__name__
+        )
+        return [
+            _check(
+                check_id,
+                NOT_CHECKED,
+                _UNREADABLE_SESSION,
+                extra={"screen": _SESSIONS_SCREEN},
+            )
+            for check_id in _SESSION_IDS
+        ]
+    return _judge_session(policy, _coverage(policy))
+
+
+def _coverage(policy) -> dict[str, str]:
+    """Counts only. A failed count leaves the outcome to the setting."""
+    try:
+        with unit_of_work() as session:
+            level = policy.require_phishing_resistant
+            if level == "nobody":
+                level = "privileged"
+            return {
+                "privileged": _accounts(
+                    mfa_coverage.without_mfa(session, "privileged"), "MFA"
+                ),
+                "everyone": _accounts(
+                    mfa_coverage.without_mfa(session, "everyone"), "MFA"
+                ),
+                "keys": _accounts(
+                    mfa_coverage.without_key(session, level), "security key"
+                ),
+            }
+    except Exception as exc:  # noqa: BLE001 - the setting is still judged
+        logger.error(
+            "Day 1 Report could not count MFA coverage: %s", type(exc).__name__
+        )
+        return {}
+
+
+def _accounts(count: int, gap: str) -> str:
+    if count == 1:
+        return f"1 account has no {gap}."
+    return f"{count} accounts have no {gap}."
+
+
+def _judge_session(policy, coverage: dict[str, str]) -> list[dict[str, Any]]:
+    idle = _ceiling(policy.idle_standard_minutes, 15)
+    length = _ceiling(policy.absolute_hours, 12)
+    lock = (
+        (PASS, _AT)
+        if policy.lockout_threshold == 3 and not policy.lockout_timed
+        else (FAIL, _WEAKER)
+    )
+    dormancy = _optional_ceiling(policy.dormancy_days, 45)
+    unused = _optional_ceiling(policy.token_unused_days, 45)
+    privileged = _level(policy.require_mfa, "privileged", "everyone")
+    keys = _level(policy.require_phishing_resistant, "privileged", "everyone")
+    everyone = _level(policy.require_mfa, "everyone", None)
+    rows = (
+        ("settings.idle", idle, _idle_reason(policy), None),
+        ("settings.length", length, _length_reason(policy), None),
+        ("settings.lockout", lock, _lockout_reason(policy), None),
+        ("settings.dormancy", dormancy, _dormancy_reason(policy), None),
+        ("settings.unused", unused, _unused_reason(policy), None),
+        (
+            "settings.mfa_privileged",
+            privileged,
+            _mfa_reason(policy.require_mfa, "privileged"),
+            coverage.get("privileged"),
+        ),
+        (
+            "settings.phishing_resistant",
+            keys,
+            _key_reason(policy.require_phishing_resistant),
+            coverage.get("keys"),
+        ),
+        (
+            "settings.mfa_everyone",
+            everyone,
+            _mfa_reason(policy.require_mfa, "everyone"),
+            coverage.get("everyone"),
+        ),
+    )
+    checks = []
+    for check_id, judged, reason, count in rows:
+        outcome, comparison = judged
+        extra: dict[str, Any] = {"comparison": comparison, "screen": _SESSIONS_SCREEN}
+        if count:
+            extra["coverage"] = count
+        if check_id == "settings.phishing_resistant" and outcome == FAIL:
+            extra["prerequisites"] = _key_prerequisites()
+        checks.append(_check(check_id, outcome, reason, extra=extra))
+    return checks
+
+
+def _retention_check() -> dict[str, Any]:
+    """The period in force. A pending period, and no period, are not in force."""
+    try:
+        with unit_of_work() as session:
+            days = retention_view(session, datetime.now(timezone.utc))["effective_days"]
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read audit retention: %s", type(exc).__name__
+        )
+        return _check(
+            "settings.retention",
+            NOT_CHECKED,
+            "Could not read the audit-trail retention period.",
+            extra={"screen": _AUDIT_SCREEN},
+        )
+    if days is None:
+        outcome, comparison = FAIL, _WEAKER
+        reason = "Audit-trail retention: no period is in force."
+    else:
+        outcome, comparison = _floor(int(days), _THREE_YEARS)
+        reason = f"Audit-trail retention: the trail is kept for {int(days)} days."
+    return _check(
+        "settings.retention",
+        outcome,
+        reason,
+        extra={"comparison": comparison, "screen": _AUDIT_SCREEN},
+    )
+
+
+def _ceiling(actual: int, limit: int) -> tuple[str, str]:
+    """Shorter than the cited maximum is stricter."""
+    if actual < limit:
+        return PASS, _STRICTER
+    if actual == limit:
+        return PASS, _AT
+    return FAIL, _WEAKER
+
+
+def _floor(actual: int, limit: int) -> tuple[str, str]:
+    """Longer than the cited minimum is stricter."""
+    if actual > limit:
+        return PASS, _STRICTER
+    if actual == limit:
+        return PASS, _AT
+    return FAIL, _WEAKER
+
+
+def _optional_ceiling(actual: Optional[int], limit: int) -> tuple[str, str]:
+    if actual is None:
+        return FAIL, _WEAKER
+    return _ceiling(actual, limit)
+
+
+def _level(actual: str, cited: str, above: Optional[str]) -> tuple[str, str]:
+    if above is not None and actual == above:
+        return PASS, _STRICTER
+    if actual == cited:
+        return PASS, _AT
+    return FAIL, _WEAKER
+
+
+def _idle_reason(policy) -> str:
+    return (
+        "Session inactivity: a standard sign-in ends after "
+        f"{policy.idle_standard_minutes} minutes with no activity."
+    )
+
+
+def _length_reason(policy) -> str:
+    return (
+        "Session length: a sign-in ends after "
+        f"{policy.absolute_hours} hours whether or not it is in use."
+    )
+
+
+def _lockout_reason(policy) -> str:
+    lead = (
+        f"Lockout: an account locks after {policy.lockout_threshold} "
+        "failed sign-ins in a row"
+    )
+    if policy.lockout_timed:
+        return f"{lead}, and the lock ends after {policy.lockout_minutes} minutes."
+    return f"{lead} and stays locked until an administrator releases it."
+
+
+def _dormancy_reason(policy) -> str:
+    if policy.dormancy_days is None:
+        return "Dormant accounts: idle accounts are not deactivated."
+    return (
+        "Dormant accounts: an account with no sign-in and no personal token use "
+        f"for {policy.dormancy_days} days is deactivated."
+    )
+
+
+def _unused_reason(policy) -> str:
+    if policy.token_unused_days is None:
+        return "Unused credentials: unused tokens are not revoked."
+    return f"Unused credentials: a token unused for {policy.token_unused_days} days is revoked."
+
+
+def _mfa_reason(level: str, which: str) -> str:
+    name = (
+        "MFA for privileged accounts" if which == "privileged" else "MFA for everyone"
+    )
+    if level == "off":
+        return f"{name}: sign-in does not require MFA."
+    if level == "privileged":
+        return f"{name}: privileged accounts must use MFA."
+    return f"{name}: every person must use MFA."
+
+
+def _key_reason(level: str) -> str:
+    if level == "nobody":
+        return "Phishing-resistant MFA: sign-in does not require a security key."
+    if level == "privileged":
+        return "Phishing-resistant MFA: privileged accounts must use a security key."
+    return "Phishing-resistant MFA: every person must use a security key."
+
+
+def _key_prerequisites() -> list[str]:
+    lines = []
+    reason = security_keys.availability().reason
+    if reason:
+        lines.append(reason)
+    lines.append(_HOSTNAME)
+    lines.append(_KEY_HOLDER)
+    return lines
 
 
 def _from_item(

@@ -84,11 +84,38 @@
   overflow-wrap: anywhere;
 }
 
-.d1-facts {
+.d1-facts,
+.d1-compare {
   color: var(--tx2);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.d1-compare { color: var(--tx1); }
+
+.d1-row a {
+  color: var(--ac);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.d1-compare a { font-size: inherit; }
+
+/* A linked row clamps its reason; focus inside it (the setting link) shows the rest. */
+.d1-row.has-link > .d1-reason {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.d1-row.has-link:focus-within > .d1-reason {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
 }
 
 .d1-actions {
@@ -100,7 +127,7 @@
 
 .d1-actions .btn { white-space: normal; }
 
-.d1-compare {
+.d1-versus {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -109,9 +136,12 @@
   max-width: 100%;
 }
 
-.d1-compare-kind {
+.d1-versus-kind {
+  margin: 0;
   color: var(--tx0);
+  font-size: 13px;
   font-weight: 650;
+  line-height: 1.45;
 }
 
 .d1-print-line {

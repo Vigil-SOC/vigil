@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { day1Api } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { useAuth } from '../../contexts/AuthContext'
@@ -21,6 +21,14 @@ type Trigger = Report['trigger']
 
 const MODULE_TITLE: Record<string, string> = {
   visibility: 'What Vigil can see',
+  settings: "Vigil's own settings",
+}
+
+const SETTINGS_TIP = {
+  source: 'The session policy and the audit-trail retention period',
+  calculation:
+    'A value passes when it is at or stricter than the cited value. An unset period fails. The MFA count is shown beside the setting and does not change the outcome.',
+  limit: 'Session checks need sessions.manage. Retention needs audit.read. Not checked is never a pass.',
 }
 
 const OUTCOMES: Outcome[] = ['pass', 'fail', 'not_checked', 'needs_a_person']
@@ -120,6 +128,9 @@ function storedLine(evidence: Evidence | null | undefined): string | null {
   if (!evidence) return null
   const parts: string[] = []
   if (evidence.fix) parts.push(evidence.fix)
+  if (evidence.comparison) parts.push(evidence.comparison)
+  if (evidence.coverage) parts.push(evidence.coverage)
+  for (const line of evidence.prerequisites ?? []) parts.push(line)
   if (evidence.source_id) {
     parts.push(evidence.source_id)
     parts.push(`Brings ${evidence.brings ?? 'lookups'}`)
@@ -130,14 +141,91 @@ function storedLine(evidence: Evidence | null | undefined): string | null {
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
+function pieces(value: string | null | undefined): string[] {
+  if (!value) return []
+  return value.split(';').map((part) => part.trim()).filter(Boolean)
+}
+
+function screenName(path: string): string {
+  return path.includes('section=audit') ? 'Audit trail' : 'Session settings'
+}
+
+function Citation({ check }: { check: Check }) {
+  const names = pieces(check.source_id)
+  if (names.length === 0) return null
+  const clauses = pieces(check.clause)
+  const hrefs = pieces(check.link)
+  const comparison = check.evidence?.comparison
+  return (
+    <p className="d1-compare">
+      {comparison ? `${comparison.charAt(0).toUpperCase()}${comparison.slice(1)}; source: ` : 'Source: '}
+      {names.map((name, index) => (
+        <span key={`${name}-${index}`}>
+          {index > 0 && '; '}
+          {hrefs[index] ? (
+            <a href={hrefs[index]} target="_blank" rel="noreferrer">
+              {name}
+            </a>
+          ) : (
+            name
+          )}
+          {clauses[index] ? `, ${clauses[index]}` : ''}
+        </span>
+      ))}
+      .
+    </p>
+  )
+}
+
+function Versus({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+  const comparison = check.comparison
+  if (!comparison) return null
+  const showEvidence =
+    comparison.kind === 'new' || comparison.kind === 'fixed' || comparison.kind === 'unchanged'
+  const currentEvidence = showEvidence ? storedLine(check.evidence) : null
+  const priorEvidence = showEvidence ? storedLine(comparison.prior_evidence) : null
+  return (
+    <div className="d1-versus">
+      <p className="d1-versus-kind">{comparisonWord(comparison, check.outcome)}</p>
+      {currentEvidence && <p className="d1-facts">This report: {currentEvidence}</p>}
+      {priorEvidence && comparedAt && <p className="d1-facts">{reportStamp(comparedAt)}: {priorEvidence}</p>}
+    </div>
+  )
+}
+
+function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+  const tone = outcomeTone(check.outcome)
+  const screen = check.evidence?.screen
+  const prerequisites = check.evidence?.prerequisites ?? []
+  return (
+    <div className="d1-row has-link">
+      <span className={`state-pill ${tone}`}>
+        <span className="state-dot" aria-hidden="true" />
+        {outcomeWord(check.outcome)}
+      </span>
+      <p className="d1-reason">{check.reason}</p>
+      <Citation check={check} />
+      {check.cited_value && (
+        <p className="d1-facts">
+          Cited value: {check.cited_value}.
+          {check.date_checked ? ` Checked ${check.date_checked}.` : ''}
+        </p>
+      )}
+      {check.evidence?.coverage && <p className="d1-facts">{check.evidence.coverage}</p>}
+      {prerequisites.map((line) => (
+        <p className="d1-facts" key={line}>
+          {line}
+        </p>
+      ))}
+      <Versus check={check} comparedAt={comparedAt} />
+      {screen && <Link to={screen}>{screenName(screen)}</Link>}
+    </div>
+  )
+}
+
 function CheckRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
   const tone = outcomeTone(check.outcome)
   const line = facts(check)
-  const comparison = check.comparison
-  const showEvidence =
-    comparison?.kind === 'new' || comparison?.kind === 'fixed' || comparison?.kind === 'unchanged'
-  const currentEvidence = showEvidence ? storedLine(check.evidence) : null
-  const priorEvidence = showEvidence ? storedLine(comparison?.prior_evidence) : null
   return (
     <div className="d1-row">
       <span className={`state-pill ${tone}`}>
@@ -147,13 +235,7 @@ function CheckRow({ check, comparedAt }: { check: Check; comparedAt: string | nu
       <p>{check.reason}</p>
       {check.evidence?.fix && <p className="d1-fix">{check.evidence.fix}</p>}
       {line && <p className="d1-facts">{line}</p>}
-      {comparison && (
-        <div className="d1-compare">
-          <p className="d1-compare-kind">{comparisonWord(comparison, check.outcome)}</p>
-          {currentEvidence && <p className="d1-facts">This report: {currentEvidence}</p>}
-          {priorEvidence && comparedAt && <p className="d1-facts">{reportStamp(comparedAt)}: {priorEvidence}</p>}
-        </div>
-      )}
+      <Versus check={check} comparedAt={comparedAt} />
     </div>
   )
 }
@@ -348,13 +430,17 @@ export default function ReportScreen() {
   }
 
   const checks = report?.checks ?? []
-  const problems = checks.filter((check) => check.outcome !== 'pass')
-  const settled = checks.filter(
+  const visibility = checks.filter((check) => check.module !== 'settings')
+  const settings = checks.filter((check) => check.module === 'settings')
+  const problems = visibility.filter((check) => check.outcome !== 'pass')
+  const settled = visibility.filter(
     (check) => check.outcome === 'pass' && !check.id.startsWith('visibility.source.'),
   )
-  const sources = checks.filter(
+  const sources = visibility.filter(
     (check) => check.outcome === 'pass' && check.id.startsWith('visibility.source.'),
   )
+  const settingProblems = settings.filter((check) => check.outcome !== 'pass')
+  const settingSettled = settings.filter((check) => check.outcome === 'pass')
   const withheld = (report?.withheld ?? []).filter((id) => id === 'visibility')
   const showVisibility = report !== null && !withheld.includes('visibility') && (report.modules ?? []).includes('visibility')
   const comparedAt = report?.compared_at ?? null
@@ -463,6 +549,28 @@ export default function ReportScreen() {
             )}
             {problems.length === 0 && settled.length === 0 && sources.length === 0 && (
               <p className="d1-quiet">Nothing to report in this section.</p>
+            )}
+          </section>
+        )}
+        {settings.length > 0 && (
+          <section className="d1-card" aria-label="Vigil's own settings">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.settings}</h2>
+              <InfoTip label="How Vigil's own settings are judged" align="start" {...SETTINGS_TIP} />
+            </div>
+            {settingProblems.length > 0 && (
+              <div className="d1-rows">
+                {settingProblems.map((check) => (
+                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                ))}
+              </div>
+            )}
+            {settingSettled.length > 0 && (
+              <div className="d1-rows">
+                {settingSettled.map((check) => (
+                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                ))}
+              </div>
             )}
           </section>
         )}
