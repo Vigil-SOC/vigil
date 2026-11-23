@@ -1414,17 +1414,13 @@ export function guardFor(plugin: PluginManifest, value: Record<string, unknown>)
 }
 
 // The actions the answer asks a person to approve, when its plugin names a field for
-// them. The backend checks each one on its own and files the valid ones. Held by a
-// guard that notes proposals, each still goes to a person, marked as unreviewed.
+// them. The backend checks each one on its own and files the valid ones. An answer a
+// guard held files none: the conclusion and review events keep what was asked and why.
 export function proposalsOf(plugin: PluginManifest, conclusion: ConclusionPayload, review?: ReviewPayload): ProposedAction[] {
+  if (review !== undefined && heldBecause(review) !== null) return [];
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.proposals_field : undefined;
   const listed = field === undefined ? undefined : conclusion.value[field];
-  const proposals = Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
-  const note = review === undefined || heldBecause(review) === null ? undefined : guardFor(plugin, conclusion.value)?.proposals_note;
-  // A proposal with no reason stays without one, so the backend still drops it.
-  return note === undefined
-    ? proposals
-    : proposals.map((one) => (typeof one.reason === "string" && one.reason.trim() ? { ...one, reason: `${note} ${one.reason}` } : one));
+  return Array.isArray(listed) ? (listed.filter((one) => typeof one === "object" && one !== null) as ProposedAction[]) : [];
 }
 
 // Why the guard moved the answer off what was asked; null when it did not.

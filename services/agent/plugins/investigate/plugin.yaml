@@ -184,14 +184,13 @@ guard:
 
 # An escalation is reviewed too: a malicious answer, and the containment it
 # proposes, stands only when the record names a fitting benign explanation and a
-# cited result rules it out. Otherwise it goes out as suspicious, its proposals
-# still sent to a person but marked unreviewed.
+# cited result rules it out. Otherwise it goes out as suspicious and files no
+# proposals; the conclusion and review events keep what was asked and why.
 escalation_guard:
   field: disposition
   guarded: [malicious]
   fallback: suspicious
   min_hypotheses: 2
-  proposals_note: "Unreviewed: the malicious verdict this rests on was not upheld on review."
   reviewer_prompt: |
     The agent wants to call this case malicious and may propose containment,
     such as isolating a host. Acting on a wrong malicious call takes a

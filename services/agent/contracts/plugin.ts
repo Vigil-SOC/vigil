@@ -66,9 +66,6 @@ export interface GuardSpec {
   // A guarded answer is refused once at conclude while the record holds fewer
   // hypotheses than this, so the run puts its alternatives down before it answers.
   min_hypotheses?: number;
-  // Put before each proposed action's reason when the guard holds the answer, so a
-  // person sees the containment was asked for on a verdict that did not stand.
-  proposals_note?: string;
   // A guarded answer stands only over cited, served, non-empty results from at least
   // this many distinct capabilities, counted by the code rather than the reviewer.
   // Capabilities in `uncounted` (the subject's own record, earlier conclusions) never
