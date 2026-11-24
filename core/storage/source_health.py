@@ -54,6 +54,7 @@ FIELDS = (
     "last_dropped_at",
     "last_data_at",
     "labels",
+    "facts",
     "last_check_at",
     "last_check_ok",
     "last_check_error",
@@ -301,6 +302,23 @@ def record_lookup(source_id: str) -> None:
     _write(source_id, apply)
 
 
+def record_facts(source_id: str, facts: Dict[str, Any], *, started: datetime) -> None:
+    """A collector's successful read of the source: its facts, and a success as
+    ``record_lookup`` stamps one. A failed read goes to ``record_failed`` and
+    leaves the facts as they were. ``last_check_*`` is not touched. Dropped when
+    the record was reset after the read ``started``: it read the old settings."""
+
+    def apply(row, now):
+        if row.reset_at is not None and row.reset_at >= started:
+            return
+        row.facts = facts
+        _attempt(row, now, True, None, None)
+        row.last_success_at = now
+        row.consecutive_failures = 0
+
+    _write(source_id, apply)
+
+
 def record_recheck(
     source_id: str,
     *,
@@ -385,6 +403,7 @@ def reset(source_id: str, session=None) -> None:
             setattr(row, f, None)
         row.last_dropped_at = None
         row.last_check_at = row.last_check_ok = row.last_check_error = None
+        row.facts = None  # another instance's, or read with another token
         row.reset_at = now
         row.updated_at = now
 

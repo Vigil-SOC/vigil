@@ -21,7 +21,7 @@ import {
   tabFromQuery,
   type IntegrationsTab,
 } from './integrationsData'
-import { rowPhrase, type ServerRow } from './integrationHealth'
+import { factsPhrase, rowPhrase, type ServerRow } from './integrationHealth'
 import { useIntegrationsState } from './IntegrationsState'
 import AddIntegrationTab from './AddIntegrationTab'
 import AuditFeedCard from './AuditFeedCard'
@@ -283,6 +283,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           <tbody>
             {connected.map((r) => {
               const phrase = rowPhrase(r)
+              const facts = r.judgement?.state === 'switched_off' ? '' : factsPhrase(r.judgement?.record?.facts)
               return (
               <tr key={r.name}>
                 <td>
@@ -295,6 +296,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                         {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                       </span>
                       <span className="int-sub">{categoryOf(r.name)}</span>
+                      {facts && <span className="int-sub int-facts"><Clamp text={facts} /></span>}
                     </div>
                   </div>
                 </td>

@@ -4786,6 +4786,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column source_health.facts": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
  "column source_health.filtered_total": {
   "default": "0",
   "nullable": false,

@@ -723,6 +723,10 @@ async def _startup(app: FastAPI):
 
         app.state.readiness_task = asyncio.create_task(readiness_sweeper())
 
+        from services.api.opencti_facts import run as opencti_facts
+
+        app.state.opencti_facts_task = asyncio.create_task(opencti_facts())
+
         from services.api.skill_sweep import run as skill_sweeper
 
         app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
@@ -773,6 +777,7 @@ async def _stop_setup_code(app) -> None:
         "setup_code_task",
         "dormancy_task",
         "readiness_task",
+        "opencti_facts_task",
         "skill_sweep_task",
         "token_sweep_task",
     ):
