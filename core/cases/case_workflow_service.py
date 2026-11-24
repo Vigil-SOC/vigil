@@ -577,6 +577,10 @@ class CaseWorkflowService:
             )
             if determining and take_ownership:
                 self._take_on_close(session, case)
+        from core.response.approval_service import settle_for_close
+
+        # Its unanswered asks end with it, in this transaction (#5107).
+        settle_for_close(session, case_id)
         return closure
 
     @staticmethod
@@ -642,6 +646,10 @@ class CaseWorkflowService:
             closure.sampled_at = None
             closure.false_positive_cause = None
         move_reopened_archived_team(session, case_id)
+        from core.response.approval_service import reopen_settled
+
+        # What the close settled is asked again (#5107).
+        reopen_settled(session, case_id)
 
     def merge_cases(
         self,
@@ -770,6 +778,13 @@ class CaseWorkflowService:
             # analyst's `false_positive` -- and being the category that writes
             # no Verdict, it would withdraw the one already written. A merge
             # relates two records; it does not overturn what one of them found.
+            from core.response.approval_service import (
+                reparent_for_merge,
+                settle_for_close,
+            )
+
+            # The source's asks follow its evidence rather than settle (#5107).
+            reparent_for_merge(session, source_case_id, target_case_id)
             standing = session.get(CaseClosureInfo, source_case_id)
             stated = (standing.closure_category or "").strip() if standing else ""
             if stated not in ("", ClosureCategory.UNSPECIFIED.value):
@@ -790,6 +805,8 @@ class CaseWorkflowService:
                     on_trail=False,
                 )
 
+            # A closed target answers what it now holds.
+            settle_for_close(session, target_case_id)
             # Both Cases changed what they hold, whether or not the close ran.
             reconcile_case_safely(session, source_case_id)
             reconcile_case_safely(session, target_case_id)
