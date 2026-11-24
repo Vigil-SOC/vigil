@@ -78,7 +78,7 @@ system: |-
   </principles>
 
   <methodology>
-  Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
+  Given a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
   check_detection_candidate lints a candidate Sigma rule and replays it: fetch the events for the evidence window with your SIEM search tools, pass the proven ones as events and those from ruled-out runs as ruled_out_events.
   save_detection_rule keeps a drafted rule (Splunk and/or Elastic copy, optional Sigma form) in Vigil's overlay, where it enters shadow. Pass the attack events' ids as your SIEM search returned them (proven_event_ids: Splunk _bkt:_cd, Elasticsearch _id) with the Sigma form, and attack_started_at / attack_ended_at around them: Vigil reads them from the SIEM and refuses the save unless the Sigma form and each Splunk and Elastic copy catch them. A rule saved without them never goes live on its own. Write each copy on the field names those events carry.
   A host, address or account that is expected in this environment never goes into the rule (lint refuses it in the Sigma form and in each Splunk search and Elastic query, even under not; whole private ranges such as 10.0.0.0/8 are fine): pass it as an exception per copy to save_detection_rule, or add one to a saved copy with detection_rule_exception, with a note saying why.

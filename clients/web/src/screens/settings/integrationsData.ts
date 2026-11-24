@@ -117,7 +117,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   anyrun: 'Interactive malware sandbox for real-time analysis with process monitoring and network capture.',
   'url-analysis': 'Analyze suspicious URLs for phishing indicators, redirects, and malicious content.',
   'ip-geolocation': 'Each looked-up address is sent to ip-api.com. Look up geographic location, ISP, and organization info for IP addresses during investigations.',
-  'atomic-red-team': 'Invoke one Atomic Red Team technique against a named range. Disabled until toggled; saving config does not run the runner.',
+  'atomic-red-team': 'Invoke one Atomic Red Team technique on a host the operator has listed. Disabled until toggled; saving config does not run the runner.',
 }))
 
 export function prettyServerName(name: string): string {
