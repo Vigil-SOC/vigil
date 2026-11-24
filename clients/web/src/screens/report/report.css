@@ -26,6 +26,16 @@
 }
 
 .d1-preface { color: var(--tx0); font-weight: 650; }
+
+.d1-selection {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  color: var(--tx0);
+}
+
+.d1-selection a { font-size: inherit; }
 .d1-meta, .d1-quiet { color: var(--tx2); }
 .d1-withheld { color: var(--tx1); }
 

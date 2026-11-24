@@ -177,13 +177,30 @@ _Avoid_: result store (outcomes live only here)
 
 **Report Check**:
 One entry in the check registry (`core/reporting/checks.py`): Vigil's own id,
-its module, the permission that gates its source, and its rule. A value check
-also carries the cited value, the source id, the clause, the link and the date
-it was checked, and has no field for quoted text. The registry holds the
-checks for what Vigil can see, for Vigil's own settings, for detection
-coverage, and for what CrowdStrike, Defender and Wazuh still list. Outcomes
-are not stored on the entry.
+its module, the permission that gates its source, and its rule. A settings
+check also carries its scoped values. Each value names jurisdictions and
+kinds, or every install, and carries a ceiling, floor or level, whether it
+is in force or proposed, the source id, the clause, the link, the date it
+was checked, and Vigil's own wording. There is no field for quoted text. The
+registry holds the checks for what Vigil can see, for Vigil's own settings,
+for detection coverage, and for what CrowdStrike, Defender and Wazuh still
+list. Outcomes are not stored on the entry.
 _Avoid_: rule check, credential check (those are other checks)
+
+**Applicable Value**:
+The one in-force value a settings check is scored against on a report run.
+It is the tightest value whose scope the selection holds in full. A scope is
+held in full when every jurisdiction and kind it names is selected. When no
+scoped value is held, the every-install value is used. A scoped value is
+used even when it equals the every-install value. Two equal scoped values:
+the scope that names more of the selection, else the registry order. A
+proposed value inside the selection is shown and is not scored. When none
+is in force, the check stores no cited value. That is not a Check Outcome:
+the row says "no cited value for your selection", shows no pass or fail, and
+stays out of the summary's actions. The selection and the Applicable Value
+are written onto the Report Record when the run is stored. A record that
+stored no citation keeps the citation text from before values were scoped.
+_Avoid_: check outcome, compliance
 
 **Check Outcome**:
 What one Report Check returned on one Report Record: pass, fail, not checked
@@ -196,8 +213,9 @@ lists each source's health and reason, what it brings in (alerts, lookups or
 rules), when data last arrived, and the labels seen on webhook events, all as
 information, plus switched-off integrations and the state of collection, the
 background service and the model. Vigil's own settings compares each live
-session and retention value with its cited value, and shows that comparison,
-the citation, a link to the setting and, for MFA, a count of accounts.
+session and retention value with its Applicable Value, and shows that
+comparison, the citation, a link to the setting and, for MFA, a count of
+accounts.
 Detection coverage (`detections.read`) lists techniques that are not proven,
 blind spots, techniques covered on paper only, rules that fail to run or whose
 data is silent, and Quiet, Noisy and Silent results that are not a pass. A

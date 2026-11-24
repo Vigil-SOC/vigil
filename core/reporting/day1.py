@@ -30,9 +30,13 @@ from core.reporting.checks import (
     ESTATE,
     FORECAST,
     HISTORY,
+    LEGACY_CITATIONS,
     MODULES,
     SETTINGS,
     VISIBILITY,
+    ScopedValue,
+    resolve,
+    scope_label,
     spec_for,
 )
 from core.reporting.coverage import produce as produce_coverage
@@ -42,6 +46,7 @@ from core.reporting.forecast import failed as forecast_failed
 from core.reporting.forecast import produce as produce_forecast
 from core.reporting.history_sections import present as present_history
 from core.reporting.history_sections import produce as produce_history
+from core.reporting.selection import SelectionError, SelectionView, read_view
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -68,6 +73,8 @@ PASS = "pass"
 FAIL = "fail"
 NOT_CHECKED = "not_checked"
 NEEDS_A_PERSON = "needs_a_person"
+# No cited value for the selection. Not a Check Outcome.
+NO_VALUE = "no_value"
 
 PREFACE = "This report describes the install, not the demo data."
 NOTICE_KIND = "day1_report"
@@ -192,9 +199,18 @@ def build(state: dict) -> dict[str, Any]:
     if VISIBILITY.id not in disabled:
         modules.append(VISIBILITY.id)
         checks.extend(_visibility_checks(state, evidence, sources, health_failed))
+    view, selection_problem = _read_selection()
+    evidence["selection"] = _selection_snapshot(view, selection_problem)
     if SETTINGS.id not in disabled:
         modules.append(SETTINGS.id)
-        checks.extend(_settings_checks())
+        if selection_problem or view is None:
+            checks.extend(
+                _unchecked_settings(
+                    selection_problem or "not checked: the selection could not be read."
+                )
+            )
+        else:
+            checks.extend(_settings_checks(view))
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
@@ -369,10 +385,18 @@ def _present(
                 "outcome": check.get("outcome"),
                 "reason": check.get("reason") or "",
                 "evidence": dict(check.get("evidence") or {}),
+                # Kept off the response model. _annotate reads it, then the
+                # model drops it. Absent on a record from before scoped values.
+                "citation": check.get("citation"),
             }
         )
         if compared is not None:
-            shown["comparison"] = _comparison(check, prior.get(check.get("id")))
+            shown["comparison"] = _comparison(
+                check,
+                prior.get(check.get("id")),
+                (record.evidence or {}).get("selection"),
+                (compared.evidence or {}).get("selection"),
+            )
         checks.append(shown)
     evidence = record.evidence or {}
     switched_off = []
@@ -397,6 +421,7 @@ def _present(
         "withheld": withheld,
         "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
+        "selection": _selection_public(evidence.get("selection")),
         "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
@@ -453,21 +478,28 @@ def _allowed(session: Session, user_id: str, check: dict) -> bool:
 
 
 def _annotate(check: dict) -> dict:
-    """Value checks carry the registry citation. It is not stored on the record."""
-    try:
-        spec = spec_for(str(check.get("id") or ""))
-    except KeyError:
+    """A stored citation wins. A record with none keeps the legacy snapshot.
+
+    The live registry is not consulted: an upgrade must not rewrite an old report.
+    """
+    stored = check.get("citation")
+    if isinstance(stored, dict):
+        return {
+            **check,
+            "cited_value": stored.get("cited_value"),
+            "source_id": stored.get("source_id"),
+            "clause": stored.get("clause"),
+            "link": stored.get("link"),
+            "date_checked": stored.get("date_checked"),
+            "scope": stored.get("scope"),
+            "proposed": list(stored.get("proposed") or []),
+            "gap": stored.get("gap"),
+            "window": stored.get("window"),
+        }
+    legacy = LEGACY_CITATIONS.get(str(check.get("id") or ""))
+    if legacy is None:
         return check
-    if spec.cited_value is None:
-        return check
-    return {
-        **check,
-        "cited_value": spec.cited_value,
-        "source_id": spec.source_id,
-        "clause": spec.clause,
-        "link": spec.link,
-        "date_checked": spec.date_checked,
-    }
+    return {**check, **legacy}
 
 
 def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
@@ -505,30 +537,125 @@ def _visible_checks(
     }
 
 
-def _comparison(current: dict, prior: Optional[dict]) -> dict[str, Any]:
+def _comparison(
+    current: dict,
+    prior: Optional[dict],
+    current_selection: Any,
+    prior_selection: Any,
+) -> dict[str, Any]:
     """How ``current`` reads against the same check on the compared run.
 
-    New and fixed only when both outcomes are pass or fail. Anything else
-    names both outcomes. A check the compared run did not have, including
-    one whose module was off, is not in that run. Evidence is the record's
-    own, and only beside new, fixed, or unchanged.
+    New and fixed only when both outcomes are pass or fail. ``no_value`` is
+    neither: a move from fail to no cited value is not fixed. Anything else
+    names both outcomes. When the outcome changed, ``change`` names a cited
+    value that moved or a kind that was ticked or cleared. A check the
+    compared run did not have, including one whose module was off, is not in
+    that run. Evidence is the record's own, and only beside new, fixed, or
+    unchanged.
     """
     if prior is None:
         return {"kind": "not_in_compared_run"}
     before = prior.get("outcome")
     after = current.get("outcome")
-    if before in (PASS, FAIL) and after in (PASS, FAIL):
-        if before == after:
-            kind = "unchanged"
-        elif before == FAIL:
-            kind = "fixed"
-        else:
-            kind = "new"
-        return {"kind": kind, "prior_evidence": dict(prior.get("evidence") or {})}
-    named: dict[str, Any] = {"kind": "named"}
-    if before in (PASS, FAIL, NOT_CHECKED, NEEDS_A_PERSON):
-        named["prior_outcome"] = before
-    return named
+    if before == after and before in (PASS, FAIL, NO_VALUE):
+        kind = "unchanged"
+    elif before in (PASS, FAIL) and after in (PASS, FAIL):
+        kind = "fixed" if before == FAIL else "new"
+    else:
+        kind = "named"
+    result: dict[str, Any] = {"kind": kind}
+    if kind in ("new", "fixed", "unchanged"):
+        result["prior_evidence"] = dict(prior.get("evidence") or {})
+    if kind == "named" and before in (
+        PASS,
+        FAIL,
+        NOT_CHECKED,
+        NEEDS_A_PERSON,
+        NO_VALUE,
+    ):
+        result["prior_outcome"] = before
+    if before != after and current.get("module") == SETTINGS.id:
+        change = _change_detail(current, prior, current_selection, prior_selection)
+        if change:
+            result["change"] = change
+    return result
+
+
+def _change_detail(
+    current: dict, prior: dict, current_selection: Any, prior_selection: Any
+) -> Optional[str]:
+    parts: list[str] = []
+    moved = _value_move(current, prior)
+    if moved:
+        parts.append(moved)
+    parts.extend(_kind_moves(current_selection, prior_selection))
+    if not parts:
+        return None
+    return " ".join(parts)
+
+
+def _citation_of(check: dict) -> Optional[dict]:
+    """The stored citation, or the legacy snapshot a record before scoped values shows."""
+    stored = check.get("citation")
+    if isinstance(stored, dict):
+        return stored
+    return LEGACY_CITATIONS.get(str(check.get("id") or ""))
+
+
+def _value_phrase(citation: dict) -> str:
+    cited = citation.get("cited_value")
+    if not cited:
+        return "no cited value"
+    source = citation.get("source_id")
+    scope = citation.get("scope")
+    if scope and source:
+        return f"{cited} (cited for {scope} by {source})"
+    if source:
+        return f"{cited} (cited by {source})"
+    return str(cited)
+
+
+def _value_move(current: dict, prior: dict) -> Optional[str]:
+    # A check that was not scored did not move its cited value.
+    if current.get("outcome") == NOT_CHECKED or prior.get("outcome") == NOT_CHECKED:
+        return None
+    after = _citation_of(current)
+    before = _citation_of(prior)
+    if after is None or before is None:
+        return None
+    fields = ("cited_value", "source_id", "scope")
+    # A legacy citation names no scope. Its value and source are compared alone.
+    if after.get("scope") is None or before.get("scope") is None:
+        fields = ("cited_value", "source_id")
+    if all(after.get(field) == before.get(field) for field in fields):
+        return None
+    return (
+        "The cited value moved from "
+        f"{_value_phrase(before)} to {_value_phrase(after)}."
+    )
+
+
+def _kind_moves(current_selection: Any, prior_selection: Any) -> list[str]:
+    if not isinstance(current_selection, dict) or not isinstance(prior_selection, dict):
+        return []
+    if current_selection.get("unreadable") or prior_selection.get("unreadable"):
+        return []
+    labels = {}
+    labels.update(prior_selection.get("kind_labels") or {})
+    labels.update(current_selection.get("kind_labels") or {})
+    before = list(prior_selection.get("kinds") or [])
+    after = list(current_selection.get("kinds") or [])
+    lines = [
+        f"Kind ticked: {labels.get(kind_id, kind_id)}."
+        for kind_id in after
+        if kind_id not in before
+    ]
+    lines.extend(
+        f"Kind cleared: {labels.get(kind_id, kind_id)}."
+        for kind_id in before
+        if kind_id not in after
+    )
+    return lines
 
 
 def _due(session: Session, readiness: Optional[str], now: datetime) -> Optional[str]:
@@ -873,13 +1000,15 @@ def _check(
     }
 
 
-_AT = "at the cited value"
-_STRICTER = "stricter than the cited value"
-_WEAKER = "weaker than the cited value"
+_AT = "at the value for your selection"
+_STRICTER = "stricter than the value for your selection"
+_WEAKER = "weaker than the value for your selection"
+_WRITTEN = (
+    "The source lets a named officer approve an equivalent or stronger "
+    "control in writing, which Vigil can't see."
+)
 _SESSIONS_SCREEN = "/settings?section=sessions"
 _AUDIT_SCREEN = "/settings?section=audit"
-# One year is 365 days, the same length as the retention minimum.
-_THREE_YEARS = 365 * 3
 _UNREADABLE_SESSION = "Could not read the session settings."
 _HOSTNAME = (
     "Set VIGIL_CONSOLE_HOSTNAME and VIGIL_COOKIE_SECURE in Compose's .env, "
@@ -895,16 +1024,106 @@ _SESSION_IDS = (
     "settings.unused",
     "settings.mfa_privileged",
     "settings.phishing_resistant",
+    "settings.phishing_resistant_everyone",
     "settings.mfa_everyone",
 )
+_SETTINGS_IDS = _SESSION_IDS + ("settings.retention",)
 
 
-def _settings_checks() -> list[dict[str, Any]]:
-    return [*_session_checks(), _retention_check()]
+def _read_selection() -> tuple[Optional[SelectionView], Optional[str]]:
+    """The selection, or why every settings check is not checked.
+
+    A failed read is never replaced with the empty selection. Visibility and
+    coverage do not use this result.
+    """
+    try:
+        view = read_view()
+    except SelectionError:
+        logger.error("Day 1 Report selection row does not parse")
+        return None, "not checked: the selection row does not parse."
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read the selection: %s", type(exc).__name__
+        )
+        return None, "not checked: the selection could not be read."
+    if view.unoffered:
+        names = ", ".join(item.id for item in view.unoffered)
+        return (
+            view,
+            "not checked: the selection names "
+            f"{names}, which this release does not offer.",
+        )
+    return view, None
 
 
-def _session_checks() -> list[dict[str, Any]]:
-    """Eight session checks from the stored row. Defaults are not a substitute."""
+def _selection_snapshot(
+    view: Optional[SelectionView], problem: Optional[str]
+) -> dict[str, Any]:
+    """Frozen onto the record. Labels are the catalogue sentences at run time."""
+    if view is None:
+        return {
+            "jurisdictions": [],
+            "kinds": [],
+            "jurisdiction_labels": {},
+            "kind_labels": {},
+            "unreadable": problem,
+        }
+    chosen_j = set(view.jurisdictions)
+    chosen_k = set(view.kinds)
+    snapshot: dict[str, Any] = {
+        "jurisdictions": list(view.jurisdictions),
+        "kinds": list(view.kinds),
+        "jurisdiction_labels": {
+            row.id: row.sentence
+            for row in view.catalogue.jurisdictions
+            if row.id in chosen_j
+        },
+        "kind_labels": {
+            row.id: row.sentence for row in view.catalogue.kinds if row.id in chosen_k
+        },
+    }
+    if problem:
+        snapshot["unreadable"] = problem
+    return snapshot
+
+
+def _selection_public(raw: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("unreadable"):
+        return {
+            "jurisdictions": [],
+            "kinds": [],
+            "unreadable": raw["unreadable"],
+        }
+    jurisdictions = raw.get("jurisdiction_labels") or {}
+    kinds = raw.get("kind_labels") or {}
+    return {
+        "jurisdictions": [
+            jurisdictions.get(item, item) for item in raw.get("jurisdictions") or []
+        ],
+        "kinds": [kinds.get(item, item) for item in raw.get("kinds") or []],
+        "unreadable": None,
+    }
+
+
+def _unchecked_settings(reason: str) -> list[dict[str, Any]]:
+    """Every settings check, unscored. The every-install values are not used."""
+    checks = []
+    for check_id in _SETTINGS_IDS:
+        screen = _AUDIT_SCREEN if check_id == "settings.retention" else _SESSIONS_SCREEN
+        check = _check(check_id, NOT_CHECKED, reason, extra={"screen": screen})
+        check["citation"] = {"proposed": []}
+        checks.append(check)
+    return checks
+
+
+def _settings_checks(view: SelectionView) -> list[dict[str, Any]]:
+    return [*_session_checks(view), _retention_check(view)]
+
+
+def _session_checks(view: SelectionView) -> list[dict[str, Any]]:
+    """Session checks from the stored row. Defaults are not a substitute."""
     try:
         with unit_of_work() as session:
             policy = session_policy.read_row(session)[0].policy
@@ -913,15 +1132,17 @@ def _session_checks() -> list[dict[str, Any]]:
             "Day 1 Report could not read session settings: %s", type(exc).__name__
         )
         return [
-            _check(
+            _scored(
+                view,
                 check_id,
                 NOT_CHECKED,
                 _UNREADABLE_SESSION,
-                extra={"screen": _SESSIONS_SCREEN},
+                screen=_SESSIONS_SCREEN,
+                actual=None,
             )
             for check_id in _SESSION_IDS
         ]
-    return _judge_session(policy, _coverage(policy))
+    return _judge_session(view, policy, _coverage(policy))
 
 
 def _coverage(policy) -> dict[str, str]:
@@ -941,6 +1162,9 @@ def _coverage(policy) -> dict[str, str]:
                 "keys": _accounts(
                     mfa_coverage.without_key(session, level), "security key"
                 ),
+                "keys_everyone": _accounts(
+                    mfa_coverage.without_key(session, "everyone"), "security key"
+                ),
             }
     except Exception as exc:  # noqa: BLE001 - the setting is still judged
         logger.error(
@@ -955,57 +1179,95 @@ def _accounts(count: int, gap: str) -> str:
     return f"{count} accounts have no {gap}."
 
 
-def _judge_session(policy, coverage: dict[str, str]) -> list[dict[str, Any]]:
-    idle = _ceiling(policy.idle_standard_minutes, 15)
-    length = _ceiling(policy.absolute_hours, 12)
-    lock = (
-        (PASS, _AT)
-        if policy.lockout_threshold == 3 and not policy.lockout_timed
-        else (FAIL, _WEAKER)
-    )
-    dormancy = _optional_ceiling(policy.dormancy_days, 45)
-    unused = _optional_ceiling(policy.token_unused_days, 45)
-    privileged = _level(policy.require_mfa, "privileged", "everyone")
-    keys = _level(policy.require_phishing_resistant, "privileged", "everyone")
-    everyone = _level(policy.require_mfa, "everyone", None)
+def _judge_session(
+    view: SelectionView, policy, coverage: dict[str, str]
+) -> list[dict[str, Any]]:
     rows = (
-        ("settings.idle", idle, _idle_reason(policy), None),
-        ("settings.length", length, _length_reason(policy), None),
-        ("settings.lockout", lock, _lockout_reason(policy), None),
-        ("settings.dormancy", dormancy, _dormancy_reason(policy), None),
-        ("settings.unused", unused, _unused_reason(policy), None),
+        (
+            "settings.idle",
+            policy.idle_standard_minutes,
+            _idle_reason(policy),
+            None,
+            False,
+        ),
+        (
+            "settings.length",
+            policy.absolute_hours,
+            _length_reason(policy),
+            None,
+            False,
+        ),
+        (
+            "settings.lockout",
+            policy.lockout_threshold,
+            _lockout_reason(policy),
+            None,
+            False,
+        ),
+        (
+            "settings.dormancy",
+            policy.dormancy_days,
+            _dormancy_reason(policy),
+            None,
+            False,
+        ),
+        (
+            "settings.unused",
+            policy.token_unused_days,
+            _unused_reason(policy),
+            None,
+            False,
+        ),
         (
             "settings.mfa_privileged",
-            privileged,
+            policy.require_mfa,
             _mfa_reason(policy.require_mfa, "privileged"),
             coverage.get("privileged"),
+            False,
         ),
         (
             "settings.phishing_resistant",
-            keys,
+            policy.require_phishing_resistant,
             _key_reason(policy.require_phishing_resistant),
             coverage.get("keys"),
+            True,
+        ),
+        (
+            "settings.phishing_resistant_everyone",
+            policy.require_phishing_resistant,
+            _key_everyone_reason(policy.require_phishing_resistant),
+            coverage.get("keys_everyone"),
+            True,
         ),
         (
             "settings.mfa_everyone",
-            everyone,
+            policy.require_mfa,
             _mfa_reason(policy.require_mfa, "everyone"),
             coverage.get("everyone"),
+            False,
         ),
     )
     checks = []
-    for check_id, judged, reason, count in rows:
-        outcome, comparison = judged
-        extra: dict[str, Any] = {"comparison": comparison, "screen": _SESSIONS_SCREEN}
+    for check_id, actual, reason, count, keys in rows:
+        extras: dict[str, Any] = {}
         if count:
-            extra["coverage"] = count
-        if check_id == "settings.phishing_resistant" and outcome == FAIL:
-            extra["prerequisites"] = _key_prerequisites()
-        checks.append(_check(check_id, outcome, reason, extra=extra))
+            extras["coverage"] = count
+        check = _scored(
+            view,
+            check_id,
+            PASS,
+            reason,
+            screen=_SESSIONS_SCREEN,
+            actual=actual,
+            extras=extras,
+        )
+        if keys and check["outcome"] == FAIL:
+            check["evidence"]["prerequisites"] = _key_prerequisites()
+        checks.append(check)
     return checks
 
 
-def _retention_check() -> dict[str, Any]:
+def _retention_check(view: SelectionView) -> dict[str, Any]:
     """The period in force. A pending period, and no period, are not in force."""
     try:
         with unit_of_work() as session:
@@ -1014,24 +1276,105 @@ def _retention_check() -> dict[str, Any]:
         logger.error(
             "Day 1 Report could not read audit retention: %s", type(exc).__name__
         )
-        return _check(
+        return _scored(
+            view,
             "settings.retention",
             NOT_CHECKED,
             "Could not read the audit-trail retention period.",
-            extra={"screen": _AUDIT_SCREEN},
+            screen=_AUDIT_SCREEN,
+            actual=None,
         )
     if days is None:
-        outcome, comparison = FAIL, _WEAKER
+        actual = None
         reason = "Audit-trail retention: no period is in force."
     else:
-        outcome, comparison = _floor(int(days), _THREE_YEARS)
+        actual = int(days)
         reason = f"Audit-trail retention: the trail is kept for {int(days)} days."
-    return _check(
+    return _scored(
+        view,
         "settings.retention",
-        outcome,
+        PASS,
         reason,
-        extra={"comparison": comparison, "screen": _AUDIT_SCREEN},
+        screen=_AUDIT_SCREEN,
+        actual=actual,
     )
+
+
+def _scored(
+    view: SelectionView,
+    check_id: str,
+    outcome: str,
+    reason: str,
+    *,
+    screen: str,
+    actual: Any,
+    extras: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Score ``actual`` against the Applicable Value and store that citation."""
+    resolved = resolve(check_id, list(view.jurisdictions), list(view.kinds))
+    comparison = None
+    if outcome != NOT_CHECKED:
+        if resolved.scored is None:
+            outcome = NO_VALUE
+        else:
+            outcome, comparison = _score(actual, resolved.scored)
+            if outcome == FAIL and resolved.scored.written_alternative:
+                reason = f"{reason} {_WRITTEN}"
+    extra = dict(extras or {})
+    extra["screen"] = screen
+    if comparison:
+        extra["comparison"] = comparison
+    check = _check(check_id, outcome, reason, extra=extra)
+    check["citation"] = _citation(resolved)
+    return check
+
+
+def _score(actual: Any, value: ScopedValue) -> tuple[str, str]:
+    if value.direction == "ceiling":
+        if actual is None:
+            return FAIL, _WEAKER
+        return _ceiling(int(actual), int(value.bound))
+    if value.direction == "floor":
+        if actual is None:
+            return FAIL, _WEAKER
+        return _floor(int(actual), int(value.bound))
+    if value.direction == "level":
+        return _level(str(actual), str(value.bound), value.above)
+    raise RuntimeError(value.direction)
+
+
+def _citation(resolved) -> dict[str, Any]:
+    scored = resolved.scored
+    body: dict[str, Any] = {
+        "proposed": [
+            {
+                "cited_value": value.cited_value,
+                "source_id": value.source_id,
+                "scope": scope_label(value),
+            }
+            for value in resolved.proposed
+        ]
+    }
+    if scored is not None:
+        body["cited_value"] = scored.cited_value
+        body["source_id"] = scored.source_id
+        body["clause"] = scored.clause
+        body["link"] = scored.link
+        body["date_checked"] = scored.date_checked
+        body["scope"] = scope_label(scored)
+    if resolved.gap is not None and resolved.gap.release_gap:
+        body["gap"] = (
+            f"{resolved.gap.release_gap} Cited for {scope_label(resolved.gap)} "
+            f"by {resolved.gap.source_id}."
+        )
+    if resolved.window is not None and resolved.window.window_minutes is not None:
+        minutes = resolved.window.window_minutes
+        body["window"] = (
+            f"{minutes}-minute window: met. Vigil counts failures in a row and "
+            "time never resets the count. "
+            f"Cited for {scope_label(resolved.window)} by {resolved.window.source_id}."
+        )
+    return body
 
 
 def _ceiling(actual: int, limit: int) -> tuple[str, str]:
@@ -1050,12 +1393,6 @@ def _floor(actual: int, limit: int) -> tuple[str, str]:
     if actual == limit:
         return PASS, _AT
     return FAIL, _WEAKER
-
-
-def _optional_ceiling(actual: Optional[int], limit: int) -> tuple[str, str]:
-    if actual is None:
-        return FAIL, _WEAKER
-    return _ceiling(actual, limit)
 
 
 def _level(actual: str, cited: str, above: Optional[str]) -> tuple[str, str]:
@@ -1122,6 +1459,21 @@ def _key_reason(level: str) -> str:
     if level == "privileged":
         return "Phishing-resistant MFA: privileged accounts must use a security key."
     return "Phishing-resistant MFA: every person must use a security key."
+
+
+def _key_everyone_reason(level: str) -> str:
+    if level == "everyone":
+        return (
+            "Phishing-resistant MFA for everyone: every person must use a security key."
+        )
+    if level == "privileged":
+        return (
+            "Phishing-resistant MFA for everyone: privileged accounts must use "
+            "a security key."
+        )
+    return (
+        "Phishing-resistant MFA for everyone: sign-in does not require a security key."
+    )
 
 
 def _key_prerequisites() -> list[str]:

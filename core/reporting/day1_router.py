@@ -70,15 +70,23 @@ class Day1Evidence(BaseModel):
 class Day1Comparison(BaseModel):
     kind: Literal["new", "fixed", "unchanged", "not_in_compared_run", "named"]
     prior_outcome: Optional[
-        Literal["pass", "fail", "not_checked", "needs_a_person"]
+        Literal["pass", "fail", "not_checked", "needs_a_person", "no_value"]
     ] = None
     prior_evidence: Optional[Day1Evidence] = None
+    # Set when the outcome changed because a cited value or a kind moved.
+    change: Optional[str] = None
+
+
+class Day1Proposed(BaseModel):
+    cited_value: str
+    source_id: str
+    scope: str
 
 
 class Day1Check(BaseModel):
     id: str
     module: str
-    outcome: Literal["pass", "fail", "not_checked", "needs_a_person"]
+    outcome: Literal["pass", "fail", "not_checked", "needs_a_person", "no_value"]
     reason: str
     evidence: Day1Evidence = Field(default_factory=Day1Evidence)
     comparison: Optional[Day1Comparison] = None
@@ -87,6 +95,16 @@ class Day1Check(BaseModel):
     clause: Optional[str] = None
     link: Optional[str] = None
     date_checked: Optional[str] = None
+    scope: Optional[str] = None
+    proposed: List[Day1Proposed] = Field(default_factory=list)
+    gap: Optional[str] = None
+    window: Optional[str] = None
+
+
+class Day1Selection(BaseModel):
+    jurisdictions: List[str] = Field(default_factory=list)
+    kinds: List[str] = Field(default_factory=list)
+    unreadable: Optional[str] = None
 
 
 class Day1Listed(BaseModel):
@@ -254,6 +272,7 @@ class Day1Report(BaseModel):
     withheld: List[str]
     compared_at: Optional[str] = None
     checks: List[Day1Check]
+    selection: Optional[Day1Selection] = None
     # Modules the caller may read. Visibility, history and the forecast stay
     # on their own fields; this is the remainder.
     evidence: Dict[str, Any] = Field(default_factory=dict)
