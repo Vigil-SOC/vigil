@@ -1,14 +1,14 @@
 """Atomic Red Team MCP server (stdio).
 
-Thin invoke of one Atomic technique on a named ``hostname`` inside a named
-``environment_id``. The operator installs the runner, which must accept
-``--technique`` and ``--hostname``; this slice does not vendor the atomics
-repo. The execute tool's JSON is the interface — an action-trace step in the
+Thin invoke of one Atomic technique on a ``hostname`` the operator has
+listed in ``allowed_hosts``; anything else is refused before the runner. The
+operator installs the runner, which must accept ``--technique`` and
+``--hostname``; this slice does not vendor the atomics repo. The execute tool's JSON is the interface — an action-trace step in the
 spelling ``core.detections.reconstruction`` joins on, not fabricated sensor
 events and not a ledger write.
 
-Config comes from the descriptor: ``runner_path`` and ``atomics_path``
-from the stored integration config under the ``atomic-red-team`` id.
+Config comes from the descriptor: ``runner_path``, ``atomics_path`` and
+``allowed_hosts`` from the stored integration config under the ``atomic-red-team`` id.
 """
 
 import sys
@@ -24,6 +24,7 @@ if _REPO_ROOT not in sys.path:
 import asyncio
 import json
 import logging
+import re
 import subprocess
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -33,6 +34,7 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from core.detections.gaps import TECHNIQUE_ID
 from core.integrations._base.config import resolve
 from core.integrations._base.tool_result import run_tool
 from core.integrations.atomic_red_team.descriptor import ATOMIC_RED_TEAM
@@ -54,11 +56,35 @@ def result(data: Any) -> List[types.TextContent]:
     ]
 
 
-def _load_config() -> Dict[str, str]:
+_SETTINGS_POINTER = "Settings → Integrations → Atomic Red Team"
+
+
+def _parse_hosts(raw: Any) -> List[str]:
+    """Split ``allowed_hosts`` on commas/newlines; drop entries that could
+    reach the runner as a flag or that hold more than one name."""
+    hosts: List[str] = []
+    for entry in re.split(r"[,\n]", str(raw or "")):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if entry.startswith("-") or re.search(r"\s", entry):
+            logger.warning(
+                "atomic-red-team: ignoring allowed_hosts entry %r "
+                "(starts with '-' or contains whitespace)",
+                entry,
+            )
+            continue
+        hosts.append(entry)
+    return hosts
+
+
+def _load_config() -> Dict[str, Any]:
+    # Read on every call so a Settings edit applies without a restart.
     config = resolve(ATOMIC_RED_TEAM)
     return {
         "runner_path": (config.get("runner_path") or "").strip(),
         "atomics_path": (config.get("atomics_path") or "").strip(),
+        "allowed_hosts": _parse_hosts(config.get("allowed_hosts")),
     }
 
 
@@ -77,29 +103,42 @@ def _runner_argv(
 
 def execute_atomic(
     arguments: Optional[dict],
-    config: Mapping[str, str],
+    config: Mapping[str, Any],
     *,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> Dict[str, Any]:
-    """Invoke one Atomic technique. Missing ``environment_id`` / ``hostname``
-    refuse before the runner.
+    """Invoke one Atomic technique. An unlisted host, an empty host list or a
+    technique that is not an ATT&CK id refuses before the runner.
 
     The returned trace uses the reconstruction spelling (``technique_id``,
     ``started_at`` / ``ended_at``, ``hostname``) so a journaled result joins to
     Findings in ``core.detections.reconstruction`` without translation.
     """
     args = arguments or {}
-    environment_id = str(args.get("environment_id") or "").strip()
-    if not environment_id:
-        return {"error": "environment_id required"}
+    allowed = list(config.get("allowed_hosts") or [])
+    if not allowed:
+        return {
+            "error": "Atomic Red Team emulation is off: no hosts are listed. "
+            f"List the hosts it may run on under {_SETTINGS_POINTER}."
+        }
 
     hostname = str(args.get("hostname") or "").strip()
-    if not hostname:
-        return {"error": "hostname required"}
+    match = next((h for h in allowed if h.lower() == hostname.lower()), None)
+    if not hostname or match is None:
+        return {
+            "error": f"hostname {hostname!r} is not an allowed host; "
+            f"Atomic Red Team runs only on: {', '.join(allowed)}"
+        }
+    hostname = match
 
     technique = str(args.get("technique") or "").strip()
-    if not technique:
-        return {"error": "technique required"}
+    if not TECHNIQUE_ID.match(technique):
+        return {
+            "error": f"technique {technique!r} is not an ATT&CK technique id "
+            "(e.g. T1003 or T1003.001)"
+        }
+    # Upper-case so technique_id matches reconstruction's and gaps' spelling.
+    technique = technique.upper()
 
     runner_path = (config.get("runner_path") or "").strip()
     if not runner_path:
@@ -122,7 +161,6 @@ def execute_atomic(
     except subprocess.TimeoutExpired as exc:
         return {
             "technique_id": technique,
-            "environment_id": environment_id,
             "hostname": hostname,
             "command": argv,
             "exit": None,
@@ -135,7 +173,6 @@ def execute_atomic(
 
     return {
         "technique_id": technique,
-        "environment_id": environment_id,
         "hostname": hostname,
         "command": argv,
         "exit": completed.returncode,
@@ -151,13 +188,14 @@ async def handle_list_tools() -> List[types.Tool]:
         types.Tool(
             name="atomic_red_team_execute",
             description=(
-                "Execute one Atomic Red Team technique on a named hostname "
-                "inside a named environment_id (customer-provided range or "
-                "staging replica). Returns an action trace step (technique_id, "
-                "hostname, command, exit, stdout/stderr, started_at/ended_at) "
-                "that reconstruct_run and analyze_coverage join to Findings. "
-                "Refuses if environment_id or hostname is missing. Does not "
-                "capture or invent sensor telemetry."
+                "Execute one Atomic Red Team technique on a named hostname. "
+                "Hosts are limited to the list the operator keeps in the "
+                "integration's settings; any other hostname is refused and the "
+                "refusal names the allowed hosts. Returns an action trace step "
+                "(technique_id, hostname, command, exit, stdout/stderr, "
+                "started_at/ended_at) that reconstruct_run and "
+                "analyze_coverage join to Findings. Does not capture or invent "
+                "sensor telemetry."
             ),
             inputSchema={
                 "type": "object",
@@ -166,23 +204,17 @@ async def handle_list_tools() -> List[types.Tool]:
                         "type": "string",
                         "description": "ATT&CK technique id, e.g. T1003.001",
                     },
-                    "environment_id": {
-                        "type": "string",
-                        "description": (
-                            "Id of the sanctioned range or staging replica. "
-                            "Required; the runner is not called without it."
-                        ),
-                    },
                     "hostname": {
                         "type": "string",
                         "description": (
-                            "Host inside the environment the technique runs on, "
-                            "as sensors report it. Required; echoed on the trace "
-                            "so Findings on that host can be correlated."
+                            "Host the technique runs on, as sensors report it. "
+                            "Must be one of the operator's allowed hosts; "
+                            "echoed on the trace so Findings on that host can "
+                            "be correlated."
                         ),
                     },
                 },
-                "required": ["technique", "environment_id", "hostname"],
+                "required": ["technique", "hostname"],
             },
         ),
     ]
