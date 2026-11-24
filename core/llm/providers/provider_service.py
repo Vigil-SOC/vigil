@@ -15,8 +15,11 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from core.llm.bifrost.admin import push_provider_key
-from core.secrets import get_secret
+from core.llm.bifrost.admin import (
+    credential_row,
+    push_provider_key,
+    row_credential_view,
+)
 from core.storage.models import AIModelConfig, LLMProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -94,39 +97,33 @@ def clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None:
 
 
 def reconcile_bifrost_key_for_type(
-    db: Session, provider_type: str, exclude_provider_id: str
+    db: Session, provider_type: str, exclude_provider_id: Optional[str] = None
 ) -> None:
-    """Reconcile Bifrost's shared per-type key after a provider loses its key.
+    """Re-point Bifrost's per-type key after a keyed row of the type changes.
 
-    Bifrost stores a single key per ``provider_type`` (see
-    ``bifrost_admin.push_provider_key`` — keyed by type, not by row), so
-    blindly blanking that key whenever one provider of the type is deleted
-    or cleared would knock out every same-type sibling that still relies on
-    it (the catalog resync only re-syncs the model allow-list, not the keys,
-    so the type would stay keyless until a restart).
-
-    So: only blank Bifrost's key when this was the last provider of its type
-    with a key; otherwise re-push a surviving sibling's key.
-    ``exclude_provider_id`` is the row being deleted/cleared, so it never
-    counts as a survivor.
+    Bifrost stores a single key and host per ``provider_type`` (see
+    ``bifrost_admin.push_provider_key``), so the type's active keyed rows elect
+    one (``credential_row``: the default first) and its key is pushed with its
+    own host. An inactive row never counts. With no keyed row left, the
+    gateway's key is cleared. ``exclude_provider_id`` is a row being deleted
+    or turned off, which is still in the session.
     """
-    survivors = [
-        r
-        for r in db.query(LLMProviderConfig).all()
-        if r.provider_type == provider_type
-        and r.provider_id != exclude_provider_id
-        and r.api_key_ref
+    rows = [
+        row_credential_view(r)
+        for r in db.query(LLMProviderConfig)
+        .filter(
+            LLMProviderConfig.provider_type == provider_type,
+            LLMProviderConfig.is_active.is_(True),
+            LLMProviderConfig.api_key_ref.isnot(None),
+        )
+        .order_by(LLMProviderConfig.created_at)
+        if r.provider_id != exclude_provider_id
     ]
-    # Prefer the default provider, then any active one, for a stable choice.
-    survivors.sort(key=lambda r: (not r.is_default, not r.is_active))
-    for survivor in survivors:
-        value = get_secret(survivor.api_key_ref)
-        if value:
-            push_provider_key(provider_type, value)
-            return
-    # No surviving provider of this type has a usable key — it was the last
-    # one, so clear the stale credential on Bifrost.
-    push_provider_key(provider_type, "")
+    chosen, value = credential_row(rows)
+    if chosen is None:
+        push_provider_key(provider_type, "")
+    else:
+        push_provider_key(provider_type, value or "", chosen.get("base_url"))
 
 
 def delete_model_configs_for_provider(db: Session, provider_id: str) -> None:
