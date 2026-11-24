@@ -4,7 +4,8 @@ The page is read under ``platform.read``. The visibility module is included
 only when the caller holds ``integrations.read``, and coverage only with
 ``detections.read``. Each settings check is included only when the caller
 holds that check's permission. The stored record stays complete. Running one,
-and turning a module on or off, takes ``platform.write``.
+turning a module on or off, and setting how often it runs again take
+``platform.write``.
 """
 
 from __future__ import annotations
@@ -29,7 +30,13 @@ from core.reporting.day1 import (
     read_record,
     status,
 )
-from core.reporting.enablement import disabled_module_ids, set_module_enabled
+from core.reporting.enablement import (
+    RECURRING_MAX_DAYS,
+    disabled_module_ids,
+    recurring_days,
+    set_module_enabled,
+    set_recurring_days,
+)
 from core.reporting.forecast import Day1Forecast
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -263,7 +270,7 @@ class Day1Report(BaseModel):
     run_id: str
     recorded_at: str
     started_at: str
-    trigger: Literal["readiness", "fallback", "on_demand"]
+    trigger: Literal["readiness", "fallback", "on_demand", "recurring"]
     actor_id: Optional[str] = None
     actor_name: Optional[str] = None
     vigil_version: str
@@ -271,6 +278,10 @@ class Day1Report(BaseModel):
     modules: List[str]
     withheld: List[str]
     compared_at: Optional[str] = None
+    # Modules the compared run had and this one did not run.
+    not_run: List[str] = Field(default_factory=list)
+    # A recurring run: a section the caller can't read got worse since the last run.
+    hidden_worse: bool = False
     checks: List[Day1Check]
     selection: Optional[Day1Selection] = None
     # Modules the caller may read. Visibility, history and the forecast stay
@@ -290,6 +301,11 @@ class Day1Module(BaseModel):
 
 class Day1ModuleBody(BaseModel):
     enabled: bool
+
+
+class Day1Recurring(BaseModel):
+    # Whole days between runs. 0 is off.
+    days: int = Field(ge=0, le=RECURRING_MAX_DAYS)
 
 
 class Day1Status(BaseModel):
@@ -331,6 +347,25 @@ def set_day1_module(
     if not saved:
         raise HTTPException(status_code=500, detail="Could not save the report module.")
     return Day1Module(id=module_id, enabled=body.enabled)
+
+
+@router.get("/recurring", response_model=Day1Recurring)
+def day1_recurring(
+    _user: User = Depends(require_permission("platform.read")),
+) -> Day1Recurring:
+    """How often the report runs again on its own. No row is every 7 days."""
+    return Day1Recurring(days=recurring_days())
+
+
+@router.put("/recurring", response_model=Day1Recurring)
+def set_day1_recurring(
+    body: Day1Recurring,
+    user: User = Depends(require_permission("platform.write")),
+) -> Day1Recurring:
+    """Set the interval in whole days, or 0 to switch recurring runs off."""
+    if not set_recurring_days(body.days, str(user.user_id)):
+        raise HTTPException(status_code=500, detail="Could not save the interval.")
+    return body
 
 
 @router.get("/status", response_model=Day1Status)
