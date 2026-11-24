@@ -153,6 +153,18 @@
             ],
             "description": "Identity of the approving analyst. Defaults to 'analyst'.",
             "title": "Approved By"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An isolation or account disable: the id of the stored candidate (parameters.containment.candidates) to act on. May be omitted when there is one.",
+            "title": "Candidate"
           }
         },
         "title": "ApproveRequest",
@@ -1109,6 +1121,17 @@
             ],
             "title": "Owner State"
           },
+          "primary_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Basis"
+          },
           "priority": {
             "anyOf": [
               {
@@ -1779,6 +1802,28 @@
             "title": "Budget Health",
             "type": "string"
           },
+          "capped": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capped"
+          },
+          "citation_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Count"
+          },
           "cost_usd": {
             "default": 0,
             "title": "Cost Usd",
@@ -1794,6 +1839,17 @@
               }
             ],
             "title": "Created At"
+          },
+          "grounded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grounded"
           },
           "investigation_id": {
             "anyOf": [
@@ -1820,6 +1876,17 @@
             "default": 0,
             "title": "Max Cost Usd",
             "type": "number"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
           },
           "primary": {
             "default": false,
@@ -4517,6 +4584,18 @@
       },
       "NeedsYouItem": {
         "properties": {
+          "args": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "That call's arguments, verbatim: approving releases exactly these.",
+            "title": "Args"
+          },
           "case_id": {
             "anyOf": [
               {
@@ -4559,6 +4638,19 @@
             ],
             "description": "The run's own checkpoint this item answers, so a page reading the run can tell it was answered.",
             "title": "Checkpoint Id"
+          },
+          "containment": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An isolation or account disable: the vendor IDs its target resolved to (candidates), or which tool is missing (missing).",
+            "title": "Containment"
           },
           "created_at": {
             "description": "'' when nothing recorded when it started waiting.",
@@ -4633,6 +4725,18 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The gated tool call this approval releases.",
+            "title": "Tool"
           },
           "waiting": {
             "anyOf": [

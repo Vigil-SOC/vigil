@@ -221,3 +221,91 @@ def target_kind(target: Any) -> str:
         if re.fullmatch(r"[0-9A-Fa-f./:]+", t) and re.search(r"[.:]", t)
         else "token"
     )
+
+
+# ---- Containment: who carries out an approved isolation or disable (#5059) ----
+# Per kind, each in-repo server that can: the lookup that turns the target into
+# the vendor's ID, the act, the state read and the undo (#5060 builds the way
+# back). Tool names are bare; the server prefixes them as the registry does.
+# ``rows`` names the list a lookup answers in, None for a single record.
+
+
+def _host_lookup(target: str) -> Dict[str, str]:
+    return {"ip": target} if _is_ip(target) else {"hostname": target}
+
+
+def _mde_state(machine: Dict[str, Any]) -> str:
+    isolation = machine.get("isolation") or {}
+    if isolation.get("pending"):
+        return "requested"
+    return "contained" if isolation.get("state") == "isolated" else "not_contained"
+
+
+# A machine action's status, as Defender words it.
+_MDE_ACTION_STATES = {
+    "Pending": "requested",
+    "InProgress": "requested",
+    "Succeeded": "contained",
+}
+
+CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
+    "isolate_host": (
+        {
+            "vendor": "microsoft-defender",
+            "lookup": "mde_find_machine",
+            "lookup_args": _host_lookup,
+            "rows": "machines",
+            "id": "machine_id",
+            "name": "name",
+            "state": _mde_state,
+            "act": "mde_isolate",
+            "id_arg": "machine_id",
+            "note_arg": "comment",
+            # The act answers a machine action; its status is the state.
+            "act_state": lambda answer: _MDE_ACTION_STATES.get(
+                answer.get("status"), "failed"
+            ),
+            "state_read": ("mde_get_machine_action", "action_id"),
+            "read_state": lambda answer: _MDE_ACTION_STATES.get(
+                answer.get("status"), "failed"
+            ),
+            "undo": "mde_release",
+        },
+        {
+            "vendor": "carbon-black",
+            "lookup": "cb_search_device",
+            "lookup_args": _host_lookup,
+            "rows": "devices",
+            "id": "device_id",
+            "name": "name",
+            "state": lambda d: "contained" if d.get("quarantined") else "not_contained",
+            "act": "cb_quarantine",
+            "id_arg": "device_id",
+            "note_arg": "reason",
+            "act_state": lambda answer: "requested",
+            # No action read: the lookup's quarantine flag says when it holds.
+            "state_read": None,
+            "undo": "cb_lift_quarantine",
+        },
+    ),
+    "disable_user": (
+        {
+            "vendor": "azure-ad",
+            "lookup": "aad_get_user",
+            "lookup_args": lambda target: {"user": target},
+            "rows": None,
+            "id": "id",
+            "name": "userPrincipalName",
+            "state": lambda u: "enabled" if u.get("accountEnabled") else "disabled",
+            "act": "aad_disable_user",
+            "id_arg": "user_id",
+            "note_arg": "reason",
+            "act_state": lambda answer: "requested",
+            "state_read": None,
+            "undo": "aad_enable_user",
+        },
+    ),
+}
+
+# What the act is for, in the state words above.
+DONE_STATE = {"isolate_host": "contained", "disable_user": "disabled"}
