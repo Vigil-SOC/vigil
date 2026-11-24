@@ -8,6 +8,8 @@ import type { Schema } from '../../services/apiTypes'
 import { CallArgs } from '../../shared/CallArgs'
 import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
+import { ContainmentTargets } from '../../shared/containment'
+import { canApprove, chosenCandidate, containmentOf } from '../../shared/containmentRead'
 import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { LIVE_COMMANDS } from '../../shell/commandBarModel'
@@ -145,7 +147,7 @@ function DecisionCard({
 }: {
   item: NeedsYouItem
   busy: boolean
-  onApprove: (item: NeedsYouItem, fused: boolean) => void
+  onApprove: (item: NeedsYouItem, fused: boolean, candidate?: string) => void
   onReject: (item: NeedsYouItem, reason: string) => void
   onOpenCase: (id: string) => void
   /** Set when Close case answers this card. */
@@ -153,6 +155,7 @@ function DecisionCard({
 }) {
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
+  const [picked, setPicked] = useState<string | null>(null)
   const caseId = item.case_id
   const asking = item.case_ids?.length ?? 0
   // On a restricted case you can't read: only its readers see it or decide it.
@@ -165,8 +168,13 @@ function DecisionCard({
   const ask = cardAsk(item)
   const advice = item.kind === 'recommendation'
   // Nothing executes a recommendation: no Approve, and Reject only clears one with no case to close.
-  const approvable = !restricted && !answersOnCase(item) && !advice
-  const rejectable = !restricted && (approvable || (advice && !caseId))
+  // An isolation or disable acts on a resolved vendor record: none, and there is nothing to approve.
+  const containment = restricted ? null : containmentOf(item.containment)
+  const decidable = !restricted && !answersOnCase(item) && !advice
+  const approvable = decidable && !(containment && containment.candidates.length === 0)
+  const ready = !busy && canApprove(containment, picked)
+  const candidate = chosenCandidate(containment, picked)
+  const rejectable = !restricted && (decidable || (advice && !caseId))
   const linkClass = answersOnCase(item) || advice ? 'home-btn primary' : 'home-btn ghost'
 
   return (
@@ -177,6 +185,7 @@ function DecisionCard({
       </div>
       <h3 title={visibleText(ask.full)}>{visibleText(ask.text)}</h3>
       <CallArgs tool={item.tool} args={item.args} />
+      {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
       {meta && (
         <p className="home-card-meta" title={meta}>
           {meta}
@@ -185,11 +194,11 @@ function DecisionCard({
       <div className="home-actions">
         {/* A hunt stopped at a limit is answered with Keep going on its case, not approved here. */}
         {!approvable ? null : item.reversibility === 'reversible' ? (
-          <button type="button" className="home-btn primary" disabled={busy} onClick={() => onApprove(item, true)}>
+          <button type="button" className="home-btn primary" disabled={!ready} onClick={() => onApprove(item, true, candidate)}>
             Approve
           </button>
         ) : (
-          <HoldButton label="Approve" disabled={busy} onConfirm={() => onApprove(item, false)} />
+          <HoldButton label="Approve" disabled={!ready} onConfirm={() => onApprove(item, false, candidate)} />
         )}
         {!rejectable ? null : rejecting ? (
           <form
@@ -455,18 +464,22 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   // page's decision block. A held (irreversible) approve commits at once.
   const fused = useFusedDecision(decisionFailText)
 
-  const approve = (item: NeedsYouItem, fuse: boolean) => {
-    if (fuse) return fused.approve(item)
-    void run(item.source_id, () => approvalsApi.approve(item.source_id), `Approved: ${item.title}`)
+  const approve = (item: NeedsYouItem, fuse: boolean, candidate?: string) => {
+    if (fuse) return fused.approve(item, candidate)
+    void run(item.source_id, () => approvalsApi.approve(item.source_id, candidate), (res) => {
+      // An isolation or disable runs on approval: say what the vendor answered.
+      const state = (res as { data?: { action?: { execution_result?: { state?: string } } } })?.data?.action?.execution_result?.state
+      return `Approved: ${item.title}${state ? ` · ${state}` : ''}`
+    })
   }
 
-  const run = async (id: string, act: () => Promise<unknown>, doneText: string) => {
+  const run = async (id: string, act: () => Promise<unknown>, doneText: string | ((res: unknown) => string)) => {
     if (busyRef.current) return
     busyRef.current = id
     setBusy(id)
     try {
-      await act()
-      notify('ok', doneText)
+      const res = await act()
+      notify('ok', typeof doneText === 'string' ? doneText : doneText(res))
       await load()
     } catch (err) {
       setError(errorText(err, 'Could not update that decision'))

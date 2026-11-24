@@ -4,7 +4,7 @@ Workflow phase approvals surface here alongside any other pending
 action the ``ApprovalService`` is tracking. Approving a workflow-linked
 action auto-resumes the paused run; rejecting cancels it with the supplied
 reason. Approving an isolation or account disable runs it on the vendor's
-own ID at once (#5059).
+own ID at once (#5059); Release or Enable on an executed one undoes it (#5060).
 """
 
 import logging
@@ -31,7 +31,9 @@ from core.response.approval_service import (
     AlreadyDecided,
     ApprovalService,
     FourEyesRefused,
+    NotUndoable,
     needs_you,
+    on_case,
     screen_action,
     screen_actions,
 )
@@ -116,6 +118,10 @@ class PendingActionResponse(BaseModel):
     restricted: bool = Field(
         default=False,
         description="An action on a restricted case the caller can't read: only its id, state and times are shown.",
+    )
+    held: bool = Field(
+        default=False,
+        description="An approved action a stop is holding: releasing the hold runs it.",
     )
     waiting: Optional[str] = Field(
         default=None,
@@ -214,6 +220,18 @@ class NeedsYouResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _person(user: User) -> Claims:
+    """The signed-in person, as a containment's call runs."""
+    principal_id = getattr(user, "principal_id", None) or getattr(user, "user_id", None)
+    return Claims(
+        username=user.username,
+        person_id=principal_id and str(principal_id),
+        agent_id=None,
+        run_id=None,
+        origin="person",
+    )
+
+
 @router.get("/approvals", response_model=ApprovalListResponse)
 async def list_approvals(
     status: Optional[str] = Query(
@@ -226,8 +244,16 @@ async def list_approvals(
         default=None,
         description="Restrict to approvals linked to this workflow run.",
     ),
+    case_id: Optional[str] = Query(
+        default=None,
+        description=(
+            "Only actions on this case, among the newest ``limit``. Requested "
+            "containments are read from the vendor again first."
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     service: ApprovalService = Depends(provide_approvals),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ):
     """List approval actions, newest first."""
     from core.response.approval_service import ActionStatus
@@ -239,13 +265,19 @@ async def list_approvals(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    actions = screen_actions(
-        service.list_actions(
-            status=status_enum,
-            workflow_run_id=workflow_run_id,
-            limit=limit,
-        )
+    if case_id:
+        await containment.refresh_open(await containment.live_registry(registry))
+    listed = service.list_actions(
+        status=status_enum,
+        workflow_run_id=workflow_run_id,
+        limit=limit,
     )
+    if case_id:
+        listed = on_case(listed, case_id)
+    actions = screen_actions(listed)
+    if case_id:
+        # Asked by case, a case the caller can't read has nothing to show.
+        actions = [a for a in actions if not a.restricted]
     return {
         "count": len(actions),
         "actions": [asdict(a) for a in actions],
@@ -327,6 +359,12 @@ async def approve_action(
     principal_id = getattr(current_user, "principal_id", None) or getattr(
         current_user, "user_id", None
     )
+    if (action.parameters or {}).get("undoes"):
+        # A lift is run again with Release or Enable, which re-checks the original.
+        raise HTTPException(
+            status_code=409,
+            detail=f"{action_id} undoes {action.parameters['undoes']}: use its undo",
+        )
     call = None
     # Pending, failed, or approved with a run claim that outlived its process.
     if action.action_type in CONTAINMENT_TYPES and action.status in (
@@ -362,14 +400,7 @@ async def approve_action(
     record_decision(updated, approved_by)
     await rollout_decided(updated, approved_by)
     if call is not None:
-        claims = Claims(
-            username=approved_by,
-            person_id=principal_id and str(principal_id),
-            agent_id=None,
-            run_id=None,
-            origin="person",
-        )
-        updated = await containment.carry_out(updated, claims, registry)
+        updated = await containment.carry_out(updated, _person(current_user), registry)
 
     response: Dict[str, Any] = {
         "action": asdict(updated),
@@ -382,6 +413,38 @@ async def approve_action(
         )
 
     return response
+
+
+@router.post(
+    "/approvals/{action_id}/undo",
+    dependencies=_DECIDE,
+    response_model=ApprovalActionResult,
+)
+async def undo_action(
+    action_id: str,
+    service: ApprovalService = Depends(provide_approvals),
+    current_user: User = Depends(get_current_user),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+):
+    """Release an executed isolation, or enable an executed account disable.
+
+    Inserts a row linked by ``parameters.undoes``, approved by the caller, that
+    carries the vendor's undo tool on the same vendor ID, and runs it at once as
+    the caller; a stop holds it. Four-eyes does not apply: no proposal is
+    involved. The action returned is that row. The original records ``released``
+    or ``enabled`` once the vendor reports it. 409 when the original is not
+    executed and contained or disabled, or a lift of it is still open.
+    """
+    action = service.get_action(action_id)
+    if action is None or screen_action(action).restricted:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    try:
+        undone = await containment.undo(action_id, _person(current_user), registry)
+    except NotUndoable as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ActionNotFound:
+        raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    return {"action": asdict(undone), "resume_result": None}
 
 
 @router.post(

@@ -144,6 +144,7 @@ export async function streamFetch(path: string, init: RequestInit = {}): Promise
 }
 
 export type NeedsYouItem = Schema<'NeedsYouItem'>
+export type ApprovalAction = Schema<'PendingActionResponse'>
 
 // The shell and the screen under it poll some reads together; callers that overlap share one
 // request. Only in-flight reads are shared, so a read that starts after one lands is always fresh.
@@ -164,8 +165,9 @@ export const approvalsApi = {
   list: (params?: {
     status?: string
     workflow_run_id?: string
+    case_id?: string
     limit?: number
-  }) => api.get('/approvals', { params }),
+  }) => api.get<{ count: number; actions: ApprovalAction[] }>('/approvals', { params }),
 
   listPending: () => api.get('/approvals/pending'),
 
@@ -174,8 +176,12 @@ export const approvalsApi = {
       ? api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', { params: { case_id: caseId } })
       : coalesce('needs-you', () => api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you')),
 
-  approve: (actionId: string, approved_by?: string) =>
-    afterWrite('needs-you', api.post(`/approvals/${actionId}/approve`, { approved_by })),
+  /** An isolation or account disable names the resolved candidate it acts on when there are several. */
+  approve: (actionId: string, candidate?: string) =>
+    afterWrite('needs-you', api.post(`/approvals/${actionId}/approve`, candidate ? { candidate } : {})),
+
+  /** Release an executed isolation or enable a disabled account (#5060): runs at once, as you. */
+  undo: (actionId: string) => afterWrite('needs-you', api.post(`/approvals/${actionId}/undo`)),
 
   reject: (actionId: string, reason: string, rejected_by?: string) =>
     afterWrite('needs-you', api.post(`/approvals/${actionId}/reject`, { reason, rejected_by })),
