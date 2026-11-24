@@ -577,7 +577,9 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   /** absent: optional needs nothing answers. The run goes without them and records no gap. */
   capabilities?: { bound: string[]; unbound: string[]; absent?: string[] }
-  budgets?: { max_iterations: number; max_cost_usd: number }
+  budgets?: { max_iterations?: number; max_cost_usd?: number; max_wall_ms?: number }
+  /** Set when WORKFLOW_DEFAULT_WALL_SECONDS is a number outside 60–86400. */
+  wall_note?: string | null
   /** set when a phase's agent is turned off: the server will refuse the run. */
   roles_note?: string | null
   /** exact, zero or unknown — how confidently the model's rate resolved. */
@@ -592,6 +594,22 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
   const where = cap === undefined || !Number.isFinite(cap) ? '' : ` It stops at $${cap.toFixed(2)} whatever happens.`
   if (turns === undefined) return 'Turns the hunt may take before it stops and reports.'
   return `${turns} turn(s): each is a lead decision, the workers it dispatches and the pass that argues against them.${where}`
+}
+
+/** Working time. The cost ceiling is the one this run will actually use. */
+function wallHint(bad: boolean, ceiling: number | undefined, hunt: boolean, investigate: boolean): string {
+  if (bad) return 'A whole number of minutes from 1 to 1440.'
+  const amount = ceiling !== undefined && Number.isFinite(ceiling) ? ` ($${ceiling.toFixed(2)})` : ''
+  const lines = [
+    'The limit counts working time, and waits on a person are excused.',
+    `The run's cost ceiling${amount} ends the run first if it's reached first.`,
+  ]
+  if (investigate) lines.push('The agent also stops at 24 turns.')
+  if (hunt) {
+    lines.push('Keep going may extend it up to twice that limit or 3 hours, whichever is more.')
+    lines.push('A limit under 90 minutes shortens the hunt\'s starting wall.')
+  }
+  return lines.join(' ')
 }
 
 /** What the run will not be able to look at, said before it costs anything.
@@ -953,6 +971,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
   const [leading, setLeading] = useState(false)
   const [iterations, setIterations] = useState('')
   const [maxCost, setMaxCost] = useState('')
+  const [maxWall, setMaxWall] = useState('')
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [startedId, setStartedId] = useState<string | null>(null) // watched in place, rather than closing
@@ -990,6 +1009,8 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
   const costBad = maxCost.trim() !== '' && (!Number.isFinite(cost) || cost <= 0 || cost > 100)
+  const wall = Number(maxWall)
+  const wallBad = maxWall.trim() !== '' && (!Number.isInteger(wall) || wall < 1 || wall > 1440)
 
   const params = {
     ...(findingId.trim() && { finding_id: findingId.trim() }),
@@ -1005,12 +1026,13 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
     ...(isHuntLike && Object.keys(asked).length > 0 && { hypothesis_subjects: asked }),
     ...(isHuntLike && !turnsBad && iterations.trim() && { iterations: turns }),
     ...(isHuntLike && !costBad && maxCost.trim() && { max_cost_usd: cost }),
+    ...(!wallBad && maxWall.trim() && { max_wall_minutes: wall }),
     ...(isHuntLike && approve && { approve_hypotheses: true }),
     ...(isHuntLike && restricted && { restricted: true }),
   }
   // Checked on Run, not per keystroke: a button dead through a sentence reads as an argument.
   const needsHypothesis = isHuntLike && hypothesis.trim() === ''
-  const canRun = Object.keys(params).length > 0 && !turnsBad && !costBad && !starting
+  const canRun = Object.keys(params).length > 0 && !turnsBad && !costBad && !wallBad && !starting
 
   // The proposal is an execute body already; it lands in the same three fields the
   // operator would have typed, so Run sends it through the same withTurns build.
@@ -1170,6 +1192,21 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
               : "Checked before each model call, so a run can end above it by the cost of the call it was making (which can include retries). Calls that couldn't be priced (up to 3), calls whose usage had to be estimated, and requests a provider billed but Vigil recorded as nothing aren't fully counted. The allowance starts again when a run resumes. The turn count above is the other ceiling; whichever it reaches first ends the run."}
           />
         )}
+        {limits?.wall_note && (
+          <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--high)' }}>{limits.wall_note}</div>
+        )}
+        <Field
+          label="Time limit"
+          value={maxWall}
+          onChange={setMaxWall}
+          placeholder={String(limits?.budgets?.max_wall_ms != null ? Math.round(limits.budgets.max_wall_ms / 60000) : (isHuntLike || wf.runKind === 'root_cause' ? 90 : 30))}
+          hint={wallHint(
+            wallBad,
+            isHuntLike && !costBad && maxCost.trim() ? cost : limits?.budgets?.max_cost_usd,
+            isHuntLike,
+            isInvestigate,
+          )}
+        />
         {isHuntLike && (
           <label className="flex items-start gap-2 text-[12.5px] leading-[1.5] text-tx-2 cursor-pointer">
             <input type="checkbox" className="mt-0.5" checked={restricted} onChange={(e) => setRestricted(e.target.checked)} />
