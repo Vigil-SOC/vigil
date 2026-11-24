@@ -109,7 +109,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
-from core.detections import exceptions
+from core.detections import exceptions, reconstruction
 from core.detections.inventory import (
     accurate,
     kibana,
@@ -146,7 +146,7 @@ VIGIL_RUNS = ("splunk", "elastic")
 # How often the sweep reads a waiting live Wazuh copy's deploy PR state (#4120).
 PR_WATCH_EVERY = timedelta(hours=1)
 FIRST_WINDOW = timedelta(hours=1)
-LAG = timedelta(minutes=30)  # how late an event may be indexed and still be seen
+LAG = reconstruction.LAG  # how late an event may be indexed and still be seen
 MAX_DOCS = 100  # documents fetched per run; the count is the full total
 SAMPLE = 3
 SAMPLE_CHARS = 500

@@ -4,15 +4,23 @@ Each step is joined on host / entity / time fields that are actually present
 on the Finding. Technique ids and other unknown keys on a step are ignored.
 Verdicts: rule | loglm | both | missed. LogLM-origin is ``data_source ==
 "loglm"``; any other correlated Finding is rule-origin.
+
+``coverage_report`` then applies the one step rule every reader of an emulation
+gets: a step a rule-origin Finding cites is caught whatever its exit; any other
+step is ``unknown`` (with a ``reason``), never missed, when its runner reported an
+error or a null or non-zero exit, or when it ended less than ``LAG`` ago.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
-Verdict = Literal["rule", "loglm", "both", "missed"]
+Verdict = Literal["rule", "loglm", "both", "missed", "unknown"]
+
+# How late an event may be indexed and still be seen (rollout.LAG reads this).
+LAG = timedelta(minutes=30)
 
 _LOG_LM = "loglm"
 
@@ -297,11 +305,20 @@ def steps_from_dispatch_results(results: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]:
-    """Group reconstructed verdicts by technique_id; join on step id / index."""
+def coverage_report(
+    trace: Any,
+    reconstructed: Dict[str, Any],
+    now: Optional[datetime] = None,
+    lag: timedelta = LAG,
+) -> Dict[str, Any]:
+    """Group reconstructed verdicts by technique_id; join on step id / index.
+
+    Each step is judged by ``judge_step`` against ``now`` (naive or aware UTC).
+    """
     records = reconstructed.get("steps") if isinstance(reconstructed, dict) else None
     if not isinstance(records, list) or not isinstance(trace, list):
         return {"techniques": []}
+    now = _naive_utc(now) if now else datetime.now(timezone.utc).replace(tzinfo=None)
 
     by_id: Dict[Any, Deque[Dict[str, Any]]] = defaultdict(deque)
     by_index: Dict[Any, Dict[str, Any]] = {}
@@ -327,6 +344,7 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
         if tid not in grouped:
             grouped[tid] = {"technique_id": tid, "steps": [], "missed": []}
             order.append(tid)
+        record = judge_step(raw, record, now, lag, reconstructed.get("cut_off"))
         grouped[tid]["steps"].append(record)
         if record.get("verdict") == "missed":
             grouped[tid]["missed"].append(_missed_step(raw, record))
@@ -346,6 +364,54 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
             }
         )
     return {"techniques": techniques}
+
+
+def judge_step(
+    raw: Any,
+    record: Dict[str, Any],
+    now: datetime,
+    lag: timedelta = LAG,
+    cut_off: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The step rule: the record as scored, with the step's hostname and times.
+
+    Rule-origin citations make it caught whatever its exit. Otherwise a runner
+    error, a null or non-zero ``exit`` (only when the step carries ``exit``: a
+    hand-written trace has none), an end within ``lag`` of ``now``, a step with no
+    time or no host/IP/user to join on, or a cut-off Findings read is unknown.
+    """
+    out = dict(record)
+    if not isinstance(raw, dict):
+        return out
+    hosts = _entities_from_step(raw)["hostnames"]
+    if hosts:
+        out["hostname"] = hosts[0]
+    window = _window(raw)
+    if window is not None:
+        out["started_at"], out["ended_at"] = (t.isoformat() for t in window)
+    if out.get("verdict") in ("rule", "both"):
+        return out
+    reason = None
+    error = raw.get("error")
+    if error:
+        reason = f"the runner reported an error ({str(error)[:200]})"
+    elif "exit" in raw and raw["exit"] is None:
+        reason = "the runner reported no exit code"
+    elif "exit" in raw and raw["exit"] != 0:
+        reason = f"the runner exited {raw['exit']}, so the step may not have run"
+    elif window is None or not _has_entity(_entities_from_step(raw)):
+        reason = "it names no time or no host, IP or user, so no Finding can join it"
+    elif window[1] + lag > now:
+        reason = (
+            f"it ended under {int(lag.total_seconds() // 60)} minutes ago; "
+            "alerts may still be arriving"
+        )
+    elif cut_off:
+        reason = cut_off
+    if reason:
+        out["verdict"] = "unknown"
+        out["reason"] = reason
+    return out
 
 
 def _caught_in(steps: List[Dict[str, Any]]) -> List[str]:
@@ -388,6 +454,8 @@ def _joined_record(
 def _layer_verdict(verdicts: List[Any]) -> Verdict:
     has_rule = False
     has_loglm = False
+    if verdicts and all(v == "unknown" for v in verdicts):
+        return "unknown"
     for verdict in verdicts:
         rule, loglm = _step_layers(verdict)
         has_rule = has_rule or rule

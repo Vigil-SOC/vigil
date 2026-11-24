@@ -226,13 +226,17 @@ def _change_row(c: Any) -> Dict[str, Any]:
     }
 
 
-# caught.py's label for a Verdict's evidence: "caught in Case <id> (proven, <trust>)"
-# or "caught in hunt <id> (...)"; a compose run's label names no Case.
-_CAUGHT_IN = re.compile(r"caught in (Case|hunt) (\S+) \([^)]*\)")
+# caught.py's label for its evidence: "caught in Case <id> (proven, <trust>)",
+# "caught in hunt <id> (...)", "caught in emulation <run id> (compose run on <host>)",
+# and a fail's "missed in emulation <run id> (...)".
+_CAUGHT_IN = re.compile(r"(caught|missed) in (Case|hunt|emulation) (\S+) \([^)]*\)")
 _HIDDEN_CAUGHT = {
-    "case": "caught in a Case you cannot read",
-    "hunt": "caught in a hunt on a Case you cannot read",
+    "case": "a Case you cannot read",
+    "hunt": "a hunt on a Case you cannot read",
+    "emulation": "an emulation on a Case you cannot read",
 }
+# Fields a Caught result names its run by, dropped with the run.
+_CAUGHT_RUN_FIELDS = ("run_id", "hostname")
 
 
 def _caught_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -249,14 +253,15 @@ def _caught_of(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def redact_caught(session: Any, rows: Iterable[Dict[str, Any]]) -> None:
     """Each row's Caught reason as the reader may see it (#4718): one naming a Case,
-    or a hunt on a Case, the reader cannot read keeps its result, technique and day
-    but names neither. Rewrites the payload rows, never the stored checks."""
+    or a hunt or emulation run on a Case, the reader cannot read keeps its result,
+    technique and day but names neither (nor the run's id and host fields). Rewrites the payload rows, never the stored checks.
+    """
     rows = list(rows)
     runs: Dict[str, Tuple[str, str]] = {}
     for row in rows:
         reason = (_caught_of(row) or {}).get("reason")
         if isinstance(reason, str) and (m := _CAUGHT_IN.search(reason)):
-            runs[reason] = (m.group(1).lower(), m.group(2))
+            runs[reason] = (m.group(2).lower(), m.group(3))
     if not runs:
         return
     from core.detections.gaps import _unreadable_runs
@@ -273,13 +278,20 @@ def redact_caught(session: Any, rows: Iterable[Dict[str, Any]]) -> None:
         run = runs.get((held or {}).get("reason"))
         if held is None or run not in hidden:
             continue
-        new = _CAUGHT_IN.sub(_HIDDEN_CAUGHT[run[0]], held["reason"], count=1)
-        if held is row:
+        new = _CAUGHT_IN.sub(
+            lambda m: f"{m.group(1)} in {_HIDDEN_CAUGHT[run[0]]}",
+            held["reason"],
+            count=1,
+        )
+        kept = {k: v for k, v in held.items() if k not in _CAUGHT_RUN_FIELDS} | {
+            "reason": new
+        }
+        if held is row:  # a change row carries no run fields
             row["reason"] = new
         elif isinstance(row.get("checks"), dict):
-            row["checks"] = {**row["checks"], CAUGHT_CHECK: {**held, "reason": new}}
+            row["checks"] = {**row["checks"], CAUGHT_CHECK: kept}
         else:
-            row[CAUGHT_CHECK] = {**held, "reason": new}
+            row[CAUGHT_CHECK] = kept
 
 
 def _latest_join():
@@ -335,6 +347,8 @@ def open_flags() -> List[Dict[str, Any]]:
             }
             for row in session.execute(_flags()).all()
         ]
+        # A Caught fail names its emulation run and host: hidden as on a rule's row.
+        redact_caught(session, flags)
     flags.sort(key=lambda f: f["since"], reverse=True)
     for flag in flags:
         del flag["changed_at"]
