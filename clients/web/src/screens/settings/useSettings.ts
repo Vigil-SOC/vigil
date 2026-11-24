@@ -100,6 +100,7 @@ interface PlatformDbForm {
   proxy_password: string
   ssh_private_key_path: string
   ssh_key_passphrase: string
+  ssh_host_key: string
   verify_proxy_tls: boolean
   database_password: string
 }
@@ -112,6 +113,7 @@ const EMPTY_PLATFORM_DB: PlatformDbForm = {
   proxy_password: '',
   ssh_private_key_path: '',
   ssh_key_passphrase: '',
+  ssh_host_key: '',
   verify_proxy_tls: true,
   database_password: '',
 }
@@ -145,6 +147,7 @@ export function usePlatformDatabase() {
           proxy_password: '',
           ssh_private_key_path: d.ssh_private_key_path || '',
           ssh_key_passphrase: '',
+          ssh_host_key: d.ssh_host_key || '',
           verify_proxy_tls: d.verify_proxy_tls ?? true,
           database_password: '',
         })
@@ -173,6 +176,7 @@ export function usePlatformDatabase() {
           proxy_password: f.proxy_password,
           ssh_private_key_path: f.ssh_private_key_path,
           ssh_key_passphrase: f.ssh_key_passphrase,
+          ssh_host_key: f.ssh_host_key,
           verify_proxy_tls: f.verify_proxy_tls,
           database_password: f.database_password,
         })

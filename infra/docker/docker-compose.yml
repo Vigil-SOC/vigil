@@ -1269,10 +1269,10 @@ services:
       - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:-changeme123}
       - SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
     ports:
-      - "8000:8000"   # Web UI (host 6990 is taken by the agent worker health port)
-      - "8088:8088"   # HEC (HTTP Event Collector)
-      - "8089:8089"   # Management port
-      - "9997:9997"   # Forwarder port
+      - "127.0.0.1:8000:8000"   # Web UI (host 6990 is taken by the agent worker health port)
+      - "127.0.0.1:8088:8088"   # HEC (HTTP Event Collector)
+      - "127.0.0.1:8089:8089"   # Management port
+      - "127.0.0.1:9997:9997"   # Forwarder port
     volumes:
       - splunk_data:/opt/splunk/var
       - splunk_etc:/opt/splunk/etc
