@@ -3221,6 +3221,11 @@
   "nullable": false,
   "type": "integer"
  },
+ "column history_tickets.alert_ids": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
+ },
  "column history_tickets.bulk_closed": {
   "default": null,
   "nullable": false,
