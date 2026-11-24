@@ -6,6 +6,7 @@
   "backend_metrics_backup",
   "backend_metrics_otel",
   "federation_sources",
+  "integration_health",
   "triage",
   "orchestrator_status",
   "llm_providers",

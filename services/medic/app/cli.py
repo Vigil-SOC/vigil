@@ -59,6 +59,7 @@ from services.medic.sensors.federation import federation_sources
 from services.medic.sensors.gateway import address as gateway_address
 from services.medic.sensors.gateway import gateway_session
 from services.medic.sensors.http_ready import agent_serve_ready, agent_worker_ready
+from services.medic.sensors.integration_health import integration_health
 from services.medic.sensors.kube import agent_worker_pods, kube_pods
 from services.medic.sensors.logtail import compose_log_sensors, helm_log_sensors
 from services.medic.sensors.providers import llm_providers
@@ -265,6 +266,7 @@ def sensors_for(
     if gateway is not None:
         sensors.append(gateway_session(host=gateway[0], port=gateway[1]))
         sensors.append(federation_sources(host=gateway[0], port=gateway[1]))
+        sensors.append(integration_health(host=gateway[0], port=gateway[1]))
         sensors.append(llm_providers(host=gateway[0], port=gateway[1]))
         sensors.extend(work_sensors(host=gateway[0], port=gateway[1]))
         sensors.extend(backend_status_sensors(host=gateway[0], port=gateway[1]))
