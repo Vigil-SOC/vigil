@@ -16947,6 +16947,7 @@ export interface components {
             file_count: number;
             /** Files */
             files: components["schemas"]["SkillFile"][];
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /** Operator Root Set */
@@ -17156,6 +17157,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17267,6 +17269,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17300,6 +17303,16 @@ export interface components {
             source?: string | null;
             /** Version */
             version?: number | null;
+        };
+        /**
+         * SkillsManaged
+         * @description The operator root is under the declared directory: Vigil writes none of it.
+         */
+        SkillsManaged: {
+            /** Directory */
+            directory: string;
+            /** Revision */
+            revision: string;
         };
         /**
          * SourceEvidence

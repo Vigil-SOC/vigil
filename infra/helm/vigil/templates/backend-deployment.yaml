@@ -134,12 +134,18 @@ spec:
             {{- if eq ((.Values.medic).enabled | toString) "true" }}
             {{- include "vigil.medic.apiKeyMount" . | nindent 12 }}
             {{- end }}
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
         {{- include "vigil.caBundleVolume" . | nindent 8 }}
         {{- include "vigil.detectionRulesVolume" . | nindent 8 }}
         {{- if eq ((.Values.medic).enabled | toString) "true" }}
         {{- include "vigil.medic.apiKeyVolume" (dict "context" . "optional" true) | nindent 8 }}
+        {{- end }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.backend.nodeSelector }}
       nodeSelector:
