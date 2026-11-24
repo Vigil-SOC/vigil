@@ -20,6 +20,7 @@ from core.workflows.playbook_resolver import (
     UnknownPlaybook,
     lead_needs,
     phases_needs,
+    wall_setting_warning,
 )
 from core.workflows.workflows_service import (
     ADJUDICATE_RUN_KIND,
@@ -237,7 +238,7 @@ def _budgets(definition: WorkflowDefinition) -> Dict[str, Any]:
             "max_wall_ms": resolver.HUNT_BUDGETS["max_wall_ms"],
         }
     if kind == INVESTIGATE_RUN_KIND:
-        return dict(resolver.INVESTIGATE_BUDGETS)
+        return resolver._with_deployment_wall(dict(resolver.INVESTIGATE_BUDGETS))
     # Only the count of phases sizes a budget, so a compose whose phases do not
     # resolve is still told its ceiling.
     return resolver._budgets(definition.phases)
@@ -315,6 +316,7 @@ def preflight(
     skills, skills_note = _skills(roles, definition.run_kind)
     permissions = _permissions(roles, definition.run_kind, report)
     checkpoints, checkpoints_note = _checkpoints(definition)
+    wall_note = wall_setting_warning()
     return {
         **({"capabilities": report} if hunt_like or investigate else {}),
         **({"pricing": pricing()} if hunt_like else {}),
@@ -329,4 +331,7 @@ def preflight(
         "budgets": _budgets(definition),
         "checkpoints": checkpoints,
         "checkpoints_note": checkpoints_note,
+        # Set only when WORKFLOW_DEFAULT_WALL_SECONDS is a number outside
+        # 60–86400. The budgets above already use 30 minutes.
+        **({"wall_note": wall_note} if wall_note else {}),
     }

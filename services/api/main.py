@@ -553,8 +553,10 @@ async def _startup(app: FastAPI):
     _announce_mcp_surface()
 
     from core.auth.auth_service import warn_retired_settings
+    from core.workflows.playbook_resolver import warn_default_wall
 
     warn_retired_settings()
+    warn_default_wall()
 
     _testing = get_settings().testing
 

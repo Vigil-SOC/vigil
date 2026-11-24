@@ -18545,6 +18545,8 @@ export interface components {
             iterations?: number | null;
             /** Max Cost Usd */
             max_cost_usd?: number | null;
+            /** Max Wall Minutes */
+            max_wall_minutes?: number | null;
             /** Restricted */
             restricted?: boolean | null;
         };

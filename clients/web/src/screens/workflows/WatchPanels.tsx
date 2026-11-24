@@ -73,6 +73,15 @@ function Columns({ explanations, rows, reviewer, blind }: { explanations: ReactN
 
 const untracked = (label: string): LimitRow => ({ label, value: NOT_TRACKED })
 
+/** Investigate and compose record the wall they were given and not the time used. */
+function unrecordedWall(limitMs: number | null): LimitRow {
+  if (limitMs === null || limitMs <= 0) return { label: 'Wall time', value: 'not recorded' }
+  const unit = limitMs > 90 * 60_000 ? 3_600_000 : 60_000
+  const n = limitMs / unit
+  const shown = n < 10 ? String(Number(n.toFixed(1))) : String(Math.round(n))
+  return { label: 'Wall time', value: `not recorded of ${shown} ${unit === 60_000 ? 'min' : 'h'}` }
+}
+
 /** A list of blind spots: the first few, then a count, so one noisy run cannot decide the column's height. */
 const SPOTS_SHOWN = 5
 export function Spots({ lines, empty, note }: { lines: { main: string; sub: string[] }[]; empty: string; note?: string }) {
@@ -354,7 +363,7 @@ const budgetRow = (spent: number | null, max: number | null): LimitRow =>
 
 /** An investigate run at one step. `costs` are the replay's per-decision spend, so the budget follows the step. */
 export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: number[]; at: number }) {
-  const view = (d.projection ?? {}) as { budgets?: { max_cost_usd?: unknown } | null; cost_usd?: unknown; gaps?: unknown; unbound?: unknown }
+  const view = (d.projection ?? {}) as { budgets?: { max_cost_usd?: unknown; max_wall_ms?: unknown } | null; cost_usd?: unknown; gaps?: unknown; unbound?: unknown }
   const last = at >= costs.length - 1
   // the newest step reads what the run has priced; an earlier one, what its decisions cost so far
   const spent = last && num(view.cost_usd) !== null ? num(view.cost_usd) : costs.slice(0, at + 1).reduce((sum, c) => sum + c, 0)
@@ -368,7 +377,12 @@ export function InvestigatePanels({ d, costs, at }: { d: WfRunDetail; costs: num
   return (
     <Columns
       explanations={NO_EXPLANATIONS}
-      rows={[budgetRow(spent, num(view.budgets?.max_cost_usd)), { label: 'Steps', value: `${n} decision${n === 1 ? '' : 's'} · no step limit on this kind` }, untracked('Scope')]}
+      rows={[
+        budgetRow(spent, num(view.budgets?.max_cost_usd)),
+        { label: 'Steps', value: `${n} decision${n === 1 ? '' : 's'} · no step limit on this kind` },
+        unrecordedWall(num(view.budgets?.max_wall_ms)),
+        untracked('Scope'),
+      ]}
       reviewer={<NoData>{NO_REVIEWER}</NoData>}
       blind={<Spots lines={lines} empty="None so far." />}
     />
@@ -395,13 +409,18 @@ export function PlaybookReport({ d, plain = false }: { d: WfRunDetail; plain?: b
 
 /** Root cause and compose have no steps to follow, so these read the run as it stands. */
 export function OtherPanels({ d }: { d: WfRunDetail }) {
-  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; budgets?: { max_cost_usd?: unknown } | null; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
+  const view = (d.projection ?? {}) as { run_kind?: unknown; cost_usd?: unknown; max_cost_usd?: unknown; budgets?: { max_cost_usd?: unknown; max_wall_ms?: unknown } | null; notices?: unknown; recent_searches?: unknown; unbound?: unknown }
   if (view.run_kind !== 'root_cause') {
     const compose = view.run_kind === 'compose'
     return (
       <Columns
         explanations={NO_EXPLANATIONS}
-        rows={[compose ? budgetRow(num(view.cost_usd), num(view.budgets?.max_cost_usd)) : untracked('Budget'), untracked('Steps'), untracked('Scope')]}
+        rows={[
+          compose ? budgetRow(num(view.cost_usd), num(view.budgets?.max_cost_usd)) : untracked('Budget'),
+          untracked('Steps'),
+          ...(compose ? [unrecordedWall(num(view.budgets?.max_wall_ms))] : []),
+          untracked('Scope'),
+        ]}
         reviewer={<NoData>{NO_REVIEWER}</NoData>}
         blind={compose ? <Spots lines={unboundLines(view.unbound)} empty="None so far." /> : <NoData>Not recorded for this kind of run yet.</NoData>}
       />

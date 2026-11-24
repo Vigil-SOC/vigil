@@ -29,6 +29,8 @@ interface Preflight {
   permissions: Permission[]
   permissions_note: string | null
   budgets: Budgets
+  /** Set when the deployment wall was a number outside its range and was ignored. */
+  wall_note?: string | null
   checkpoints: Record<string, 'ask' | 'auto'>
   checkpoints_note: string | null
 }
@@ -403,6 +405,7 @@ function StopsAndCheckpoints({ definition, single, pre, stage, selected, missing
           <span className="text-accent inline-flex pt-0.5"><Icon name="info" size={10} /></span>{line}
         </span>
       ))}
+      {pre.wall_note && <span className="text-[12px] leading-[1.4]" style={{ color: 'var(--high)' }}>{pre.wall_note}</span>}
       <SubLabel>Checkpoints</SubLabel>
       {!pre.checkpoints && <Muted>{missing}</Muted>}
       {classes.map((c) => (

@@ -992,6 +992,10 @@ config:
   ORCHESTRATOR_MAX_ITERATIONS: "50"
   ORCHESTRATOR_MAX_COST: "5.0"
   ORCHESTRATOR_MAX_RUNTIME: "3600"
+  # Investigate and compose runs whose start names no wall, in seconds.
+  # 60–86400; outside that the API keeps 1800 and logs it. Autonomous runs
+  # keep ORCHESTRATOR_MAX_RUNTIME. Not an intent knob.
+  WORKFLOW_DEFAULT_WALL_SECONDS: "1800"
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
