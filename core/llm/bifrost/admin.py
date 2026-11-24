@@ -1105,7 +1105,9 @@ _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
 }
 
 
-def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
+def _is_chat_catalogue_entry(
+    entry: Dict[str, Any], provider_type: Optional[str] = None
+) -> bool:
     """True when a datasheet entry is a chat model rather than another modality.
 
     Vertex serves imagen, veo, chirp, OCR and embeddings out of the same
@@ -1113,10 +1115,17 @@ def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
     ``max_output_tokens`` is the discriminator; embedding ids carry an input
     limit only and are also caught by name, since their families are the one
     set ``discovery.py`` already knows how to spot.
+
+    Host-owned catalogues (Ollama) list local/self-hosted models without
+    datasheet pricing or output token caps. Any non-embedding entry is treated
+    as chat-capable.
     """
     name = entry.get("name") or ""
     if not name or is_embedding_model_id(name):
         return False
+    ptype = provider_type or entry.get("provider") or ""
+    if ptype in _HOST_OWNED_CATALOGUE:
+        return True
     return bool(entry.get("max_output_tokens"))
 
 
@@ -1175,7 +1184,7 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
             cache_write_cost_per_token=_rate(e, "cache_creation_input_token_cost"),
         )
         for e in entries
-        if _is_chat_catalogue_entry(e)
+        if _is_chat_catalogue_entry(e, provider_type=provider_type)
     ]
     if not meta:
         logger.warning(
