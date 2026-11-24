@@ -174,7 +174,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'password',
         required: true,
         placeholder: 'Your OpenCTI API token',
-        helpText: 'From your OpenCTI profile. A user with read access (Knowledge and Observables) is enough; Vigil never writes.',
+        helpText: 'From your OpenCTI profile. The user\'s role needs Access knowledge (KNOWLEDGE) and Allow token usage (APIACCESS_USETOKEN); add Access connectors (MODULES) to show the ingest backlog. Vigil never writes.',
       },
       {
         name: 'verify_ssl',

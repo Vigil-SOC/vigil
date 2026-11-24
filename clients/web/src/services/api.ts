@@ -1935,7 +1935,21 @@ export interface IntegrationHealthRecord {
   /** returned − stored − filtered − dropped; negative is an accounting error */
   duplicate_window: number | null
   dropped_total: number
+  /** What a collector read from the source itself; OpenCTI only (services/api/opencti_facts.py). */
+  facts?: SourceFacts | null
   [key: string]: unknown
+}
+
+export interface SourceFacts {
+  collected_at: string
+  /** the collector's interval: older than two of these and the facts are unknown */
+  interval_seconds: number
+  version: string | null
+  newest_intel_at: string | null
+  queue_messages_total: number | null
+  connectors: { name: string; active: boolean; queue_messages: number }[] | null
+  /** facts the token could not read, each with a plain reason */
+  missing: { fact: string; reason: string }[]
 }
 
 export interface IntegrationHealthResponse {
