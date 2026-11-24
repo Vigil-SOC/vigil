@@ -38,6 +38,7 @@ from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
+from core.response import emulation
 from core.response.approval_service import ActionStatus, ApprovalService
 from core.response.ceiling import gated_tools, unattended_refusal
 from core.routing import Auth, RouterMeta
@@ -179,6 +180,16 @@ def _schema_row_caps(
     undescribed -- which is how ``limit`` came to be sent to tools that do not
     take one.
     """
+    properties = _schema_properties(tool, registry)
+    if properties is None:
+        return None
+    return {name: properties[name] for name in _ROW_CAP_ARGS if name in properties}
+
+
+def _schema_properties(
+    tool: str, registry: Optional["MCPRegistry"] = None
+) -> Optional[Dict[str, Any]]:
+    """The arguments ``tool``'s input schema declares, or None if nothing describes it."""
     spec = MANIFEST.get(tool)
     if spec is None and registry is not None:
         try:
@@ -189,10 +200,31 @@ def _schema_row_caps(
             spec = None
     if spec is None:
         return None
-    properties = (spec.get("input_schema") or spec.get("inputSchema") or {}).get(
+    return (spec.get("input_schema") or spec.get("inputSchema") or {}).get(
         "properties"
     ) or {}
-    return {name: properties[name] for name in _ROW_CAP_ARGS if name in properties}
+
+
+def _scoped(
+    args: Dict[str, Any],
+    tool: str,
+    limits: "emulation.Emulation",
+    registry: Optional["MCPRegistry"] = None,
+) -> Dict[str, Any]:
+    """An emulator's call as sent: the hostname in its listed spelling, and the
+    listed hosts in ``allowed_hosts`` when the schema declares that argument, as
+    ``_bounded`` fills a declared row cap. Never sent otherwise: it would be a
+    keyword the tool does not take."""
+    hostname = str(args.get("hostname") or "").strip()
+    listed = limits.listed(hostname) if hostname else None
+    scoped = {**args, "hostname": listed} if listed else {**args}
+    declared = (_schema_properties(tool, registry) or {}).get("allowed_hosts")
+    if declared is None:
+        return scoped
+    kind = declared.get("type") if isinstance(declared, dict) else None
+    hosts = limits.hosts
+    scoped["allowed_hosts"] = ", ".join(hosts) if kind == "string" else list(hosts)
+    return scoped
 
 
 # A server that bounds its own row cap refuses a call past it rather than answering
@@ -368,9 +400,19 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
     tool, raw = body.tool, body.args
     if tool == CALL_INTEGRATION_TOOL:
         tool, raw = resolve_integration_call(registry, raw)
-    args = _bounded(raw, body.bounds.max_rows, tool, registry)
-
     claims = current_claims()
+    # A marked emulator is held to the operator's host list before anything leaves.
+    limits = await asyncio.to_thread(emulation.read_emulation)
+    held = emulation.refusal(limits, tool, raw)
+    if held is not None:
+        if attributed(claims):
+            _outcome(claims, tool, raw, "refused")
+        raise MCPFailure("refused", held)
+    args = _bounded(raw, body.bounds.max_rows, tool, registry)
+    # Into what is sent only: an approval and the trail hold what the model asked.
+    if limits.marked(tool):
+        args = _scoped(args, tool, limits, registry)
+
     denial = None if claims is None else _denial(claims, tool, raw)
     # A run whose person can no longer read its own case parks on the reason
     # (#4358): it reads that case at every step, so its next call is refused.
@@ -404,6 +446,13 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
         result, handled = await asyncio.wait_for(
             execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
         )
+        if handled and limits.marked(tool):
+            # The list bounds what Vigil asks, not what the far side does: a
+            # step it reports on another host is flagged, the answer unchanged.
+            stray = emulation.unlisted_hosts(limits, result)
+            if stray:
+                run_id = body.run_id or (claims.run_id if claims else None)
+                await asyncio.to_thread(emulation.note_unlisted, tool, run_id, stray)
         if not handled:
             outcome = "refused"
         elif _errored(result) is not None:

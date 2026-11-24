@@ -1611,6 +1611,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/emulation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Emulation */
+        get: operations["get_api_autonomy_emulation"];
+        /**
+         * Put Emulation
+         * @description Mark or unmark emulators, and edit the hosts they may run on.
+         *
+         *     Adding a mark or a host lets an emulator act where it could not: a
+         *     person's ``ai_autonomy.write``, refused while stopped, as loosening a
+         *     tool's class is. Removing either is ``ai_autonomy.stop``. One trail entry
+         *     names who changed what.
+         */
+        put: operations["put_api_autonomy_emulation"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/held/release": {
         parameters: {
             query?: never;
@@ -13358,6 +13384,33 @@ export interface components {
             token: string;
         };
         /**
+         * EmulationBody
+         * @description The marked tools and the host list, each replacing what is stored.
+         *
+         *     An omitted field stays as it is. A host is one hostname: no whitespace and
+         *     no leading ``-``.
+         */
+        EmulationBody: {
+            /** Hosts */
+            hosts?: string[] | null;
+            /** Tools */
+            tools?: string[] | null;
+        };
+        /**
+         * EmulationResponse
+         * @description Which outside tools are emulators, the hosts they may run on, and the defaults.
+         */
+        EmulationResponse: {
+            /** Defaults */
+            defaults: {
+                [key: string]: string[];
+            };
+            /** Hosts */
+            hosts: string[];
+            /** Tools */
+            tools: string[];
+        };
+        /**
          * EndSignInsRequest
          * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
          */
@@ -21177,6 +21230,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy_emulation: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmulationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy_emulation: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmulationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmulationResponse"];
                 };
             };
             /** @description Validation Error */

@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.tool_schemas import (
     ALL_TOOLS,
     CALL_INTEGRATION_TOOL,
@@ -17,6 +16,7 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.response.ceiling import gated_tools
+from core.response.emulation import read_emulation
 
 REMOTE = "remote"
 
@@ -40,13 +40,18 @@ def run_id_for(session_id: str) -> str:
 # reversible, irreversible and unclassified tools go through the approval queue
 # and workflows instead. Those sharing a built-in's name are left out too — the
 # backend answers those, and an agent's ``wanted`` list decides whether it may.
+# A marked emulator is left out whatever its class: emulation belongs in a run,
+# where it is recorded, so resolve_integration_call refuses it too.
 def integration_tools(
     mcp_tools: Optional[List[Dict[str, Any]]],
 ) -> List[Dict[str, Any]]:
     static = {t["name"] for t in ALL_TOOLS if t.get("name")}
     named = [t for t in mcp_tools or [] if t.get("name") and t["name"] not in static]
+    if not named:
+        return []
     gated = gated_tools(t["name"] for t in named)
-    return [t for t in named if t["name"] not in gated]
+    marked = read_emulation()
+    return [t for t in named if t["name"] not in gated and not marked.marked(t["name"])]
 
 
 def integrations_how(mcp_tools: Optional[List[Dict[str, Any]]]) -> str:
@@ -92,13 +97,12 @@ def _declare(
     # says: a user who connected an integration expects the assistant to use it.
     # Hunts curate separately (playbook_resolver).
     #
-    # Chat has no approval-resume path, so ART execute is dropped by id.
     # ``approve_action`` stays declared and does not approve: it leaves the row
     # and points at Approvals (#2918). ``isolate_host`` in chat would be a
     # detonation nobody queued, which is a different question from this list.
     static = {t["name"]: t for t in ALL_TOOLS if t.get("name")}
     names = list(static) if wanted is None else [n for n in wanted if n in static]
-    entries = [static[n] for n in names if n not in EXECUTE_IDS]
+    entries = [static[n] for n in names]
     if integration_tools(mcp_tools):
         entries += INTEGRATION_TOOLS
     declared = []
