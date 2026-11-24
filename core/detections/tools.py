@@ -19,7 +19,7 @@ from core.detections.gaps import (
     read_window_findings,
     technique_check,
 )
-from core.detections.inventory import catalog, metrics
+from core.detections.inventory import catalog, coverage, metrics
 from core.detections.inventory.accurate import FALSE_PAGE, judged_false_page
 from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
@@ -303,6 +303,21 @@ class SecurityDetectionsTools:
     async def detection_metrics(self, **_kwargs: object) -> Dict:
         """The rollout's success metrics from stored data, each with its source."""
         return await asyncio.to_thread(metrics.report)
+
+    async def emulate_next(self, **_kwargs: object) -> Dict:
+        """The coverage map's techniques in the order to emulate next (no rule,
+        unproven, proven with nothing caught, then the rest), as coverage()
+        orders them. Says nothing about which tests an emulation runner holds."""
+        report = await asyncio.to_thread(coverage.coverage)
+        rows = {row["technique"]: row for row in report["techniques"]}
+        keys = ("technique", "name", "tactic", "state", "rules", "caught")
+        return {
+            "techniques": [
+                {k: rows[t][k] for k in keys} for t in report["emulate_next"]
+            ],
+            "summary": {**report["summary"], "caught": report["caught_techniques"]},
+            "source": report["source"],
+        }
 
     async def lint_detections(
         self,

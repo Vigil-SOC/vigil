@@ -1090,6 +1090,8 @@ interface MetricNotes { source: string; unknown: string[] }
 export interface CoverageSiem {
   copies: number
   proven: number
+  /** Copies whose latest version caught a real attack step. */
+  caught: number
   failing: number
   state: 'proven' | 'unproven'
 }
@@ -1107,6 +1109,8 @@ export interface CoverageCell {
   disabled: number
   seen: number
   replayed: number
+  /** Active rules whose latest version caught a real attack step, counted once across copies. */
+  caught: number
   siems: Partial<Record<CoverageSiemName, CoverageSiem>>
 }
 
@@ -1117,6 +1121,10 @@ export interface DetectionCoverage {
   /** Every SIEM with a listed (active or disabled) rule, in order, whether or not its rules declare a technique. */
   siems: CoverageSiemName[]
   summary: Record<CoverageState, number>
+  /** Techniques with any caught rule. */
+  caught_techniques: number
+  /** Technique ids in the order to emulate next: no rule, unproven, proven with nothing caught, then the rest. */
+  emulate_next: string[]
   rule_total: number
   mapped: number
   source: string

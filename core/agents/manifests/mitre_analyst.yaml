@@ -11,6 +11,7 @@ needs:
   - read_skill
   - atomic_red_team_execute
   - identify_gaps
+  - emulate_next
   - analyze_coverage
   - list_findings
   - search_findings

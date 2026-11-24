@@ -2325,6 +2325,18 @@ async def get_gaps_report() -> str:
     return await _acall(read)
 
 
+@tool("Emulate next", reads=True)
+@requires("detections.read")
+async def get_emulate_next() -> str:
+    """The coverage map's techniques in the order to emulate next: no rule,
+    unproven, proven with nothing caught, then the rest. Each row has
+    technique, name, tactic, state, rules and caught. Says nothing about which
+    tests an emulation runner holds."""
+    from core.detections.tools import get_security_detection_tools
+
+    return await _acall(get_security_detection_tools().emulate_next)
+
+
 @tool("Day 1 Report", reads=True)
 @requires("platform.read")
 def get_day1_report(record_id: Optional[str] = None) -> str:

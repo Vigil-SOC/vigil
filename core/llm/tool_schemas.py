@@ -197,6 +197,11 @@ SECURITY_DETECTION_TOOLS = [
         },
     },
     {
+        "name": "emulate_next",
+        "description": "List the ATT&CK techniques on the coverage map in the order to emulate next: no_rule (no active rule declares it), then unproven (an active rule declares it, no SIEM copy passes Runs and Sees), then proven techniques no rule has caught, then the rest; most stored alerts first within each. Each row has technique, name, tactic, state, rules (active rules declaring it, counted once across copies) and caught (active rules whose latest version alerted on a real attack step). summary counts each state and the techniques with any caught rule. It makes no claim about which tests the Atomic Red Team runner holds: check that before planning an emulation. Reads stored data only and writes nothing.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "get_coverage_stats",
         "description": "Get overall detection coverage statistics including total detections, techniques covered, and breakdown by source format. Use this for high-level coverage overview.",
         "input_schema": {

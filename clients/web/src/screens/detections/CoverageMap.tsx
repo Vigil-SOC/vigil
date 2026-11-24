@@ -7,7 +7,8 @@ import { CoverageLoading } from './DetectionsLoading'
 
 // The heat map is Alex Margaris's from the 1.x line (ProgramTab's HeatMap), here
 // with main's meaning of proven (an active SIEM copy passes Runs and Sees) and a
-// split by SIEM. It opens on a summary per tactic; the whole grid is "Full map".
+// split by SIEM. It opens on a summary per tactic; the whole grid is "Full map",
+// and "Emulate next" lists the techniques in the server's emulate-next order.
 
 const STATES: Record<CoverageState, string> = {
   proven: 'Proven',
@@ -20,11 +21,17 @@ const SIEMS: { id: CoverageSiemName; label: string }[] = [
   { id: 'wazuh', label: 'Wazuh' },
 ]
 type Lens = 'all' | CoverageSiemName
+type View = 'summary' | 'full' | 'next'
 
 /** A cell's state through the lens: every SIEM, or one SIEM's copies only. */
 function stateIn(cell: CoverageCell, lens: Lens): CoverageState {
   if (lens === 'all') return cell.state
   return cell.siems[lens]?.state ?? 'no_rule'
+}
+
+/** How many rules (every SIEM) or copies (one SIEM) caught a real attack step. */
+function caughtIn(cell: CoverageCell, lens: Lens): number {
+  return lens === 'all' ? cell.caught : cell.siems[lens]?.caught ?? 0
 }
 
 function plural(count: number, one: string, many = `${one}s`): string {
@@ -69,7 +76,8 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
   const [error, setError] = useState<string | null>(null)
   const [lens, setLens] = useState<Lens>('all')
   const [selected, setSelected] = useState<string | null>(null)
-  const [full, setFull] = useState(false)
+  const [view, setView] = useState<View>('summary')
+  const toggleView = (next: View) => setView(view === next ? 'summary' : next)
   // Tactics to show; none picked means all of them.
   const [picked, setPicked] = useState<string[]>(readPicked)
   const pick = (next: string[]) => { setPicked(next); writePicked(next) }
@@ -102,7 +110,11 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
   const present = SIEMS.filter((s) => coverage.siems.includes(s.id))
   const known = picked.filter((t) => coverage.tactics.includes(t))
   const tactics = known.length ? coverage.tactics.filter((t) => known.includes(t)) : coverage.tactics
-  const total = countStates(coverage.techniques.filter((t) => tactics.includes(t.tactic)), lens)
+  // The emulate-next order is across every SIEM, so that view reads every SIEM.
+  const seen = view === 'next' ? 'all' : lens
+  const inTactics = coverage.techniques.filter((t) => tactics.includes(t.tactic))
+  const total = countStates(inTactics, seen)
+  const caught = inTactics.filter((t) => caughtIn(t, seen) > 0).length
   const toggleTactic = (tactic: string) => pick(known.includes(tactic) ? known.filter((t) => t !== tactic) : [...known, tactic])
   const select = (technique: string) => setSelected(selected === technique ? null : technique)
   const cell = coverage.techniques.find((t) => t.technique === selected) ?? null
@@ -110,18 +122,20 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
     <div className="x1-card de-cov" data-testid="coverage-map">
       <div className="de-cov-head">
         <div className="de-cov-lens" role="group" aria-label="Coverage in">
-          <button type="button" className={`de-cov-lens-b${lens === 'all' ? ' on' : ''}`} aria-pressed={lens === 'all'} onClick={() => setLens('all')}>Every SIEM</button>
+          <button type="button" className={`de-cov-lens-b${seen === 'all' ? ' on' : ''}`} aria-pressed={seen === 'all'} disabled={view === 'next'} onClick={() => setLens('all')}>Every SIEM</button>
           {present.map((s) => (
-            <button key={s.id} type="button" className={`de-cov-lens-b${lens === s.id ? ' on' : ''}`} aria-pressed={lens === s.id} onClick={() => setLens(s.id)}>{s.label}</button>
+            <button key={s.id} type="button" className={`de-cov-lens-b${seen === s.id ? ' on' : ''}`} aria-pressed={seen === s.id} disabled={view === 'next'} title={view === 'next' ? 'Emulate next reads every SIEM' : undefined} onClick={() => setLens(s.id)}>{s.label}</button>
           ))}
           <span className="de-cov-sep" aria-hidden="true" />
-          <button type="button" className={`de-cov-lens-b${full ? ' on' : ''}`} aria-pressed={full} onClick={() => setFull(!full)}>Full map</button>
+          <button type="button" className={`de-cov-lens-b${view === 'full' ? ' on' : ''}`} aria-pressed={view === 'full'} onClick={() => toggleView('full')}>Full map</button>
+          <button type="button" className={`de-cov-lens-b${view === 'next' ? ' on' : ''}`} aria-pressed={view === 'next'} onClick={() => toggleView('next')}>Emulate next</button>
           <TacticMenu tactics={coverage.tactics} known={known} onAll={() => pick([])} onToggle={toggleTactic} />
         </div>
         <div className="de-cov-legend">
           {ORDER.map((s) => (
-            <span key={s}><span className={`de-swatch ${s}`} />{stateName(s, lens)} · {total[s]}</span>
+            <span key={s}><span className={`de-swatch ${s}`} />{stateName(s, seen)} · {total[s]}</span>
           ))}
+          <span className="de-cov-caught">Caught · {caught}</span>
         </div>
       </div>
       <div className="de-cov-tactics" role="group" aria-label="Tactics shown">
@@ -131,8 +145,9 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
           <button key={tactic} type="button" className={`de-cov-tac-b${known.includes(tactic) ? ' on' : ''}`} aria-pressed={known.includes(tactic)} onClick={() => toggleTactic(tactic)}>{tactic}</button>
         ))}
       </div>
-      {!full && <TacticSummary coverage={coverage} tactics={tactics} lens={lens} selected={selected} onSelect={select} />}
-      {full && <div className="de-matrix-wrap">
+      {view === 'summary' && <TacticSummary coverage={coverage} tactics={tactics} lens={lens} selected={selected} onSelect={select} />}
+      {view === 'next' && <EmulateNext coverage={coverage} tactics={tactics} selected={selected} onSelect={select} />}
+      {view === 'full' && <div className="de-matrix-wrap">
         <div className="de-matrix">
           {tactics.map((tactic) => (
             <div key={tactic} className="de-col">
@@ -144,9 +159,9 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
           ))}
         </div>
       </div>}
-      {full && cell && <CellDetail cell={cell} />}
+      {view === 'full' && cell && <CellDetail cell={cell} />}
       <p className="de-note">
-        Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled one is no coverage, so its technique shows as no active rule.
+        Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. Caught: an active rule's latest version alerted on a real attack step. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled one is no coverage, so its technique shows as no active rule.
       </p>
     </div>
   )
@@ -156,10 +171,11 @@ function Cell({ cell, lens, on, onSelect, extra }: { cell: CoverageCell; lens: L
   const state = stateIn(cell, lens)
   // Under one SIEM an empty cell says so, not the rules other SIEMs have.
   const rules = state === 'no_rule' && lens !== 'all' ? stateName(state, lens) : cell.rules ? plural(cell.rules, 'rule') : ''
+  const caught = caughtIn(cell, lens)
   return (
     <button type="button" className={`de-cell ${state}${on ? ' on' : ''}`} aria-pressed={on} title={stateName(state, lens)} onClick={() => onSelect(cell.technique)}>
       <b>{cell.name}</b>
-      <span className="x1-mono">{cell.technique}{rules ? ` · ${rules}` : ''}{extra ? ` · ${extra}` : ''}</span>
+      <span className="x1-mono">{cell.technique}{rules ? ` · ${rules}` : ''}{caught > 0 && <span className="de-cell-caught"> · {caught} caught</span>}{extra ? ` · ${extra}` : ''}</span>
     </button>
   )
 }
@@ -214,7 +230,7 @@ function TacticSummary({ coverage, tactics, lens, selected, onSelect }: { covera
                 {ORDER.map((s) => n[s] > 0 && <span key={s} className={`de-tac-seg ${s}`} style={{ flexGrow: n[s] }} />)}
               </span>
               <span className="de-tac-counts">
-                <span className="proven">{n.proven} proven</span> · <span className="unproven">{n.unproven} rule, not proven</span> · <span className="no_rule">{n.no_rule} no active rule{lens === 'all' ? '' : ` in ${siemLabel(lens)}`}</span>
+                <span className="proven">{n.proven} proven</span> · <span className="caught">{cells.filter((c) => caughtIn(c, lens) > 0).length} caught</span> · <span className="unproven">{n.unproven} rule, not proven</span> · <span className="no_rule">{n.no_rule} no active rule{lens === 'all' ? '' : ` in ${siemLabel(lens)}`}</span>
               </span>
             </button>
             {isOpen && <TacticTechniques cells={cells} lens={lens} selected={selected} onSelect={onSelect} />}
@@ -272,13 +288,13 @@ function TacticTechniques({ cells, lens, selected, onSelect }: { cells: Coverage
 function CellDetail({ cell }: { cell: CoverageCell }) {
   return (
     <div className="de-cov-detail" data-testid="coverage-cell">
-      <b>{cell.name} <span className="x1-mono x1-muted">{cell.technique}</span> · {STATES[cell.state]}</b>
+      <b>{cell.name} <span className="x1-mono x1-muted">{cell.technique}</span> · {STATES[cell.state]}{cell.caught > 0 && <span className="de-cell-caught"> · {plural(cell.caught, 'rule')} caught</span>}</b>
       <span className="x1-muted">
         {plural(cell.rules, 'active rule')} declare it{cell.disabled > 0 ? `, and ${plural(cell.disabled, 'disabled rule')}` : ''}. Seen on {plural(cell.seen, 'stored alert')}.
         {cell.replayed > 0 && ` ${plural(cell.replayed, 'rule')} passed a replay on stored events.`}
       </span>
       <table className="de-cov-siems">
-        <thead><tr><th>SIEM</th><th>Copies</th><th>Proven</th><th>Failing Runs or Sees</th></tr></thead>
+        <thead><tr><th>SIEM</th><th>Copies</th><th>Proven</th><th>Caught</th><th>Failing Runs or Sees</th></tr></thead>
         <tbody>
           {SIEMS.map((s) => {
             const split = cell.siems[s.id]
@@ -287,12 +303,49 @@ function CellDetail({ cell }: { cell: CoverageCell }) {
                 <td>{s.label}</td>
                 <td>{split?.copies ?? 0}</td>
                 <td className={split?.proven ? 'proven' : undefined}>{split?.proven ?? 0}</td>
+                <td className={split?.caught ? 'proven' : undefined}>{split?.caught ?? 0}</td>
                 <td className={split?.failing ? 'failing' : undefined}>{split?.failing ?? 0}</td>
               </tr>
             )
           })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// The groups of the server's emulate-next order, in that order.
+const NEXT_GROUPS = [
+  { id: 'no_rule', label: 'No active rule' },
+  { id: 'unproven', label: 'Rule, not proven' },
+  { id: 'uncaught', label: 'Proven, nothing caught' },
+  { id: 'caught', label: 'Proven and caught' },
+] as const
+const nextGroup = (c: CoverageCell) => c.state !== 'proven' ? c.state : c.caught ? 'caught' : 'uncaught'
+
+/** The techniques in the order to emulate next, as the server orders them; nothing about which tests a runner holds. */
+function EmulateNext({ coverage, tactics, selected, onSelect }: { coverage: DetectionCoverage; tactics: string[]; selected: string | null; onSelect: (technique: string) => void }) {
+  const byId = new Map(coverage.techniques.map((t) => [t.technique, t]))
+  const ordered = coverage.emulate_next.map((id) => byId.get(id)).filter((t): t is CoverageCell => !!t && tactics.includes(t.tactic))
+  return (
+    <div className="de-next" data-testid="coverage-next">
+      <p className="de-note">Across every SIEM: no active rule first, then a rule not proven, then proven with nothing caught; most alerts seen first within each. It says nothing about which tests an emulation runner holds.</p>
+      {NEXT_GROUPS.map((g) => {
+        const cells = ordered.filter((c) => nextGroup(c) === g.id)
+        if (!cells.length) return null
+        const cell = cells.find((c) => c.technique === selected)
+        return (
+          <section key={g.id} className="de-next-group">
+            <h4>{g.label} <span className="x1-muted">· {cells.length}</span></h4>
+            <div className="de-tac-groups">
+              {cells.map((t) => (
+                <Cell key={t.technique} cell={t} lens="all" on={selected === t.technique} onSelect={onSelect} extra={t.seen ? plural(t.seen, 'alert') : undefined} />
+              ))}
+            </div>
+            {cell && <CellDetail cell={cell} />}
+          </section>
+        )
+      })}
     </div>
   )
 }
