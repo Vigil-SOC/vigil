@@ -97,6 +97,8 @@ export interface Skill {
   held: boolean
   /** the repo it was installed from and how many skills came with it; null when not from a repo */
   library: { label: string; ref: string | null; path: string; commit: string; skills: number } | null
+  /** the declared directory the operator root sits in, and its revision; null when Vigil writes skills */
+  managed: { directory: string; revision: string } | null
 }
 
 /** The usage line the card and the drawer subtitle share (#1560). */

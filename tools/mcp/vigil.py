@@ -1515,20 +1515,17 @@ def create_approval_action(
     """
     from core.response.proposal_targets import (
         REASON_SENTENCES,
-        TARGET_RULES,
         check_confidence,
         check_target,
     )
 
-    # A containment kind's target must fit it and its confidence be above zero.
-    if action_type in TARGET_RULES:
-        checked, code = check_target(action_type, target)
-        code = code or check_confidence({"confidence": confidence})
-        if code:
-            return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
-        target = checked
-    elif not 0.0 <= confidence <= 1.0:
-        return jdump({"error": "confidence must be between 0 and 1"})
+    # Only the six kinds a run may propose; the target must fit the kind and the
+    # confidence be above zero.
+    checked, code = check_target(action_type, target)
+    code = code or check_confidence({"confidence": confidence})
+    if code:
+        return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
+    target = checked
     try:
         svc = ApprovalService()
         action = svc.create_action(
@@ -1599,9 +1596,12 @@ def list_approval_actions(
 
 @tool("Get approval action", reads=True)
 @requires("ai_decisions.read")
-def get_approval_action(action_id: str) -> str:
-    """Get action details."""
-    return _call(tool_registry.get_approval_action, action_id=action_id)
+async def get_approval_action(action_id: str) -> str:
+    """Get action details. An isolation or account disable carries the vendor
+    IDs its target resolved to, or what it is waiting on, in
+    ``parameters.containment``, and once run, the vendor's state in
+    ``execution_result.state``."""
+    return await _acall(tool_registry.get_approval_action, action_id=action_id)
 
 
 @tool("Approve action (confirmed in Approvals)", reads=True)

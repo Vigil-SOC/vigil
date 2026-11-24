@@ -1705,7 +1705,7 @@ export const autonomyApi = {
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),
-  // Clears the stop's hold. The row stays approved; the next executor pass runs it.
+  // Clears the stop's hold and runs the row at once, as the person releasing it.
   releaseHeld: (actionId: string) =>
     api.post<Ceiling>(`/autonomy/held/${encodeURIComponent(actionId)}/release`),
   releaseAllHeld: () => api.post<Ceiling>('/autonomy/held/release'),

@@ -56,6 +56,10 @@ backend:
   affinity: {}
   # Extra env merged on top of the shared ConfigMap/Secret. Useful for overrides.
   extraEnv: []
+  # The declared intent directory, read-only, when skills live in it (README:
+  # "Skills in the declared directory"). The backend only reads its REVISION.
+  extraVolumes: []
+  extraVolumeMounts: []
   # Backend-specific feature flags written into the ConfigMap.
   env:
     BIND_HOST: "0.0.0.0"
@@ -100,7 +104,8 @@ daemon:
   extraEnv: []
   # Declared intent (README: "Declared intent directory"). Mount a directory
   # holding INTENT.md and REVISION here, and set VIGIL_INTENT_DIR to its path
-  # in extraEnv. Only the daemon mounts it: it is the one applier.
+  # in extraEnv. The daemon is the one applier; backend and llmWorker mount it
+  # too only when skills live in it.
   extraVolumes: []
   extraVolumeMounts: []
 
@@ -151,6 +156,10 @@ llmWorker:
   tolerations: []
   affinity: {}
   extraEnv: []
+  # The declared intent directory, read-only, when skills live in it (README:
+  # "Skills in the declared directory").
+  extraVolumes: []
+  extraVolumeMounts: []
 
 # -----------------------------------------------------------------------------
 # Agent worker — the TypeScript BullMQ consumer. Runs alongside llmWorker, not
@@ -993,6 +1002,8 @@ config:
   # is cleared on restart and is not shared between backend replicas. With
   # stateDirectory on ReadWriteMany storage, set this to null to use its
   # skills/ folder (created on the first save), or to an existing directory.
+  # A path under the declared intent directory (VIGIL_INTENT_DIR) makes the
+  # skills managed by it: Vigil refuses every write there (README).
   VIGIL_SKILLS_PATH: ""
 
   # OTEL — empty exports nothing; set it to a reachable collector to turn on

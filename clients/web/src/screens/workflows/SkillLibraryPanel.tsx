@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { OverlayPortal } from '../../shared/ui'
 import type { Skill } from '../../data/appData'
+import { skillsManagedText } from '../../services/skillsApi'
 import { SkillDeleteModal } from './SkillDrawer'
 import { SkillLibraryDialog } from './SkillLibraryDialog'
 
@@ -24,6 +25,7 @@ export function SkillLibraryPanel({
   const first = skills[0]
   const lib = first.library!
   const held = skills.filter((s) => s.held).length
+  const managedText = first.managed ? skillsManagedText(first.managed) : undefined
 
   // The update and delete popups take their own Escape; the panel closes only when neither is open.
   useEffect(() => {
@@ -59,9 +61,10 @@ export function SkillLibraryPanel({
               </button>
             ))}
           </div>
+          {canWrite && managedText && <p className="text-[13px] text-tx-2 leading-[1.5] break-words">{managedText}</p>}
           <div className="vg-side-foot">
             {canWrite && (
-              <button type="button" className="vg-side-btn" onClick={() => setUpdating(true)}>
+              <button type="button" className="vg-side-btn" disabled={!!managedText} title={managedText} onClick={() => setUpdating(true)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5" />
                 </svg>
@@ -71,7 +74,7 @@ export function SkillLibraryPanel({
             <span className="vg-skill-foot-end">
               <button type="button" className="vg-side-btn" onClick={onClose}>Close</button>
               {canWrite && (
-                <button type="button" className="vg-side-btn" onClick={() => setDeleting(true)}>Delete library</button>
+                <button type="button" className="vg-side-btn" disabled={!!managedText} title={managedText} onClick={() => setDeleting(true)}>Delete library</button>
               )}
             </span>
           </div>

@@ -51,7 +51,7 @@ _LEGACY_POLL_SOURCES = (
 _FEDERATION_ZERO = {"polls": 0, "findings": 0, "errors": 0, "dropped": 0}
 
 # Work-loop pass counters on /health. One integer per component the hang rule
-# reads. Kafka and the executor are not in that set.
+# reads. Kafka is not in that set.
 _PASS_COMPONENTS = ("poller", "processor", "scheduler", "orchestrator")
 
 
@@ -131,7 +131,6 @@ class MetricsServer:
         self.poller = None
         self.kafka_ingestor = None
         self.processor = None
-        self.executor = None
         self.scheduler = None
         self.orchestrator = None
 
@@ -263,7 +262,6 @@ class MetricsServer:
                 ("poller", self.poller),
                 ("kafka", self.kafka_ingestor),
                 ("processor", self.processor),
-                ("executor", self.executor),
                 ("scheduler", self.scheduler),
                 ("orchestrator", self.orchestrator),
             )
@@ -289,7 +287,6 @@ class MetricsServer:
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),
             "processor": metrics.get("processor", {}),
-            "executor": metrics.get("executor", {}),
             "scheduler": metrics.get("scheduler", {}),
             "orchestrator": metrics.get("orchestrator", {}),
             "federation": metrics["federation"],
@@ -315,8 +312,6 @@ class MetricsServer:
         processor_stats.update(_processor_pipeline(self.processor))
         processor_stats["loops"] = self.loops_status("processor")
         metrics["processor"] = processor_stats
-
-        metrics["executor"] = self.executor.stats.copy() if self.executor else {}
 
         if self.scheduler:
             metrics["scheduler"] = self.scheduler.stats.copy()

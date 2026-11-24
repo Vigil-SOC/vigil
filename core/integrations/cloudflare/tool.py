@@ -244,9 +244,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
 
 
 # ---------------------------------------------------------------------------
-# REST helpers — kept module-level so they can be imported by the response
-# service for the approved-action executor (single source of truth for the
-# Cloudflare API surface).
+# REST helpers — the Cloudflare API surface the tools above call.
 # ---------------------------------------------------------------------------
 
 

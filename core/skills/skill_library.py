@@ -37,6 +37,7 @@ import yaml
 
 from core.config import Settings, get_settings, vigil_path
 from core.frontmatter import FrontmatterError, split_frontmatter
+from core.intent import declared_dir, read_revision
 
 logger = logging.getLogger(__name__)
 
@@ -662,11 +663,46 @@ def _write_new_file(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
+@dataclass(frozen=True)
+class ManagedSkills:
+    """The operator root sits under the declared directory (``VIGIL_INTENT_DIR``)."""
+
+    directory: str
+    revision: str
+
+
+def managed_skills(settings: Optional[Settings] = None) -> Optional[ManagedSkills]:
+    """Set when ``VIGIL_SKILLS_PATH`` is inside the declared directory (#5070).
+
+    Those skills change by commit to that directory, never through Vigil; the
+    revision is read from its ``REVISION`` marker on every call.
+    """
+    settings = settings or get_settings()
+    declared, root = declared_dir(settings), operator_skills_root(settings)
+    if declared is None or root is None:
+        return None
+    declared = declared.expanduser().resolve()
+    if not root.resolve().is_relative_to(declared):
+        return None
+    try:
+        revision = read_revision(declared)[1]
+    except OSError:
+        revision = "unknown"
+    return ManagedSkills(str(declared), revision)
+
+
 def _require_operator_root(settings: Optional[Settings]) -> Path:
     settings = settings or get_settings()
     root = operator_skills_root(settings)
     if root is None:
         raise SkillError("Operator skills are off (VIGIL_SKILLS_PATH is empty)")
+    # Every Vigil write into a declared directory is refused: it changes by commit.
+    managed = managed_skills(settings)
+    if managed is not None:
+        raise SkillError(
+            f"Skills are managed by {managed.directory} at revision "
+            f"{managed.revision}; change them by committing there"
+        )
     # Only the default is created, private like the State Directory it sits in.
     # A path the operator named that is missing is more likely a volume that
     # did not mount than a folder to make.

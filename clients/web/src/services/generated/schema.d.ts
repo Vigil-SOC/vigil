@@ -444,6 +444,7 @@ export interface paths {
          *
          *     Declared before ``/approvals/{action_id}`` so the literal path is not
          *     read as an action id. Uncapped: the decisions list stops at 500.
+         *     Containments are resolved, and requested ones read again, first.
          */
         get: operations["get_api_approvals_needs-you"];
         put?: never;
@@ -484,7 +485,7 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description Fetch a single approval action.
+         * @description Fetch a single approval action, resolving or re-reading a containment.
          */
         get: operations["get_api_approvals_action_id"];
         put?: never;
@@ -509,7 +510,10 @@ export interface paths {
          * @description Approve a pending action.
          *
          *     If the action is linked to a paused workflow run, the run resumes
-         *     automatically and the resume result is included in the response.
+         *     automatically and the resume result is included in the response. An
+         *     isolation or account disable names a resolved candidate (``candidate``);
+         *     its call runs at once, as the approver, and the action returned says what
+         *     the vendor answered. A failed one may be approved again.
          */
         post: operations["post_api_approvals_action_id_approve"];
         delete?: never;
@@ -1648,9 +1652,9 @@ export interface paths {
         put?: never;
         /**
          * Post Release Held
-         * @description Clear the hold on every held action this person may decide.
+         * @description Clear the hold on every held action this person may decide, and run them.
          *
-         *     Executes nothing. Each released row writes one trail entry.
+         *     Each released row writes one trail entry.
          */
         post: operations["post_api_autonomy_held_release"];
         delete?: never;
@@ -1670,9 +1674,7 @@ export interface paths {
         put?: never;
         /**
          * Post Release Action
-         * @description Clear the hold on one action. The next executor pass runs it.
-         *
-         *     Executes nothing itself.
+         * @description Clear the hold on one action and run it, as the person releasing it.
          */
         post: operations["post_api_autonomy_held_action_id_release"];
         delete?: never;
@@ -8613,6 +8615,7 @@ export interface paths {
          *
          *     Declared before ``/approvals/{action_id}`` so the literal path is not
          *     read as an action id. Uncapped: the decisions list stops at 500.
+         *     Containments are resolved, and requested ones read again, first.
          */
         get: operations["get_api_v1_approvals_needs-you"];
         put?: never;
@@ -8653,7 +8656,7 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description Fetch a single approval action.
+         * @description Fetch a single approval action, resolving or re-reading a containment.
          */
         get: operations["get_api_v1_approvals_action_id"];
         put?: never;
@@ -8678,7 +8681,10 @@ export interface paths {
          * @description Approve a pending action.
          *
          *     If the action is linked to a paused workflow run, the run resumes
-         *     automatically and the resume result is included in the response.
+         *     automatically and the resume result is included in the response. An
+         *     isolation or account disable names a resolved candidate (``candidate``);
+         *     its call runs at once, as the approver, and the action returned says what
+         *     the vendor answered. A failed one may be approved again.
          */
         post: operations["post_api_v1_approvals_action_id_approve"];
         delete?: never;
@@ -8825,9 +8831,9 @@ export interface paths {
         put?: never;
         /**
          * Post Release Held
-         * @description Clear the hold on every held action this person may decide.
+         * @description Clear the hold on every held action this person may decide, and run them.
          *
-         *     Executes nothing. Each released row writes one trail entry.
+         *     Each released row writes one trail entry.
          */
         post: operations["post_api_v1_autonomy_held_release"];
         delete?: never;
@@ -8847,9 +8853,7 @@ export interface paths {
         put?: never;
         /**
          * Post Release Action
-         * @description Clear the hold on one action. The next executor pass runs it.
-         *
-         *     Executes nothing itself.
+         * @description Clear the hold on one action and run it, as the person releasing it.
          */
         post: operations["post_api_v1_autonomy_held_action_id_release"];
         delete?: never;
@@ -10836,6 +10840,11 @@ export interface components {
              * @description Identity of the approving analyst. Defaults to 'analyst'.
              */
             approved_by?: string | null;
+            /**
+             * Candidate
+             * @description An isolation or account disable: the id of the stored candidate (parameters.containment.candidates) to act on. May be omitted when there is one.
+             */
+            candidate?: string | null;
         };
         /**
          * AuditEntry
@@ -14770,6 +14779,8 @@ export interface components {
         };
         /** InvokeRequest */
         InvokeRequest: {
+            /** Action Id */
+            action_id?: string | null;
             /** Agent Id */
             agent_id?: string | null;
             /** Args */
@@ -15329,6 +15340,13 @@ export interface components {
              * @description The run's own checkpoint this item answers, so a page reading the run can tell it was answered.
              */
             checkpoint_id?: string | null;
+            /**
+             * Containment
+             * @description An isolation or account disable: the vendor IDs its target resolved to (candidates), or which tool is missing (missing).
+             */
+            containment?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Created At
              * @description '' when nothing recorded when it started waiting.
@@ -17006,6 +17024,7 @@ export interface components {
             file_count: number;
             /** Files */
             files: components["schemas"]["SkillFile"][];
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /** Operator Root Set */
@@ -17215,6 +17234,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17326,6 +17346,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17359,6 +17380,16 @@ export interface components {
             source?: string | null;
             /** Version */
             version?: number | null;
+        };
+        /**
+         * SkillsManaged
+         * @description The operator root is under the declared directory: Vigil writes none of it.
+         */
+        SkillsManaged: {
+            /** Directory */
+            directory: string;
+            /** Revision */
+            revision: string;
         };
         /**
          * SourceEvidence

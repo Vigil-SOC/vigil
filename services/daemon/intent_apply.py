@@ -26,16 +26,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from core.config import get_settings
 from core.daemon_config import DaemonConfig
 from core.intent import (
     FIELDS_BY_KEY,
     INTENT_FILE_NAME,
-    REVISION_FILE_NAME,
     IntentRejected,
+    declared_dir,
     effective_values,
     label,
     parse_intent_strict,
+    read_revision,
 )
 from core.intent_report import effective_daemon_config
 from core.response.ceiling import (
@@ -64,21 +64,14 @@ class StoreWriteFailed(Exception):
     """A store was not written; the revision is retried on the next poll."""
 
 
-def intent_dir() -> Optional[Path]:
-    raw = get_settings().vigil_intent_dir.strip()
-    return Path(raw) if raw else None
+intent_dir = declared_dir
 
 
 def _snapshot(directory: Path) -> tuple[str, str, str]:
     """``(hash, revision, INTENT.md text)``; raises ``OSError`` when unreadable."""
     content = (directory / INTENT_FILE_NAME).read_bytes()
-    try:
-        marker = (directory / REVISION_FILE_NAME).read_bytes()
-    except FileNotFoundError:
-        marker = b""
+    marker, revision = read_revision(directory)
     digest = hashlib.sha256(content + b"\0" + marker).hexdigest()
-    lines = marker.decode("utf-8", "replace").splitlines()
-    revision = (lines[0].strip()[:200] if lines else "") or "unknown"
     return digest, revision, content.decode("utf-8", "replace")
 
 
