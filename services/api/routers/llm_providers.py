@@ -15,10 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import deny_unless, permission_gate
-from core.llm.bifrost.admin import (
-    push_provider_key,
-    sync_all_provider_models,
-)
+from core.llm.bifrost.admin import sync_all_provider_models
 from core.llm.providers import provider_service
 from core.llm.providers.base_url import validate_base_url_shape
 from core.llm.providers.registry import (
@@ -226,9 +223,6 @@ async def create_provider(
                 status_code=500,
                 detail=secret_write_failure_detail("Failed to persist API key"),
             )
-        # Push live to Bifrost so subsequent LLM calls use the new key
-        # without waiting for a container restart.
-        push_provider_key(payload.provider_type, payload.api_key)
 
     row = LLMProviderConfig(
         provider_id=provider_id,
@@ -242,6 +236,10 @@ async def create_provider(
         config=payload.config or {},
     )
     provider_service.insert(db, row, make_default=payload.is_default)
+    if api_key_ref and row.is_active:
+        # Live in Bifrost without waiting for a restart: the type's elected
+        # row (the default first), with that row's own host.
+        provider_service.reconcile_bifrost_key_for_type(db, row.provider_type)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"created provider {provider_id}")
     return _to_response(row)
@@ -260,7 +258,21 @@ async def update_provider(
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
+    moves_host = payload.base_url is not None and (payload.base_url or None) != (
+        row.base_url or None
+    )
+    if moves_host and row.api_key_ref and payload.api_key is None:
+        # A stored key goes only to the host it was entered for.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Changing this provider's base URL sends its stored API key to "
+                "the new host. Enter the API key again with the new base URL."
+            ),
+        )
+
     before = _snapshot(row)
+    was_keyed_active = bool(row.api_key_ref) and row.is_active
     if payload.name is not None:
         row.name = payload.name
     if payload.base_url is not None:
@@ -304,12 +316,6 @@ async def update_provider(
         if payload.api_key == "":
             delete_secret(ref)
             row.api_key_ref = None
-            # Bifrost's key is shared per provider_type, so only blank it if
-            # no same-type sibling still has a key — otherwise re-push the
-            # survivor's so the type keeps a working credential.
-            provider_service.reconcile_bifrost_key_for_type(
-                db, row.provider_type, provider_id
-            )
         else:
             if not set_secret(ref, payload.api_key):
                 raise HTTPException(
@@ -317,7 +323,18 @@ async def update_provider(
                     detail=secret_write_failure_detail("Failed to persist API key"),
                 )
             row.api_key_ref = ref
-            push_provider_key(row.provider_type, payload.api_key)
+
+    provider_service.settle(db, row)
+    # Bifrost holds one key and host per type, elected from the active keyed
+    # rows; re-elect whenever this row joins, leaves or changes among them.
+    is_keyed_active = bool(row.api_key_ref) and row.is_active
+    if (was_keyed_active or is_keyed_active) and (
+        payload.api_key is not None
+        or was_keyed_active != is_keyed_active
+        or after.get("is_default") != before.get("is_default")
+        or moves_host
+    ):
+        provider_service.reconcile_bifrost_key_for_type(db, row.provider_type)
 
     provider_service.settle(db, row)
     _refresh_self_hosted_attestation(db)
@@ -374,9 +391,9 @@ async def delete_provider(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to delete secret %s: %s", row.api_key_ref, exc)
         # Bifrost's key is shared per provider_type. Only wipe it if this was
-        # the last keyed provider of its type; otherwise re-push a surviving
-        # sibling's key so the type isn't left without a working credential.
-        # (``row`` is still in the session here — exclude it explicitly.)
+        # the last active keyed provider of its type; otherwise re-push the
+        # elected survivor's key, with its host. (``row`` is still in the
+        # session here — exclude it explicitly.)
         provider_service.reconcile_bifrost_key_for_type(
             db, row.provider_type, provider_id
         )

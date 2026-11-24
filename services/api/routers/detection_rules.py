@@ -36,8 +36,13 @@ from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.integrations.mcp.surface import acting_as
 from core.routing import Auth, RouterMeta
-from core.storage.config_service import get_config_service
+from core.storage.config_service import (
+    audited_change,
+    get_config_service,
+    write_config_audit,
+)
 from core.storage.models import User
+from core.storage.unit_of_work import unit_of_work
 from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
@@ -89,6 +94,17 @@ def _audit_deploy_target(user: User, source: dict, old: bool, new: bool) -> None
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not write deploy target audit log: %s", e)
+
+
+def _source_record(source: dict) -> dict:
+    """What the trail keeps of a rule source."""
+    keys = ("id", "name", "type", "format", "git_url", "local_path")
+    return {
+        **{k: source.get(k) for k in keys},
+        "subdirectory": source.get("subdirectory") or "",
+        "deploy_target": bool(source.get("deploy_target")),
+        "github_enterprise": bool(source.get("github_enterprise")),
+    }
 
 
 class DeployTargetRequest(BaseModel):
@@ -169,6 +185,7 @@ def add_source(
         before = (
             service.deploy_target(request.format) if request.deploy_target else None
         )
+        prior = {x["id"]: _source_record(x) for x in service.list_sources()}
         source = service.add_source(
             name=request.name,
             source_type=request.source_type,
@@ -180,6 +197,30 @@ def add_source(
             deploy_target=request.deploy_target,
             github_enterprise=request.github_enterprise,
         )
+        # Recorded after the add, which can clone for minutes: the trail's lock
+        # is held to the end of its transaction. A folder already registered is
+        # refreshed, not added; a refused entry takes out only a new source.
+        old = prior.get(source["id"])
+        try:
+            with unit_of_work() as session:
+                write_config_audit(
+                    session,
+                    config_type="detection_rules",
+                    config_key=f"source:{source['id']}",
+                    action="update" if old else "create",
+                    old_value=old,
+                    new_value=_source_record(source),
+                    changed_by=str(current_user.user_id),
+                )
+        except Exception:
+            if old is None:
+                service.remove_source(source["id"])
+            elif request.deploy_target:
+                # Only a deploy-target mark changes what a re-registered source does.
+                service.set_deploy_target(
+                    source["id"], old["deploy_target"], old["github_enterprise"]
+                )
+            raise
         if request.deploy_target:
             was = before is not None and before.get("id") == source["id"]
             _audit_deploy_target(current_user, source, was, True)
@@ -201,6 +242,7 @@ def remove_source(
     background: BackgroundTasks,
     delete_files: bool = False,
     service: DetectionRulesService = Depends(provide_detection_rules),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Remove a detection rule source.
@@ -212,9 +254,22 @@ def remove_source(
     Returns:
         Success status
     """
-    success = service.remove_source(source_id, delete_files=delete_files)
-    if not success:
+    source = service.get_source(source_id)
+    if not source:
         raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
+    # Recorded first: a refused entry leaves the source in place.
+    with audited_change(
+        str(current_user.user_id),
+        config_type="detection_rules",
+        config_key=f"source:{source_id}",
+        action="delete",
+        old_value=_source_record(source),
+        new_value={"delete_files": delete_files},
+    ):
+        if not service.remove_source(source_id, delete_files=delete_files):
+            raise HTTPException(
+                status_code=404, detail=f"Source not found: {source_id}"
+            )
     background.add_task(_sync_detection_rules)
     return {"success": True}
 

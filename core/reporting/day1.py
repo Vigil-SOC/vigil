@@ -64,6 +64,10 @@ SETUP_KEY = "setup.wizard"
 READINESS = "readiness"
 FALLBACK = "fallback"
 ON_DEMAND = "on_demand"
+# The Production Start Report uses the same tables. Day 1 readers ignore both.
+PRODUCTION = "production"
+PRODUCTION_ON_DEMAND = "production_on_demand"
+DAY1_TRIGGERS = (READINESS, FALLBACK, ON_DEMAND)
 
 PASS = "pass"
 FAIL = "fail"
@@ -304,12 +308,16 @@ def status() -> dict[str, Any]:
         open_runs = (
             session.query(ReportRun)
             .outerjoin(ReportRecord, ReportRecord.run_id == ReportRun.run_id)
-            .filter(ReportRecord.record_id.is_(None))
+            .filter(
+                ReportRecord.record_id.is_(None),
+                ReportRun.trigger.in_(DAY1_TRIGGERS),
+            )
             .order_by(ReportRun.started_at.desc())
             .all()
         )
         latest = (
             session.query(ReportRecord)
+            .filter(ReportRecord.trigger.in_(DAY1_TRIGGERS))
             .order_by(ReportRecord.recorded_at.desc())
             .first()
         )
@@ -332,9 +340,12 @@ def read_record(user_id: str, record_id: Optional[str]) -> Optional[dict[str, An
     with unit_of_work() as session:
         if record_id:
             record = session.get(ReportRecord, record_id)
+            if record is not None and record.trigger not in DAY1_TRIGGERS:
+                record = None
         else:
             record = (
                 session.query(ReportRecord)
+                .filter(ReportRecord.trigger.in_(DAY1_TRIGGERS))
                 .order_by(ReportRecord.recorded_at.desc())
                 .first()
             )
@@ -355,7 +366,9 @@ def _present(
         is not None
     ]
     hidden = set(withheld)
-    compared = _compared(session, record)
+    # A production record is not read against a Day 1 run.
+    production_run = record.trigger in (PRODUCTION, PRODUCTION_ON_DEMAND)
+    compared = None if production_run else _compared(session, record)
     prior = (
         _visible_checks(session, user_id, compared, hidden)
         if compared is not None
@@ -409,6 +422,7 @@ def _present(
         "compared_at": _iso(compared.recorded_at) if compared is not None else None,
         "checks": checks,
         "selection": _selection_public(evidence.get("selection")),
+        "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
         **present_history(
@@ -422,6 +436,34 @@ def _present(
             user_id,
         ),
     }
+
+
+def _readable_evidence(
+    session: Session, user_id: str, record: ReportRecord, hidden: set[str]
+) -> dict[str, Any]:
+    """Evidence for modules the caller may read. The rest is omitted.
+
+    Visibility, the history sections and the forecast are already returned as
+    their own fields. This is the remainder, plus the production window.
+    """
+    stored = record.evidence or {}
+    shown: dict[str, Any] = {}
+    for key, body in stored.items():
+        if not isinstance(key, str):
+            continue
+        if key == "production":
+            if missing_permission(user_id, "platform.read", session) is None:
+                shown[key] = body
+            continue
+        module = MODULES.get(key)
+        if module is None or key in hidden:
+            continue
+        if key in (VISIBILITY.id, FORECAST.id) or key.startswith("history."):
+            continue
+        if missing_permission(user_id, module.permission, session) is not None:
+            continue
+        shown[key] = body
+    return shown
 
 
 def _allowed(session: Session, user_id: str, check: dict) -> bool:
@@ -476,9 +518,10 @@ def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
     )
     if day1 is not None:
         return day1
+    # A production row is never the Day 1 comparison.
     return (
         session.query(ReportRecord)
-        .filter(before)
+        .filter(before, ReportRecord.trigger.in_(DAY1_TRIGGERS))
         .order_by(ReportRecord.recorded_at.asc())
         .first()
     )
@@ -636,7 +679,14 @@ def _due(session: Session, readiness: Optional[str], now: datetime) -> Optional[
 
 
 def _triggers(session: Session, model) -> set[str]:
-    return {trigger for (trigger,) in session.query(model.trigger).distinct().all()}
+    """Day 1 triggers only. A production row does not change when Day 1 is due."""
+    rows = (
+        session.query(model.trigger)
+        .filter(model.trigger.in_(DAY1_TRIGGERS))
+        .distinct()
+        .all()
+    )
+    return {trigger for (trigger,) in rows}
 
 
 def _ensure_anchor(session: Session, now: datetime) -> None:

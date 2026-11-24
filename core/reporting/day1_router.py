@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -273,6 +273,9 @@ class Day1Report(BaseModel):
     compared_at: Optional[str] = None
     checks: List[Day1Check]
     selection: Optional[Day1Selection] = None
+    # Modules the caller may read. Visibility, history and the forecast stay
+    # on their own fields; this is the remainder.
+    evidence: Dict[str, Any] = Field(default_factory=dict)
     switched_off: List[Day1Listed]
     history_before: Optional[HistoryBefore] = None
     history_recheck: Optional[HistoryRecheck] = None
