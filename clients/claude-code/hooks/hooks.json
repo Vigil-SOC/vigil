@@ -1,0 +1,17 @@
+{
+  "description": "Force a confirmation prompt for every Vigil MCP tool that is not known to be read-only.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__plugin_vigil.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/vigil_guard.py"]
+          }
+        ]
+      }
+    ]
+  }
+}

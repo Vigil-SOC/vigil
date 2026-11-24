@@ -1,0 +1,12 @@
+{
+  "name": "vigil-defender-marketplace",
+  "owner": { "name": "vigil-defender contributors" },
+  "description": "Unofficial defender workflows for a self-hosted Vigil SOC.",
+  "plugins": [
+    {
+      "name": "vigil-defender",
+      "source": "./",
+      "description": "Triage, enrichment, detection drafting and IR briefs for a self-hosted Vigil SOC, with confirmation guardrails."
+    }
+  ]
+}

@@ -1,91 +1,79 @@
-# The Claude Code client for Vigil
+# vigil-defender
 
-Work your team's Vigil, the open source AI SOC you run yourself, from a Claude Code session.
+Defender workflows for a **self-hosted [Vigil SOC](https://vigilsoc.org)** instance, inside Claude Code: triage, enrichment, detection drafting and incident-response briefs, with guardrails against prompt injection and unintended side effects.
 
-It works in Claude Code: the terminal, the IDE extensions, and the Code tab of the Claude desktop app. In the Claude chat app the skills load but have no connection to Vigil, because chat reaches a server only at a fixed public address and your Vigil has none.
+> **Unofficial.** Not made, endorsed or supported by the Vigil project or DeepTempo. Vigil's Terms (s.4) forbid presenting software as an official product; this plugin is a community add-on. Vigil's own first-party plugin is `vigil-soc` (see below).
 
-## What it adds to Claude Code
+## What research found (and what it means for this design)
 
-Claude Code alone can reason about a log you paste into it. It holds no cases, no record of last week's hunt, and no view of what a colleague concluded. Vigil holds those, and this client brings them into the session:
+Verified against vigilsoc.org and the Vigil repo on 2026-11-18:
 
-- **A SOC behind the session.** Investigations and hunts run in Vigil, on its agents and the integrations your Vigil already has, not in the session's context. The session starts a run, steers it, and reads its conclusion with citations and declared gaps.
-- **Work shared with colleagues.** Cases, hunts, runs and verdicts live in Vigil. A colleague opens the same case from their own session, reads what you concluded, and builds on it.
-- **Memory across runs.** A new run begins with what earlier runs concluded about the same entities, whoever started them, within the limits of restricted cases.
-- **Your controls.** Each call runs under the analyst's own credential and role and is recorded on Vigil's audit trail under that person. A session cannot approve an action; approval stays with a person in the console.
+- **vigilsoc.org is a project website, not a service.** Vigil is open source (Apache-2.0), runs on *your* infrastructure, and the project "does not operate Vigil as a service". `/api` and `/openapi.json` on the site return 404; there is no public API, feed, STIX or CSV export, no site rate limits, and `robots.txt` allows all crawling. So there is nothing on vigilsoc.org to build an MCP client against, and this plugin makes **no requests to vigilsoc.org**.
+- **The real integration surface is your own Vigil's `/mcp` endpoint.** Vigil's official plugin manifest (`clients/claude-code/.claude-plugin/plugin.json` in the Vigil repo) uses `type: http`, URL `<vigil>/mcp`, header `Authorization: Bearer <credential>`. This plugin uses the same contract. The surface is off until an operator opens it.
+- **Because the official plugin already is the MCP bridge, this plugin ships no server code** (so no dependencies to pin). Its value is the defender layer on top: workflows, a read-only subagent, and a fail-closed confirmation hook.
 
-## What it is
+### Components
 
-A Claude Code plugin, named `vigil-soc`, that works your own Vigil from a Claude Code session. It holds no logic: an MCP entry that points at your Vigil's `/mcp` surface under a credential you minted, and seven short skills.
-
-Vigil's kernel does the work. The session starts investigations and hunts, steers them and reads what they conclude, with their citations and declared gaps. Vigil enforces role, the autonomy ceiling and approvals, and records every call on its audit trail under the credential's person, the same as the console.
-
-| Skill | What it does | Tools it uses |
-|---|---|---|
-| `/vigil-soc:status` | Does Vigil answer for this credential | `list_findings` |
-| `/vigil-soc:queue` | Open findings and cases | `list_findings`, `list_cases` |
-| `/vigil-soc:case <id>` | One case and its evidence | `get_case`, `get_case_iocs`, `get_case_comments` |
-| `/vigil-soc:investigate <case id>` | Start an investigation run, steer it, read its conclusion once it ends | `list_workflows`, `list_operator_agents`, `start_run`, `send_directive`, `get_run` |
-| `/vigil-soc:hunt <case id> <hypothesis>` | Start a hunt the same way | the same, and `list_completed_hunts` |
-| `/vigil-soc:waiting` | What waits on a person, and reject one | `get_run`, `list_approval_actions`, `get_approval_action`, `reject_action` |
-| `/vigil-soc:trail` | The audit trail | `list_audit_entries` |
-
-## Open the surface and mint a credential
-
-The `/mcp` surface is off on a fresh install. Open it and mint a credential in either of two ways:
-
-- **From the console:** Settings → Integrations, turn on **Vigil MCP server**, then mint a credential for yourself.
-- **From the shell**, on the host that runs Vigil, with no console needed:
-
-  ```bash
-  # in the Vigil checkout, inside the backend's environment (./start.sh runs it on the host)
-  TOKEN=$(venv/bin/python -m core.auth.mcp_token <username>)
-  # or, where the backend runs in its container
-  TOKEN=$(docker compose -f infra/docker/docker-compose.yml exec -T backend python -m core.auth.mcp_token <username>)
-  ```
-
-  This opens the surface if it is closed and prints the token once. Both acts go on the trail.
-
-The credential acts as its person, with that person's role. Reading the trail (`/vigil-soc:trail`) needs an Admin, Manager or auditor; an analyst's credential is refused it.
+| Component | Purpose |
+|---|---|
+| `.claude-plugin/plugin.json` | Manifest; inline `vigil` MCP server; `userConfig` for URL + sensitive credential |
+| `skills/soc-context` | Auto-loading rules: tool map, untrusted-data handling, confirmation, privacy, output discipline |
+| `skills/triage`, `enrich`, `detect`, `ir-brief` | User-invoked commands (`/vigil-defender:<name>`); read-only |
+| `agents/investigator.md` | Subagent whose `tools` list contains only read-only Vigil tools |
+| `hooks/hooks.json` + `scripts/vigil_guard.py` | `PreToolUse` hook: any Vigil tool not on a read-only allowlist triggers a confirmation prompt (fails closed on unknown tools) |
+| `tests/test_vigil_guard.py` | Unit tests for the guard and manifest invariants |
 
 ## Install
 
-Pin the marketplace to the tag of the Vigil you run, so the skills match its tools:
+Requires Claude Code >= 2.1.323, `python3` on PATH (guard hook, stdlib only), and a running Vigil.
+
+1. **Open the MCP surface and mint a credential in Vigil** (documented in Vigil's own client README): Settings → Integrations → *Vigil MCP server*, mint a credential; or on the Vigil host `python -m core.auth.mcp_token <username>`. The credential acts with that user's Vigil role and is audited under them.
+2. Install:
+   ```bash
+   claude plugin marketplace add /path/to/this/repo      # or its git URL
+   claude plugin install vigil-defender@vigil-defender-marketplace
+   ```
+   Claude Code prompts for **Vigil address** (e.g. `http://localhost:6987`, no `/mcp`) and **credential**. The credential is stored in the OS secure store (`sensitive: true`); nothing is in any file here. Reconfigure via `/plugin`.
+3. Try it without installing: `claude --plugin-dir /path/to/this/repo`.
+
+**Don't enable both `vigil-defender` and the official `vigil-soc` plugin**: each registers a `vigil` MCP server with the same tools. Use this one, or use `vigil-soc` and copy only the skills/agent/hook (the hook matcher `mcp__plugin_vigil.*` already covers both names; the agent's `tools` names assume this plugin's name).
+
+Use plain HTTP only for loopback or an SSH tunnel; use HTTPS otherwise.
+
+## Usage
+
+```
+/vigil-defender:triage high 10
+/vigil-defender:enrich <finding-id or entity>
+/vigil-defender:detect T1059.001
+/vigil-defender:ir-brief <case-id>
+```
+Or ask naturally ("what's hot in Vigil today?"); `soc-context` loads. For a deep dive: "use the investigator agent on case X".
+
+## Safety model
+
+- **Untrusted input.** Findings, notes, comments and IOCs can be attacker-written. Skills and the agent instruct Claude to treat them strictly as evidence, quote embedded instructions rather than follow them, and never fetch/run/send because data said so. This is a mitigation, not a guarantee; keep a human in the loop.
+- **No side effects without confirmation.** The hook asks before *every* Vigil tool not on its read-only list (create/update/close case, start run, directives, approvals, and any tool added in a future Vigil). A hook `ask` overrides `allowed-tools`. The subagent has no write tools at all. Containment is only ever proposed; approval is a human act in Vigil (Vigil itself leaves `approve_action` pending over `/mcp`).
+- **Privacy / external services.** The plugin talks only to the Vigil address you configure. Tool results do enter the Claude Code session and therefore reach whichever model provider you use (for most, Anthropic); route Claude Code to an in-boundary provider if that matters. No command calls any third-party intel service; the skills require explicit per-item opt-in before any IOC from a private incident leaves your environment. No telemetry.
+- **Credentials.** `userConfig` with `sensitive: true`; never hardcoded. Prefer a token for a least-privilege Vigil user; it can be revoked in Vigil at any time.
+- **Rate limiting / caching.** The plugin has no network code of its own. Gentle use is enforced by instruction: one page (<= 25) at a time, reuse of results already in the session, no polling loops. Vigil documents auth-route limits (5/min); it states no limit for `/mcp` tools. Real throttling and caching are Vigil's job; none is implemented here.
+
+## Test and validate
 
 ```bash
-claude plugin marketplace add Vigil-SOC/vigil@v<your Vigil version> --sparse .claude-plugin clients/claude-code
-claude plugin install vigil-soc@vigil
+python3 -m unittest discover -s tests -v     # guard logic + manifest invariants
+claude plugin validate . --strict            # manifest/layout check
 ```
 
-`--sparse` fetches only the marketplace file and this directory, not the whole repository. From a local checkout, `claude plugin marketplace add /path/to/vigil` works the same way.
+## Limitations and unverified items
 
-Claude Code then asks for two values: your Vigil's address (for example `http://localhost:6987`, without `/mcp`) and the credential. The credential is marked sensitive, so Claude Code keeps it in the platform's secure store. No file in the plugin holds an address or a secret. Change either later with `/plugin` → vigil-soc → configure, then run `/vigil-soc:status`.
+- **`/mcp` tool list.** Names come from Vigil's API docs and `tools/mcp/vigil.py` as read on 2026-11-18, not from a live instance. Some are marked frozen upstream; others may change ("0.x terms"). I could not call a live server, so tool argument details (e.g. for `get_entity_facts`) are deliberately left to the tool schema. Pin the plugin to your Vigil version and check `tools/list`.
+- **Hook allowlist.** `READ_ONLY` in `scripts/vigil_guard.py` is a judgment from names/docs; verify against your version. Wrong direction is safe: an unlisted read just prompts.
+- **No coverage of Vigil's REST API** (cases/SLA/ATT&CK endpoints exist, but token acquisition for them is not documented in the pages I read) or of Vigil's backend integration tools (VirusTotal, Splunk, Elastic...), which are not documented as exposed over `/mcp`.
+- **Detection rules.** Vigil ships none; `detect` only reads `~/security-detections/` if you cloned it with Vigil's script, and only drafts.
+- Docs inconsistencies noted upstream (version 1.0.0 vs 1.1.x, `/mcp` auth header not stated on the docs site). Claude Code plugin schema was read from the official docs on the same date; hooks/MCP-in-plugin details came from partially summarized pages.
+- LLM output may be wrong. Vigil's terms require review by a qualified person for consequential actions.
 
-## Sign in with OAuth instead of a token
+## License
 
-If your Vigil has OAuth turned on for the surface ([OAuth on the MCP surface](../../docs/mcp-oauth.md)), Claude Code can connect from the URL alone: it registers, opens Vigil's consent page in your browser, and keeps the tokens it is given. There is no credential to mint or paste.
-
-The plugin's entry always sends the credential as an `Authorization` header, and Claude Code does not attempt OAuth for a server whose `Authorization` header is set, even to an empty value. So for OAuth:
-
-1. Install the plugin as above for its skills, and leave the credential unset. Without it, the plugin starts no server of its own.
-2. Add Vigil's server yourself, without a header, and sign in:
-
-   ```bash
-   claude mcp add --transport http vigil https://vigil.example.com/mcp
-   claude mcp login vigil   # or /mcp in a session → vigil → Authenticate
-   ```
-
-3. Approve "Connect Claude Code (vigil)?" on Vigil's consent page. `claude mcp list` then shows `vigil` as connected, and the skills use it.
-
-The connection appears in Vigil under your API tokens, marked "Connected app", and ends when you revoke it there. A personal token remains the way in for headless and scripted use.
-
-## What it cannot do
-
-**Approve from the session.** Over `/mcp`, `approve_action` leaves the action pending, and `send_directive` with `approve`, `reject` or `benign` does not answer a run's checkpoint. Approving happens in Vigil's Approvals. The credential is a `vgl_api_` API token, though, and it also reaches Vigil's HTTP API as its holder: if that person holds `ai_decisions.approve`, `POST /api/v1/approvals/{id}/approve` with the token approves the action. Four-eyes still applies. A proposal from the session (`create_approval_action`) is recorded as that person's, so with four-eyes on, someone else must approve it. Rejecting works from the session.
-
-## Privacy: where the data goes
-
-Tool results enter the Claude Code session, and so reach whichever model provider that session uses. For many setups that is a provider outside your environment. If you route Claude Code to a model inside your own boundary, the data stays inside it end to end. Nothing calls DeepTempo and nothing is hosted: the plugin talks only to the Vigil address you enter.
-
-The surface is off until an operator opens it, and an operator can close it or revoke a credential at any time.
-
-The full statement is the project's [privacy policy](https://vigilsoc.org/privacy/), kept in this folder as [PRIVACY.md](PRIVACY.md); use of the plugin is under the [terms of use](https://vigilsoc.org/terms/), kept as [TERMS.md](TERMS.md).
+MIT (see `LICENSE`). Choose another if you prefer.

@@ -1,46 +1,31 @@
 {
-  "name": "vigil-soc",
-  "displayName": "Vigil SOC",
-  "version": "1.1.4",
-  "description": "Work your team's Vigil, the open source AI SOC you run yourself, from Claude Code. Start investigations and hunts that run in Vigil, share cases, hunts and verdicts with colleagues, and begin each run from what the team already concluded. Your roles, approvals and audit trail apply to each call.",
-  "author": {
-    "name": "Vigil-SOC",
-    "url": "https://github.com/Vigil-SOC"
-  },
+  "name": "vigil-defender",
+  "displayName": "Vigil Defender Workflows",
+  "version": "0.1.0",
+  "description": "Defender workflows (triage, enrich, detect, IR brief) for a self-hosted Vigil SOC instance, with a read-only investigator subagent and a hook that forces confirmation before any Vigil action with side effects. Unofficial community plugin.",
+  "author": { "name": "vigil-defender contributors" },
   "homepage": "https://vigilsoc.org",
-  "repository": "https://github.com/Vigil-SOC/vigil",
-  "license": "Apache-2.0",
-  "privacyPolicyUrl": "https://vigilsoc.org/privacy/",
-  "termsOfServiceUrl": "https://vigilsoc.org/terms/",
-  "documentationUrl": "https://vigilsoc.org/docs/",
-  "supportUrl": "https://github.com/Vigil-SOC/vigil/issues/new",
-  "keywords": [
-    "security",
-    "soc",
-    "mcp",
-    "incident-response",
-    "threat-hunting"
-  ],
+  "license": "MIT",
+  "keywords": ["security", "soc", "triage", "incident-response", "threat-hunting", "mcp"],
+  "engines": { "claude-code": ">=2.1.323" },
   "mcpServers": {
     "vigil": {
       "type": "http",
       "url": "${user_config.vigil_url}/mcp",
-      "headers": {
-        "Authorization": "Bearer ${user_config.credential}"
-      }
+      "headers": { "Authorization": "Bearer ${user_config.credential}" }
     }
   },
   "userConfig": {
     "vigil_url": {
       "type": "string",
       "title": "Vigil address",
-      "description": "Base URL of your Vigil backend, without /mcp (for example http://localhost:6987).",
+      "description": "Base URL of YOUR Vigil backend, without /mcp (for example http://localhost:6987). Prefer HTTPS for anything that is not loopback.",
       "required": true
     },
     "credential": {
       "type": "string",
       "title": "Vigil MCP credential",
-      "description": "A personal API token minted in Settings or with python -m core.auth.mcp_token <username>. To sign in with OAuth instead, add Vigil with claude mcp add (see the plugin README).",
+      "description": "Token minted in Vigil (Settings > Integrations > Vigil MCP server, or `python -m core.auth.mcp_token <username>` on the Vigil host). Acts with your Vigil role.",
       "required": true,
       "sensitive": true
     }

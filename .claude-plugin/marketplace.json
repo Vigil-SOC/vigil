@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "vigil-soc",
+      "name": "vigil-defender",
       "source": "./clients/claude-code",
       "description": "Work your team's Vigil from Claude Code: investigations and hunts that run in your own SOC, shared with colleagues.",
       "license": "Apache-2.0",
