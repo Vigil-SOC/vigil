@@ -4,8 +4,9 @@ Version, newest intelligence and connector backlog, while the ``opencti``
 integration is switched on. Runs on every replica; a transaction advisory lock
 held for the whole pass, and a claim read under it (the last read, kept or
 failed, is under an interval old), make one replica read per interval; a
-failed lookup counts as a failed read there. A success writes ``facts`` and stamps the record as a lookup does; a failed read
-leaves ``facts`` and adds one to the record's failure run.
+failed lookup counts as a failed read there. A success writes ``facts`` and
+stamps the record as a lookup does; a failed read leaves ``facts`` and adds one
+to the record's failure run.
 """
 
 from __future__ import annotations
