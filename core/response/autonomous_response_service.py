@@ -31,7 +31,11 @@ class AutonomousResponseService:
         compare against different lines; the no-arg form reads Settings.
         """
         self.approval_service = approvals or ApprovalService(config=config)
-        self.config = config or self.approval_service.config
+        self._config = config
+
+    @property
+    def config(self) -> ResponseConfig:
+        return self._config or self.approval_service.config
 
     def _execute_isolation(
         self, ip_address: str, hostname: Optional[str], reason: str, confidence: float

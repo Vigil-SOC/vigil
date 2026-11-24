@@ -14419,10 +14419,18 @@ export interface components {
         IntentReportResponse: {
             /** Path */
             path: string;
+            /** Pending */
+            pending?: string[];
             /** Readable */
             readable: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Revision */
+            revision?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
+            /** State */
+            state?: string | null;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {

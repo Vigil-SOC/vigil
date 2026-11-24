@@ -24,9 +24,10 @@ class FrontmatterError(ValueError):
     keep the document despite the bad header can.
     """
 
-    def __init__(self, message: str, body_offset: int):
+    def __init__(self, message: str, body_offset: int, line: Optional[int] = None):
         super().__init__(message)
         self.body_offset = body_offset
+        self.line = line  # 1-based line in the document, when YAML named one
 
 
 def split_frontmatter(content: str) -> Tuple[Optional[Dict[str, Any]], int]:
@@ -42,9 +43,49 @@ def split_frontmatter(content: str) -> Tuple[Optional[Dict[str, Any]], int]:
     try:
         parsed = yaml.safe_load(match.group(1))
     except yaml.YAMLError as exc:
-        raise FrontmatterError(f"invalid YAML: {exc}", match.end()) from exc
+        # The construct being parsed names the culprit line; where the
+        # parser gave up can be several lines on.
+        mark = getattr(exc, "context_mark", None) or getattr(exc, "problem_mark", None)
+        line = _first_line(content, match) + mark.line if mark else None
+        raise FrontmatterError(f"invalid YAML: {exc}", match.end(), line) from exc
     if parsed is None:
         parsed = {}
     if not isinstance(parsed, dict):
-        raise FrontmatterError("frontmatter must be a YAML mapping", match.end())
+        raise FrontmatterError(
+            "frontmatter must be a YAML mapping",
+            match.end(),
+            _first_line(content, match),
+        )
     return parsed, match.end()
+
+
+def _first_line(content: str, match: "re.Match[str]") -> int:
+    """1-based document line of the first frontmatter line."""
+    return content.count("\n", 0, match.start(1)) + 1
+
+
+def frontmatter_key_lines(content: str) -> Dict[str, int]:
+    """Dotted key path -> 1-based document line, for nested mapping keys.
+
+    Call after :func:`split_frontmatter` succeeded; returns ``{}`` otherwise.
+    """
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        return {}
+    try:
+        root = yaml.compose(match.group(1))
+    except yaml.YAMLError:
+        return {}
+    first = _first_line(content, match)
+    lines: Dict[str, int] = {}
+
+    def walk(node: Any, prefix: str) -> None:
+        if not isinstance(node, yaml.MappingNode):
+            return
+        for key_node, value_node in node.value:
+            key = f"{prefix}{key_node.value}"
+            lines[key] = first + key_node.start_mark.line
+            walk(value_node, f"{key}.")
+
+    walk(root, "")
+    return lines

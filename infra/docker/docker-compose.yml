@@ -482,6 +482,9 @@ services:
       SSL_CERT_FILE:
       REQUESTS_CA_BUNDLE:
       NODE_EXTRA_CA_CERTS:
+      # Declared intent directory (INTENT.md + REVISION). Empty is observe mode.
+      # This daemon is the only applier; set it here only (see volumes below).
+      VIGIL_INTENT_DIR: ${VIGIL_INTENT_DIR:-}
       # Integrations (loaded from core/config)
       SPLUNK_URL: ${SPLUNK_URL}
       SPLUNK_USERNAME: ${SPLUNK_USERNAME}
@@ -515,6 +518,12 @@ services:
       - vigil_investigations:/app/data/investigations
       - detection_rules:/home/vigil/security-detections
       - mcp_runner_token:/run/vigil/mcp-runner:ro
+      # Declared intent: bind-mount a plain checkout of the repo holding
+      # INTENT.md and REVISION, and set VIGIL_INTENT_DIR=/etc/vigil/intent.
+      # Compose has no optional-volume syntax, so this stays commented.
+      # The first line of REVISION names the revision; a plain checkout writes
+      # it in a post-merge hook: git rev-parse HEAD > REVISION
+      #   - ${VIGIL_INTENT_SOURCE}:/etc/vigil/intent:ro
     depends_on:
       mcp-runner:
         condition: service_started

@@ -5,7 +5,10 @@ from typing import Dict, List
 from core.config import get_settings
 from core.ingestion.kafka_config import KafkaConfig, apply_kafka_settings
 from core.intent import INTENT_FIELDS
-from core.response.config import ResponseConfig  # re-exported for DaemonConfig
+from core.response.config import (  # ResponseConfig re-exported for DaemonConfig
+    ResponseConfig,
+    applied_intent,
+)
 from core.secrets import get_secret
 from core.telemetry import configure_logging
 
@@ -91,6 +94,26 @@ class OrchestratorConfig:
     intake_surge_depth: int = 20
 
 
+def _overlay_applied_intent(config: "DaemonConfig") -> None:
+    """An applied INTENT.md revision (the ``intent.applied`` row) over env.
+
+    triage/enrich values come from the row (respond.* already did, through
+    ``ResponseConfig.from_settings``); act.* and investigate.* values are in
+    their own rows. A managed key that is not pending reports ``declared``;
+    a row value no longer in the file reports ``db``.
+    """
+    applied = applied_intent()
+    values = applied.get("values") or {}
+    managed = set(applied.get("keys") or {}) - set(applied.get("pending") or [])
+    for f in INTENT_FIELDS:
+        if f.key in values and f.key.split(".")[0] in ("triage", "enrich"):
+            setattr(config.processing, f.path.split(".")[1], bool(values[f.key]))
+        if f.key in managed:
+            config.sources[f.path] = "declared"
+        elif f.key in values:
+            config.sources[f.path] = "db"
+
+
 @dataclass
 class DaemonConfig:
     polling: PollingConfig = field(default_factory=PollingConfig)
@@ -105,8 +128,8 @@ class DaemonConfig:
     # Logging
     log_level: str = "INFO"
 
-    # Where each intent knob's value came from (env | db | default), keyed by
-    # attribute path, recorded by from_env() for the INTENT.md observe report.
+    # Where each intent knob's value came from (env | db | default | declared),
+    # keyed by attribute path, recorded by from_env() for the INTENT.md report.
     sources: Dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -218,6 +241,7 @@ class DaemonConfig:
                 f"Could not load Kafka config from DB (using env/defaults): {e}"
             )
 
+        _overlay_applied_intent(config)
         return config
 
     def setup_logging(self):
