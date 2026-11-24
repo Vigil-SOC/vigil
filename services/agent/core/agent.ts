@@ -209,7 +209,14 @@ export function pluginGrants(
   // per request, so which tools it may reach is the caller's answer, not the plugin's.
   const bound = plugin.needs.includes("*")
     ? [...tools]
-    : tools.filter((tool) => typeof tool["provides"] === "string" && plugin.needs.includes(tool["provides"] as string));
+    : tools.filter((tool) => {
+        const provides = tool["provides"];
+        if (typeof provides !== "string") return false;
+        // A capability the plugin names, or a catalogue tool the playbook named
+        // by id: that bind sets provides to the id. Adding those ids to this
+        // plugin's needs would mark every live investigation unbound for them.
+        return plugin.needs.includes(provides) || provides === tool.id;
+      });
   const loader = plugin.skills.length === 0 ? [] : [SKILL_TOOL];
   return { [AGENT_ROLE]: [...new Set([...bound.map((tool) => tool.id), ...own, ...loader])], [REVIEW_ROLE]: [] };
 }

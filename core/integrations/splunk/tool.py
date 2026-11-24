@@ -340,7 +340,8 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 splunk.search,
                 spl,
                 args.get("earliest", _ALL_TIME),
-                "now",
+                # "now" unless a re-decision replaced the bound with the close.
+                str(args.get("latest") or "now"),
                 args.get("max_results", 100),
             )
             payload = {
@@ -415,7 +416,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 splunk.search,
                 spl_result["spl_query"],
                 _ALL_TIME,
-                "now",
+                str(args.get("latest") or "now"),
                 args.get("max_results", 100),
             )
             return result(

@@ -766,7 +766,10 @@ export function useInvestigateWorkflows() {
     ])
       .then(([res, agreement]) => {
         if (cancelled) return
-        const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter((w) => w.run_kind === 'investigate')
+        // re-decision is an investigate workflow the live intake list does not offer.
+        const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter(
+          (w) => w.run_kind === 'investigate' && w.id !== 're-decision',
+        )
         setWorkflows(
           listed.map((w) => ({
             id: w.id,

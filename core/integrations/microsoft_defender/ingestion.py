@@ -9,6 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 
@@ -319,6 +320,28 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             skip += len(page)
         logger.info(f"Read {len(rows)} resolved alerts from Microsoft Defender")
         return rows
+
+    async def fetch_alert(self, alert_id: str) -> Optional[Dict[str, Any]]:
+        """One alert by its stored id, or None when Defender no longer holds it."""
+        token = await asyncio.to_thread(self._get_access_token)
+        if not token:
+            return None
+        response = await asyncio.to_thread(
+            httpx.get,
+            "https://api.securitycenter.microsoft.com/api/alerts/"
+            + quote(str(alert_id), safe=""),
+            headers={"Authorization": f"Bearer {token}"},
+            params={"$expand": "evidence"},
+            timeout=DEFAULT_TIMEOUT,
+            follow_redirects=_FOLLOW_REDIRECTS,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict) or not body.get("id"):
+            return None
+        return body
 
     def _history_row(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         finding = self.transform_alert_to_finding(alert) or {}

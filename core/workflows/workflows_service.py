@@ -662,6 +662,13 @@ class WorkflowsService:
         workflow = self.get_workflow(workflow_id)
         if not workflow:
             return {"success": False, "error": f"Workflow not found: {workflow_id}"}
+        # The re-decision starter calls begin_run and enqueue_run itself. The
+        # console, MCP and the handoff all come through here. Imported in the
+        # function: that starter imports this service.
+        from core.workflows.redecision import NOT_STARTED_HERE, WORKFLOW_ID
+
+        if workflow.id == WORKFLOW_ID:
+            return {"success": False, "error": NOT_STARTED_HERE}
         # The one check every starter reaches, the router and the handoff alike.
         if not is_enabled(workflow_id):
             return {

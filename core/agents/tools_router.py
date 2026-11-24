@@ -24,6 +24,7 @@ from core.agents.attribution import (
 from core.agents.integration_tools import resolve_integration_call
 from core.agents.internal_auth import accepted, authorise, authorise_run
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
+from core.agents.search_ceiling import SearchAfterClose, cap_search_args
 from core.agents.tool_registry import (
     MANIFEST,
     execute_backend_tool,
@@ -49,6 +50,7 @@ from core.response.ceiling import (
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
+from core.workflows.redecision import redecision_close
 
 router = APIRouter()
 
@@ -452,6 +454,17 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
             _outcome(claims, tool, raw, "refused")
         raise MCPFailure("refused", held)
     args = _bounded(raw, body.bounds.max_rows, tool, registry)
+    # A re-decision's searches end at the ticket's close. The close is read from
+    # the run, not from the arguments. Live runs are not marked and pass through.
+    if claims is not None and claims.run_id:
+        close = await asyncio.to_thread(redecision_close, claims.run_id)
+        if close is not None:
+            try:
+                args = cap_search_args(tool, args, close)
+            except SearchAfterClose as exc:
+                if attributed(claims):
+                    _outcome(claims, tool, raw, "refused")
+                raise MCPFailure("refused", str(exc)) from exc
     # Into what is sent only: an approval and the trail hold what the model asked.
     if limits.marked(tool):
         args = _scoped(args, tool, limits, registry)
