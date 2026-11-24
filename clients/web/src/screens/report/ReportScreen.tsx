@@ -16,8 +16,11 @@ import {
   AlertsSection,
   QUIET_TIP,
   QuietSection,
+  TUNING_TIP,
+  TuningSection,
   alertsEvidence,
   quietEvidence,
+  tuningEvidence,
 } from './ProductionSections'
 import { reportStamp } from './stamp'
 import { residencyLabel, type ResidencyClass } from '../../shared/residency'
@@ -53,6 +56,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.running': 'What is running',
   'production.quiet': 'Sources and rules gone quiet',
   'production.alerts': 'What happened to every alert',
+  'production.tuning': 'Tuning since Production Start',
   'production.confidence': 'How sure the investigations were',
   'production.agreement': 'Agreement',
 }
@@ -69,6 +73,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.running': 'platform.read',
   'production.quiet': 'findings.read',
   'production.alerts': 'findings.read',
+  'production.tuning': 'findings.read',
   'production.confidence': 'platform.read',
   'production.agreement': 'platform.read',
 }
@@ -1037,6 +1042,7 @@ export default function ReportScreen() {
     : []
   const quietBody = quietEvidence(produced?.evidence?.['production.quiet'])
   const alertsBody = alertsEvidence(produced?.evidence?.['production.alerts'])
+  const tuningBody = tuningEvidence(produced?.evidence?.['production.tuning'])
 
   return (
     <div className="d1-page">
@@ -1176,6 +1182,15 @@ export default function ReportScreen() {
               <p className="d1-quiet">Nothing to report in this section.</p>
             )}
           </section>
+        )}
+        {produced && withheld.includes('production.tuning') && <Withheld id="production.tuning" />}
+        {produced && !withheld.includes('production.tuning') && (produced.modules ?? []).includes('production.tuning') && (
+          <TuningSection
+            evidence={tuningBody}
+            reportId={produced.id}
+            runId={produced.run_id}
+            tip={TUNING_TIP}
+          />
         )}
         {produced && withheld.includes('production.quiet') && <Withheld id="production.quiet" />}
         {produced && !withheld.includes('production.quiet') && (produced.modules ?? []).includes('production.quiet') && (
