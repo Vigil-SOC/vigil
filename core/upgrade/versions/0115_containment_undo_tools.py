@@ -2,7 +2,7 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0115_containment_undo_tool_classes"
+revision = "0115_containment_undo_tools"
 down_revision = "0114_day1_recurring_trigger"
 
 
