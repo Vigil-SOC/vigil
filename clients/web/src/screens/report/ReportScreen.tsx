@@ -799,13 +799,294 @@ function CheckRow({
 }
 
 /** The first three non-pass checks, in the order the checklist shows them. No cited value is left out. */
-function summaryActions(report: Report): Check[] {
+function summaryActions(report: { checks: Check[] }): Check[] {
   return report.checks
     .filter((check) => check.outcome !== 'pass' && check.outcome !== 'no_value')
     .slice(0, 3)
 }
 
-function Summary({ report }: { report: Report }) {
+function recordOf(value: unknown): Record<string, unknown> | null {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return null
+}
+
+function finite(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+// Figures only. A row would be zeros, so these stay out of the area grid.
+const UNCOUNTED = new Set([
+  'production.alerts',
+  'production.time',
+  'production.tuning',
+  'production.confidence',
+  'production.agreement',
+  'production.changes',
+])
+
+function productionAreas(report: ProductionReport): string[] {
+  const hidden = new Set(report.withheld ?? [])
+  const areas: string[] = []
+  for (const id of report.modules ?? []) {
+    if (hidden.has(id) || UNCOUNTED.has(id)) continue
+    if (!report.checks.some((check) => check.module === id)) continue
+    areas.push(id)
+  }
+  // Settings checks are stored on the record. `settings` is not a production module.
+  if (report.checks.some((check) => check.module === 'settings')) areas.push('settings')
+  return areas
+}
+
+function moduleBody(report: ProductionReport, id: string): Record<string, unknown> | null {
+  if (!(report.modules ?? []).includes(id) || (report.withheld ?? []).includes(id)) return null
+  return recordOf(report.evidence?.[id])
+}
+
+function noted(body: Record<string, unknown>): string | null {
+  return typeof body.not_checked === 'string' && body.not_checked ? body.not_checked : null
+}
+
+function pct(value: number): string {
+  const shown = value * 100
+  const rounded = Math.round(shown)
+  return Math.abs(shown - rounded) < 0.05 ? `${rounded}%` : `${shown.toFixed(1)}%`
+}
+
+/** Under 20 the share is the count. At 20 or above, the count and the range. */
+function countShare(k: number, n: number, low: number | null, high: number | null): string {
+  if (low == null || high == null) return `${k} of ${n}`
+  const point = n > 0 ? pct(k / n) : '0%'
+  return `${k} of ${n}, ${point} (${pct(low)}–${pct(high)})`
+}
+
+// A group stores its count on `k`. There is no `count` field.
+function alertCountLine(source: Record<string, unknown>): string | null {
+  if (typeof source.source !== 'string' || source.source === '') return null
+  const groups = Array.isArray(source.groups) ? source.groups : []
+  const groupText = groups.flatMap((row) => {
+    const item = recordOf(row)
+    if (!item || typeof item.label !== 'string') return []
+    const count = finite(item.k)
+    if (count === null) return []
+    return [`${item.label} ${count}`]
+  })
+  const left = Array.isArray(source.left_out) ? source.left_out : []
+  const leftText = left.flatMap((row) => {
+    const item = recordOf(row)
+    if (!item || typeof item.label !== 'string') return []
+    const count = finite(item.count)
+    if (count === null) return []
+    return [`${item.label} ${count}`]
+  })
+  const parts = [`${source.source}: ${groupText.join(', ')}`]
+  if (leftText.length > 0) parts.push(`Left out: ${leftText.join(', ')}`)
+  return `${parts.join('. ')}.`
+}
+
+function timePhrase(figure: Record<string, unknown> | null): string {
+  if (!figure) return 'none'
+  const median = typeof figure.median === 'string' && figure.median ? figure.median : null
+  if (median) {
+    const p90 = typeof figure.p90 === 'string' && figure.p90 ? figure.p90 : '—'
+    return `median ${median}, p90 ${p90}`
+  }
+  const bands = Array.isArray(figure.bands) ? figure.bands : []
+  const text = bands.flatMap((row) => {
+    const item = recordOf(row)
+    if (!item || typeof item.label !== 'string' || item.label === '') return []
+    const count = finite(item.count)
+    if (count === null) return []
+    return [`${count} ${item.label}`]
+  })
+  return text.length > 0 ? text.join(', ') : 'none'
+}
+
+function timeCountLine(source: Record<string, unknown>): string | null {
+  if (typeof source.source !== 'string' || source.source === '') return null
+  return (
+    `${source.source}: time to first verdict ${timePhrase(recordOf(source.time_to_first_verdict))}. ` +
+    `Time to close ${timePhrase(recordOf(source.time_to_close))}.`
+  )
+}
+
+function figureLine(row: Record<string, unknown>): string | null {
+  const k = finite(row.k)
+  const n = finite(row.n)
+  if (typeof row.label !== 'string' || k === null || n === null) return null
+  return `${row.label}: ${countShare(k, n, finite(row.low), finite(row.high))}.`
+}
+
+/** Counts and shares already stored. No hosts, titles, rule names, or earlier windows. */
+function printFigures(report: ProductionReport): string[] {
+  const lines: string[] = []
+  const alerts = moduleBody(report, 'production.alerts')
+  if (alerts) {
+    const note = noted(alerts)
+    if (note) lines.push(note)
+    else {
+      for (const row of Array.isArray(alerts.sources) ? alerts.sources : []) {
+        const source = recordOf(row)
+        const line = source ? alertCountLine(source) : null
+        if (line) lines.push(line)
+      }
+    }
+  }
+  const time = moduleBody(report, 'production.time')
+  if (time) {
+    const note = noted(time)
+    if (note) lines.push(note)
+    else {
+      for (const row of Array.isArray(time.sources) ? time.sources : []) {
+        const source = recordOf(row)
+        const line = source ? timeCountLine(source) : null
+        if (line) lines.push(line)
+      }
+    }
+  }
+  const confidence = moduleBody(report, 'production.confidence')
+  if (confidence) {
+    const note = noted(confidence)
+    if (note) lines.push(note)
+    else {
+      const parts = (Array.isArray(confidence.levels) ? confidence.levels : []).flatMap((row) => {
+        const item = recordOf(row)
+        if (!item || typeof item.level !== 'string') return []
+        const count = finite(item.count)
+        const abstained = finite(item.abstained)
+        if (count === null || abstained === null) return []
+        return [`${item.level} ${count}, abstained ${abstained}`]
+      })
+      if (parts.length > 0) lines.push(`How sure: ${parts.join('; ')}.`)
+    }
+  }
+  const agreement = moduleBody(report, 'production.agreement')
+  if (agreement) {
+    const note = noted(agreement)
+    if (note) lines.push(note)
+    else {
+      for (const row of Array.isArray(agreement.figures) ? agreement.figures : []) {
+        const item = recordOf(row)
+        const line = item ? figureLine(item) : null
+        if (line) lines.push(line)
+      }
+    }
+  }
+  return lines
+}
+
+function ProductionSummary({ report }: { report: ProductionReport }) {
+  const span = productionWindow(report)
+  const window = span ? windowLength(span.start, span.end) : 'window'
+  const areas = productionAreas(report)
+  const actions = summaryActions(report)
+  const hidden = new Set(report.withheld ?? [])
+  const modules = report.modules ?? []
+  const seeRunning = modules.includes('production.running') && !hidden.has('production.running')
+  const seeQuiet = modules.includes('production.quiet') && !hidden.has('production.quiet')
+  const neitherRan = !modules.includes('production.running') && !modules.includes('production.quiet')
+  const unmet = report.checks.filter(
+    (check) =>
+      check.outcome !== 'pass' &&
+      ((seeRunning && check.module === 'production.running') ||
+        (seeQuiet && check.module === 'production.quiet')),
+  )
+  const showCantSee = neitherRan || seeRunning || seeQuiet
+  const figures = printFigures(report)
+  return (
+    <section className="d1-card d1-print" aria-label="Summary">
+      <h2 className="d1-print-title">Summary</h2>
+      {report.preface && <p className="d1-print-line">{report.preface}</p>}
+      <p className="d1-print-line">
+        Describes this install&apos;s first {window} in production, as of {reportStamp(report.recorded_at)}.
+      </p>
+      <div className="d1-print-block">
+        <h2>Actions</h2>
+        {actions.length > 0 ? (
+          <ol className="d1-actions-list">
+            {actions.map((check) => (
+              <li key={check.id}>
+                <span>{check.reason}</span>
+                {check.evidence?.fix && <span className="d1-fix">{check.evidence.fix}</span>}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="d1-quiet">None.</p>
+        )}
+      </div>
+      <div className="d1-print-block">
+        <h2>Area by outcome</h2>
+        {areas.length > 0 ? (
+          <table className="d1-grid">
+            <thead>
+              <tr>
+                <th scope="col">Area</th>
+                {OUTCOMES.map((outcome) => (
+                  <th key={outcome} scope="col">
+                    {outcomeWord(outcome)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {areas.map((id) => {
+                const counts = { pass: 0, fail: 0, not_checked: 0, needs_a_person: 0 }
+                for (const check of report.checks) {
+                  if (check.module !== id || check.outcome === 'no_value') continue
+                  counts[check.outcome] += 1
+                }
+                return (
+                  <tr key={id}>
+                    <th scope="row">{MODULE_TITLE[id] ?? id}</th>
+                    {OUTCOMES.map((outcome) => (
+                      <td key={outcome} data-label={outcomeWord(outcome)}>
+                        {counts[outcome]}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="d1-quiet">None.</p>
+        )}
+      </div>
+      {showCantSee && (
+        <div className="d1-print-block">
+          <h2>What Vigil can&apos;t see</h2>
+          {neitherRan && <p className="d1-quiet">What is running and sources gone quiet did not run.</p>}
+          {seeRunning || seeQuiet ? (
+            unmet.length === 0 ? (
+              <p className="d1-quiet">None.</p>
+            ) : (
+              <ul className="d1-gaps">
+                {unmet.map((check) => (
+                  <li key={check.id}>{check.reason}</li>
+                ))}
+              </ul>
+            )
+          ) : null}
+        </div>
+      )}
+      {figures.length > 0 && (
+        <div className="d1-print-block">
+          <h2>Figures</h2>
+          <ul className="d1-gaps">
+            {figures.map((line, index) => (
+              <li key={`${index}-${line}`}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function Summary({ report }: { report: Loaded }) {
+  if (isProduction(report)) return <ProductionSummary report={report} />
   const hidden = new Set(report.withheld ?? [])
   const modules = report.modules ?? []
   // Visibility and estate share one row and one "can't see" block. Estate is not its own row.
@@ -1214,7 +1495,7 @@ export default function ReportScreen() {
           </section>
         )}
       </div>
-      {day1 && <Summary report={day1} />}
+      {report && <Summary report={report} />}
       <div className="d1-screen">
         {produced && withheld.includes('production.running') && <Withheld id="production.running" />}
         {produced && !withheld.includes('production.running') && (produced.modules ?? []).includes('production.running') && (
