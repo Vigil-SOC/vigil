@@ -3951,6 +3951,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/recurring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Day1 Recurring
+         * @description How often the report runs again on its own. No row is every 7 days.
+         */
+        get: operations["get_api_day1-report_recurring"];
+        /**
+         * Set Day1 Recurring
+         * @description Set the interval in whole days, or 0 to switch recurring runs off.
+         */
+        put: operations["put_api_day1-report_recurring"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/selection": {
         parameters: {
             query?: never;
@@ -13109,6 +13133,11 @@ export interface components {
             /** Source Id */
             source_id: string;
         };
+        /** Day1Recurring */
+        Day1Recurring: {
+            /** Days */
+            days: number;
+        };
         /** Day1Report */
         Day1Report: {
             /** Actor Id */
@@ -13124,6 +13153,11 @@ export interface components {
                 [key: string]: unknown;
             };
             forecast?: components["schemas"]["Day1Forecast"] | null;
+            /**
+             * Hidden Worse
+             * @default false
+             */
+            hidden_worse: boolean;
             history_before?: components["schemas"]["HistoryBefore"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
             history_tuning?: components["schemas"]["HistoryTuning"] | null;
@@ -13131,6 +13165,8 @@ export interface components {
             id: string;
             /** Modules */
             modules: string[];
+            /** Not Run */
+            not_run?: string[];
             /** Preface */
             preface?: string | null;
             /** Recorded At */
@@ -13146,7 +13182,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "readiness" | "fallback" | "on_demand";
+            trigger: "readiness" | "fallback" | "on_demand" | "recurring";
             /** Vigil Version */
             vigil_version: string;
             /** Withheld */
@@ -25369,6 +25405,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Day1Module"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_recurring": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Recurring"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_recurring": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Day1Recurring"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Day1Recurring"];
                 };
             };
             /** @description Validation Error */
