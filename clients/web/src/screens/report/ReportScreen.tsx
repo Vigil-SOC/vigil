@@ -25,6 +25,7 @@ import {
   quietEvidence,
   tuningEvidence,
 } from './ProductionSections'
+import { TimeSection } from './TimeSection'
 import { reportStamp } from './stamp'
 import { residencyLabel, type ResidencyClass } from '../../shared/residency'
 import './report.css'
@@ -63,6 +64,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.confidence': 'How sure the investigations were',
   'production.agreement': 'Agreement',
   'production.changes': 'What changed',
+  'production.time': 'Time to first verdict and time to close',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -81,6 +83,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.confidence': 'platform.read',
   'production.agreement': 'platform.read',
   'production.changes': 'platform.read',
+  'production.time': 'findings.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -1245,6 +1248,10 @@ export default function ReportScreen() {
           <AlertsSection evidence={alertsBody} tip={ALERTS_TIP} />
         )}
         {produced && <ProductionFigures report={produced} />}
+        {produced && withheld.includes('production.time') && <Withheld id="production.time" />}
+        {produced && !withheld.includes('production.time') && (produced.modules ?? []).includes('production.time') && (
+          <TimeSection evidence={produced.evidence?.['production.time']} />
+        )}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">
