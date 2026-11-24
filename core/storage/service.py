@@ -225,6 +225,13 @@ DAEMON_ENRICHMENT_KEYS = (
 )
 
 
+def keep_first_verdict(current: Any, stamp: Any) -> Any:
+    """The first recorded verdict time. A later stamp does not move it."""
+    if current is not None or stamp is None:
+        return current
+    return stamp
+
+
 def merge_ai_enrichment(
     stored: Optional[Dict[str, Any]], new: Dict[str, Any], *, daemon: bool
 ) -> Dict[str, Any]:
@@ -1036,6 +1043,7 @@ class DatabaseService:
         not the caller's (possibly stale) copy, so a concurrent triage and
         Generate don't lose each other's write. ``updates`` are plain column
         sets applied in the same transaction (the daemon's severity).
+        ``first_verdict_at`` is set only while that column is null.
         """
         with self.db_manager.session_scope() as session:
             finding = session.execute(
@@ -1050,6 +1058,10 @@ class DatabaseService:
             finding.ai_enrichment = merge_ai_enrichment(
                 finding.ai_enrichment, ai_enrichment, daemon=daemon
             )
+            if "first_verdict_at" in updates:
+                finding.first_verdict_at = keep_first_verdict(
+                    finding.first_verdict_at, updates.pop("first_verdict_at")
+                )
             for key, value in updates.items():
                 setattr(finding, key, value)
             finding.updated_at = utcnow()

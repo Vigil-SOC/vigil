@@ -899,9 +899,14 @@ class FindingProcessor:
         if not ai_enrichment:
             return
         # Replaces only the triage keys; a generated analysis survives. It
-        # reports failure by returning False rather than raising.
+        # reports failure by returning False rather than raising. The first
+        # verdict time is a column, set once, not an enrichment key.
+        updates = {}
+        stamp = finding.get("_record_first_verdict_at")
+        if stamp is not None:
+            updates["first_verdict_at"] = stamp
         ok = self._data_service.write_ai_enrichment(
-            finding_id, ai_enrichment, daemon=True
+            finding_id, ai_enrichment, daemon=True, **updates
         )
         if not ok:
             logger.error(
@@ -1139,6 +1144,8 @@ REASONING: one sentence summing up the verdict
     ) -> Dict[str, Any]:
         """Apply AI triage result to finding."""
         triage_result = {}
+        # Only a verdict recorded by this call is offered to the column.
+        finding.pop("_record_first_verdict_at", None)
         fields = _reply_fields(response)
 
         said = (fields.get("VERDICT") or "").lower()
@@ -1167,6 +1174,7 @@ REASONING: one sentence summing up the verdict
 
         if verdict:
             triage_result["verdict"] = verdict
+            finding["_record_first_verdict_at"] = utcnow()
 
         # Kept as triage's opinion only: a finding's severity is the detector's
         # or an analyst's, never the model's.

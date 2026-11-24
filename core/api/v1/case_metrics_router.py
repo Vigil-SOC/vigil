@@ -23,6 +23,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from core.auth.permissions import case_read_clause, permission_gate
 from core.cases.case_sla_service import CaseSLAService
 from core.cases.case_status import CLOSED
+from core.cases.close_time import closed_at as _closed_at
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import CaseRepository
 from core.storage.models import Case, CaseClosureInfo
@@ -57,17 +58,6 @@ _BETA = {"openapi_extra": {"x-vigil-beta": True}}
 _ISO_DATETIME = (
     r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])[T ]([01]\d|2[0-3]):[0-5]\d"
 )
-
-
-def _closed_at() -> ColumnElement:
-    """When a closed case was closed.
-
-    ``case_closure_info.closed_at`` is stamped by ``close_case``, which every
-    close path goes through, and it does not move when the case is edited
-    afterwards. A case closed before closure rows existed falls back to
-    ``cases.updated_at``.
-    """
-    return func.coalesce(CaseClosureInfo.closed_at, Case.updated_at)
 
 
 def _first_activity_at() -> ColumnElement:

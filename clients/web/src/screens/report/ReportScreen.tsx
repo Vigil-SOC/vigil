@@ -26,6 +26,7 @@ import {
   quietEvidence,
   tuningEvidence,
 } from './ProductionSections'
+import { TimeSection } from './TimeSection'
 import { reportStamp } from './stamp'
 import { residencyLabel, type ResidencyClass } from '../../shared/residency'
 import './report.css'
@@ -65,6 +66,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.agreement': 'Agreement',
   'production.spend': 'Spend since Production Start',
   'production.changes': 'What changed',
+  'production.time': 'Time to first verdict and time to close',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -84,6 +86,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.agreement': 'platform.read',
   'production.spend': 'platform.read',
   'production.changes': 'platform.read',
+  'production.time': 'findings.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -1252,6 +1255,10 @@ export default function ReportScreen() {
         {produced && withheld.includes('production.spend') && <Withheld id="production.spend" />}
         {produced && !withheld.includes('production.spend') && (produced.modules ?? []).includes('production.spend') && (
           <SpendSection evidence={produced.evidence?.['production.spend']} />
+        )}
+        {produced && withheld.includes('production.time') && <Withheld id="production.time" />}
+        {produced && !withheld.includes('production.time') && (produced.modules ?? []).includes('production.time') && (
+          <TimeSection evidence={produced.evidence?.['production.time']} />
         )}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
