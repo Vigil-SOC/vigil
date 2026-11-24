@@ -1392,6 +1392,7 @@ class IngestionService:
             raise
         self.import_id = investigation_id
         self.unmapped = result["unmapped"]
+        self.dropped_columns = result["dropped_columns"]
         logger.info("History import %s complete: %s", investigation_id, self.stats)
         return self.stats
 

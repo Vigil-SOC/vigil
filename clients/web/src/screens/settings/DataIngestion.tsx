@@ -496,6 +496,7 @@ function ImportDetails({ row, canWrite, rerun }: { row: HistoryImport; canWrite:
     : row.concluded_at ? `Through ${utcDay(row.concluded_at)}` : '—'
   const leftOut = Object.entries(row.left_out)
   const more = row.unmapped.length - UNMAPPED_SHOWN
+  const droppedMore = row.dropped_columns.length - UNMAPPED_SHOWN
   const facts: [string, ReactNode][] = [
     ['Started', utcDayClock(row.started_at) ?? '—'],
     ['Finished', utcDayClock(row.finished_at) ?? (row.status === 'running' ? 'Still importing' : '—')],
@@ -547,6 +548,18 @@ function ImportDetails({ row, canWrite, rerun }: { row: HistoryImport; canWrite:
             </span>
           ))}
           {more > 0 && ` and ${more} more`}. Rename them in the export to a listed value and import again.
+        </div>
+      )}
+      {row.dropped_columns.length > 0 && (
+        <div className="data-history-line">
+          <b>Dropped columns</b>{' '}
+          {row.dropped_columns.slice(0, UNMAPPED_SHOWN).map((column, i) => (
+            <span key={column.name}>
+              {i > 0 && ', '}
+              <code className="data-history-value">{column.name}</code> ({column.count})
+            </span>
+          ))}
+          {droppedMore > 0 && ` and ${droppedMore} more`}. Not stored.
         </div>
       )}
       {!row.has_ticket_detail && (

@@ -32,6 +32,11 @@ class UnmappedValue(BaseModel):
     count: int
 
 
+class DroppedColumn(BaseModel):
+    name: str
+    count: int
+
+
 class ImportOut(BaseModel):
     import_id: str
     source_system: str
@@ -52,6 +57,8 @@ class ImportOut(BaseModel):
     severity_unknown: int
     # Disposition values no listed value matches, most common first.
     unmapped: List[UnmappedValue]
+    # Alert-column names whose values were not stored, most common first.
+    dropped_columns: List[DroppedColumn]
     # A connected pull's window.
     pull_days: Optional[int]
     pulled_at: Optional[datetime]
@@ -84,7 +91,7 @@ def remove_import(
     import_id: str = Path(..., min_length=1, max_length=512),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete one whole import: its Verdicts, Sightings, tickets and record."""
+    """Delete one whole import: its Verdicts, Sightings, tickets, alerts and record."""
     try:
         row = delete_import(session, import_id, actor=current_user.principal_id)
     except ImportRunning:
