@@ -46,8 +46,11 @@ HISTORY_BEFORE = ReportModule("history.before", "findings.read")
 HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
 HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
 HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
-# The Production Start Report's first module. Day 1's build does not call it.
+# The Production Start Report. Day 1's build does not call these.
 RUNNING = ReportModule("production.running", "platform.read")
+QUIET = ReportModule("production.quiet", "findings.read")
+# Figures, no checks. The body is evidence["production.alerts"].
+ALERTS = ReportModule("production.alerts", "findings.read")
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -281,6 +284,12 @@ CHECKS: tuple[ReportCheck, ...] = (
         RUNNING.permission,
         "At least one alert source is switched on, the same way Day 1 visibility judges it. With none, the check needs a person.",
     ),
+    ReportCheck(
+        "production.quiet",
+        QUIET.id,
+        QUIET.permission,
+        "A switched-on alert source passes when a new alert arrived in the window's last 24 hours. None in that day, or none ever, needs a person. An unhealthy source needs a person. The check names the record it read.",
+    ),
 )
 
 MODULES = {
@@ -293,6 +302,8 @@ MODULES = {
     HISTORY_TUNING.id: HISTORY_TUNING,
     FORECAST.id: FORECAST,
     RUNNING.id: RUNNING,
+    QUIET.id: QUIET,
+    ALERTS.id: ALERTS,
 }
 
 

@@ -10,6 +10,14 @@ import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
+import {
+  ALERTS_TIP,
+  AlertsSection,
+  QUIET_TIP,
+  QuietSection,
+  alertsEvidence,
+  quietEvidence,
+} from './ProductionSections'
 import { reportStamp } from './stamp'
 import './report.css'
 
@@ -41,6 +49,8 @@ const MODULE_TITLE: Record<string, string> = {
   'history.tuning': 'Tuning candidates',
   'history.forecast': 'Cost forecast',
   'production.running': 'What is running',
+  'production.quiet': 'Sources and rules gone quiet',
+  'production.alerts': 'What happened to every alert',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -53,6 +63,8 @@ const MODULE_PERMISSION: Record<string, string> = {
   'history.tuning': 'findings.read',
   'history.forecast': 'platform.read',
   'production.running': 'platform.read',
+  'production.quiet': 'findings.read',
+  'production.alerts': 'findings.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -890,6 +902,11 @@ export default function ReportScreen() {
   const runningChecks = produced
     ? produced.checks.filter((check) => check.module === 'production.running')
     : []
+  const quietChecks = produced
+    ? produced.checks.filter((check) => check.module === 'production.quiet')
+    : []
+  const quietBody = quietEvidence(produced?.evidence?.['production.quiet'])
+  const alertsBody = alertsEvidence(produced?.evidence?.['production.alerts'])
 
   return (
     <div className="d1-page">
@@ -966,6 +983,14 @@ export default function ReportScreen() {
               <p className="d1-quiet">Nothing to report in this section.</p>
             )}
           </section>
+        )}
+        {produced && withheld.includes('production.quiet') && <Withheld id="production.quiet" />}
+        {produced && !withheld.includes('production.quiet') && (produced.modules ?? []).includes('production.quiet') && (
+          <QuietSection checks={quietChecks} evidence={quietBody} tip={QUIET_TIP} />
+        )}
+        {produced && withheld.includes('production.alerts') && <Withheld id="production.alerts" />}
+        {produced && !withheld.includes('production.alerts') && (produced.modules ?? []).includes('production.alerts') && alertsBody && (
+          <AlertsSection evidence={alertsBody} tip={ALERTS_TIP} />
         )}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
