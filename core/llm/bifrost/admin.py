@@ -994,7 +994,8 @@ def _resolve_row_key(
             if val:
                 return val
         except Exception as exc:  # noqa: BLE001
-            logger.debug("secret lookup for %s failed: %s", api_key_ref, exc)
+            # The error's type only: its text can carry what the store returned.
+            logger.debug("A provider secret lookup failed (%s)", type(exc).__name__)
     if own_only:
         return None
     if provider_type == "anthropic":
