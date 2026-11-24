@@ -26,6 +26,7 @@ class FindingSchema(ORMSchema):
     entity_context: Optional[Any] = None
     evidence_links: Optional[Any] = None
     timestamp: OptDateTime = None
+    first_verdict_at: OptDateTime = None
     data_source: Optional[str] = None
     external_id: Optional[str] = None
     cluster_id: Optional[str] = None

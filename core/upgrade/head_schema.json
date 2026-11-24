@@ -3076,6 +3076,11 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column findings.first_verdict_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column findings.ip_addresses": {
   "default": "finding_ips(entity_context)",
   "nullable": true,

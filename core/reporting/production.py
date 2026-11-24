@@ -34,6 +34,7 @@ from core.reporting.checks import (
     QUIET,
     RUNNING,
     SETTINGS,
+    TIME,
     TUNING,
 )
 from core.reporting.day1 import (
@@ -63,6 +64,7 @@ from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
 from core.reporting.production_changes import present as present_changes
 from core.reporting.production_changes import produce as produce_changes
+from core.reporting.production_time import report as time_report
 from core.reporting.production_tuning import tuning as produce_tuning
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
@@ -252,9 +254,6 @@ def build(
     One that is not built yet returns None and is skipped. A failed read is
     not-checked for that module only. Day 1's ``build`` does not call these.
     """
-    disabled = disabled_module_ids()
-    checks: list[dict[str, Any]] = []
-    modules: list[str] = []
     end = _iso(window_end)
     evidence: dict[str, Any] = {
         "production": {
@@ -262,6 +261,9 @@ def build(
             "window": {"start": started_at, "end": end},
         }
     }
+    disabled = disabled_module_ids()
+    checks: list[dict[str, Any]] = []
+    modules: list[str] = []
     for module_id in MODULES:
         if not module_id.startswith("production."):
             continue
@@ -310,6 +312,8 @@ def _produce(
         return [], agreement(started_at, window_end)
     if module_id == CHANGES.id:
         return [], produce_changes(started_at, window_end)
+    if module_id == TIME.id:
+        return [], time_report({"start": started_at, "end": _iso(window_end)})
     return None
 
 
