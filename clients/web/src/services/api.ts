@@ -775,6 +775,9 @@ export const day1Api = {
   modules: () => api.get<Schema<'Day1Module'>[]>('/day1-report/modules'),
   setModule: (id: string, enabled: boolean) =>
     api.put<Schema<'Day1Module'>>(`/day1-report/modules/${encodeURIComponent(id)}`, { enabled }),
+  // Whole days between automatic re-runs; 0 is off (#5045).
+  recurring: () => api.get<Schema<'Day1Recurring'>>('/day1-report/recurring'),
+  setRecurring: (days: number) => api.put<Schema<'Day1Recurring'>>('/day1-report/recurring', { days }),
   // Jurisdictions and data or organisation kinds (#5010). The catalogue in the
   // response is the only copy of the closure rules the form uses.
   selection: () => api.get<SelectionView>('/day1-report/selection'),
