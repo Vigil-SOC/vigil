@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import deny_unless, permission_gate
+from core.llm import residency
 from core.llm.bifrost.admin import sync_all_provider_models
 from core.llm.providers import provider_service
 from core.llm.providers.base_url import validate_base_url_shape
@@ -23,6 +24,7 @@ from core.llm.providers.registry import (
     attest_self_hosted,
     invalidate_model_cache,
 )
+from core.llm.residency import ProviderResidency, Residency
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import delete_secret, secret_write_failure_detail, set_secret
 from core.storage.config_service import write_config_audit
@@ -98,11 +100,23 @@ class LLMProviderResponse(BaseModel):
     last_error: Optional[str]
     created_at: Optional[str]
     updated_at: Optional[str]
+    # Where this provider's calls go; the class only, never the address.
+    residency: ProviderResidency
 
 
-def _to_response(row: LLMProviderConfig) -> Dict[str, Any]:
+async def _gateway_for(rows: List[LLMProviderConfig]) -> Optional[Dict[str, Residency]]:
+    # Read the gateway only when a mirror row needs it.
+    if not any(residency.is_gateway_row(r) and not r.base_url for r in rows):
+        return {}
+    return await residency.gateway_residency()
+
+
+def _to_response(
+    row: LLMProviderConfig, gateway: Optional[Dict[str, Residency]]
+) -> Dict[str, Any]:
     d = LLMProviderConfigSchema.dump(row)
     d.pop("api_key_ref", None)
+    d["residency"] = residency.row_residency(row, gateway).public()
     return d
 
 
@@ -192,7 +206,8 @@ async def list_providers(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
     rows = provider_service.list_providers(db)
-    return [_to_response(r) for r in rows]
+    gateway = await _gateway_for(rows)
+    return [_to_response(r, gateway) for r in rows]
 
 
 @router.post("", response_model=LLMProviderResponse, status_code=201)
@@ -242,7 +257,7 @@ async def create_provider(
         provider_service.reconcile_bifrost_key_for_type(db, row.provider_type)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"created provider {provider_id}")
-    return _to_response(row)
+    return _to_response(row, await _gateway_for([row]))
 
 
 @router.put("/{provider_id}", response_model=LLMProviderResponse)
@@ -339,7 +354,7 @@ async def update_provider(
     provider_service.settle(db, row)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"updated provider {provider_id}")
-    return _to_response(row)
+    return _to_response(row, await _gateway_for([row]))
 
 
 @router.delete("/{provider_id}")

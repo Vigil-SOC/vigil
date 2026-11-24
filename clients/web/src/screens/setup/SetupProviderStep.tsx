@@ -7,7 +7,7 @@
    cloud account or another provider) → Test → read the verdict banner.
    ============================================================ */
 import { useEffect, useRef, useState } from 'react'
-import { Icon, type IconName } from '../../shared/icons'
+import { Icon } from '../../shared/icons'
 import { Field } from '../../shared/ui'
 import { Banner } from '../../shared/formKit'
 import { LevelBadge } from '../../shared/LevelBadge'
@@ -19,13 +19,7 @@ import ChoiceCard from './ChoiceCard'
 import ModelPlan from './ModelPlan'
 import ProviderKeyCard, { OutcomeBanner } from './ProviderKeyCard'
 import { checkKey, type Outcome } from './providerOutcome'
-import {
-  CLOUD_PROVIDERS,
-  bifrostStaysInCloud,
-  bifrostStaysOnSite,
-  legacyStaysOnSite,
-  residencyCopy,
-} from './providerResidency'
+import { CLOUD_PROVIDERS, RESIDENCY_ICON, residencyLabel, residencyOf, type Residency } from '../../shared/residency'
 
 type CardId = 'anthropic' | 'openai' | 'cloud' | 'ollama'
 // 'other' is the Another provider field: naming a provider there deselects every card.
@@ -61,7 +55,7 @@ const CARDS: { id: CardId; title: string; name: string; body: string; providers:
     id: 'ollama',
     title: 'Local (Ollama)',
     name: 'Ollama',
-    body: 'Everything stays on this server. Slower, and weaker on hard investigations. Needs a GPU with 48 GB of memory.',
+    body: 'Runs on the Ollama server you point it at. Slower, and weaker on hard investigations. Needs a GPU with 48 GB of memory.',
     providers: ['ollama'],
     kind: 'local',
   },
@@ -203,15 +197,19 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
     return <p className="text-tx-3 text-sm py-2">Loading gateway config…</p>
   }
 
+  // The server's class once the gateway has the provider; before that, the card's type says it.
+  // An Ollama card with no provider yet shows none: its address isn't known until it's set.
   const footer = (c: (typeof CARDS)[number]) => {
     const p = c.providers[0]
-    const inCloud = bifrostStaysInCloud(p)
-    const stays = bifrostStaysOnSite(p, keys[p] || [])
-    const icon: IconName = inCloud ? 'cloud' : stays ? 'lock' : 'globe'
+    let r: Residency | null
+    if (c.kind === 'cloud') r = { class: 'your_cloud', address_known: true }
+    else if (exists(p)) r = residencyOf(verdicts?.residency?.[p])
+    else r = c.kind === 'key' ? { class: 'hosted', address_known: true } : null
+    if (!r) return undefined
     return (
-      <span className={`su-resid${inCloud || stays ? ' stays' : ''}`}>
-        <Icon name={icon} size={13} />
-        {residencyCopy(stays, inCloud)}
+      <span className={`su-resid ${r.class}`}>
+        <Icon name={RESIDENCY_ICON[r.class]} size={13} />
+        {residencyLabel(r)}
       </span>
     )
   }
@@ -321,7 +319,7 @@ export default function SetupProviderStep({ onRoutable }: { onRoutable: () => vo
               {legacy.map((p, i) => (
                 <span key={p.provider_id}>
                   {i > 0 && '; '}
-                  <span className="font-medium">{p.name}</span> ({residencyCopy(legacyStaysOnSite(p))})
+                  <span className="font-medium">{p.name}</span> ({residencyLabel(p.residency)})
                 </span>
               ))}
             </p>

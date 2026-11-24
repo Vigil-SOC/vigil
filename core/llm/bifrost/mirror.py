@@ -34,6 +34,7 @@ import httpx
 from core.config import get_settings
 from core.llm.bifrost.auth import management_auth
 from core.llm.outage import report_outage, report_recovered
+from core.llm.residency import gateway_provider_residency
 
 logger = logging.getLogger(__name__)
 
@@ -504,6 +505,9 @@ async def routability() -> Dict[str, Any]:
     providers = (await _get("providers")).get("providers") or []
     key_verdicts: Dict[str, Any] = {}
     provider_verdicts: Dict[str, bool] = {}
+    # Where each provider's calls go. Server-side objects carrying addresses;
+    # path_health.routability_body hands out only their public form.
+    residency: Dict[str, Any] = {}
 
     for p in providers:
         name = p.get("name")
@@ -514,7 +518,9 @@ async def routability() -> Dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - one provider must not fail all
             logger.warning("Routability: could not list keys for %s: %s", name, exc)
             provider_verdicts[name] = is_key_less(p)
+            residency[name] = gateway_provider_residency(p, None)
             continue
+        residency[name] = gateway_provider_residency(p, keys)
         routable_here = is_key_less(p)
         for k in keys:
             key_id = k.get("id")
@@ -545,4 +551,8 @@ async def routability() -> Dict[str, Any]:
                 }
         provider_verdicts[name] = routable_here
 
-    return {"providers": provider_verdicts, "keys": key_verdicts}
+    return {
+        "providers": provider_verdicts,
+        "keys": key_verdicts,
+        "residency": residency,
+    }

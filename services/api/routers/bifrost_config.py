@@ -49,11 +49,15 @@ from core.config import get_settings
 from core.llm.bifrost import mirror, path_health
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
 from core.llm.bifrost.auth import management_auth
+from core.llm.bifrost.refs import ollama_ref as _ollama_ref
+from core.llm.bifrost.refs import scope_ref as _scope_ref
+from core.llm.bifrost.refs import secret_ref as _secret_ref
 from core.llm.providers.base_url import (
     normalize_openai_compat_base_url,
     validate_base_url_shape,
 )
 from core.llm.providers.registry import VALID_PROVIDER_TYPES
+from core.llm.residency import ProviderResidency
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
 from core.storage.config_service import get_config_service, redacted_config_copy
@@ -93,31 +97,6 @@ _WRITE_METHODS = frozenset({"POST", "PUT", "DELETE"})
 # paths carrying a credential, and so the only ones needing secret handling.
 _KEYS_PATH = re.compile(r"^providers/(?P<provider>[^/]+)/keys(?:/(?P<key_id>[^/]+))?$")
 _PROVIDER_PATH = re.compile(r"^providers/(?P<provider>[^/]+)$")
-
-
-def _secret_ref(key_id: str) -> str:
-    return f"llm_key_{key_id}"
-
-
-def _scope_ref(key_id: str) -> str:
-    """Where a Vertex key's project/region are kept.
-
-    Not secrets, but Bifrost masks them like one and offers no unmasked read —
-    ``?unmasked``/``?reveal`` all come back ``prod****oglm`` — so the real
-    values cannot be recovered from the gateway. Keeping our own copy is what
-    lets an edit that only changes the weight leave the scope intact.
-    """
-    return f"llm_key_{key_id}_vertex_scope"
-
-
-def _ollama_ref(key_id: str) -> str:
-    """Where an Ollama key's endpoint URL is kept.
-
-    Same reason as ``_scope_ref``: not a secret, but Bifrost masks it on read
-    and offers no way to get it back, so an edit that only changes the weight
-    would otherwise hand the gateway a mask in place of the endpoint.
-    """
-    return f"llm_key_{key_id}_ollama_url"
 
 
 def _stored_scope(key_id: Optional[str]) -> Dict[str, str]:
@@ -647,6 +626,9 @@ class Routability(BaseModel):
 
     providers: Dict[str, bool]
     keys: Dict[str, KeyVerdict]
+    # Where each provider's calls go (core.llm.residency). The class only,
+    # never the address.
+    residency: Dict[str, ProviderResidency] = {}
 
 
 @router.get("/routability", response_model=Routability)
