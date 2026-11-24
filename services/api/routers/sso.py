@@ -2,9 +2,12 @@
 
 One row, versioned like the session policy: GET returns it with its version as
 the ETag; PUT needs that version in ``If-Match`` and refuses a stale one with
-412. A save that changes the discovery URL, client ID or secret first fetches
-the provider's discovery document and refuses, with a fixed reason, unless it
-answers. The client secret is written to the secrets store and never returned.
+412. A save that changes the discovery URL or client ID while a client secret
+is stored, and still names both, must send the new provider's secret. That
+save is refused and nothing is fetched. A save that does change the provider
+or the secret first fetches the discovery document and refuses, with a fixed
+reason, unless it answers. The client secret is written to the secrets store
+and never returned.
 
 "Require single sign-on" (#4286) is a field of the same row. It turns on only
 from the caller's own SSO sign-in that started after the discovery URL or client
@@ -65,6 +68,11 @@ NOT_REACHED = (
 NEEDS_CLIENT = (
     "Single sign-on needs a client ID and a client secret before it is turned on"
 )
+# A stored secret belongs to the discovery URL and client ID it was saved with.
+NEEDS_NEW_SECRET = (
+    "Enter the client secret for this provider. The saved one belongs to "
+    "the previous discovery URL or client ID"
+)
 # Why Require single sign-on can't be turned on from this sign-in.
 REQUIRE_SSO_OFF = "Single sign-on is not on and saved"
 REQUIRE_NOT_SSO = "Your sign-in didn't come through SSO: sign out and sign in with SSO"
@@ -100,7 +108,8 @@ class SsoSettingsIn(BaseModel):
     enabled: bool = False
     discovery_url: str = Field("", max_length=2048)
     client_id: str = Field("", max_length=512)
-    # Empty or absent keeps the stored secret.
+    # Empty or absent keeps the stored secret, unless the discovery URL or
+    # client ID changes while one is stored.
     client_secret: Optional[SecretStr] = None
     group_roles: list[sso_settings.GroupRole] = Field(
         default_factory=list, max_length=200
@@ -273,6 +282,17 @@ def put_sso_settings(
     # While required, the provider people sign in through stays put.
     if old.settings.require_sso and (client_changed or not new.enabled):
         refuse(409, REQUIRE_FIRST)
+    # The stored secret was issued for the previous registration. On or off,
+    # a different discovery URL or client ID needs this provider's secret
+    # when both are still set. A cleared field names no provider, so it is not asked for.
+    if (
+        client_changed
+        and new.discovery_url
+        and new.client_id
+        and not secret
+        and get_secret(sso_settings.SECRET_KEY)
+    ):
+        refuse(409, NEEDS_NEW_SECRET)
     # A row saved before the timestamp was kept gets one on its next save.
     if client_changed or (new.discovery_url and new.provider_changed_at is None):
         new.provider_changed_at = utcnow()
