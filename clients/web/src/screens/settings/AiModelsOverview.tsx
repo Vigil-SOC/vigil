@@ -6,14 +6,29 @@
    ai_model_configs. Where each provider's calls go is the server's class
    (core/llm/residency.py, on the routability read), labelled by shared/residency.
    ============================================================ */
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
-import { ConfirmDialog, EmptyState, Select, SettingsCard } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, Field, Popup, Select, SettingsCard } from '../../shared/ui'
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
-import { type AIModelInfo, type ComponentAssignment } from '../../services/api'
+import {
+  llmProviderApi,
+  type AIModelInfo,
+  type ComponentAssignment,
+  type LLMProvider,
+  type StatementView,
+} from '../../services/api'
 import type { BifrostProvider, BifrostRoutability } from '../../services/bifrostApi'
-import { RESIDENCY_LABEL, residencyLabel, residencyOf, type Residency, type ResidencyClass } from '../../shared/residency'
+import {
+  RESIDENCY_LABEL,
+  residencyLabel,
+  residencyOf,
+  type Residency,
+  type ResidencyClass,
+  type SelfHostedBy,
+} from '../../shared/residency'
+import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
 import { ROUTABILITY_CHANGED } from './routabilityChanged'
@@ -69,17 +84,70 @@ function defaultProviderName(
  *  (Home's "Pick a model per agent" step sends ?tab=assignment, which AiConfigSection scrolls to). */
 export const AGENT_MODEL_TABLE_ID = 'ai-model-for-each-agent'
 
+/** Vigil's provider rows, for the Provider Statements each type holds. */
+function useProviderRows() {
+  const [rows, setRows] = useState<LLMProvider[] | null>(null)
+  const reload = useCallback(() => {
+    llmProviderApi
+      .list()
+      .then(({ data }) => setRows(data))
+      .catch(() => setRows(null))
+  }, [])
+  useEffect(reload, [reload])
+  return { rows, reload }
+}
+
+/** The row a statement save goes to: the gateway mirror first, else the type's first active row.
+ *  The server writes it onto every active row of the type. */
+function statementRow(rows: LLMProvider[] | null, name: string): LLMProvider | null {
+  const own = (rows || []).filter((r) => r.provider_type === name)
+  return (
+    own.find((r) => r.provider_id === `bifrost-${name}` && r.is_active) ||
+    own.find((r) => r.is_active) ||
+    own[0] ||
+    null
+  )
+}
+
+function selfHostedOf(row: LLMProvider | null): SelfHostedBy | null {
+  const s = row?.statements?.self_hosted
+  return s && s.state === 'held' && s.value === 'yes' && s.by_name && s.at ? { by: s.by_name, at: s.at } : null
+}
+
 export default function AiModelsOverview({ notify }: SectionProps) {
   const ma = useModelAssignment()
   const bf = useBifrostProviders()
+  const pr = useProviderRows()
   // A write in the Keys panel below (its own hook) can change a provider's class.
   const { reload } = bf
+  const { reload: reloadRows } = pr
   useEffect(() => {
-    window.addEventListener(ROUTABILITY_CHANGED, reload)
-    return () => window.removeEventListener(ROUTABILITY_CHANGED, reload)
-  }, [reload])
+    const both = () => {
+      reload()
+      reloadRows()
+    }
+    window.addEventListener(ROUTABILITY_CHANGED, both)
+    return () => window.removeEventListener(ROUTABILITY_CHANGED, both)
+  }, [reload, reloadRows])
   const names = bf.shown.map((p) => p.name)
   const defaultName = defaultProviderName(ma.assignments[CHAT_DEFAULT_KEY], ma.models, names)
+  // ?tab=statements&provider=<type> (the Day 1 Report's link) opens that provider's statements.
+  const [params, setParams] = useSearchParams()
+  const [stating, setStating] = useState<string | null>(null)
+  const linked = params.get('tab') === 'statements' ? params.get('provider') : null
+  useEffect(() => {
+    if (linked && pr.rows && names.includes(linked)) setStating(linked)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked, pr.rows, names.join()])
+  const closeStating = () => {
+    setStating(null)
+    if (linked) {
+      const next = new URLSearchParams(params)
+      next.delete('tab')
+      next.delete('provider')
+      setParams(next, { replace: true })
+    }
+  }
 
   return (
     <>
@@ -100,13 +168,27 @@ export default function AiModelsOverview({ notify }: SectionProps) {
                 provider={provider}
                 keyCount={(bf.keys[provider.name] || []).length}
                 residency={residencyOf(bf.verdicts?.residency?.[provider.name])}
+                selfHosted={selfHostedOf(statementRow(pr.rows, provider.name))}
                 isDefault={provider.name === defaultName}
                 // null verdicts is "could not ask" — no badge, never Poor
                 routable={bf.verdicts ? !!bf.verdicts.providers?.[provider.name] : null}
+                onStatements={pr.rows ? () => setStating(provider.name) : undefined}
               />
             ))}
           </div>
         </>
+      )}
+      {stating && (
+        <StatementsDialog
+          name={providerLabel(stating)}
+          row={statementRow(pr.rows, stating)}
+          onClose={closeStating}
+          onSaved={() => {
+            pr.reload()
+            notify('ok', `Statements for ${providerLabel(stating)} saved.`)
+            closeStating()
+          }}
+        />
       )}
       <AgentModelTable ma={ma} notify={notify} />
     </>
@@ -157,12 +239,14 @@ function hostOf(url: string | undefined): string | null {
   }
 }
 
-function ProviderCard({ provider, keyCount, residency, isDefault, routable }: {
+function ProviderCard({ provider, keyCount, residency, selfHosted, isDefault, routable, onStatements }: {
   provider: BifrostProvider
   keyCount: number
   residency: Residency
+  selfHosted: SelfHostedBy | null
   isDefault: boolean
   routable: boolean | null
+  onStatements?: () => void
 }) {
   const { name } = provider
   const url = provider.network_config?.base_url
@@ -183,10 +267,190 @@ function ProviderCard({ provider, keyCount, residency, isDefault, routable }: {
         {routable !== null && (keyCount > 0 || keyLess) && <LevelBadge variant="pill" level={routable ? 'good' : 'poor'} />}
       </div>
       <span className="aim-card-keys" title={host ? url : undefined}>{keys}</span>
-      <span className={`aim-card-where ${residency.class}`}>
-        {residencyLabel(residency)}
+      <span className={`aim-card-where ${selfHosted ? 'self_hosted' : residency.class}`}>
+        {residencyLabel(residency, selfHosted)}
       </span>
+      {onStatements && (
+        <button type="button" className="btn ghost aim-card-statements" onClick={onStatements}>
+          <Icon name="edit" size={14} /> Statements
+        </button>
+      )}
     </div>
+  )
+}
+
+/* ---------------- Provider Statements ---------------- */
+// Each statement's list, "Not stated" first. The ids match core/llm/statements.py VALUES.
+const STATEMENT_FIELDS: { name: string; label: string; hint: string; options: { value: string; label: string }[] }[] = [
+  {
+    name: 'self_hosted',
+    label: 'Self-hosted',
+    hint: 'The model runs on hardware you control. An address on your network is not this statement.',
+    options: [
+      { value: 'yes', label: 'Yes, on hardware we control' },
+      { value: 'no', label: 'No' },
+    ],
+  },
+  {
+    name: 'baa',
+    label: 'Business associate agreement',
+    hint: 'A BAA signed with this provider (yours as covered entity or business associate).',
+    options: [
+      { value: 'signed', label: 'Signed' },
+      { value: 'none', label: 'None' },
+    ],
+  },
+  {
+    name: 'hipaa_account',
+    label: 'HIPAA-eligible account mode',
+    hint: 'The account is in the provider’s HIPAA-eligible mode.',
+    options: [
+      { value: 'on', label: 'On' },
+      { value: 'off', label: 'Off' },
+    ],
+  },
+  {
+    name: 'region',
+    label: 'Processing and support region',
+    hint: 'Where the provider processes and supports this account.',
+    options: [
+      { value: 'us', label: 'United States' },
+      { value: 'eu_eea', label: 'EU/EEA' },
+      { value: 'other', label: 'Elsewhere' },
+    ],
+  },
+  {
+    name: 'fedramp',
+    label: 'FedRAMP authorization',
+    hint: 'The provider’s FedRAMP authorization for this service.',
+    options: [
+      { value: 'high', label: 'High' },
+      { value: 'moderate', label: 'Moderate' },
+      { value: 'low', label: 'Low' },
+      { value: 'none', label: 'None' },
+    ],
+  },
+  {
+    name: 'transfer_basis',
+    label: 'EU transfer basis',
+    hint: 'What covers transfers of EU personal data to this provider.',
+    options: [
+      { value: 'adequacy', label: 'Adequacy decision covering the processing country' },
+      { value: 'dpf', label: 'EU–US Data Privacy Framework, provider on its list' },
+      { value: 'scc', label: 'Standard contractual clauses' },
+      { value: 'bcr', label: 'Binding corporate rules' },
+      { value: 'art49', label: 'Art. 49 derogation' },
+      { value: 'none', label: 'None' },
+    ],
+  },
+]
+const NOT_STATED = 'not_stated'
+
+/** What a statement stands on now, in a sentence. */
+function standingText(s: StatementView | undefined, field: (typeof STATEMENT_FIELDS)[number]): string | null {
+  if (!s || s.state === 'absent') return s?.why ? `Not stated: ${s.why}.` : null
+  const who = s.by_name && s.at ? `stated by ${s.by_name} on ${s.at.slice(0, 10)}` : 'stated'
+  const Who = who.charAt(0).toUpperCase() + who.slice(1)
+  if (s.state === 'held') return `${Who}.`
+  if (s.state === 'cleared') {
+    const was = field.options.find((o) => o.value === s.value)?.label ?? s.value
+    return `Was “${was}”, ${who}, then cleared: ${s.why}. Pick it again to state it.`
+  }
+  // a flag from before statements has no author: the reason says so
+  if (!s.by_name && s.why) return `${s.why.charAt(0).toUpperCase()}${s.why.slice(1)}.`
+  return `${Who}; ${s.why}.`
+}
+
+function StatementsDialog({ name, row, onClose, onSaved }: {
+  name: string
+  row: LLMProvider | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { hasPermission } = useAuth()
+  const canEdit = hasPermission('platform.write')
+  const stored = row?.statements || {}
+  // A standing statement shows its value; a cleared one starts at Not stated.
+  const shownValue = (n: string) => {
+    const s = stored[n]
+    return (s?.state === 'held' || s?.state === 'pending') && s.value ? s.value : NOT_STATED
+  }
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(STATEMENT_FIELDS.map((f) => [f.name, shownValue(f.name)])),
+  )
+  // Pending statements the person chose to re-confirm unchanged.
+  const [confirm, setConfirm] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  // What a save writes: only what this person changed or chose to re-confirm.
+  const written = Object.fromEntries(
+    STATEMENT_FIELDS.filter(
+      ({ name: n }) => draft[n] !== shownValue(n) || (confirm.includes(n) && draft[n] !== NOT_STATED),
+    ).map(({ name: n }) => [n, draft[n]]),
+  )
+  const submit = async () => {
+    if (!row) return
+    setSaving(true)
+    setErr(null)
+    try {
+      await llmProviderApi.state(row.provider_id, written)
+      onSaved()
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setErr(typeof detail === 'string' ? detail : 'The statements were not saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <Popup open onClose={onClose} title={`Statements · ${name}`} width={520}>
+      <p className="text-sm text-tx-2 mb-3">
+        What you state about this provider, for the Day 1 Report’s check on where model processing runs. Each
+        statement is tied to the provider’s address: a new address clears it, and a new key asks for it to be
+        re-confirmed. Saving records your name and the date on the audit trail.
+      </p>
+      {!row && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> This provider has no row in Vigil yet. Add a key it can route with first.</div>}
+      {err && <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {err}</div>}
+      <div className="aim-statements">
+        {STATEMENT_FIELDS.map((f) => {
+          const standing = standingText(stored[f.name], f)
+          const pending = stored[f.name]?.state === 'pending' && draft[f.name] === shownValue(f.name)
+          const confirming = confirm.includes(f.name)
+          return (
+            <div key={f.name} className="aim-statement">
+              <Field label={f.label} hint={standing ? `${f.hint} ${standing}` : f.hint}>
+                <Select
+                  label={f.label}
+                  value={draft[f.name]}
+                  disabled={!canEdit || !row || saving}
+                  options={[{ value: NOT_STATED, label: 'Not stated' }, ...f.options]}
+                  onSelect={(v) => setDraft((d) => ({ ...d, [f.name]: v }))}
+                />
+              </Field>
+              {pending && canEdit && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  aria-pressed={confirming}
+                  disabled={saving}
+                  onClick={() => setConfirm((c) => (confirming ? c.filter((n) => n !== f.name) : [...c, f.name]))}
+                >
+                  <Icon name={confirming ? 'check2' : 'refresh'} size={14} /> {confirming ? 'Re-confirmed on save' : 'Re-confirm'}
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        {canEdit && (
+          <button className="btn primary" disabled={saving || !row || Object.keys(written).length === 0} onClick={submit}>
+            <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+      </div>
+    </Popup>
   )
 }
 

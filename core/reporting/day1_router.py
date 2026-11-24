@@ -37,6 +37,19 @@ ROUTER_META = RouterMeta(
 )
 
 
+class Day1Provider(BaseModel):
+    """One provider type the model components reach. Never an address or key."""
+
+    provider_type: str
+    # The class from core.llm.residency; the console labels it.
+    residency: str
+    reason: Optional[str] = None
+    components: List[str] = Field(default_factory=list)
+    statements: List[str] = Field(default_factory=list)
+    self_hosted_by: Optional[str] = None
+    self_hosted_at: Optional[str] = None
+
+
 class Day1Evidence(BaseModel):
     fix: Optional[str] = None
     source_id: Optional[str] = None
@@ -48,6 +61,10 @@ class Day1Evidence(BaseModel):
     screen: Optional[str] = None
     prerequisites: List[str] = Field(default_factory=list)
     coverage: Optional[str] = None
+    # Where model processing runs: the providers reached, and the unscored
+    # CJIS sentence for counsel.
+    providers: List[Day1Provider] = Field(default_factory=list)
+    counsel: Optional[str] = None
     # When a coverage check was stored, or when a host-count read finished.
     # The section shows it as the result's age.
     checked_at: Optional[str] = None

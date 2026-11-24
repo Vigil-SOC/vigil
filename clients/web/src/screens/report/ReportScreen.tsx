@@ -20,6 +20,7 @@ import {
   quietEvidence,
 } from './ProductionSections'
 import { reportStamp } from './stamp'
+import { residencyLabel, type ResidencyClass } from '../../shared/residency'
 import './report.css'
 
 type Report = Schema<'Day1Report'>
@@ -83,10 +84,10 @@ const REPORT_SECTIONS = new Set([
 ])
 
 const SETTINGS_TIP = {
-  source: 'The session policy and the audit-trail retention period',
+  source: 'The session policy, the audit-trail retention period, and the Provider Statements on each model provider',
   calculation:
-    'A value passes when it is at or stricter than the value for your selection. No cited value is not a pass or a fail. An unset period fails when a value is in force. The MFA count is shown beside the setting and does not change the outcome.',
-  limit: 'Session checks need sessions.manage. Retention needs audit.read. Not checked is never a pass.',
+    'A value passes when it is at or stricter than the value for your selection. No cited value is not a pass or a fail. An unset period fails when a value is in force. The MFA count is shown beside the setting and does not change the outcome. Where model processing runs passes when every provider the model components reach meets every value cited for your selection, as stated by a person.',
+  limit: 'Session checks need sessions.manage. Retention needs audit.read. Where model processing runs covers model calls only. Not checked is never a pass.',
 }
 
 type ScoredOutcome = Exclude<Outcome, 'no_value'>
@@ -306,6 +307,10 @@ function pieces(value: string | null | undefined): string[] {
 
 function screenName(path: string): string {
   if (path.includes('section=data')) return 'Data & uploads'
+  if (path.includes('section=ai-config')) {
+    const provider = new URLSearchParams(path.split('?')[1] ?? '').get('provider')
+    return provider ? `Statements for ${provider}` : 'AI models'
+  }
   return path.includes('section=audit') ? 'Audit trail' : 'Session settings'
 }
 
@@ -667,9 +672,34 @@ function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string |
           {line}
         </p>
       ))}
+      <ProviderLines providers={check.evidence?.providers ?? []} />
+      {check.evidence?.counsel && <p className="d1-facts">Not scored: {check.evidence.counsel}</p>}
       <Versus check={check} comparedAt={comparedAt} />
       {screen && <Link to={screen}>{screenName(screen)}</Link>}
     </div>
+  )
+}
+
+/** Each provider the model components reach: its class, in the console's one label, and its statements. */
+function ProviderLines({ providers }: { providers: NonNullable<Evidence['providers']> }) {
+  return (
+    <>
+      {providers.map((p) => {
+        const selfHosted = p.self_hosted_by && p.self_hosted_at ? { by: p.self_hosted_by, at: p.self_hosted_at } : null
+        const where = residencyLabel(
+          { class: p.residency as ResidencyClass, address_known: !p.reason, reason: p.reason ?? null },
+          selfHosted,
+        )
+        const parts = [where, ...(p.statements ?? [])]
+        const used = (p.components ?? []).join(', ')
+        return (
+          <p className="d1-facts" key={p.provider_type}>
+            <b>{p.provider_type}</b>
+            {used ? ` (${used})` : ''}: {parts.join('; ')}.
+          </p>
+        )
+      })}
+    </>
   )
 }
 

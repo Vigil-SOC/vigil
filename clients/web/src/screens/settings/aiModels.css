@@ -41,6 +41,11 @@ button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
 .aim-card-where { font-size: 12px; font-weight: 600; color: var(--tx1); }
 .aim-card-where.your_cloud { color: var(--good); }
 .aim-card-where.unknown { color: var(--fair); }
+.aim-card-where.self_hosted { color: var(--good); }
+.aim-card-statements { align-self: flex-start; margin-top: auto; }
+.aim-statements { display: flex; flex-direction: column; gap: 12px; }
+.aim-statement { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.aim-statement > .field { align-self: stretch; }
 
 .aim-table tbody td { white-space: normal; vertical-align: middle; }
 /* unlayered, so it beats the hide rule outright: leave a hidden (.col-low) column alone */

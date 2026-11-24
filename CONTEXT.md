@@ -202,6 +202,22 @@ are written onto the Report Record when the run is stored. A record that
 stored no citation keeps the citation text from before values were scoped.
 _Avoid_: check outcome, compliance
 
+**Provider Statement**:
+What the operator states about a model provider type, recorded on the
+provider's settings under AI models with `platform.write`: self-hosted (the
+model runs on hardware the operator controls; stored as `config.self_hosted`,
+which pricing reads too), a signed BAA, the HIPAA-eligible account mode, the
+processing and support region, a FedRAMP authorization and an EU transfer
+basis. Each takes a value from a list, "not stated" included. It is held per
+provider type: it counts only when every active row of the type carries it.
+Each keeps the account id that made it, the date, and a hash of the addresses
+the provider's calls reach (`core.llm.residency`); a different hash clears it,
+as a change to Vigil's copy of the Vertex region clears a region statement. A
+credential set or cleared since makes the check "needs a person" until
+someone re-confirms it. Read by one check, where model processing runs; never
+exported, never a vendor's claim. An address is never a self-hosted statement.
+_Avoid_: attestation, certification, verified
+
 **Check Outcome**:
 What one Report Check returned on one Report Record: pass, fail, not checked
 (with the reason), or needs a person. Not checked never reads as a pass.
