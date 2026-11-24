@@ -163,6 +163,8 @@ class DataPoller:
         self._microsoft_defender_service = None
         self._elastic_service = None
         self._opensearch_service = None
+        # Resolved config each live client was built from, to spot edits.
+        self._service_configs: Dict[str, Dict[str, Any]] = {}
 
         # Stats
         self.stats = {
@@ -199,111 +201,111 @@ class DataPoller:
         self._output_queue = queue
         self._federation.set_output_queue(queue)
 
+    @staticmethod
+    def _build_splunk(cfg: Dict[str, Any]):
+        from core.integrations.splunk.client import SplunkService
+
+        return SplunkService(
+            server_url=cfg["server_url"] or "",
+            username=cfg["username"] or "",
+            password=cfg["password"] or "",
+            verify_ssl=cfg["verify_ssl"],
+            ca_cert_path=cfg["ca_cert_path"],
+        )
+
+    @staticmethod
+    def _build_crowdstrike(cfg: Dict[str, Any]):
+        from core.integrations.crowdstrike.client import CrowdStrikeService
+
+        return CrowdStrikeService(
+            client_id=cfg["client_id"] or "",
+            client_secret=cfg["client_secret"] or "",
+            base_url=cfg["base_url"] or "https://api.crowdstrike.com",
+        )
+
+    @staticmethod
+    def _sources() -> Dict[str, tuple]:
+        """Attribute key -> (descriptor, client factory taking the resolved config).
+
+        The ingestion clients resolve their own config in __init__, so their
+        factories ignore the argument.
+        """
+        from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
+        from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+        from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
+        from core.integrations.elastic.descriptor import ELASTIC
+        from core.integrations.microsoft_defender.descriptor import (
+            MICROSOFT_DEFENDER,
+        )
+        from core.integrations.opensearch.descriptor import OPENSEARCH
+        from core.integrations.splunk.descriptor import SPLUNK
+
+        def ingestion(module: str, cls: str):
+            def build(_cfg):
+                import importlib
+
+                mod = importlib.import_module(f"core.integrations.{module}.ingestion")
+                return getattr(mod, cls)()
+
+            return build
+
+        return {
+            "splunk": (SPLUNK, DataPoller._build_splunk),
+            "crowdstrike": (CROWDSTRIKE, DataPoller._build_crowdstrike),
+            "azure_sentinel": (
+                AZURE_SENTINEL,
+                ingestion("azure_sentinel", "AzureSentinelIngestion"),
+            ),
+            "aws_security_hub": (
+                AWS_SECURITY_HUB,
+                ingestion("aws_security_hub", "AWSSecurityHubIngestion"),
+            ),
+            "microsoft_defender": (
+                MICROSOFT_DEFENDER,
+                ingestion("microsoft_defender", "MicrosoftDefenderIngestion"),
+            ),
+            "elastic": (ELASTIC, ingestion("elastic", "ElasticIngestion")),
+            "opensearch": (OPENSEARCH, ingestion("opensearch", "OpenSearchIngestion")),
+        }
+
+    def _refresh_service(self, key: str):
+        """Re-read a source's switch and settings; return its current client.
+
+        Called before every poll so switching an integration off stops its loop
+        on the next tick, and a changed destination, credential or TLS setting
+        rebuilds the client, without a daemon restart. Blocking: run in a thread.
+        """
+        from core.config import is_integration_enabled
+        from core.integrations._base.config import resolve
+
+        descriptor, build = self._sources()[key]
+        attr = f"_{key}_service"
+        if not is_integration_enabled(descriptor.id):
+            if getattr(self, attr) is not None:
+                logger.info("%s switched off; polling stopped", descriptor.id)
+            setattr(self, attr, None)
+            self._service_configs.pop(key, None)
+            return None
+        cfg = resolve(descriptor)
+        if getattr(self, attr) is None or self._service_configs.get(key) != cfg:
+            # Drop the old client first so a failed rebuild never polls on
+            # settings the operator has replaced.
+            setattr(self, attr, None)
+            self._service_configs.pop(key, None)
+            setattr(self, attr, build(cfg))
+            self._service_configs[key] = cfg
+            logger.info("%s service (re)initialized", descriptor.id)
+        return getattr(self, attr)
+
+    async def _current_service(self, key: str):
+        return await asyncio.to_thread(self._refresh_service, key)
+
     def _init_services(self):
-        """Initialize data source services."""
+        """Initialize the data service; source clients are built per tick."""
         try:
-            from core.config import is_integration_enabled
-            from core.integrations._base.config import resolve
-
-            # Initialize Splunk service if configured
-            if is_integration_enabled("splunk"):
-                try:
-                    from core.integrations.splunk.client import SplunkService
-                    from core.integrations.splunk.descriptor import SPLUNK
-
-                    splunk_config = resolve(SPLUNK)
-                    self._splunk_service = SplunkService(
-                        server_url=splunk_config["server_url"] or "",
-                        username=splunk_config["username"] or "",
-                        password=splunk_config["password"] or "",
-                        verify_ssl=splunk_config["verify_ssl"],
-                        ca_cert_path=splunk_config["ca_cert_path"],
-                    )
-                    logger.info("Splunk service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize Splunk service: {e}")
-
-            # Initialize CrowdStrike service if configured
-            if is_integration_enabled("crowdstrike"):
-                try:
-                    from core.integrations.crowdstrike.client import CrowdStrikeService
-                    from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
-
-                    cs_config = resolve(CROWDSTRIKE)
-                    self._crowdstrike_service = CrowdStrikeService(
-                        client_id=cs_config["client_id"] or "",
-                        client_secret=cs_config["client_secret"] or "",
-                        base_url=cs_config["base_url"] or "https://api.crowdstrike.com",
-                    )
-                    logger.info("CrowdStrike service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize CrowdStrike service: {e}")
-
-            # Initialize Azure Sentinel service if configured
-            if is_integration_enabled("azure-sentinel"):
-                try:
-                    from core.integrations.azure_sentinel.ingestion import (
-                        AzureSentinelIngestion,
-                    )
-
-                    self._azure_sentinel_service = AzureSentinelIngestion()
-                    logger.info("Azure Sentinel service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize Azure Sentinel service: {e}")
-
-            # Initialize AWS Security Hub service if configured
-            if is_integration_enabled("aws-security-hub"):
-                try:
-                    from core.integrations.aws_security_hub.ingestion import (
-                        AWSSecurityHubIngestion,
-                    )
-
-                    self._aws_security_hub_service = AWSSecurityHubIngestion()
-                    logger.info("AWS Security Hub service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize AWS Security Hub service: {e}")
-
-            # Initialize Microsoft Defender service if configured
-            if is_integration_enabled("microsoft-defender"):
-                try:
-                    from core.integrations.microsoft_defender.ingestion import (
-                        MicrosoftDefenderIngestion,
-                    )
-
-                    self._microsoft_defender_service = MicrosoftDefenderIngestion()
-                    logger.info("Microsoft Defender service initialized")
-                except Exception as e:
-                    logger.error(
-                        f"Failed to initialize Microsoft Defender service: {e}"
-                    )
-
-            # Initialize Elastic Security service if configured
-            if is_integration_enabled("elastic-siem"):
-                try:
-                    from core.integrations.elastic.ingestion import ElasticIngestion
-
-                    self._elastic_service = ElasticIngestion()
-                    logger.info("Elastic Security service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize Elastic Security service: {e}")
-
-            # Initialize OpenSearch service if configured
-            if is_integration_enabled("opensearch"):
-                try:
-                    from core.integrations.opensearch.ingestion import (
-                        OpenSearchIngestion,
-                    )
-
-                    self._opensearch_service = OpenSearchIngestion()
-                    logger.info("OpenSearch service initialized")
-                except Exception as e:
-                    logger.error(f"Failed to initialize OpenSearch service: {e}")
-
-            # Initialize data service for database access
             from core.storage.database_data_service import DatabaseDataService
 
             self._data_service = DatabaseDataService()
-
         except Exception as e:
             logger.error(f"Error initializing services: {e}")
 
@@ -319,24 +321,15 @@ class DataPoller:
         # federation.settings toggle and per-source rows; idle while disabled.
         tasks.append(asyncio.create_task(self._federation.run(shutdown_event)))
 
-        if self._splunk_service:
-            tasks.append(asyncio.create_task(self._poll_splunk_loop(shutdown_event)))
-
-        if self._crowdstrike_service:
-            tasks.append(
-                asyncio.create_task(self._poll_crowdstrike_loop(shutdown_event))
-            )
-
+        # Every source loop runs; each re-checks its integration's switch per
+        # tick and idles while it is off, so switching one on needs no restart.
+        tasks.append(asyncio.create_task(self._poll_splunk_loop(shutdown_event)))
+        tasks.append(asyncio.create_task(self._poll_crowdstrike_loop(shutdown_event)))
         for source in self._INGESTION_SOURCES:
-            if getattr(self, f"_{source}_service"):
-                tasks.append(
-                    asyncio.create_task(
-                        self._poll_ingestion_loop(source, shutdown_event)
-                    )
-                )
-
-        if self._elastic_service:
-            tasks.append(asyncio.create_task(self._poll_elastic_loop(shutdown_event)))
+            tasks.append(
+                asyncio.create_task(self._poll_ingestion_loop(source, shutdown_event))
+            )
+        tasks.append(asyncio.create_task(self._poll_elastic_loop(shutdown_event)))
 
         if self.config.webhook_enabled:
             tasks.append(asyncio.create_task(self._run_webhook_server(shutdown_event)))
@@ -378,10 +371,11 @@ class DataPoller:
 
     async def _poll_splunk(self):
         """Poll Splunk for new security alerts."""
-        if not self._splunk_service:
-            return
         if self._federation.is_active_for("splunk"):
             return  # Federation owns this source while globally + per-source enabled
+        splunk = await self._current_service("splunk")
+        if not splunk:
+            return
 
         self.stats["splunk_polls"] += 1
         logger.debug("Polling Splunk for new alerts...")
@@ -411,7 +405,7 @@ class DataPoller:
                 # which would otherwise freeze the whole daemon loop.
                 results = (
                     await asyncio.to_thread(
-                        self._splunk_service.search,
+                        splunk.search,
                         query=query,
                         earliest_time=earliest_time,
                         latest_time="now",
@@ -468,9 +462,10 @@ class DataPoller:
 
     async def _poll_crowdstrike(self):
         """Poll CrowdStrike for new alerts."""
-        if not self._crowdstrike_service:
-            return
         if self._federation.is_active_for("crowdstrike"):
+            return
+        crowdstrike = await self._current_service("crowdstrike")
+        if not crowdstrike:
             return
 
         self.stats["crowdstrike_polls"] += 1
@@ -483,7 +478,7 @@ class DataPoller:
             since = utcnow() - timedelta(minutes=lookback)
 
             alerts = await asyncio.to_thread(
-                self._crowdstrike_service.get_alerts,
+                crowdstrike.get_alerts,
                 filter_query=endpoint_alert_filter(since),
                 limit=100,
             )
@@ -491,7 +486,7 @@ class DataPoller:
             # None means the query failed; raise so the loop counts an error
             # and leaves last_poll_time alone. [] is a clean empty poll.
             if alerts is None:
-                detail = getattr(self._crowdstrike_service, "last_error", None)
+                detail = getattr(crowdstrike, "last_error", None)
                 raise RuntimeError(
                     "CrowdStrike alerts query failed"
                     + (f": {detail}" if detail else "")
@@ -746,8 +741,10 @@ class DataPoller:
     async def _poll_ingestion_source(self, source: str):
         """Poll one ingestion-service source. Raises so the loop counts it."""
         label, noun = self._INGESTION_SOURCES[source]
-        service = getattr(self, f"_{source}_service")
-        if not service or self._federation.is_active_for(source):
+        if self._federation.is_active_for(source):
+            return
+        service = await self._current_service(source)
+        if not service:
             return
 
         self.stats[f"{source}_polls"] += 1
@@ -824,9 +821,10 @@ class DataPoller:
 
     async def _poll_elastic(self):
         """Poll Elastic Security for new detection alerts."""
-        if not self._elastic_service:
-            return
         if self._federation.is_active_for("elastic"):
+            return
+        elastic = await self._current_service("elastic")
+        if not elastic:
             return
 
         self.stats["elastic_polls"] += 1
@@ -836,14 +834,12 @@ class DataPoller:
             lookback = self._elastic_state.lookback_minutes(self.config.splunk_interval)
             start_time = utcnow() - timedelta(minutes=lookback)
 
-            alerts = await self._elastic_service.fetch_alerts(
-                start_time=start_time, limit=100
-            )
+            alerts = await elastic.fetch_alerts(start_time=start_time, limit=100)
 
             new_count = 0
             dropped = 0
             for alert in alerts:
-                finding = self._elastic_service.transform_alert_to_finding(alert)
+                finding = elastic.transform_alert_to_finding(alert)
                 if not finding:
                     dropped += 1
                     continue
