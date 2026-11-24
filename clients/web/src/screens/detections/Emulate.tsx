@@ -25,7 +25,7 @@ export default function Emulate({ goal, className = 'de-link' }: { goal: string;
   if (said) {
     return (
       <span className="de-emulate-said" role="status">
-        {said.bad ? <span className="de-x-err">{said.text}</span> : <>{said.text} · <Link className="de-link" to="/workflows">Runs</Link></>}
+        {said.bad ? <span className="de-x-err">{said.text}</span> : <>{said.text} · its execute call waits in <Link className="de-link" to="/home">Needs your attention</Link></>}
       </span>
     )
   }
