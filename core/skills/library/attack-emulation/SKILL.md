@@ -21,9 +21,10 @@ covers a technique today and which gaps are already on record.
 ## Emulate on the listed hosts
 
 An emulator tool you hold runs one technique on one host, and only on a host
-the operator listed for emulation. Pick a host from that list; when a call is
-refused, the refusal names the hosts you may use. Never ask for a host the list
-does not name. Whether a call waits in Approvals for a person depends on the
+the operator listed for emulation. The tool names those hosts: its `hostname`
+parameter allows only them and its description lists them. Pick one of them;
+never ask for a host the tool does not name. When the description says no host
+is listed, every call is refused: say so and do not call the tool. Whether a call waits in Approvals for a person depends on the
 deployment's autonomy ceiling: when it waits, say what it will run and where,
 and do not treat a call that is waiting as one that ran. An answer with
 `done: false` and a `handle` is still running: call the emulator again with
