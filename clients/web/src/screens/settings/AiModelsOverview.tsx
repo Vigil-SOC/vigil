@@ -160,7 +160,11 @@ export default function AiModelsOverview({ notify }: SectionProps) {
       )}
       {bf.phase === 'ready' && names.length > 0 && (
         <>
-          <ResidencyBanner providers={bf.shown} verdicts={bf.verdicts} />
+          <ResidencyBanner
+            providers={bf.shown}
+            verdicts={bf.verdicts}
+            selfHosted={(name) => selfHostedOf(statementRow(pr.rows, name))}
+          />
           <div className="aim-cards">
             {bf.shown.map((provider) => (
               <ProviderCard
@@ -202,9 +206,16 @@ const BANNER_GROUPS: { cls: ResidencyClass; text: (names: string) => string }[] 
   { cls: 'local_by_address', text: (n) => ` ${RESIDENCY_LABEL.local_by_address}: ${n}.` },
 ]
 
-function ResidencyBanner({ providers, verdicts }: { providers: BifrostProvider[]; verdicts: BifrostRoutability | null }) {
+function ResidencyBanner({ providers, verdicts, selfHosted }: {
+  providers: BifrostProvider[]
+  verdicts: BifrostRoutability | null
+  selfHosted: (name: string) => SelfHostedBy | null
+}) {
   const of = (p: BifrostProvider) => residencyOf(verdicts?.residency?.[p.name])
-  const named = (cls: ResidencyClass) => providers.filter((p) => of(p).class === cls).map((p) => providerLabel(p.name))
+  // a held self-hosted statement takes the provider out of its class, as on its card
+  const stated = providers.filter((p) => of(p).class !== 'unknown' && selfHosted(p.name))
+  const named = (cls: ResidencyClass) =>
+    providers.filter((p) => of(p).class === cls && !stated.includes(p)).map((p) => providerLabel(p.name))
   // unknown providers grouped by the server's reason
   const unknown = new Map<string, string[]>()
   for (const p of providers.filter((p) => of(p).class === 'unknown')) {
@@ -220,6 +231,7 @@ function ResidencyBanner({ providers, verdicts }: { providers: BifrostProvider[]
           const names = named(cls)
           return names.length > 0 && <Fragment key={cls}>{text(names.join(', '))}</Fragment>
         })}
+        {stated.length > 0 && ` Self-hosted, as stated: ${stated.map((p) => providerLabel(p.name)).join(', ')}.`}
         {[...unknown].map(([why, names]) => (
           <Fragment key={why}>{` Not known for ${names.join(', ')}: ${why}.`}</Fragment>
         ))}

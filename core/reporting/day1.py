@@ -1182,8 +1182,22 @@ def _settings_checks(view: SelectionView, gateway: tuple) -> list[dict[str, Any]
     return [
         *_session_checks(view),
         _retention_check(view),
-        _model_check(view, gateway),
+        _safe_model_check(view, gateway),
     ]
+
+
+def _safe_model_check(view: SelectionView, gateway: tuple) -> dict[str, Any]:
+    try:
+        return _model_check(view, gateway)
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not judge model processing: %s", type(exc).__name__
+        )
+        extra = {"screen": _AI_SCREEN}
+        values = applicable(_MODEL_ID, list(view.jurisdictions), list(view.kinds))
+        return _model_result(
+            values, NOT_CHECKED, "Could not judge the model providers.", extra
+        )
 
 
 def _session_checks(view: SelectionView) -> list[dict[str, Any]]:
@@ -1424,7 +1438,8 @@ def _statement_line(name: str, item: dict) -> str:
     if item.get("by_name"):
         line += f", stated by {item['by_name']} on {str(item.get('at') or '')[:10]}"
     if item.get("why"):
-        line += f" ({item['why']})"
+        cleared = "cleared: " if item.get("state") == statements.CLEARED else ""
+        line += f" ({cleared}{item['why']})"
     return line
 
 
@@ -1496,6 +1511,8 @@ def _judge_type(
             s = held[name]
             if s["state"] == statements.CLEARED:
                 note = f"its {statements.NAMES[name]} statement was cleared: {s['why']}"
+            elif s.get("why") == statements.LEGACY_SELF_HOSTED:
+                note = s["why"]
             elif s["state"] == statements.PENDING:
                 note = f"its {statements.NAMES[name]} statement was {s['why']}"
             else:
@@ -1505,7 +1522,8 @@ def _judge_type(
     if not lenient:
         return FAIL, [f"is missing {' and '.join(gaps)}", *notes]
     if not strict:
-        return NEEDS_A_PERSON, [*notes, "a person has to re-confirm it"]
+        them = "them" if len(notes) > 1 else "it"
+        return NEEDS_A_PERSON, [*notes, f"a person has to re-confirm {them}"]
     return PASS, []
 
 
@@ -1559,7 +1577,8 @@ def _model_check(view: SelectionView, read: tuple) -> dict[str, Any]:
                 "statements": [
                     _statement_line(name, item)
                     for name, item in view_.items()
-                    if item.get("value")
+                    # a held self-hosted statement is the class label itself
+                    if item.get("value") and not (name == "self_hosted" and sh_held)
                 ],
                 # The class label reads "Self-hosted, stated by … on …" then.
                 "self_hosted_by": sh.get("by_name") if sh_held else None,

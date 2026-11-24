@@ -40,7 +40,9 @@ export interface SelfHostedBy {
  *  A held self-hosted statement replaces the class: an address alone never says it. */
 export function residencyLabel(r: Residency | null | undefined, selfHosted?: SelfHostedBy | null): string {
   const { class: cls, reason } = residencyOf(r)
-  if (selfHosted && cls !== 'unknown') return `Self-hosted, stated by ${selfHosted.by} on ${selfHosted.at.slice(0, 10)}`
+  // non-breaking hyphens: the date never wraps in half
+  if (selfHosted && cls !== 'unknown')
+    return `Self-hosted, stated by ${selfHosted.by} on ${selfHosted.at.slice(0, 10).replace(/-/g, '\u2011')}`
   if (cls !== 'unknown') return RESIDENCY_LABEL[cls]
   const why = (reason || GATEWAY_UNREAD).replace(/\.$/, '')
   return `Not known: ${why.charAt(0).toLowerCase()}${why.slice(1)}`
