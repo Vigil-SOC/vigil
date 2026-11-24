@@ -237,6 +237,10 @@ services:
       # Whole days, shorter than 12 months (365). Empty keeps 12 months.
       KEY_ROTATION_DAYS: ${KEY_ROTATION_DAYS:-}
       DEV_MODE: ${DEV_MODE:-false}
+      # Investigate and compose runs whose start names no wall, in seconds.
+      # 60–86400; outside that the API keeps 30 minutes and logs it. Not the
+      # autonomous runtime, which stays on the intent anchor above.
+      WORKFLOW_DEFAULT_WALL_SECONDS: ${WORKFLOW_DEFAULT_WALL_SECONDS:-1800}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989

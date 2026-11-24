@@ -15,10 +15,15 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.agents.projections import read_call, read_projection, read_replay, read_verify
-from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
+from core.agents.run_limits import (
+    MAX_COST_USD,
+    MAX_ITERATIONS,
+    OverrideRefused,
+    check_wall_minutes,
+)
 from core.auth import tool_principal
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -99,6 +104,20 @@ class WorkflowExecuteRequest(BaseModel):
     # What the caller will spend on this question, which is not a property of the
     # definition. Bounded because a mistyped ceiling is money.
     max_cost_usd: Optional[float] = Field(default=None, gt=0, le=MAX_COST_USD)
+    # Working time, in whole minutes. Waits on a person do not count. Bounded by
+    # the same wall ceiling as overrides.budgets.max_wall_ms.
+    max_wall_minutes: Optional[int] = None
+
+    @field_validator("max_wall_minutes", mode="before")
+    @classmethod
+    def _wall_minutes(cls, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return check_wall_minutes(value)
+        except OverrideRefused as exc:
+            raise ValueError(str(exc)) from None
+
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None
@@ -517,9 +536,13 @@ async def execute_workflow(
         raise HTTPException(status_code=refused.status, detail=refused.detail) from None
     if not result.get("success"):
         error = result.get("error", "Unknown error during workflow execution")
-        raise HTTPException(
-            status_code=409 if result.get("disabled") else 500, detail=error
-        )
+        if result.get("disabled"):
+            status = 409
+        elif result.get("refused"):
+            status = 422
+        else:
+            status = 500
+        raise HTTPException(status_code=status, detail=error)
 
     return result
 

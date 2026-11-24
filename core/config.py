@@ -380,6 +380,11 @@ class Settings(BaseSettings):
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0
     orchestrator_max_runtime: int = 3600
+    # Wall for an investigate or compose run whose start names none, in seconds.
+    # Unset is 30 minutes. A number outside 60–86400 is ignored and the run keeps
+    # 30 minutes (core.workflows.playbook_resolver.deployment_wall_ms); it does not
+    # stop this process. Autonomous runs keep orchestrator_max_runtime.
+    workflow_default_wall_seconds: int = 1800
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False

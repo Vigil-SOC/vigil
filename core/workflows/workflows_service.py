@@ -15,6 +15,7 @@ from core.agents.attribution import (
     principal_id_for_username,
 )
 from core.agents.queue import new_run_id
+from core.agents.run_limits import OverrideRefused, check_overrides, check_wall_minutes
 from core.auth import sign_in_runs, sign_ins, tool_principal
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.documents.fence import FINDING_NOTE, fenced, fenced_document
@@ -733,6 +734,23 @@ class WorkflowsService:
             sid = await asyncio.to_thread(sign_in_runs.inherited_sid, origin_id)
         if sid and await asyncio.to_thread(sign_ins.ended_for_compromise, sid):
             return {"success": False, "error": sign_ins.STOP_REASON}
+        # Before a row exists: a refused limit must not leave a run queued.
+        ceiling = (parameters or {}).get("max_cost_usd")
+        minutes = (parameters or {}).get("max_wall_minutes")
+        budgets_override: Dict[str, Any] = {}
+        if ceiling:
+            budgets_override["max_cost_usd"] = ceiling
+        if minutes is not None:
+            try:
+                budgets_override["max_wall_ms"] = check_wall_minutes(minutes) * 60_000
+            except OverrideRefused as exc:
+                return {"success": False, "error": str(exc), "refused": True}
+        overrides = {"budgets": budgets_override} if budgets_override else None
+        if overrides is not None:
+            try:
+                check_overrides(overrides)
+            except OverrideRefused as exc:
+                return {"success": False, "error": str(exc), "refused": True}
         context = {**dict(parameters or {}), "run_kind": workflow.run_kind}
         agents = phase_actors(workflow.phases)
         if agents:
@@ -776,7 +794,6 @@ class WorkflowsService:
         )
         origin_value = _origin_value(resolved_origin, person_id, origin_id)
         asked = _asked_hypotheses(parameters)
-        ceiling = (parameters or {}).get("max_cost_usd")
         spec = _omit_unset(
             {
                 # A reference, not a path: the layers resolve at run start, so an
@@ -790,9 +807,7 @@ class WorkflowsService:
                 "hypotheses": asked,
                 "hypothesis_subjects": _asked_hypothesis_subjects(parameters, asked),
                 "iterations": (parameters or {}).get("iterations"),
-                "overrides": (
-                    {"budgets": {"max_cost_usd": ceiling}} if ceiling else None
-                ),
+                "overrides": overrides,
                 # True only: _omit_unset keeps None out, so an unset flag leaves the
                 # config's policy rather than pinning every run to this side's.
                 "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
