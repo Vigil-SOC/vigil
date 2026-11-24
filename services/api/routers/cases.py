@@ -98,7 +98,7 @@ def _mark_workdirs_failed(investigation_ids: List[str], reason: str) -> None:
     Runs after the request commits, because the sidecar cannot be rolled back
     with the rows. One unwritable workdir must not abandon the rest.
     """
-    from services.daemon.config import DaemonConfig
+    from core.daemon_config import DaemonConfig
     from services.daemon.workdir import WorkdirManager
 
     workdir = WorkdirManager(DaemonConfig.from_env().orchestrator.workdir_base)

@@ -97,6 +97,17 @@ a wrong-typed value rejects the whole revision. A poll that brings nothing new
 writes nothing, so a setting narrowed from the console stays narrowed until a
 commit changes that key. This file at the repo root is never enforced.
 
+Settings → Limits & autonomy → Declared intent, `GET /api/config/intent` and the /mcp
+tool `get_intent_report` show each managed key with its file, line and
+revision, whether it has drifted (narrowed locally or by an env lock), whether
+a loosening is pending, and an env value the declaration overrides. A local
+change that narrows a managed key is stored; one that widens it is refused
+with 409 naming the file and revision. Setting the declared value back is the
+reset. A person with `ai_autonomy.write`, never a service account or API
+token, accepts pending loosenings with `POST /api/config/intent/accept`
+(`{"revision": ...}`); each store write is audited under their name with the
+revision.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the

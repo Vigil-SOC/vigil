@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
 
 from core.config import get_settings
+from core.daemon_config import PollingConfig
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
 from core.integrations.crowdstrike.adapter import (
@@ -40,7 +41,6 @@ from core.webhook_rejections import (
     record_rejection,
     rejection_counts,
 )
-from services.daemon.config import PollingConfig
 
 logger = logging.getLogger(__name__)
 

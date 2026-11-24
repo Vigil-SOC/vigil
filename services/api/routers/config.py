@@ -15,6 +15,7 @@ from sqlalchemy import exists, select, text
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
+from core.auth.current_user import is_machine_request
 from core.auth.permissions import permission_gate
 from core.config import (
     _load_json_config,
@@ -45,10 +46,13 @@ from core.integrations.integration_secrets import (
     unstorable_secret_fields,
 )
 from core.integrations.readiness import evaluate, sources_settled
+from core.intent_report import intent_body
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.security import MAX_SYSTEM_PROMPT_BYTES
 from core.llm.system_prompt import OPERATOR_INSTRUCTIONS_KEY, validate_system_prompt
 from core.platform.process_health import ProcessHealth
+from core.response.ceiling import CeilingRefusal, CeilingWriteError, read_ceiling
+from core.response.config import applied_intent, managed_widening, settle_pending
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -76,7 +80,7 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
-from services.daemon.intent import applied_directory, intent_report, report_path
+from services.daemon.intent_apply import StoreWriteFailed, accept_pending
 
 router = APIRouter()
 
@@ -1898,6 +1902,18 @@ class IntentDiffRow(BaseModel):
     effective: Any
     source: str
     label: str
+    # Set for a key a declared directory manages: the file, line and the
+    # revision that last changed it. ``drift`` is a local or env narrowing;
+    # ``pending`` a loosening waiting for a person; ``env_value`` the env
+    # value the declared one overrides, when they differ.
+    managed: bool = False
+    file: Optional[str] = None
+    line: Optional[int] = None
+    revision: Optional[str] = None
+    drift: bool = False
+    pending: bool = False
+    env_ignored: bool = False
+    env_value: Any = None
 
 
 class IntentReportResponse(BaseModel):
@@ -1912,41 +1928,91 @@ class IntentReportResponse(BaseModel):
     state: Optional[str] = None
     reason: Optional[str] = None
     pending: list[str] = Field(default_factory=list)
+    directory: Optional[str] = None
+    # The newest revision the daemon read; "unknown" while degraded.
+    revision_on_disk: Optional[str] = None
+    in_sync: Optional[bool] = None
+    hash: Optional[str] = None
+    applied_at: Optional[str] = None
+    rejected: Optional[Dict[str, Any]] = None
+    verification: Optional[str] = None
 
 
 @router.get("/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ)
-def get_intent_report() -> IntentReportResponse:
-    """Declared intent beside effective config.
+def get_intent_report() -> Dict[str, Any]:
+    """Declared intent beside effective config, and what a declared directory manages.
 
     A missing or unreadable manifest is 200 with ``readable`` false and no
     rows, so the Settings card can say so in one line.
     """
-    rows = intent_report(include_same=True)
-    path = str(report_path())
-    applied = applied_directory() or {}
-    status = {
-        "revision": applied.get("revision"),
-        "state": applied.get("state"),
-        "reason": applied.get("reason"),
-        "pending": applied.get("pending") or [],
-    }
-    if rows is None:
-        return IntentReportResponse(path=path, readable=False, rows=[], **status)
-    return IntentReportResponse(
-        path=path,
-        readable=True,
-        **status,
-        rows=[
-            IntentDiffRow(
-                key=row.key,
-                declared=row.declared,
-                effective=row.effective,
-                source=row.source,
-                label=row.label,
-            )
-            for row in rows
-        ],
-    )
+    return intent_body()
+
+
+class IntentAcceptBody(BaseModel):
+    """The revision (and hash) the person reviewed; a newer one is a 409."""
+
+    revision: str
+    hash: Optional[str] = None
+
+
+@router.post(
+    "/intent/accept", response_model=IntentReportResponse, dependencies=_AUTONOMY_WRITE
+)
+def accept_intent_pending(
+    body: IntentAcceptBody,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """Apply the pending loosenings of the applied revision. A person's act.
+
+    Each key's declared value goes into its store under the person's name,
+    with the revision on the audit entry. No timer, and not over /mcp.
+    """
+    if is_machine_request(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="A service account or API token cannot raise autonomy",
+        )
+    try:
+        stopped = read_ceiling().stopped
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+    if stopped:
+        raise HTTPException(status_code=409, detail="Stopped: resume first")
+    report = intent_body()
+    if not report["directory"]:
+        raise HTTPException(status_code=409, detail="No declared directory is applied")
+    if report["revision"] != body.revision or (
+        body.hash is not None and body.hash != report["hash"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"The applied revision is now {report['revision']}; review it again",
+        )
+    if not report["pending"]:
+        raise HTTPException(status_code=409, detail="Nothing is pending")
+    who = current_user.username or str(current_user.user_id)
+    try:
+        accept_pending(
+            report["pending"], body.revision, body.hash, str(current_user.user_id), who
+        )
+    except CeilingRefusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except (CeilingWriteError, StoreWriteFailed) as exc:
+        raise HTTPException(
+            status_code=500, detail="The pending keys were not all stored"
+        ) from exc
+    return intent_body()
+
+
+def refuse_managed_widening(values: Dict[str, Any]) -> None:
+    """409 when a local write would widen a key the declared directory manages."""
+    applied = applied_intent(fresh=True)
+    for key, value in values.items():
+        refused = managed_widening(key, value, applied)
+        if refused:
+            raise HTTPException(status_code=409, detail=refused)
 
 
 @router.get(
@@ -1980,6 +2046,16 @@ def set_orchestrator_config(
     flat keys; no profile name is written.
     """
     config_data = config.model_dump()
+    managed = {
+        f"investigate.{name}": config_data[name]
+        for name in (
+            "enabled",
+            "max_cost_per_investigation",
+            "max_total_hourly_cost",
+            "max_runtime_per_investigation",
+        )
+    }
+    refuse_managed_widening(managed)
 
     config_service = _for_user(current_user)
     success = config_service.set_system_config(
@@ -1994,6 +2070,7 @@ def set_orchestrator_config(
         raise HTTPException(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
+    settle_pending(managed, str(current_user.user_id))
 
     return {"success": True, "message": "Orchestrator settings saved"}
 

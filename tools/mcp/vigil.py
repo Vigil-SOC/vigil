@@ -1700,6 +1700,23 @@ def get_autonomy_ceiling() -> str:
         return jdump({"error": "Could not read the autonomy ceiling"})
 
 
+@tool("Declared intent report", reads=True)
+@requires("ai_autonomy.read")
+def get_intent_report() -> str:
+    """Read the declared intent report, as GET /api/config/intent does: each
+    INTENT.md key's declared and effective value, and with a declared directory
+    applied, per key whether it is managed, its file, line and revision, drift,
+    pending loosenings and an ignored env value; plus the applied revision, the
+    revision on disk, in_sync and state. Read only; accepting is not exposed."""
+    from core.intent_report import intent_body
+
+    try:
+        return jdump(intent_body())
+    except Exception as e:
+        logger.error("get_intent_report failed: %s", e)
+        return jdump({"error": "Could not read the intent report"})
+
+
 @tool("Entity facts held", reads=True)
 @requires("findings.read")
 def get_entity_facts(limit: Annotated[int, Field(ge=1, le=500)] = 100) -> str:

@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
 from core.config import get_settings
+from core.daemon_config import SchedulerConfig
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from core.workflows.enablement import is_enabled
 from core.workflows.routing import DETECTION_GAPS_WORKFLOW, SCHEDULED_WORKFLOW
-from services.daemon.config import SchedulerConfig
 from services.daemon.probes import inject_probes, score_probes
 from services.daemon.threat_feed_poller import ThreatFeedPoller
 

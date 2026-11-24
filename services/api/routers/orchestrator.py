@@ -61,7 +61,7 @@ _cached_orchestrator = None
 def _get_orchestrator():
     global _cached_orchestrator
     try:
-        from services.daemon.config import DaemonConfig
+        from core.daemon_config import DaemonConfig
         from services.daemon.orchestrator import Orchestrator
 
         config = DaemonConfig.from_env().orchestrator
@@ -179,9 +179,15 @@ def _persist_orchestrator_enabled(
     defaults defined in services/api/routers/config.py. Raises when the write
     fails: the daemon only learns of a toggle through this row.
     """
+    from core.response.config import settle_pending
     from core.storage.config_service import get_config_service
-    from services.api.routers.config import ORCHESTRATOR_DEFAULTS
+    from services.api.routers.config import (
+        ORCHESTRATOR_DEFAULTS,
+        refuse_managed_widening,
+    )
 
+    if enabled:
+        refuse_managed_widening({"investigate.enabled": True})
     svc = get_config_service(user_id=user_id)
     current = svc.get_system_config("orchestrator.settings")
     base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
@@ -198,6 +204,8 @@ def _persist_orchestrator_enabled(
     )
     if stored is False:
         raise RuntimeError("orchestrator.settings was not stored")
+    if enabled:
+        settle_pending({"investigate.enabled": True}, user_id)
 
 
 @router.post("/enable", dependencies=_ENABLE)

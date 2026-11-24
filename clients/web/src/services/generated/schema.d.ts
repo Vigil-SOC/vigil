@@ -3459,7 +3459,7 @@ export interface paths {
         };
         /**
          * Get Intent Report
-         * @description Declared intent beside effective config.
+         * @description Declared intent beside effective config, and what a declared directory manages.
          *
          *     A missing or unreadable manifest is 200 with ``readable`` false and no
          *     rows, so the Settings card can say so in one line.
@@ -3467,6 +3467,29 @@ export interface paths {
         get: operations["get_api_config_intent"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/intent/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Intent Pending
+         * @description Apply the pending loosenings of the applied revision. A person's act.
+         *
+         *     Each key's declared value goes into its store under the person's name,
+         *     with the revision on the audit entry. No timer, and not over /mcp.
+         */
+        post: operations["post_api_config_intent_accept"];
         delete?: never;
         options?: never;
         head?: never;
@@ -14459,18 +14482,56 @@ export interface components {
             };
         };
         /**
+         * IntentAcceptBody
+         * @description The revision (and hash) the person reviewed; a newer one is a 409.
+         */
+        IntentAcceptBody: {
+            /** Hash */
+            hash?: string | null;
+            /** Revision */
+            revision: string;
+        };
+        /**
          * IntentDiffRow
          * @description One manifest key beside the value the daemon is running with.
          */
         IntentDiffRow: {
             /** Declared */
             declared: unknown;
+            /**
+             * Drift
+             * @default false
+             */
+            drift: boolean;
             /** Effective */
             effective: unknown;
+            /**
+             * Env Ignored
+             * @default false
+             */
+            env_ignored: boolean;
+            /** Env Value */
+            env_value?: unknown;
+            /** File */
+            file?: string | null;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /** Line */
+            line?: number | null;
+            /**
+             * Managed
+             * @default false
+             */
+            managed: boolean;
+            /**
+             * Pending
+             * @default false
+             */
+            pending: boolean;
+            /** Revision */
+            revision?: string | null;
             /** Source */
             source: string;
         };
@@ -14479,6 +14540,14 @@ export interface components {
          * @description Declared INTENT.md beside effective daemon config. Read-only.
          */
         IntentReportResponse: {
+            /** Applied At */
+            applied_at?: string | null;
+            /** Directory */
+            directory?: string | null;
+            /** Hash */
+            hash?: string | null;
+            /** In Sync */
+            in_sync?: boolean | null;
             /** Path */
             path: string;
             /** Pending */
@@ -14487,12 +14556,20 @@ export interface components {
             readable: boolean;
             /** Reason */
             reason?: string | null;
+            /** Rejected */
+            rejected?: {
+                [key: string]: unknown;
+            } | null;
             /** Revision */
             revision?: string | null;
+            /** Revision On Disk */
+            revision_on_disk?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
             /** State */
             state?: string | null;
+            /** Verification */
+            verification?: string | null;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {
@@ -24608,6 +24685,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_intent_accept: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntentAcceptBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
