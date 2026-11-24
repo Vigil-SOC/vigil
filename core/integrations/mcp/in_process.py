@@ -45,7 +45,8 @@ _cached_tools: Optional[List[Dict[str, Any]]] = None
 
 # Tools /mcp still serves that are not offered to Vigil's own agents (#4239):
 # agents read rules and coverage through search_detections and analyze_coverage,
-# and gaps through identify_gaps. The Day 1 Report is for outside callers (#5046).
+# gaps through identify_gaps and what to emulate next through emulate_next.
+# The Day 1 Report is for outside callers (#5046).
 _MCP_ONLY = frozenset(
     {
         "get_case",
@@ -54,6 +55,7 @@ _MCP_ONLY = frozenset(
         "get_detection_coverage",
         "start_gaps_run",
         "get_gaps_report",
+        "get_emulate_next",
         "get_day1_report",
         "start_day1_report",
     }
