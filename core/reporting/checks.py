@@ -51,6 +51,8 @@ RUNNING = ReportModule("production.running", "platform.read")
 QUIET = ReportModule("production.quiet", "findings.read")
 # Figures, no checks. The body is evidence["production.alerts"].
 ALERTS = ReportModule("production.alerts", "findings.read")
+# Figures, no checks. The body is evidence["production.tuning"].
+TUNING = ReportModule("production.tuning", "findings.read")
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -304,6 +306,7 @@ MODULES = {
     RUNNING.id: RUNNING,
     QUIET.id: QUIET,
     ALERTS.id: ALERTS,
+    TUNING.id: TUNING,
 }
 
 

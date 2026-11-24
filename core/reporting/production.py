@@ -25,7 +25,7 @@ from core.auth.permissions import holders
 from core.config import get_settings, is_demo_mode
 from core.integrations.readiness import UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import ALERTS, MODULES, QUIET, RUNNING
+from core.reporting.checks import ALERTS, MODULES, QUIET, RUNNING, TUNING
 from core.reporting.day1 import (
     FAIL,
     LOCK,
@@ -50,6 +50,7 @@ from core.reporting.day1 import producing_ids
 from core.reporting.enablement import disabled_module_ids
 from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
+from core.reporting.production_tuning import tuning as produce_tuning
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
 from core.storage.unit_of_work import unit_of_work
@@ -282,6 +283,8 @@ def _produce(
         return produce_quiet(started_at, window_end)
     if module_id == ALERTS.id:
         return [], produce_alerts(started_at, window_end)
+    if module_id == TUNING.id:
+        return [], produce_tuning(started_at, window_end)
     return None
 
 
