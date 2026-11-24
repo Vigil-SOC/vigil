@@ -32,6 +32,7 @@ from core.reporting.checks import (
     MODULES,
     QUIET,
     RUNNING,
+    SPEND,
     TUNING,
 )
 from core.reporting.day1 import (
@@ -59,6 +60,7 @@ from core.reporting.enablement import disabled_module_ids
 from core.reporting.production_agreement import agreement, confidence
 from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
+from core.reporting.production_spend import spend as produce_spend
 from core.reporting.production_tuning import tuning as produce_tuning
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
@@ -298,6 +300,8 @@ def _produce(
         return [], confidence(started_at, window_end)
     if module_id == AGREEMENT.id:
         return [], agreement(started_at, window_end)
+    if module_id == SPEND.id:
+        return [], produce_spend(started_at, window_end)
     return None
 
 

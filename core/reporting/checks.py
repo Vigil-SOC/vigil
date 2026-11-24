@@ -286,6 +286,8 @@ ALERTS = ReportModule("production.alerts", "findings.read")
 TUNING = ReportModule("production.tuning", "findings.read")
 CONFIDENCE = ReportModule("production.confidence", "platform.read")
 AGREEMENT = ReportModule("production.agreement", "platform.read")
+# Figures, no checks. The body is evidence["production.spend"].
+SPEND = ReportModule("production.spend", "platform.read")
 
 # Ids are not prefixes of each other: spec_for also matches "id.".
 CHECKS: tuple[ReportCheck, ...] = (
@@ -811,6 +813,7 @@ MODULES = {
     TUNING.id: TUNING,
     CONFIDENCE.id: CONFIDENCE,
     AGREEMENT.id: AGREEMENT,
+    SPEND.id: SPEND,
 }
 
 

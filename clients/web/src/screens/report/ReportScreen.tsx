@@ -11,6 +11,7 @@ import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
 import { ProductionFigures } from './ProductionFigures'
+import { SpendSection } from './ProductionSpend'
 import {
   ALERTS_TIP,
   AlertsSection,
@@ -59,6 +60,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.tuning': 'Tuning since Production Start',
   'production.confidence': 'How sure the investigations were',
   'production.agreement': 'Agreement',
+  'production.spend': 'Spend since Production Start',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -76,6 +78,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.tuning': 'findings.read',
   'production.confidence': 'platform.read',
   'production.agreement': 'platform.read',
+  'production.spend': 'platform.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -86,6 +89,7 @@ const REPORT_SECTIONS = new Set([
   'history.forecast',
   'production.confidence',
   'production.agreement',
+  'production.spend',
 ])
 
 const SETTINGS_TIP = {
@@ -1201,6 +1205,10 @@ export default function ReportScreen() {
           <AlertsSection evidence={alertsBody} tip={ALERTS_TIP} />
         )}
         {produced && <ProductionFigures report={produced} />}
+        {produced && withheld.includes('production.spend') && <Withheld id="production.spend" />}
+        {produced && !withheld.includes('production.spend') && (produced.modules ?? []).includes('production.spend') && (
+          <SpendSection evidence={produced.evidence?.['production.spend']} />
+        )}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">
