@@ -48,6 +48,19 @@ def odata_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def refusal(resp: httpx.Response) -> dict:
+    """Graph's own status and message for a call it refused."""
+    try:
+        err = resp.json().get("error") or {}
+        message = err.get("message") if isinstance(err, dict) else str(err)
+    except (ValueError, AttributeError):
+        message = None
+    return {
+        "error": message or resp.reason_phrase or "request refused",
+        "status": resp.status_code,
+    }
+
+
 def get_token():
     """Access token, or None when credentials are not configured.
 
@@ -82,6 +95,19 @@ async def handle_list_tools():
         types.Tool(
             name="aad_disable_user",
             description="Disable Azure AD user",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["user_id", "reason"],
+            },
+        ),
+        types.Tool(
+            name="aad_enable_user",
+            description="Enable Azure AD user (undo a disable); aad_get_user's "
+            "accountEnabled reads the state",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -196,6 +222,25 @@ async def handle_call_tool(name: str, arguments: dict | None):
             )
             resp.raise_for_status()
             return result({"success": True, "user_id": uid, "action": "disabled"})
+
+        elif name == "aad_enable_user":
+            uid = args.get("user_id")
+            if not uid:
+                return result({"error": "user_id required"})
+            path = user_path(uid)
+            if path is None:
+                return result({"error": "invalid user_id"})
+            resp = httpx.patch(
+                f"https://graph.microsoft.com/v1.0/users/{path}",
+                headers=headers,
+                json={"accountEnabled": True},
+                timeout=30,
+            )
+            if resp.status_code == 404:
+                return result({"error": "user not found", "status": 404})
+            if resp.is_error:
+                return result(refusal(resp))
+            return result({"user_id": uid, "accountEnabled": True})
 
         elif name == "aad_get_sign_ins":
             # `or 20`, not a .get default: a tool call may carry "limit": null,
