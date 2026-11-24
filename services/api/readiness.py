@@ -58,8 +58,9 @@ async def tick(processes: ProcessHealth) -> None:
     if started:
         run_id, trigger = started
         try:
+            gateway = await day1.read_gateway()
             record_id = await asyncio.to_thread(
-                day1.finish, run_id, trigger, None, state
+                day1.finish, run_id, trigger, None, state, gateway
             )
         except (
             Exception

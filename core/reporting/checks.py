@@ -19,7 +19,9 @@ from typing import Literal, Optional
 
 from core.reporting.selection import JURISDICTIONS, KINDS
 
-Direction = Literal["ceiling", "floor", "level"]
+# "statement": met by Provider Statements; ``bound`` names the rule
+# (core/reporting/day1.py, _MODEL_RULES). Every held one applies, not the tightest.
+Direction = Literal["ceiling", "floor", "level", "statement"]
 ValueStatus = Literal["in_force", "proposed"]
 
 _LEVEL_RANK = {"off": 0, "nobody": 0, "privileged": 1, "everyone": 2}
@@ -57,6 +59,9 @@ _FEDRAMP = (
     "https://fedramp.gov/2026/reference/controls/identification-and-authentication/"
 )
 _IRS = "https://www.irs.gov/pub/irs-pdf/p1075.pdf"
+_BA = "https://www.ecfr.gov/current/title-45/section-164.308"
+_GDPR = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679"
+_DPF = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32023D1795"
 _E8 = (
     "https://www.cyber.gov.au/business-government/asds-cyber-security-frameworks/"
     "essential-eight/essential-eight-maturity-model"
@@ -634,6 +639,61 @@ CHECKS: tuple[ReportCheck, ...] = (
         ),
     ),
     ReportCheck(
+        "settings.model_processing",
+        SETTINGS.id,
+        "platform.read",
+        "Every provider a model component's calls reach meets each in-force "
+        "value for the selection, by the operator's Provider Statements. "
+        "Model calls only.",
+        (
+            _cited(
+                "hipaa",
+                direction="statement",
+                bound="hipaa",
+                cited_value=(
+                    "self-hosted, or a BAA signed with the provider and its "
+                    "HIPAA-eligible account mode stated"
+                ),
+                source_id="45 CFR 164.308(b)",
+                clause=(
+                    "164.308(b)(1) for a covered entity or (b)(2) for a business "
+                    "associate, each with (b)(3)"
+                ),
+                link=_BA,
+                date_checked="2026-11-22",
+            ),
+            _cited(
+                "federal_tax_information",
+                direction="statement",
+                bound="fti",
+                cited_value=(
+                    "processing and support region stated as the United States "
+                    "and, for a provider that isn't self-hosted, a FedRAMP "
+                    "authorization stated"
+                ),
+                source_id="IRS Publication 1075 (Rev. 11-2021)",
+                clause="§2.C.7, §3.3.1",
+                link=_IRS,
+                date_checked="2026-11-19",
+            ),
+            # GDPR names no kind: the EU alone scopes it.
+            ScopedValue(
+                ("european_union",),
+                (),
+                "statement",
+                "gdpr",
+                (
+                    "processing region stated in the EU/EEA, or a transfer basis "
+                    "stated"
+                ),
+                "GDPR (Regulation (EU) 2016/679); Decision (EU) 2023/1795",
+                "Arts 44–46, 49; Art. 1 (appeal C-703/25 P pending)",
+                f"{_GDPR}; {_DPF}",
+                "2026-11-19",
+            ),
+        ),
+    ),
+    ReportCheck(
         "coverage.technique",
         COVERAGE.id,
         COVERAGE.permission,
@@ -835,6 +895,21 @@ def _pick(
         if _names(candidate, selected) > _names(best, selected):
             best = candidate
     return best
+
+
+def applicable(
+    check_id: str, jurisdictions: list[str], kinds: list[str]
+) -> tuple[ScopedValue, ...]:
+    """Every in-force value of a statement check the selection holds in full.
+
+    Each one applies: a provider has to meet all of them.
+    """
+    chosen_j, chosen_k = set(jurisdictions), set(kinds)
+    return tuple(
+        value
+        for value in spec_for(check_id).values
+        if value.status == "in_force" and _held(value, chosen_j, chosen_k)
+    )
 
 
 def resolve(check_id: str, jurisdictions: list[str], kinds: list[str]) -> Resolved:

@@ -18,6 +18,7 @@ import logging
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from sqlalchemy import func, text
@@ -35,6 +36,7 @@ from core.integrations.readiness import (
     UNKNOWN,
     evaluate,
 )
+from core.llm import residency, statements
 from core.platform import notices
 from core.platform.process_health import ProcessHealth
 from core.reporting.checks import (
@@ -48,6 +50,7 @@ from core.reporting.checks import (
     SETTINGS,
     VISIBILITY,
     ScopedValue,
+    applicable,
     resolve,
     scope_label,
     spec_for,
@@ -167,10 +170,19 @@ def begin_on_demand(actor_id: str) -> str:
         raise
 
 
-def finish(run_id: str, trigger: str, actor_id: Optional[str], state: dict) -> str:
-    """Build the record for a committed start and insert it. Clears the running mark."""
+def finish(
+    run_id: str,
+    trigger: str,
+    actor_id: Optional[str],
+    state: dict,
+    gateway: Optional[tuple] = None,
+) -> str:
+    """Build the record for a committed start and insert it. Clears the running mark.
+
+    ``gateway`` is :func:`read_gateway`'s answer, read on the event loop.
+    """
     try:
-        built = build(state)
+        built = build(state, gateway)
         return _insert_record(run_id, trigger, actor_id, built)
     finally:
         _clear(run_id)
@@ -220,12 +232,29 @@ async def run_on_demand(
     run_id = await asyncio.to_thread(begin_on_demand, actor_id)
     if begun is not None and not begun.done():
         begun.set_result(run_id)
-    record_id = await asyncio.to_thread(finish, run_id, ON_DEMAND, actor_id, state)
+    gateway = await read_gateway()
+    record_id = await asyncio.to_thread(
+        finish, run_id, ON_DEMAND, actor_id, state, gateway
+    )
     await asyncio.to_thread(notify_finished, ON_DEMAND, actor_id, record_id)
     return record_id
 
 
-def build(state: dict) -> dict[str, Any]:
+async def read_gateway() -> tuple:
+    """Where gateway providers' calls go, and the Vertex region hash, for the
+    model check. Read here on the event loop: the shared routability snapshot
+    can't be awaited from the report's thread."""
+    try:
+        return (
+            await residency.gateway_residency(),
+            await statements.vertex_region_hash(),
+        )
+    except Exception as exc:  # noqa: BLE001 - the check reads it as unknown
+        logger.error("Day 1 Report could not read the gateway: %s", type(exc).__name__)
+        return None, None
+
+
+def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
     """Each module that is switched on.
 
     A listed id is left out, and ``modules`` names only what ran. Daemon,
@@ -264,7 +293,7 @@ def build(state: dict) -> dict[str, Any]:
                 )
             )
         else:
-            checks.extend(_settings_checks(view))
+            checks.extend(_settings_checks(view, gateway or (None, None)))
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
@@ -1232,7 +1261,10 @@ _SESSION_IDS = (
     "settings.phishing_resistant_everyone",
     "settings.mfa_everyone",
 )
-_SETTINGS_IDS = _SESSION_IDS + ("settings.retention",)
+_MODEL_ID = "settings.model_processing"
+_SETTINGS_IDS = _SESSION_IDS + ("settings.retention", _MODEL_ID)
+_AI_SCREEN = "/settings?section=ai-config"
+_SCREENS = {"settings.retention": _AUDIT_SCREEN, _MODEL_ID: _AI_SCREEN}
 
 
 def _read_selection() -> tuple[Optional[SelectionView], Optional[str]]:
@@ -1316,15 +1348,33 @@ def _unchecked_settings(reason: str) -> list[dict[str, Any]]:
     """Every settings check, unscored. The every-install values are not used."""
     checks = []
     for check_id in _SETTINGS_IDS:
-        screen = _AUDIT_SCREEN if check_id == "settings.retention" else _SESSIONS_SCREEN
+        screen = _SCREENS.get(check_id, _SESSIONS_SCREEN)
         check = _check(check_id, NOT_CHECKED, reason, extra={"screen": screen})
         check["citation"] = {"proposed": []}
         checks.append(check)
     return checks
 
 
-def _settings_checks(view: SelectionView) -> list[dict[str, Any]]:
-    return [*_session_checks(view), _retention_check(view)]
+def _settings_checks(view: SelectionView, gateway: tuple) -> list[dict[str, Any]]:
+    return [
+        *_session_checks(view),
+        _retention_check(view),
+        _safe_model_check(view, gateway),
+    ]
+
+
+def _safe_model_check(view: SelectionView, gateway: tuple) -> dict[str, Any]:
+    try:
+        return _model_check(view, gateway)
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not judge model processing: %s", type(exc).__name__
+        )
+        extra = {"screen": _AI_SCREEN}
+        values = applicable(_MODEL_ID, list(view.jurisdictions), list(view.kinds))
+        return _model_result(
+            values, NOT_CHECKED, "Could not judge the model providers.", extra
+        )
 
 
 def _session_checks(view: SelectionView) -> list[dict[str, Any]]:
@@ -1503,6 +1553,288 @@ def _retention_check(view: SelectionView) -> dict[str, Any]:
         screen=_AUDIT_SCREEN,
         actual=actual,
     )
+
+
+# Where model processing runs. Components whose calls the check follows.
+_MODEL_COMPONENTS = (
+    "chat_default",
+    "triage",
+    "investigation",
+    "summarization",
+    "reporting",
+)
+_MODEL_LEAD = "Where model processing runs (model calls only): "
+_CJIS_NOTE = (
+    "CJIS Security Policy v6.1 restricts where criminal-justice information "
+    "may be stored in a cloud. Whether a model provider's processing counts "
+    "is a question for your counsel; this check doesn't score it."
+)
+_AUTHORIZED = ("high", "moderate", "low")
+_BASES = ("adequacy", "dpf", "scc", "bcr", "art49")
+# The statements each rule reads.
+_MODEL_RULES = {
+    "hipaa": ("self_hosted", "baa", "hipaa_account"),
+    "fti": ("region", "self_hosted", "fedramp"),
+    "gdpr": ("region", "transfer_basis"),
+}
+
+
+def _reached() -> tuple[dict[str, Any], dict[str, list], dict[str, str]]:
+    """Each component's provider row, every row of each type reached, and the
+    names of those who made statements. Plain copies: the session closes."""
+    from core.llm.providers.registry import get_registry
+    from core.storage.models import LLMProviderConfig
+
+    registry = get_registry()
+    copy = lambda r: SimpleNamespace(  # noqa: E731
+        provider_id=r.provider_id,
+        provider_type=r.provider_type,
+        base_url=r.base_url,
+        config=dict(r.config or {}),
+    )
+    reached: dict[str, Any] = {}
+    by_type: dict[str, list] = {}
+    with unit_of_work() as session:
+        for component in _MODEL_COMPONENTS:
+            picked = registry.resolve_model_for_component(component)
+            row = session.get(LLMProviderConfig, picked[0]) if picked else None
+            reached[component] = copy(row) if row is not None else None
+            if row is not None and row.provider_type not in by_type:
+                by_type[row.provider_type] = [
+                    copy(r)
+                    for r in statements.rows_of_type(session, row.provider_type, row)
+                ]
+        every = [r for rows in by_type.values() for r in rows]
+        names = statements.account_names(session, statements.authors(every))
+    return reached, by_type, names
+
+
+def _statement_line(name: str, item: dict) -> str:
+    value = statements.VALUE_WORDS.get(item.get("value") or "", item.get("value"))
+    line = f"{statements.NAMES[name]}: {value}"
+    if item.get("by_name"):
+        line += f", stated by {item['by_name']} on {str(item.get('at') or '')[:10]}"
+    if item.get("why"):
+        cleared = "cleared: " if item.get("state") == statements.CLEARED else ""
+        line += f" ({cleared}{item['why']})"
+    return line
+
+
+def _meets(rule: str, has) -> bool:
+    self_hosted = has("self_hosted", ("yes",))
+    if rule == "hipaa":
+        return self_hosted or (
+            has("baa", ("signed",)) and has("hipaa_account", ("on",))
+        )
+    if rule == "fti":
+        return has("region", ("us",)) and (self_hosted or has("fedramp", _AUTHORIZED))
+    if rule == "gdpr":
+        return has("region", ("eu_eea",)) or has("transfer_basis", _BASES)
+    raise RuntimeError(rule)
+
+
+def _missing(rule: str, has) -> str:
+    if rule == "hipaa":
+        parts = []
+        if not has("baa", ("signed",)):
+            parts.append("a signed BAA")
+        if not has("hipaa_account", ("on",)):
+            parts.append("the HIPAA-eligible account mode")
+        return f"{' and '.join(parts)}, or a self-hosted statement"
+    if rule == "fti":
+        parts = []
+        if not has("region", ("us",)):
+            parts.append("a United States processing and support region")
+        if not has("self_hosted", ("yes",)) and not has("fedramp", _AUTHORIZED):
+            parts.append("a FedRAMP authorization, or a self-hosted statement")
+        return " and ".join(parts)
+    return "an EU/EEA processing region or an EU transfer basis"
+
+
+def _judge_type(
+    rows: list, res: dict, region: Any, rules: list[str]
+) -> tuple[str, list[str]]:
+    """PASS, NEEDS_A_PERSON or FAIL for one provider type, and why.
+
+    Every row of the type has to meet every rule. A statement standing but
+    made before a credential changed, or a flag from before statements,
+    counts only toward needs a person.
+    """
+    strict = lenient = True
+    gaps: list[str] = []
+    notes: list[str] = []
+    for row in rows:
+        held = {
+            name: statements.standing(row.config, name, res[row.provider_id], region)
+            for name in statements.VALUES
+        }
+
+        def has(name, ok, loose=False):
+            s = held[name]
+            return s.get("value") in ok and (
+                s["state"] == statements.HELD
+                or (loose and s["state"] == statements.PENDING)
+            )
+
+        for rule in rules:
+            if not _meets(rule, has):
+                strict = False
+                if not _meets(rule, lambda n, ok: has(n, ok, True)):
+                    lenient = False
+                    gap = _missing(rule, has)
+                    if gap not in gaps:
+                        gaps.append(gap)
+        for name in {n for rule in rules for n in _MODEL_RULES[rule]}:
+            s = held[name]
+            if s["state"] == statements.CLEARED:
+                note = f"its {statements.NAMES[name]} statement was cleared: {s['why']}"
+            elif s.get("why") == statements.LEGACY_SELF_HOSTED:
+                note = s["why"]
+            elif s["state"] == statements.PENDING:
+                note = f"its {statements.NAMES[name]} statement was {s['why']}"
+            else:
+                continue
+            if note not in notes:
+                notes.append(note)
+    if not lenient:
+        return FAIL, [f"is missing {' and '.join(gaps)}", *notes]
+    if not strict:
+        them = "them" if len(notes) > 1 else "it"
+        return NEEDS_A_PERSON, [*notes, f"a person has to re-confirm {them}"]
+    return PASS, []
+
+
+def _model_check(view: SelectionView, read: tuple) -> dict[str, Any]:
+    """Every provider the model components reach, against every held value.
+
+    ``read`` is :func:`read_gateway`'s (residency by gateway provider, Vertex
+    region hash); a gateway that couldn't be read is (None, None).
+    """
+    values = applicable(_MODEL_ID, list(view.jurisdictions), list(view.kinds))
+    extra: dict[str, Any] = {"screen": _AI_SCREEN}
+    if "criminal_justice_information" in view.kinds:
+        extra["counsel"] = _CJIS_NOTE
+    try:
+        reached, by_type, names = _reached()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read the model providers: %s", type(exc).__name__
+        )
+        return _model_result(
+            values, NOT_CHECKED, "Could not read the model assignments.", extra
+        )
+    components: dict[str, list[str]] = {}
+    no_model = []
+    for component, row in reached.items():
+        if row is None:
+            no_model.append(component)
+        else:
+            components.setdefault(row.provider_type, []).append(component)
+    gateway, vertex = read
+    regions = {"vertex": vertex}
+    rules = [str(value.bound) for value in values]
+    providers, fails, unchecked, people, passes = [], [], [], [], []
+    first_problem = None
+    for ptype, rows in by_type.items():
+        res = {r.provider_id: residency.row_residency(r, gateway) for r in rows}
+        why = statements.unknown(res.values())
+        view_ = (
+            {} if why else statements.type_view(rows, res, regions.get(ptype), names)
+        )
+        main = res[rows[0].provider_id]
+        own = ", ".join(components.get(ptype, []))
+        sh = view_.get("self_hosted") or {}
+        sh_held = sh.get("state") == statements.HELD and sh.get("value") == "yes"
+        providers.append(
+            {
+                "provider_type": ptype,
+                "residency": residency.UNKNOWN if why else main.cls,
+                "reason": why,
+                "components": components.get(ptype, []),
+                "statements": [
+                    _statement_line(name, item)
+                    for name, item in view_.items()
+                    # a held self-hosted statement is the class label itself
+                    if item.get("value") and not (name == "self_hosted" and sh_held)
+                ],
+                # The class label reads "Self-hosted, stated by … on …" then.
+                "self_hosted_by": sh.get("by_name") if sh_held else None,
+                "self_hosted_at": str(sh.get("at") or "")[:10] if sh_held else None,
+            }
+        )
+        if why:
+            unchecked.append(f"Not checked for {own}: {why}")
+            continue
+        if not rules:
+            continue
+        outcome, lines = _judge_type(rows, res, regions.get(ptype), rules)
+        if outcome == FAIL:
+            fails.append(f"{ptype} {'; '.join(lines)}.")
+            first_problem = first_problem or ptype
+        elif outcome == NEEDS_A_PERSON:
+            people.append(f"{ptype}: {'; '.join(lines)}.")
+            first_problem = first_problem or ptype
+        else:
+            relied = {n for rule in rules for n in _MODEL_RULES[rule]}
+            held = [
+                _statement_line(name, item)
+                for name, item in view_.items()
+                if name in relied
+                and item.get("state") == statements.HELD
+                and item.get("value") not in (None, "none", "no", "off")
+            ]
+            passes.append(f"{ptype}: {'; '.join(held)}.")
+    if no_model:
+        unchecked.append(
+            f"Not checked for {', '.join(no_model)}: no model is assigned and "
+            "no provider is active."
+        )
+    unchecked = [f"{line.rstrip('.')}." for line in unchecked]
+    extra["providers"] = providers
+    if not rules:
+        reason = "No value for your selection restricts it. " + " ".join(unchecked)
+        return _model_result(values, NO_VALUE, reason.strip(), extra)
+    if first_problem:
+        extra["screen"] = f"{_AI_SCREEN}&tab=statements&provider={first_problem}"
+    if fails:
+        outcome, body = FAIL, fails + unchecked + people
+    elif unchecked:
+        outcome, body = NOT_CHECKED, unchecked + people
+    elif people:
+        outcome, body = NEEDS_A_PERSON, people
+    else:
+        outcome = PASS
+        body = [
+            "Every provider your model calls reach meets the value for your selection.",
+            *passes,
+        ]
+    return _model_result(values, outcome, " ".join(body), extra)
+
+
+def _model_result(
+    values: tuple[ScopedValue, ...], outcome: str, reason: str, extra: dict
+) -> dict[str, Any]:
+    check = _check(_MODEL_ID, outcome, f"{_MODEL_LEAD}{reason}", extra=extra)
+    check["citation"] = _model_citation(values)
+    return check
+
+
+def _model_citation(values: tuple[ScopedValue, ...]) -> dict[str, Any]:
+    """Every held value, frozen on the record. One value reads with its scope."""
+    body: dict[str, Any] = {"proposed": []}
+    if not values:
+        return body
+    join = lambda field: "; ".join(getattr(v, field) for v in values)  # noqa: E731
+    body.update(
+        cited_value=join("cited_value"),
+        source_id=join("source_id"),
+        clause=join("clause"),
+        link=join("link"),
+        date_checked=", ".join(dict.fromkeys(v.date_checked for v in values)),
+    )
+    if len(values) == 1:
+        body["scope"] = scope_label(values[0])
+    return body
 
 
 def _scored(

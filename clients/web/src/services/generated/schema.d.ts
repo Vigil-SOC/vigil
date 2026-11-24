@@ -12966,6 +12966,8 @@ export interface components {
             checked_at?: string | null;
             /** Comparison */
             comparison?: string | null;
+            /** Counsel */
+            counsel?: string | null;
             /** Coverage */
             coverage?: string | null;
             /** Days 7 To 30 */
@@ -12986,6 +12988,8 @@ export interface components {
             over_30_days?: number | null;
             /** Prerequisites */
             prerequisites?: string[];
+            /** Providers */
+            providers?: components["schemas"]["Day1Provider"][];
             /** Screen */
             screen?: string | null;
             /** Source Id */
@@ -13132,6 +13136,26 @@ export interface components {
             scope: string;
             /** Source Id */
             source_id: string;
+        };
+        /**
+         * Day1Provider
+         * @description One provider type the model components reach. Never an address or key.
+         */
+        Day1Provider: {
+            /** Components */
+            components?: string[];
+            /** Provider Type */
+            provider_type: string;
+            /** Reason */
+            reason?: string | null;
+            /** Residency */
+            residency: string;
+            /** Self Hosted At */
+            self_hosted_at?: string | null;
+            /** Self Hosted By */
+            self_hosted_by?: string | null;
+            /** Statements */
+            statements?: string[];
         };
         /** Day1Recurring */
         Day1Recurring: {
@@ -14782,6 +14806,10 @@ export interface components {
             /** Provider Type */
             provider_type: string;
             residency: components["schemas"]["ProviderResidency"];
+            /** Statements */
+            statements?: {
+                [key: string]: components["schemas"]["StatementView"];
+            };
             /** Updated At */
             updated_at: string | null;
         };
@@ -14803,6 +14831,10 @@ export interface components {
             is_default?: boolean | null;
             /** Name */
             name?: string | null;
+            /** Statements */
+            statements?: {
+                [key: string]: string;
+            } | null;
         };
         /** LinkRequest */
         LinkRequest: {
@@ -17425,6 +17457,24 @@ export interface components {
             job_id: string;
             /** Run Id */
             run_id: string;
+        };
+        /** StatementView */
+        StatementView: {
+            /** At */
+            at?: string | null;
+            /** By */
+            by?: string | null;
+            /** By Name */
+            by_name?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "held" | "pending" | "cleared" | "absent";
+            /** Value */
+            value?: string | null;
+            /** Why */
+            why?: string | null;
         };
         /** StatusBreakdownRow */
         StatusBreakdownRow: {

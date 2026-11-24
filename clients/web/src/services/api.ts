@@ -832,10 +832,17 @@ export interface LLMProvider {
   updated_at: string | null
   /** where its calls go, as the server classifies it (shared/residency.ts labels it) */
   residency: Schema<'ProviderResidency'>
+  /** the type's Provider Statements, by name (core/llm/statements.py) */
+  statements: Record<string, StatementView>
 }
+
+export type StatementView = Schema<'StatementView'>
 
 export const llmProviderApi = {
   list: () => api.get<LLMProvider[]>('/llm/providers/'),
+  /** Records statements onto every active row of the provider's type. */
+  state: (providerId: string, statements: Record<string, string>) =>
+    api.put<LLMProvider>(`/llm/providers/${encodeURIComponent(providerId)}`, { statements }),
 }
 
 export interface AIModelInfo {

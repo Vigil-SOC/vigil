@@ -46,6 +46,7 @@ from pydantic import BaseModel
 
 from core.auth.permissions import deny_unless
 from core.config import get_settings
+from core.llm import statements
 from core.llm.bifrost import mirror, path_health
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
 from core.llm.bifrost.auth import management_auth
@@ -709,6 +710,8 @@ async def proxy(
 
     keys_match = _KEYS_PATH.match(path)
     key_id = keys_match.group("key_id") if keys_match else None
+    # Read before the stored plaintext is filled in for an edit that didn't retype it.
+    typed_secret = _types_secret(body)
     if keys_match and isinstance(body, dict):
         _resolve_key_value(body, key_id, keys_match.group("provider"))
 
@@ -741,7 +744,9 @@ async def proxy(
     routability_changed = False
     if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
         provider = keys_match.group("provider")
-        _persist_key_secret(request.method, key_id, body, upstream, provider)
+        _persist_key_secret(
+            request.method, key_id, body, upstream, provider, typed_secret
+        )
         written = _written_key_id(key_id, upstream)
         if written:
             mirror.invalidate_express_probe(written)
@@ -779,8 +784,12 @@ def _persist_key_secret(
     body: Optional[Dict[str, Any]],
     upstream: httpx.Response,
     provider: Optional[str] = None,
+    typed_secret: bool = False,
 ) -> None:
     """Mirror an accepted key write into the secrets store.
+
+    A write whose request carried a newly typed secret also moves the type's
+    credential generation on, so its Provider Statements need re-confirming.
 
     On create, the ref comes from the ``key_id`` Bifrost minted in its response.
     Best-effort: a secrets failure must not undo a write Bifrost has accepted,
@@ -809,6 +818,8 @@ def _persist_key_secret(
             token = (body or {}).get("value")
             if ref_id and token and not _is_masked(token):
                 set_secret(_secret_ref(ref_id), token)
+            if typed_secret:
+                statements.bump_type_now(provider)
             elif ref_id and "value" in (body or {}) and not token:
                 delete_secret(_secret_ref(ref_id))
             return
@@ -829,8 +840,24 @@ def _persist_key_secret(
             return
         set_secret(_secret_ref(ref_id), value)
         _persist_vertex_scope(ref_id, body)
+        if typed_secret and provider:
+            statements.bump_type_now(provider)
     except Exception as exc:  # noqa: BLE001 - never fail an accepted write
         logger.warning("Bifrost proxy: could not mirror key secret: %s", exc)
+
+
+def _types_secret(body: Optional[Dict[str, Any]]) -> bool:
+    """True when a key write's own body sets a credential (not a mask, not omitted)."""
+    if not isinstance(body, dict):
+        return False
+    vertex = body.get("vertex_key_config")
+    for value in (
+        body.get("value"),
+        vertex.get("auth_credentials") if isinstance(vertex, dict) else None,
+    ):
+        if value and not _is_masked(value):
+            return True
+    return False
 
 
 def _written_key_id(key_id: Optional[str], upstream: httpx.Response) -> Optional[str]:
