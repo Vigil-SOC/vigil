@@ -1,21 +1,15 @@
-// Read-only. INTENT.md is edited in git; this card only shows the report.
+// INTENT.md is edited where it lives; this card shows the report and, for a
+// person with ai_autonomy.write, accepts a declared directory's pending loosenings.
 import { useEffect, useState } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
 import { configApi } from '../../services/api'
-import { SettingsCard } from '../../shared/ui'
+import type { Schema } from '../../services/apiTypes'
+import { errorText } from '../../shared/errorText'
+import { ConfirmDialog, SettingsCard } from '../../shared/ui'
+import type { SectionProps } from './types'
 
-interface IntentRow {
-  key: string
-  declared: unknown
-  effective: unknown
-  source: string
-  label: string
-}
-
-interface IntentReport {
-  path: string
-  readable: boolean
-  rows: IntentRow[]
-}
+type IntentReport = Schema<'IntentReportResponse'>
+type IntentRow = Schema<'IntentDiffRow'>
 
 function show(value: unknown): string {
   if (typeof value === 'boolean' || typeof value === 'number') return String(value)
@@ -24,9 +18,39 @@ function show(value: unknown): string {
   return JSON.stringify(value)
 }
 
-export default function IntentReportCard({ reloadKey = 0 }: { reloadKey?: number }) {
+function Status({ row }: { row: IntentRow }) {
+  const chips: [string, string, string][] = []
+  if (row.pending) chips.push(['Pending', 'var(--fair)', 'A loosening waits for a person to accept it'])
+  if (row.drift) chips.push(['Drift', 'var(--fair)', 'Narrower than declared, here or by an env lock'])
+  if (row.env_ignored)
+    chips.push([`Env ${show(row.env_value)} ignored`, 'var(--tx2)', 'The declared value outranks the environment'])
+  if (!chips.length) return <span className="text-tx-3">{row.managed ? 'Managed' : '—'}</span>
+  return (
+    <span className="flex flex-wrap gap-1">
+      {chips.map(([text, color, title]) => (
+        <span key={text} className="chip" style={{ color }} title={title}>
+          {text}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+export default function IntentReportCard({
+  reloadKey = 0,
+  notify,
+  onAccepted,
+}: {
+  reloadKey?: number
+  notify?: SectionProps['notify']
+  onAccepted?: () => void
+}) {
   const [report, setReport] = useState<IntentReport | null>(null)
   const [failed, setFailed] = useState(false)
+  const [asking, setAsking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const { hasPermission } = useAuth()
+  const canAccept = hasPermission('ai_autonomy.write')
 
   useEffect(() => {
     let cancelled = false
@@ -34,7 +58,7 @@ export default function IntentReportCard({ reloadKey = 0 }: { reloadKey?: number
       .getIntent()
       .then((res) => {
         if (cancelled) return
-        setReport(res.data as IntentReport)
+        setReport(res.data)
         setFailed(false)
       })
       .catch(() => {
@@ -73,31 +97,122 @@ export default function IntentReportCard({ reloadKey = 0 }: { reloadKey?: number
     )
   }
 
+  const managed = !!report.directory
+  const pending = report.pending ?? []
+  const pendingRows = report.rows?.filter((r) => r.pending) ?? []
+  const onDisk = report.revision_on_disk
+  const accept = () => {
+    if (!report.revision) return
+    setBusy(true)
+    configApi
+      .acceptIntent({ revision: report.revision, hash: report.hash ?? null })
+      .then((res) => {
+        setReport(res.data)
+        notify?.('ok', `Accepted. Revision ${report.revision} now applies in full.`)
+        onAccepted?.()
+      })
+      .catch((e) => notify?.('err', errorText(e, 'The pending keys were not accepted.')))
+      .finally(() => {
+        setBusy(false)
+        setAsking(false)
+      })
+  }
+
   return (
     <SettingsCard title="Declared intent" wide>
-      <p className="text-xs text-tx-3 mb-3">{report.path} is edited in git, not here.</p>
-      <table className="tbl">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Declared</th>
-            <th>Effective</th>
-            <th>Source</th>
-            <th>Label</th>
-          </tr>
-        </thead>
-        <tbody>
-          {report.rows.map((row) => (
-            <tr key={row.key}>
-              <td className="mono">{row.key}</td>
-              <td className="mono">{show(row.declared)}</td>
-              <td className="mono">{show(row.effective)}</td>
-              <td>{row.source}</td>
-              <td>{row.label}</td>
+      {managed ? (
+        <div className="text-xs text-tx-3 mb-3 flex flex-col gap-1 [overflow-wrap:anywhere]">
+          <p>
+            Managed by <span className="mono">{report.directory}</span> at revision{' '}
+            <span className="mono">{report.revision ?? 'none'}</span>
+            {onDisk && onDisk !== report.revision && (
+              <>
+                {' '}(on disk: <span className="mono">{onDisk}</span>)
+              </>
+            )}
+            {' · '}
+            <span style={{ color: report.in_sync ? 'var(--good)' : 'var(--fair)' }}>
+              {report.in_sync ? 'in sync' : 'not in sync'}
+            </span>
+            . Change it there, not here: a local change may only narrow a managed key.
+          </p>
+          <p>{report.verification}</p>
+          {report.state !== 'ok' && report.reason && <p style={{ color: 'var(--fair)' }}>{report.reason}</p>}
+        </div>
+      ) : (
+        <p className="text-xs text-tx-3 mb-3">{report.path} is edited in git, not here.</p>
+      )}
+      {pending.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2.5 mb-3">
+          <span className="text-sm text-tx-2">
+            {pending.length === 1 ? 'A loosening waits' : `${pending.length} loosenings wait`} for a person:{' '}
+            <span className="mono">{pending.join(', ')}</span>
+          </span>
+          {canAccept && (
+            <button className="btn" onClick={() => setAsking(true)}>
+              Accept
+            </button>
+          )}
+        </div>
+      )}
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Declared</th>
+              <th>Effective</th>
+              <th>Source</th>
+              <th>Label</th>
+              {managed && <th>Status</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {report.rows?.map((row) => (
+              <tr key={row.key}>
+                <td>
+                  <span className="mono">{row.key}</span>
+                  {row.managed && (
+                    <span className="block text-xs text-tx-3 mono">
+                      {row.file}:{row.line} @ {row.revision ?? 'unknown'}
+                    </span>
+                  )}
+                </td>
+                <td className="mono">{show(row.declared)}</td>
+                <td className="mono">{show(row.effective)}</td>
+                <td>{row.source}</td>
+                <td>{row.label}</td>
+                {managed && (
+                  <td>
+                    <Status row={row} />
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ConfirmDialog
+        open={asking}
+        title={`Accept revision ${report.revision ?? ''}?`}
+        body={
+          <>
+            <p className="mb-2">These keys take their declared value and autonomy widens:</p>
+            <ul className="mono text-xs mb-2">
+              {pendingRows.map((r) => (
+                <li key={r.key}>
+                  {r.key}: {show(r.effective)} → {show(r.declared)}
+                </li>
+              ))}
+            </ul>
+            <p>Your name and the revision go on the audit trail.</p>
+          </>
+        }
+        confirmLabel="Accept"
+        busy={busy}
+        onConfirm={accept}
+        onClose={() => setAsking(false)}
+      />
     </SettingsCard>
   )
 }

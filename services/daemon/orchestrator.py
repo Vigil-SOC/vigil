@@ -28,12 +28,12 @@ from core.auth import sign_ins
 from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings, is_integration_enabled
+from core.daemon_config import OrchestratorConfig
 from core.integrations._base.config import resolve
 from core.integrations.slack.descriptor import SLACK
 from core.storage.case_insert import insert_case
 from core.storage.intake_queue import SEVERITY_BANDS, intake_severity_band
 from core.time import utcnow
-from services.daemon.config import OrchestratorConfig
 
 try:
     from opentelemetry.trace import SpanKind

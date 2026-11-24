@@ -734,7 +734,10 @@ export const configApi = {
   }) => api.post('/config/darktrace', data),
 
   getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
-  getIntent: () => api.get('/config/intent'),
+  getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
+  // A person's accept of the applied revision's pending loosenings (#5069)
+  acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
+    api.post<Schema<'IntentReportResponse'>>('/config/intent/accept', data),
   setOrchestrator: (data: {
     enabled: boolean
     dry_run: boolean

@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from redis.exceptions import RedisError
 
 from core.config import is_integration_enabled
+from core.daemon_config import ProcessingConfig, ResponseConfig
 from core.findings import triage_citations as citations
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
@@ -26,7 +27,6 @@ from core.redis_client import open_async_redis, redact_logged_text
 from core.response.config import applied_values
 from core.storage.service import DAEMON_ENRICHMENT_KEYS
 from core.time import utcnow
-from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import ACTIONS as TRIAGE_ACTIONS
 from services.daemon.probes import PROBE_DATA_SOURCE
 from services.daemon.vendor_errors import (

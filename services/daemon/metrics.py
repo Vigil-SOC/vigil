@@ -21,11 +21,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from core.agents.queue import RUN_QUEUE
 from core.config import get_settings
+from core.daemon_config import MetricsConfig
 from core.llm.gateway.gateway import QUEUE_NAME
 from core.redis_client import configured_redis_url, open_sync_redis, redact_logged_text
 from core.telemetry import get_meter
 from core.time import utcnow
-from services.daemon.config import MetricsConfig
 from services.daemon.vendor_errors import vendor_error_snapshot
 
 logger = logging.getLogger(__name__)

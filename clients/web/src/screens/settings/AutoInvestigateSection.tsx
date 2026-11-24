@@ -345,6 +345,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     try {
       await ceiling.save(patch)
       notify('ok', 'Limits saved.')
+      setIntentRevision((n) => n + 1) // a narrowing shows as drift
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
     }
@@ -1074,7 +1075,14 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 onBlur={persistIfChanged}
               />
             </Field>
-            <IntentReportCard reloadKey={intentRevision} />
+            <IntentReportCard
+              reloadKey={intentRevision}
+              notify={notify}
+              onAccepted={() => {
+                void ceiling.refresh()
+                reload()
+              }}
+            />
           </div>
         ) : (
           <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage and the intent report.</span>
