@@ -122,7 +122,7 @@ export default function IntentReportCard({
     <SettingsCard title="Declared intent" wide>
       {managed ? (
         <div className="text-xs text-tx-3 mb-3 flex flex-col gap-1 [overflow-wrap:anywhere]">
-          <p>
+          <div>
             Managed by <span className="mono">{report.directory}</span> at revision{' '}
             <span className="mono">{report.revision ?? 'none'}</span>
             {onDisk && onDisk !== report.revision && (
@@ -135,9 +135,9 @@ export default function IntentReportCard({
               {report.in_sync ? 'in sync' : 'not in sync'}
             </span>
             . Change it there, not here: a local change may only narrow a managed key.
-          </p>
-          <p>{report.verification}</p>
-          {report.state !== 'ok' && report.reason && <p style={{ color: 'var(--fair)' }}>{report.reason}</p>}
+          </div>
+          <div>{report.verification}</div>
+          {report.state !== 'ok' && report.reason && <div style={{ color: 'var(--fair)' }}>{report.reason}</div>}
         </div>
       ) : (
         <p className="text-xs text-tx-3 mb-3">{report.path} is edited in git, not here.</p>

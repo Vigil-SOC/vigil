@@ -97,7 +97,7 @@ a wrong-typed value rejects the whole revision. A poll that brings nothing new
 writes nothing, so a setting narrowed from the console stays narrowed until a
 commit changes that key. This file at the repo root is never enforced.
 
-Settings → Autonomy → Declared intent, `GET /api/config/intent` and the /mcp
+Settings → Limits & autonomy → Declared intent, `GET /api/config/intent` and the /mcp
 tool `get_intent_report` show each managed key with its file, line and
 revision, whether it has drifted (narrowed locally or by an env lock), whether
 a loosening is pending, and an env value the declaration overrides. A local

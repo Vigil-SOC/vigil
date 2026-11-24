@@ -9,6 +9,7 @@ Lives in ``core/`` because ``core`` must not import ``services``;
 ``core.daemon_config`` re-exports it as part of ``DaemonConfig``.
 """
 
+import json
 import logging
 import re
 import time
@@ -70,7 +71,7 @@ def managed_widening(
         return None
     return (
         f"{key} is managed by {meta.get('file')}:{meta.get('line')} at revision "
-        f"{meta.get('revision') or 'unknown'} (declared {declared!r}); a local "
+        f"{meta.get('revision') or 'unknown'} (declared {json.dumps(declared)}); a local "
         f"change may only narrow it. Change it in the declared directory "
         f"{applied['directory']}."
     )
@@ -100,13 +101,17 @@ def settle_pending(values: Dict[str, Any], user_id: str) -> None:
         ]
         if not settled:
             return
+        note = (
+            f"INTENT.md revision {row.get('revision')}: "
+            f"{', '.join(settled)} set to the declared value"
+        )
+        pending = [k for k in row["pending"] if k not in settled]
         service.set_system_config(
             key=INTENT_APPLIED_KEY,
-            value={**row, "pending": [k for k in row["pending"] if k not in settled]},
+            value={**row, "pending": pending, "reason": note},
             description="Declared INTENT.md revision applied by the daemon",
             config_type="intent",
-            change_reason=f"INTENT.md revision {row.get('revision')}: "
-            f"{', '.join(settled)} set to the declared value",
+            change_reason=note,
         )
         applied_intent(fresh=True)
     except Exception as exc:  # noqa: BLE001
