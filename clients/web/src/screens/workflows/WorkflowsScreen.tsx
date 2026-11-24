@@ -4363,7 +4363,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   </button>
                   <div className="sk-meta">
                     <SkillUsage skill={usage} align={align} />
-                    {canWrite && <button className="btn ghost" disabled={!!managed} title={managedText} onClick={() => setDeleteLibrary(first)}>Delete</button>}
+                    {managed
+                      ? <span className="sk-ro" title={managedText}>Managed</span>
+                      : canWrite && <button className="btn ghost" onClick={() => setDeleteLibrary(first)}>Delete</button>}
                   </div>
                 </div>
               )
@@ -4387,7 +4389,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   <SkillUsage skill={s} align={align} />
                   {s.bundled
                     ? <span className="sk-ro">Read-only</span>
-                    : canWrite && <button className="btn ghost" disabled={!!managed} title={managedText} onClick={() => setDeleteSkill(s)}>Delete</button>}
+                    : managed
+                      ? <span className="sk-ro" title={managedText}>Managed</span>
+                      : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
                 </div>
               </div>
             )
