@@ -46,6 +46,8 @@ HISTORY_BEFORE = ReportModule("history.before", "findings.read")
 HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
 HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
 HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
+# The Production Start Report's first module. Day 1's build does not call it.
+RUNNING = ReportModule("production.running", "platform.read")
 
 _CHECKED = "2026-11-23"
 _NIST = "https://csrc.nist.gov/pubs/sp/800/63/b/4/final"
@@ -261,6 +263,24 @@ CHECKS: tuple[ReportCheck, ...] = (
         ESTATE.permission,
         "Wazuh agents last heard 7 days or more before the read, and never-connected agents once registration is 7 days old. The manager is not counted.",
     ),
+    ReportCheck(
+        "production.running.service",
+        RUNNING.id,
+        RUNNING.permission,
+        "The background service is running. Off is not checked: nothing is collected.",
+    ),
+    ReportCheck(
+        "production.running.triage",
+        RUNNING.id,
+        RUNNING.permission,
+        "Automatic triage is on in this process. When the setting was not supplied, the check is not checked.",
+    ),
+    ReportCheck(
+        "production.running.source",
+        RUNNING.id,
+        RUNNING.permission,
+        "At least one alert source is switched on, the same way Day 1 visibility judges it. With none, the check needs a person.",
+    ),
 )
 
 MODULES = {
@@ -272,6 +292,7 @@ MODULES = {
     HISTORY_RECHECK.id: HISTORY_RECHECK,
     HISTORY_TUNING.id: HISTORY_TUNING,
     FORECAST.id: FORECAST,
+    RUNNING.id: RUNNING,
 }
 
 

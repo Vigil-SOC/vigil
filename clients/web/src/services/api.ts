@@ -759,6 +759,13 @@ export const productionStartApi = {
     api.put<Schema<'ProductionStart'>>('/production-start', { started_at }),
 }
 
+export const productionReportApi = {
+  status: () => api.get<Schema<'ProductionReportStatus'>>('/production-report/status'),
+  get: (record?: string) =>
+    api.get<Schema<'ProductionReport'>>('/production-report', { params: record ? { record } : {} }),
+  run: () => api.post<Schema<'ProductionReport'>>('/production-report'),
+}
+
 export const day1Api = {
   status: () => api.get<Schema<'Day1Status'>>('/day1-report/status'),
   get: (record?: string) =>

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { day1Api } from '../../services/api'
+import { day1Api, productionReportApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
@@ -14,6 +14,8 @@ import { reportStamp } from './stamp'
 import './report.css'
 
 type Report = Schema<'Day1Report'>
+type ProductionReport = Schema<'ProductionReport'>
+type Loaded = Report | ProductionReport
 type Check = Schema<'Day1Check'>
 type Evidence = Schema<'Day1Evidence'>
 type Comparison = Schema<'Day1Comparison'>
@@ -23,7 +25,11 @@ type ForecastSource = Schema<'Day1ForecastSource'>
 type ForecastLimits = Schema<'Day1ForecastLimits'>
 type ForecastSpend = Schema<'Day1ForecastSpend'>
 type Outcome = Check['outcome']
-type Trigger = Report['trigger']
+type Trigger = Report['trigger'] | ProductionReport['trigger']
+
+function isProduction(report: Loaded): report is ProductionReport {
+  return report.trigger === 'production' || report.trigger === 'production_on_demand'
+}
 
 const MODULE_TITLE: Record<string, string> = {
   visibility: 'What Vigil can see',
@@ -34,6 +40,7 @@ const MODULE_TITLE: Record<string, string> = {
   'history.recheck': 'Re-check list',
   'history.tuning': 'Tuning candidates',
   'history.forecast': 'Cost forecast',
+  'production.running': 'What is running',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -45,6 +52,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'history.recheck': 'findings.read',
   'history.tuning': 'findings.read',
   'history.forecast': 'platform.read',
+  'production.running': 'platform.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -147,6 +155,10 @@ function triggerWord(trigger: Trigger, name: string | null): string {
       return 'Fallback time'
     case 'on_demand':
       return name ? `On demand, by ${name}` : 'On demand'
+    case 'production':
+      return 'Automatic'
+    case 'production_on_demand':
+      return name ? `On demand, by ${name}` : 'On demand'
     default: {
       const never: never = trigger
       return never
@@ -173,6 +185,32 @@ function comparisonWord(comparison: Comparison, outcome: Outcome): string {
       return never
     }
   }
+}
+
+function windowLength(start: string, end: string): string {
+  const ms = Date.parse(end) - Date.parse(start)
+  if (!Number.isFinite(ms) || ms < 0) return 'window'
+  const totalMinutes = Math.round(ms / 60000)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours > 0 && minutes === 0) return hours === 1 ? '1 hour' : `${hours} hours`
+  if (hours > 0) return `${hours} h ${minutes} min`
+  return minutes === 1 ? '1 min' : `${minutes} min`
+}
+
+function productionWindow(report: ProductionReport): { start: string; end: string } | null {
+  const body = report.evidence?.production
+  if (!body || typeof body !== 'object') return null
+  const span = (body as { window?: { start?: unknown; end?: unknown } }).window
+  if (!span || typeof span.start !== 'string' || typeof span.end !== 'string') return null
+  return { start: span.start, end: span.end }
+}
+
+const RUNNING_TIP = {
+  source: 'Install readiness and the automatic-triage setting on this process',
+  calculation:
+    'The background service off is not checked, because nothing is collected. Automatic triage is the value supplied to this process. No alert source switched on needs a person.',
+  limit: 'Not checked is never a pass.',
 }
 
 function isStatus(error: unknown, code: number): boolean {
@@ -722,7 +760,7 @@ export default function ReportScreen() {
   const { hasPermission } = useAuth()
   const canRun = hasPermission('platform.write')
   const { notify } = useToast()
-  const [report, setReport] = useState<Report | null>(null)
+  const [report, setReport] = useState<Loaded | null>(null)
   const [modules, setModules] = useState<ModuleSetting[] | null>(null)
   const [savingModule, setSavingModule] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
@@ -737,8 +775,18 @@ export default function ReportScreen() {
       (err: unknown) => (isStatus(err, 403) ? null : Promise.reject(err)),
     )
     const reportRead = day1Api.get(record ?? undefined).then(
-      (res) => ({ ok: true as const, data: res.data }),
-      (err: unknown) => ({ ok: false as const, err }),
+      (res) => ({ ok: true as const, data: res.data as Loaded }),
+      async (err: unknown) => {
+        if (record && isStatus(err, 404)) {
+          try {
+            const res = await productionReportApi.get(record)
+            return { ok: true as const, data: res.data as Loaded }
+          } catch (prodErr) {
+            return { ok: false as const, err: prodErr }
+          }
+        }
+        return { ok: false as const, err }
+      },
     )
     const moduleRead = day1Api.modules().then(
       (res) => ({ ok: true as const, data: res.data }),
@@ -807,6 +855,8 @@ export default function ReportScreen() {
     }
   }
 
+  const day1 = report && !isProduction(report) ? report : null
+  const produced = report && isProduction(report) ? report : null
   const checks = report?.checks ?? []
   const visibilityChecks = checks.filter((check) => check.module === 'visibility')
   const settings = checks.filter((check) => check.module === 'settings')
@@ -835,12 +885,22 @@ export default function ReportScreen() {
   const coverageRest = coverageChecks.filter(
     (check) => !coverageGrouped.some((group) => group.checks.includes(check)),
   )
-  const comparedAt = report?.compared_at ?? null
+  const comparedAt = day1?.compared_at ?? null
+  const span = produced ? productionWindow(produced) : null
+  const runningChecks = produced
+    ? produced.checks.filter((check) => check.module === 'production.running')
+    : []
 
   return (
     <div className="d1-page">
       <div className="d1-screen">
         {report?.preface && <p className="d1-preface">{report.preface}</p>}
+        {produced && span && (
+          <p className="d1-preface">
+            Describes this install&apos;s first {windowLength(span.start, span.end)} in production, as of{' '}
+            {reportStamp(produced.recorded_at)}.
+          </p>
+        )}
         {report && (
           <p className="d1-meta">
             {reportStamp(report.recorded_at)} · Vigil {report.vigil_version} ·{' '}
@@ -887,10 +947,28 @@ export default function ReportScreen() {
           </section>
         )}
       </div>
-      {report && <Summary report={report} />}
+      {day1 && <Summary report={day1} />}
       <div className="d1-screen">
-        {report && withheld.includes('visibility') && <Withheld id="visibility" />}
-        {showVisibility && (
+        {produced && withheld.includes('production.running') && <Withheld id="production.running" />}
+        {produced && !withheld.includes('production.running') && (produced.modules ?? []).includes('production.running') && (
+          <section className="d1-card" aria-label="What is running">
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE['production.running']}</h2>
+              <InfoTip label="How what is running is judged" align="start" {...RUNNING_TIP} />
+            </div>
+            {runningChecks.length > 0 ? (
+              <div className="d1-rows">
+                {runningChecks.map((check) => (
+                  <CheckRow key={check.id} check={check} comparedAt={null} />
+                ))}
+              </div>
+            ) : (
+              <p className="d1-quiet">Nothing to report in this section.</p>
+            )}
+          </section>
+        )}
+        {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
+        {day1 && showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">
             <div className="d1-card-head">
               <h2>{MODULE_TITLE.visibility}</h2>
@@ -920,11 +998,11 @@ export default function ReportScreen() {
                 </div>
               </>
             )}
-            {(report.switched_off ?? []).length > 0 && (
+            {(day1.switched_off ?? []).length > 0 && (
               <>
                 <p className="d1-sub">Switched off</p>
                 <div className="d1-rows">
-                  {report.switched_off.map((row) => (
+                  {day1.switched_off.map((row) => (
                     <div className="d1-row" key={row.source_id}>
                       <p>
                         {row.source_id}: switched off. Brings {row.brings}.
@@ -990,10 +1068,10 @@ export default function ReportScreen() {
             {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
           </section>
         )}
-        {report && withheld.includes('history.before') && <Withheld id="history.before" />}
-        {report && withheld.includes('history.recheck') && <Withheld id="history.recheck" />}
-        {report && withheld.includes('history.tuning') && <Withheld id="history.tuning" />}
-        {report && <HistorySections report={report} />}
+        {day1 && withheld.includes('history.before') && <Withheld id="history.before" />}
+        {day1 && withheld.includes('history.recheck') && <Withheld id="history.recheck" />}
+        {day1 && withheld.includes('history.tuning') && <Withheld id="history.tuning" />}
+        {day1 && <HistorySections report={day1} />}
         {estateRan && withheld.includes('estate') && <Withheld id="estate" />}
         {showEstate && (
           <section className="d1-card" aria-label="What CrowdStrike, Defender and Wazuh still list">
@@ -1021,8 +1099,8 @@ export default function ReportScreen() {
             )}
           </section>
         )}
-        {report?.forecast && (report.modules ?? []).includes('history.forecast') && (
-          <ForecastSection forecast={report.forecast} />
+        {day1?.forecast && (day1.modules ?? []).includes('history.forecast') && (
+          <ForecastSection forecast={day1.forecast} />
         )}
       </div>
     </div>

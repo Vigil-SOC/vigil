@@ -107,6 +107,23 @@ and `declared_at` (when they wrote it). Clearing writes both empty. Home shows
 rule's live stage: "go live" and "live" belong to rule rollout.
 _Avoid_: live, go live
 
+**Production Start Report**:
+A stored report of the install's first stretch in production, run from the
+same Install Readiness sweep as the Day 1 Report. It runs once, trigger
+`production`, at the first tick at or after Production Start plus 48 hours.
+A start already that old is due on the next tick. A cleared start starts
+nothing, and a change after that one run does not start another. Someone
+holding `platform.write` can run it on demand (`production_on_demand`) once a
+start is declared; before that, the action reads "Not in production yet". An
+on-demand run does not take the place of the automatic one. The record stores
+the start it used and the window in `evidence["production"]`. The page is
+`/report`, the same screen as the Day 1 Report, rendered from the trigger.
+Home, beside the Production Start line, offers Run when the latest report
+used a different start, and Re-run when the automatic start did not finish.
+An automatic run sends one link-only notice to `platform.write` holders; an
+on-demand run notifies the person who started it.
+_Avoid_: Day 1 Report (that report is the install before this window)
+
 **Day 1 Report**:
 A stored report of what a new install can see, run from the Install Readiness
 sweep (`services/api/readiness.py` calls `core/reporting/day1.py`). It runs
@@ -126,8 +143,9 @@ _Avoid_: Install Readiness (that decides when this runs; it is not a module)
 One completed Day 1 Report run (`report_records`), inserted once and never
 rewritten. `vigil_app` may insert and read it, not update, delete or truncate
 it. It holds the modules that ran, each check's outcome with its evidence and
-reason, what started the run (readiness, the fallback time, or a person's
-account id), the time and Vigil's version. The run's start is its own row
+reason, what started the run (readiness, the fallback time, a person's Day 1
+run, the automatic Production Start Report, or an on-demand one), the time
+and Vigil's version. The run's start is its own row
 (`report_runs`), so a start with no record can be shown. People are stored as
 account ids and shown by name when the record is read.
 _Avoid_: result store (outcomes live only here)
