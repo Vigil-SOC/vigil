@@ -15928,6 +15928,11 @@ export interface components {
              */
             proxy_username: string;
             /**
+             * Ssh Host Key
+             * @default
+             */
+            ssh_host_key: string;
+            /**
              * Ssh Key Passphrase
              * @default
              */

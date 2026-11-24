@@ -106,6 +106,16 @@ export default function SystemSection({ notify }: SectionProps) {
 
             {isSsh && (
               <>
+                <Field
+                  label="SSH Host Key"
+                  hint="Required. The bastion's public host key, e.g. from ssh-keyscan or /etc/ssh/ssh_host_ed25519_key.pub on the bastion. The tunnel refuses any other server."
+                >
+                  <TextInput
+                    value={form.ssh_host_key}
+                    placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…"
+                    onChange={(e) => setForm({ ...form, ssh_host_key: e.target.value })}
+                  />
+                </Field>
                 <Field label="SSH Private Key Path" hint="Absolute path on the backend host.">
                   <TextInput
                     value={form.ssh_private_key_path}
@@ -144,7 +154,7 @@ export default function SystemSection({ notify }: SectionProps) {
 
             <Field
               label="Database Password"
-              hint="Required when the proxy type, host or port changes, or TLS verification is turned off: Vigil's database login is sent through the proxy. Checked, not stored."
+              hint="Required when the proxy type, host, port or SSH host key changes, or TLS verification is turned off: Vigil's database login is sent through the proxy. Checked, not stored."
             >
               <PasswordInput
                 value={form.database_password}
