@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { HoldButton } from '../../shared/HoldButton'
 import { Icon } from '../../shared/icons'
 import { OverlayPortal, Popup } from '../../shared/ui'
-import { skillsApi, type ApiSkillDetail, type ApiSkillScanDetail, type ApiSkillTest } from '../../services/skillsApi'
+import { skillsApi, skillsManagedText, type ApiSkillDetail, type ApiSkillScanDetail, type ApiSkillTest } from '../../services/skillsApi'
 import { skillUsageText, type Skill } from '../../data/appData'
 import { SkillLibraryDialog } from './SkillLibraryDialog'
 
@@ -65,6 +65,8 @@ export function SkillDrawer({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [rootUnset, setRootUnset] = useState(false)
+  // Create mode's copy of detail.managed, read off any loaded skill like rootUnset.
+  const [rootManaged, setRootManaged] = useState<string | null>(null)
   // The file shown read-only in place of the steps; null is the editable SKILL.md.
   const [openFile, setOpenFile] = useState<string | null>(null)
   // "Test with a sample": null until run; one synchronous request, so only `testing` marks the wait.
@@ -136,13 +138,18 @@ export function SkillDrawer({
     let cancelled = false
     skillsApi
       .get(existingNames[0])
-      .then((loaded) => { if (!cancelled) setRootUnset(!loaded.operator_root_set) })
+      .then((loaded) => {
+        if (cancelled) return
+        setRootUnset(!loaded.operator_root_set)
+        setRootManaged(loaded.managed ? skillsManagedText(loaded.managed) : null)
+      })
       .catch(() => undefined)
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name])
 
-  const pathUnset = rootUnset || (detail !== null && !detail.operator_root_set)
+  const managedText = detail?.managed ? skillsManagedText(detail.managed) : rootManaged
+  const pathUnset = rootUnset || (detail !== null && !detail.operator_root_set) || managedText !== null
   const canDescribe = creating && canWrite && !pathUnset
   const nameLocked = detail !== null && !detail.bundled
   const needsNewName = detail?.bundled === true && skillName.trim() === detail.name
@@ -270,8 +277,8 @@ export function SkillDrawer({
                 </div>
               )}
               {!canWrite && <p className="text-[13px] text-tx-2 leading-[1.5]">{READ_ONLY}</p>}
-              {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5]">{PATH_OFF}</p>}
-              {detail?.bundled && (
+              {canWrite && pathUnset && <p className="text-[13px] text-tx-2 leading-[1.5] break-words">{managedText ?? PATH_OFF}</p>}
+              {detail?.bundled && !managedText && (
                 <p className="text-[13px] text-tx-2 leading-[1.5]">
                   Saving writes a new skill under the operator root and leaves the bundled directory unchanged.
                 </p>
@@ -414,7 +421,7 @@ export function SkillDrawer({
                   </button>
                 )}
                 {source && canWrite && (
-                  <button type="button" className="vg-side-btn" onClick={() => setUpdating(true)}>
+                  <button type="button" className="vg-side-btn" disabled={managedText !== null} title={managedText ?? undefined} onClick={() => setUpdating(true)}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5" />
                     </svg>
@@ -427,7 +434,7 @@ export function SkillDrawer({
                     <HoldButton label={approving ? 'Approving…' : 'Approve anyway'} name={`Approve ${detail?.name}`} disabled={approving} onConfirm={approveSkill} />
                   )}
                   {canWrite && (
-                    <button type="button" className="vg-side-btn primary" disabled={saveDisabled} onClick={save}>
+                    <button type="button" className="vg-side-btn primary" disabled={saveDisabled} title={managedText ?? undefined} onClick={save}>
                       {busy ? 'Saving…' : creating ? 'Save' : 'Save new version'}
                     </button>
                   )}

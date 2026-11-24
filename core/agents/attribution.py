@@ -371,7 +371,8 @@ def note_tool(claims: Claims, tool: str, args: Any, *, outcome: Optional[str]) -
     The payload names the tool and, when the call has one, its target.
     Arguments and the result body stay off it.
     """
-    actor = phase_actor(claims.run_id or "") or claims.agent_id
+    # A person running an approved row has no run or agent: they are the actor.
+    actor = phase_actor(claims.run_id or "") or claims.agent_id or claims.person_id
     payload: dict[str, Any] = {
         "action": "agent.tool.intent" if outcome is None else "agent.tool.outcome",
         "actor": actor,

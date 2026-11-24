@@ -2,8 +2,8 @@
 
 from core.upgrade.revision import run_sql
 
-revision = "0117_source_health_facts"
-down_revision = "0116_emulation_hosts"
+revision = "0118_source_health_facts"
+down_revision = "0117_reopen_unrun_containment"
 
 
 def upgrade() -> None:

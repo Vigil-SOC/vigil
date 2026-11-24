@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.detections.gaps import TECHNIQUE_ID
+from core.detections.reconstruction import answer_steps
 from core.storage import config_service as config_store
 from core.storage.models import SystemConfig
 from core.storage.unit_of_work import unit_of_work
@@ -274,22 +275,9 @@ def refusal(emulation: Emulation, tool: str, args: Dict[str, Any]) -> Optional[s
     return None
 
 
-def _steps(answer: Any) -> List[Dict[str, Any]]:
-    """The steps an answer holds: each object with ``steps``, or a bare step."""
-    found: List[Dict[str, Any]] = []
-    for item in answer if isinstance(answer, list) else [answer]:
-        if not isinstance(item, dict):
-            continue
-        if isinstance(item.get("steps"), list):
-            found += [s for s in item["steps"] if isinstance(s, dict)]
-        elif "technique_id" in item:
-            found.append(item)
-    return found
-
-
 def unlisted_hosts(emulation: Emulation, answer: Any) -> List[str]:
     """Hostnames the answer's steps name that are not listed, once each."""
-    hosts = [str(s.get("hostname") or "").strip() for s in _steps(answer)]
+    hosts = [str(s.get("hostname") or "").strip() for s in answer_steps(answer)]
     return list(
         _unique((h for h in hosts if h and emulation.listed(h) is None), str.lower)
     )

@@ -686,6 +686,7 @@ function turnFor(
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
     approvals: approvalsFor(options),
+    emulators: emulatorsOf(options.spec),
     ...(options.conversation === undefined ? { park_on_denial: true } : {}),
     verbs: [],
     result_cap: spec.runtime.result_cap,
@@ -724,6 +725,11 @@ export function deniedPark(events: readonly { kind: string; ts: string; payload:
 export function approvalsFor(options: Pick<AgentOptions, "spec" | "origin">): ReadonlySet<string> {
   const unattended = options.origin !== undefined && options.origin !== "person";
   return unattended ? new Set() : new Set(options.spec.approvals);
+}
+
+// The tools the deployment marks as emulators; each call to one is journaled.
+export function emulatorsOf(spec: Pick<RunSpec, "tools">): ReadonlySet<string> {
+  return new Set(spec.tools.filter((tool) => tool["emulator"] === true).map((tool) => tool.id));
 }
 
 // The system prompt's list of the skills an agent can load: a name and one line each.
@@ -928,6 +934,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
     answer_within_cap: true,
     approvals: approvalsFor(options),
+    emulators: emulatorsOf(options.spec),
     ...(sub.park_on_denial === true ? { park_on_denial: true } : {}),
     verbs: [],
     result_cap: options.spec.runtime.result_cap,

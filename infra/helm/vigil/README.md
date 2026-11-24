@@ -145,8 +145,9 @@ to those two pods when `networkPolicies.enabled` is set.
 
 Set `VIGIL_INTENT_DIR` on the daemon to a directory holding `INTENT.md` and
 `REVISION`, and the daemon applies each new revision without a restart. Unset,
-`INTENT.md` stays observe-only. Mount it on the daemon only: the daemon is the
-one applier, and the backend reads what it applied from the database.
+`INTENT.md` stays observe-only. The daemon is the one applier, and the backend
+reads what it applied from the database; mount the directory elsewhere only
+for skills (below).
 
 | Value | Default | |
 |---|---|---|
@@ -181,3 +182,29 @@ daemon:
   a tightening applies at once, a loosening is recorded as pending and waits
   for a person. A missing directory keeps the last revision, state `degraded`.
   `GET /api/config/intent` shows the revision, its state and the pending keys.
+
+### Skills in the declared directory
+
+Keep skills in the same checkout (`skills/<name>/SKILL.md`) and point
+`VIGIL_SKILLS_PATH` under the mount, and they are managed by it: the Skills
+screen and `GET /api/skills` show the directory and its revision, and Vigil
+refuses every save, upload, delete, repo install and library update there.
+They change by commit; a changed skill is held until its scan clears it, as
+any other. Every process that loads skills needs the mount and both settings:
+
+```yaml
+config:
+  VIGIL_SKILLS_PATH: /etc/vigil/intent/skills
+backend:
+  extraVolumes: [{name: intent, configMap: {name: vigil-intent}}]
+  extraVolumeMounts: [{name: intent, mountPath: /etc/vigil/intent, readOnly: true}]
+  extraEnv: [{name: VIGIL_INTENT_DIR, value: /etc/vigil/intent}]
+llmWorker:
+  extraVolumes: [{name: intent, configMap: {name: vigil-intent}}]
+  extraVolumeMounts: [{name: intent, mountPath: /etc/vigil/intent, readOnly: true}]
+# daemon: as above.
+```
+
+A ConfigMap is flat, so a skill folder needs a volume that keeps directories
+(a git-sync sidecar's emptyDir, or a ReadOnlyMany claim) rather than one
+ConfigMap.

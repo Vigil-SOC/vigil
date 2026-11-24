@@ -48,8 +48,8 @@ from services.medic.sensors.gateway import GatewayCall, get
 from services.medic.sensors.http_ready import failure
 
 SERVICE = "soc-daemon"
-COMPONENTS = ("poller", "kafka", "processor", "executor", "scheduler", "orchestrator")
-# The four work loops that count passes. Kafka and the executor do not.
+COMPONENTS = ("poller", "kafka", "processor", "scheduler", "orchestrator")
+# The four work loops that count passes. Kafka does not.
 PASS_COMPONENTS = ("poller", "processor", "scheduler", "orchestrator")
 STATES = frozenset({"running", "disabled", "stopped", "not_initialized", "failed"})
 STATUS_SIGNALS = tuple(f"daemon_status.{part}" for part in (*COMPONENTS, "vendors"))
@@ -57,7 +57,6 @@ KAFKA_CALL = GatewayCall("/api/kafka/status")
 ORCHESTRATOR_CALL = GatewayCall("/api/orchestrator/status")
 CALLS = (KAFKA_CALL, ORCHESTRATOR_CALL)
 _BODY_CAP = 1 << 20  # /status is a few KiB
-_EXECUTOR = ("executed", "failed", "errors")
 
 
 def _int(raw: object) -> int | None:
@@ -211,9 +210,6 @@ def _status(body: Mapping[str, Any]) -> dict[str, list[Value]]:
         "daemon_status.poller": _poller(_part(body, "poller")),
         "daemon_status.kafka": _kafka(_part(body, "kafka")),
         "daemon_status.processor": _processor(_part(body, "processor")),
-        "daemon_status.executor": [
-            Value.counter(k, _int(_part(body, "executor").get(k))) for k in _EXECUTOR
-        ],
         "daemon_status.scheduler": [
             Value.counter("tasks_run", _int(_part(body, "scheduler").get("tasks_run")))
         ],

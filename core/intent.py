@@ -164,6 +164,26 @@ INTENT_FILE_NAME = "INTENT.md"
 REVISION_FILE_NAME = "REVISION"
 
 
+def declared_dir(settings: Any = None) -> Optional[Path]:
+    """``VIGIL_INTENT_DIR``, or None when unset."""
+    raw = (settings or get_settings()).vigil_intent_dir.strip()
+    return Path(raw) if raw else None
+
+
+def read_revision(directory: Path) -> Tuple[bytes, str]:
+    """``<directory>/REVISION``'s bytes and the revision its first line names.
+
+    A missing or empty marker names ``unknown``. The daemon applier hashes the
+    bytes; the skills API reports the revision (#5070).
+    """
+    try:
+        marker = (directory / REVISION_FILE_NAME).read_bytes()
+    except FileNotFoundError:
+        marker = b""
+    lines = marker.decode("utf-8", "replace").splitlines()
+    return marker, (lines[0].strip()[:200] if lines else "") or "unknown"
+
+
 class IntentRejected(ValueError):
     """A declared revision that is not applied at all, and where it went wrong."""
 

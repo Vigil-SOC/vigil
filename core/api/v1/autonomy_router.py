@@ -11,6 +11,7 @@ Inactive accounts are refused by the auth dependency the mount adds to every
 route, so the handlers read the caller with ``get_current_user``.
 """
 
+import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -41,6 +42,7 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import ToolEffectClass, User
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 ROUTER_META = RouterMeta(
     prefix="/api/v1/autonomy",
@@ -198,17 +200,40 @@ def _principal(user: User) -> Optional[str]:
     return getattr(user, "principal_id", None) or getattr(user, "user_id", None)
 
 
+# A released row runs at once, as the person who released it (#5059).
+async def _run_released(actions, user: User, registry: MCPRegistry) -> None:
+    from core.auth.tool_principal import Claims
+    from core.response import containment
+
+    principal = _principal(user)
+    claims = Claims(
+        username=user.username,
+        person_id=principal and str(principal),
+        agent_id=None,
+        run_id=None,
+        origin="person",
+    )
+    registry = await containment.live_registry(registry)
+    for action in actions:
+        try:
+            await containment.carry_out(action, claims, registry)
+        except Exception:  # noqa: BLE001 — the rest still run
+            logger.exception("released action %s not run", action.action_id)
+
+
 @router.post("/held/release", dependencies=_DECIDE, response_model=CeilingResponse)
-def post_release_held(
+async def post_release_held(
     service: ApprovalService = Depends(provide_approvals),
     current_user: User = Depends(get_current_user),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> CeilingResponse:
-    """Clear the hold on every held action this person may decide.
+    """Clear the hold on every held action this person may decide, and run them.
 
-    Executes nothing. Each released row writes one trail entry.
+    Each released row writes one trail entry.
     """
     try:
-        service.release_held(current_user.username, _principal(current_user))
+        released = service.release_held(current_user.username, _principal(current_user))
+        await _run_released(released, current_user, registry)
         return _view()
     except HTTPException:
         raise
@@ -223,15 +248,13 @@ def post_release_held(
     dependencies=_DECIDE,
     response_model=CeilingResponse,
 )
-def post_release_action(
+async def post_release_action(
     action_id: str,
     service: ApprovalService = Depends(provide_approvals),
     current_user: User = Depends(get_current_user),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> CeilingResponse:
-    """Clear the hold on one action. The next executor pass runs it.
-
-    Executes nothing itself.
-    """
+    """Clear the hold on one action and run it, as the person releasing it."""
     try:
         updated = service.release_action(
             action_id, current_user.username, _principal(current_user)
@@ -244,6 +267,7 @@ def post_release_action(
         ) from None
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
+    await _run_released([updated], current_user, registry)
     try:
         return _view()
     except Exception as exc:

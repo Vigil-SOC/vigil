@@ -9,11 +9,15 @@ Verdicts: rule | loglm | both | missed. LogLM-origin is ``data_source ==
 gets: a step a rule-origin Finding cites is caught whatever its exit; any other
 step is ``unknown`` (with a ``reason``), never missed, when its runner reported an
 error or a null or non-zero exit, or when it ended less than ``LAG`` ago.
+
+A run's steps are read by ``steps_from_dispatch_results`` from emulator answers
+only (docs/emulators.md), so they correlate on hostname and window alone.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
@@ -289,19 +293,115 @@ _EVIDENCE_KEYS = (
 )
 
 
-def steps_from_dispatch_results(results: Any) -> List[Dict[str, Any]]:
-    """Pull action-trace steps out of journaled gated-execute ToolResults."""
-    if isinstance(results, dict):
-        held = results.get("results")
-        if isinstance(held, list):
-            results = held
-        else:
-            return _steps_from_result(results)
-    if not isinstance(results, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for item in results:
-        out.extend(_steps_from_result(item))
+# What an emulator's step is read for (docs/emulators.md); the rest is evidence only.
+STEP_FIELDS = ("technique_id", "hostname", "started_at", "ended_at", "exit", "id")
+
+
+def answer_steps(answer: Any) -> List[Dict[str, Any]]:
+    """The steps an emulator's answer holds: each object's ``steps``, or a bare
+    step. The one reader of the shape: the host check and the report both use it."""
+    found: List[Dict[str, Any]] = []
+    for item in answer if isinstance(answer, list) else [answer]:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("steps"), list):
+            found += [s for s in item["steps"] if isinstance(s, dict)]
+        elif "technique_id" in item:
+            found.append(item)
+    return found
+
+
+@dataclass
+class EmulatedSteps:
+    """A run's emulated steps, each once, and what was read but never scored."""
+
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    set_aside: List[Dict[str, Any]] = field(default_factory=list)
+    outside_hosts: List[str] = field(default_factory=list)
+    # An answer the row limit cut; a handle whose latest answer said done: false.
+    capped: bool = False
+    unfinished: List[str] = field(default_factory=list)
+
+    def notes(self) -> Dict[str, Any]:
+        return {
+            "set_aside": self.set_aside,
+            "outside_hosts": self.outside_hosts,
+            "capped": self.capped,
+            "unfinished": self.unfinished,
+        }
+
+
+def _set_aside_reason(step: Dict[str, Any], listed: Any) -> Optional[str]:
+    from core.detections.gaps import TECHNIQUE_ID
+
+    tid = step.get("technique_id")
+    if not isinstance(tid, str) or not TECHNIQUE_ID.match(tid.strip()):
+        return f"technique {tid!r} is not an ATT&CK technique id"
+    host = step.get("hostname")
+    if not isinstance(host, str) or not host.strip():
+        return "it names no hostname"
+    if listed(host.strip()) is None:
+        return f"hostname {host.strip()!r} is not listed for emulation"
+    if _window(step) is None:
+        return "it names no time"
+    return None
+
+
+def steps_from_dispatch_results(projection: Any) -> EmulatedSteps:
+    """The steps of a run's emulator answers: only results the agent layer stamped
+    as an emulator's, only ``STEP_FIELDS`` of each. A step with no hostname, no
+    time, a technique that is not an ATT&CK id or a host not listed now is set
+    aside with its reason, never scored; a step reported twice counts once (by
+    ``id``, else technique, host and start), its latest report kept."""
+    from core.response.emulation import read_emulation
+
+    out = EmulatedSteps()
+    emulated = projection.get("emulated") if isinstance(projection, dict) else None
+    if not isinstance(emulated, list) or not emulated:
+        return out
+    emulation = read_emulation()
+    kept: Dict[Any, Dict[str, Any]] = {}
+    aside: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    outside: Dict[str, str] = {}
+    done: Dict[str, Any] = {}
+    for entry in emulated:
+        result = entry.get("result") if isinstance(entry, dict) else None
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        out.capped = out.capped or result.get("capped") is True
+        rows = result.get("rows")
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("handle") not in (None, ""):
+                done[str(row["handle"])] = row.get("done")
+        for raw in answer_steps(rows):
+            step = {k: raw[k] for k in STEP_FIELDS if k in raw}
+            reason = _set_aside_reason(step, emulation.listed)
+            if reason is not None:
+                host = step.get("hostname")
+                if reason.startswith("hostname"):
+                    outside.setdefault(host.strip().lower(), host.strip())
+                aside[(reason, repr(sorted(step.items(), key=str)))] = {
+                    **step,
+                    "tool": entry.get("tool"),
+                    "reason": reason,
+                }
+                continue
+            step["technique_id"] = step["technique_id"].strip().upper()
+            step_id = step.get("id")
+            key = (
+                ("id", str(step_id))
+                if step_id not in (None, "")
+                else (
+                    step["technique_id"],
+                    step["hostname"].strip().lower(),
+                    _window(step)[0],  # type: ignore[index]
+                )
+            )
+            kept[key] = step
+    out.steps = list(kept.values())
+    out.set_aside = list(aside.values())
+    out.outside_hosts = list(outside.values())
+    out.unfinished = [h for h, d in done.items() if d is False]
     return out
 
 
@@ -496,45 +596,3 @@ def _missed_step(raw: Any, record: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, str) and value.strip():
             missed[key] = value
     return missed
-
-
-def _steps_from_result(item: Any) -> List[Dict[str, Any]]:
-    if isinstance(item, list):
-        return _steps_from_rows(item)
-    if not isinstance(item, dict):
-        return []
-    rows = item.get("rows")
-    if isinstance(rows, list) and ("ok" in item or "rowCount" in item):
-        return _steps_from_rows(rows)
-    if isinstance(item.get("steps"), list):
-        return [
-            row
-            for row in item["steps"]
-            if isinstance(row, dict) and _looks_like_step(row)
-        ]
-    if _looks_like_step(item):
-        return [item]
-    return []
-
-
-def _steps_from_rows(rows: List[Any]) -> List[Dict[str, Any]]:
-    steps: List[Dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        nested = row.get("steps")
-        if isinstance(nested, list):
-            steps.extend(
-                step
-                for step in nested
-                if isinstance(step, dict) and _looks_like_step(step)
-            )
-        elif _looks_like_step(row):
-            steps.append(row)
-    return steps
-
-
-def _looks_like_step(row: Dict[str, Any]) -> bool:
-    # Coverage groups by technique_id; other tool rows must not enter the trace.
-    tid = row.get("technique_id")
-    return isinstance(tid, str) and bool(tid.strip())

@@ -49,6 +49,44 @@ def record_decision(
             )
 
 
+# A containment's act and what the vendor answered, on each case it is on (#5059).
+# ``by`` is who ran it; None when a read found the state changed. Best effort.
+def record_execution(action: PendingAction, by: Optional[str]) -> None:
+    result = action.execution_result or {}
+    state = result.get("state") or action.status
+    tool = result.get("tool") or "the vendor"
+    summary = f"{action.title}: {state} ({tool}"
+    summary += f", run by {by})" if by else ")"
+    if state == "failed" and result.get("error"):
+        summary += f": {str(result['error'])[:300]}"
+    try:
+        from core.workflows.run_bridge_router import _add_activity
+
+        case_ids = case_ids_for(action)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not resolve the cases of %s", action.action_id)
+        return
+    for case_id in case_ids:
+        try:
+            _add_activity(
+                case_id,
+                f"containment_{state}",
+                summary,
+                {
+                    "action_id": action.action_id,
+                    "tool": result.get("tool"),
+                    "vendor": result.get("vendor"),
+                    "vendor_id": result.get("vendor_id"),
+                    "state": state,
+                    **({"run_by": by} if by else {}),
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "could not record %s on case %s", action.action_id, case_id
+            )
+
+
 # A rule promotion or deploy PR (#4068): audit the answer; an approval does the
 # move. The decision stands if that fails: the sweep retries an approved one.
 async def rollout_decided(
