@@ -107,10 +107,12 @@ async def lifespan(app: FastAPI):
 
     from services.daemon.gaps import start_gaps_run
     from tools.mcp.vigil import mcp as vigil_mcp
-    from tools.mcp.vigil import serve_gaps_runs
+    from tools.mcp.vigil import serve_day1_runs, serve_gaps_runs
 
     # start_gaps_run on /mcp queues through the daemon's intake, which tools/ can't import.
     serve_gaps_runs(start_gaps_run)
+    # start_day1_report builds the report from this process's health.
+    serve_day1_runs(app.state.process_health)
 
     # Stateless: no MCP session lives in a process's memory, so a client's
     # requests may land on any worker or replica. Nothing needs a session --

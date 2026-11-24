@@ -14781,6 +14781,7 @@ export interface components {
             provider_id: string;
             /** Provider Type */
             provider_type: string;
+            residency: components["schemas"]["ProviderResidency"];
             /** Updated At */
             updated_at: string | null;
         };
@@ -15937,6 +15938,22 @@ export interface components {
          * @enum {string}
          */
         ProposalState: "draft" | "linted" | "replayed" | "converted" | "shadow" | "live" | "rejected";
+        /**
+         * ProviderResidency
+         * @description ``Residency.public`` as a response model, shared by the provider API
+         *     and the gateway routability read so the generated client has one type.
+         */
+        ProviderResidency: {
+            /** Address Known */
+            address_known: boolean;
+            /**
+             * Class
+             * @enum {string}
+             */
+            class: "local_by_address" | "your_cloud" | "hosted" | "unknown";
+            /** Reason */
+            reason?: string | null;
+        };
         /** PushedGroup */
         PushedGroup: {
             /** Display Name */
@@ -16235,6 +16252,13 @@ export interface components {
             /** Providers */
             providers: {
                 [key: string]: boolean;
+            };
+            /**
+             * Residency
+             * @default {}
+             */
+            residency: {
+                [key: string]: components["schemas"]["ProviderResidency"];
             };
         };
         /** RunListItem */

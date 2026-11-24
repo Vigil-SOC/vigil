@@ -13,6 +13,7 @@ and notifies only when a settings check that passed now fails.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import uuid
@@ -27,8 +28,15 @@ from core.auth import mfa_coverage, security_keys, session_policy
 from core.auth.permissions import holders, missing_permission
 from core.config import is_demo_mode
 from core.integrations import health
-from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
+from core.integrations.readiness import (
+    DESKTOP_LINE,
+    READY,
+    UNAVAILABLE,
+    UNKNOWN,
+    evaluate,
+)
 from core.platform import notices
+from core.platform.process_health import ProcessHealth
 from core.reporting.checks import (
     COVERAGE,
     ESTATE,
@@ -194,6 +202,26 @@ def notify_finished(trigger: str, actor_id: Optional[str], record_id: str) -> No
             notices.notify(principal, NOTICE_KIND, NOTICE_TITLE, message, link=link)
         except Exception:  # noqa: BLE001 - the record is already stored
             logger.exception("day 1 report notice was not sent")
+
+
+async def run_on_demand(
+    actor_id: str,
+    processes: ProcessHealth,
+    begun: Optional[asyncio.Future] = None,
+) -> str:
+    """Run the Day 1 Report now as ``actor_id``, tell them, and return the record id.
+
+    ``begun`` gets the run id once the start is committed, for a caller that
+    does not wait for the record. A failure after that leaves the start, which
+    Home shows as not completed.
+    """
+    state = await evaluate(processes)
+    run_id = await asyncio.to_thread(begin_on_demand, actor_id)
+    if begun is not None and not begun.done():
+        begun.set_result(run_id)
+    record_id = await asyncio.to_thread(finish, run_id, ON_DEMAND, actor_id, state)
+    await asyncio.to_thread(notify_finished, ON_DEMAND, actor_id, record_id)
+    return record_id
 
 
 def build(state: dict) -> dict[str, Any]:

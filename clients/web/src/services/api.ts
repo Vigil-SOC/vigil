@@ -830,6 +830,8 @@ export interface LLMProvider {
   last_error: string | null
   created_at: string | null
   updated_at: string | null
+  /** where its calls go, as the server classifies it (shared/residency.ts labels it) */
+  residency: Schema<'ProviderResidency'>
 }
 
 export const llmProviderApi = {

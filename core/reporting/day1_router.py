@@ -14,22 +14,12 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import require_permission
-from core.deps import provide_process_health
-from core.integrations.readiness import evaluate
-from core.platform.process_health import ProcessHealth
 from core.reporting.checks import MODULES
-from core.reporting.day1 import (
-    ON_DEMAND,
-    begin_on_demand,
-    finish,
-    notify_finished,
-    read_record,
-    status,
-)
+from core.reporting.day1 import read_record, run_on_demand, status
 from core.reporting.enablement import (
     RECURRING_MAX_DAYS,
     disabled_module_ids,
@@ -44,6 +34,8 @@ from core.storage.models import User
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+NO_REPORT = "No Day 1 Report yet."
 
 ROUTER_META = RouterMeta(
     prefix="/api/day1-report",
@@ -315,10 +307,20 @@ class Day1Status(BaseModel):
     latest_at: Optional[str] = None
 
 
+def presented(user_id: str, record_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """The record as GET /api/day1-report returns it, or None. /mcp reads it here too."""
+    body = read_record(user_id, record_id)
+    return (
+        None
+        if body is None
+        else Day1Report.model_validate(body).model_dump(mode="json")
+    )
+
+
 def _report(user_id: str, record_id: Optional[str]) -> Day1Report:
     body = read_record(user_id, record_id)
     if body is None:
-        raise HTTPException(status_code=404, detail="No Day 1 Report yet.")
+        raise HTTPException(status_code=404, detail=NO_REPORT)
     return Day1Report.model_validate(body)
 
 
@@ -387,18 +389,15 @@ def day1_report(
 
 @router.post("", response_model=Day1Report)
 async def run_day1_report(
+    request: Request,
     user: User = Depends(require_permission("platform.write")),
-    processes: ProcessHealth = Depends(provide_process_health),
 ) -> Day1Report:
     """Run the Day 1 Report now. Tells the person who started it."""
-    state = await evaluate(processes)
-    run_id = await asyncio.to_thread(begin_on_demand, user.principal_id)
     try:
-        record_id = await asyncio.to_thread(
-            finish, run_id, ON_DEMAND, user.principal_id, state
+        record_id = await run_on_demand(
+            user.principal_id, request.app.state.process_health
         )
     except Exception:  # noqa: BLE001 - the start stays, Home shows it did not complete
         logger.exception("on-demand day 1 report did not complete")
         raise HTTPException(status_code=500, detail="Internal server error") from None
-    await asyncio.to_thread(notify_finished, ON_DEMAND, user.principal_id, record_id)
     return await asyncio.to_thread(_report, user.user_id, record_id)
