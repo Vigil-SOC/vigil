@@ -271,11 +271,14 @@ HISTORY_BEFORE = ReportModule("history.before", "findings.read")
 HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
 HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
 HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
-# The Production Start Report. Day 1's build does not call these.
+# The Production Start Report. Day 1's build does not call these. Confidence
+# and agreement are figures only: they have no checks.
 RUNNING = ReportModule("production.running", "platform.read")
 QUIET = ReportModule("production.quiet", "findings.read")
 # Figures, no checks. The body is evidence["production.alerts"].
 ALERTS = ReportModule("production.alerts", "findings.read")
+CONFIDENCE = ReportModule("production.confidence", "platform.read")
+AGREEMENT = ReportModule("production.agreement", "platform.read")
 
 # Ids are not prefixes of each other: spec_for also matches "id.".
 CHECKS: tuple[ReportCheck, ...] = (
@@ -743,6 +746,8 @@ MODULES = {
     RUNNING.id: RUNNING,
     QUIET.id: QUIET,
     ALERTS.id: ALERTS,
+    CONFIDENCE.id: CONFIDENCE,
+    AGREEMENT.id: AGREEMENT,
 }
 
 
