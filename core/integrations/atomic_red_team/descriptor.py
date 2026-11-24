@@ -14,6 +14,7 @@ ATOMIC_RED_TEAM = register_descriptor(
         fields=(
             IntegrationField("runner_path"),
             IntegrationField("atomics_path"),
+            IntegrationField("allowed_hosts"),
         ),
     )
 )

@@ -5,7 +5,7 @@ import type { Schema } from '../../services/apiTypes'
 import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { InfoTip } from '../../shared/InfoTip'
-import { ToggleRow } from '../../shared/ui'
+import { NumberInput, ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
@@ -185,6 +185,8 @@ function triggerWord(trigger: Trigger, name: string | null): string {
       return 'Fallback time'
     case 'on_demand':
       return name ? `On demand, by ${name}` : 'On demand'
+    case 'recurring':
+      return 'Recurring'
     case 'production':
       return 'Automatic'
     case 'production_on_demand':
@@ -890,6 +892,9 @@ export default function ReportScreen() {
   const [report, setReport] = useState<Loaded | null>(null)
   const [modules, setModules] = useState<ModuleSetting[] | null>(null)
   const [savingModule, setSavingModule] = useState<string | null>(null)
+  const [recurringDays, setRecurringDays] = useState<number | null>(null)
+  const [daysDraft, setDaysDraft] = useState('')
+  const [savingDays, setSavingDays] = useState(false)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runningSince, setRunningSince] = useState<string | null>(null)
@@ -919,6 +924,10 @@ export default function ReportScreen() {
       (res) => ({ ok: true as const, data: res.data }),
       (err: unknown) => ({ ok: false as const, err }),
     )
+    const recurringRead = day1Api.recurring().then(
+      (res) => res.data.days,
+      () => null,
+    )
     let lineError: string | null = null
     try {
       const line = await statusRead
@@ -934,6 +943,9 @@ export default function ReportScreen() {
     else if (!isStatus(moduleBody.err, 403)) {
       lineError = lineError ?? errorText(moduleBody.err, 'Could not load report modules')
     }
+    const days = await recurringRead
+    setRecurringDays(days)
+    if (days) setDaysDraft(String(days))
     const body = await reportRead
     if (body.ok) {
       setReport(body.data)
@@ -981,6 +993,21 @@ export default function ReportScreen() {
       setSavingModule(null)
     }
   }
+
+  const saveDays = async (days: number) => {
+    setSavingDays(true)
+    try {
+      const { data } = await day1Api.setRecurring(days)
+      setRecurringDays(data.days)
+      if (data.days) setDaysDraft(String(data.days))
+    } catch (err) {
+      if (!stepUpDetailOf(err)) notify('err', errorText(err, 'Could not save how often the report runs'))
+    } finally {
+      setSavingDays(false)
+    }
+  }
+  const draftDays = Number(daysDraft)
+  const draftValid = Number.isInteger(draftDays) && draftDays >= 1 && draftDays <= 365
 
   const day1 = report && !isProduction(report) ? report : null
   const produced = report && isProduction(report) ? report : null
@@ -1053,6 +1080,16 @@ export default function ReportScreen() {
           </p>
         )}
         {comparedAt && <p className="d1-meta">Compared with {reportStamp(comparedAt)}</p>}
+        {day1 && (day1.not_run ?? []).length > 0 && (
+          <p className="d1-meta">
+            Not run this time: {(day1.not_run ?? []).map((id) => MODULE_TITLE[id] ?? id).join(', ')}.
+          </p>
+        )}
+        {day1?.hidden_worse && (
+          <p className="d1-withheld" role="status">
+            A section you can&apos;t read got worse since the last run.
+          </p>
+        )}
         {(runningSince || incompleteSince) && (
           <p className="d1-quiet" role="status">
             {runningSince && <>Running since {reportStamp(runningSince)}. </>}
@@ -1089,6 +1126,48 @@ export default function ReportScreen() {
                 onChange={(enabled) => void setModule(row.id, enabled)}
               />
             ))}
+            {recurringDays !== null && (
+              <>
+                <ToggleRow
+                  label="Run again on its own"
+                  hint={
+                    recurringDays
+                      ? `Every ${recurringDays === 1 ? 'day' : `${recurringDays} days`}. A notice goes out only when a setting that passed now fails.`
+                      : 'Off'
+                  }
+                  checked={recurringDays > 0}
+                  disabled={!canRun || savingDays}
+                  onChange={(on) => void saveDays(on ? (draftValid ? draftDays : 7) : 0)}
+                />
+                {recurringDays > 0 && canRun && (
+                  <form
+                    className="d1-every"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      if (draftValid) void saveDays(draftDays)
+                    }}
+                  >
+                    <label htmlFor="d1-every-days">Every</label>
+                    <NumberInput
+                      id="d1-every-days"
+                      min={1}
+                      max={365}
+                      step={1}
+                      value={daysDraft}
+                      onChange={(event) => setDaysDraft(event.target.value)}
+                    />
+                    <span>days</span>
+                    <button
+                      type="submit"
+                      className="btn"
+                      disabled={savingDays || !draftValid || draftDays === recurringDays}
+                    >
+                      Save
+                    </button>
+                  </form>
+                )}
+              </>
+            )}
           </section>
         )}
       </div>

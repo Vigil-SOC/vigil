@@ -50,6 +50,17 @@
   gap: 12px;
 }
 
+.d1-every {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tx1);
+}
+
+.d1-every .field-input { width: 88px; }
+
 .d1-card-head {
   display: flex;
   flex-wrap: wrap;

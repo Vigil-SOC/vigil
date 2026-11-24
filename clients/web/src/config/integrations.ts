@@ -1362,7 +1362,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'atomic-red-team',
     name: 'Atomic Red Team',
     category: 'Forensics & Analysis',
-    description: 'Invoke one Atomic Red Team technique against a named range or staging replica. Operator installs the runner; Vigil does not vendor the atomics repo.',
+    description: 'Invoke one Atomic Red Team technique on a host the operator has listed. Operator installs the runner; Vigil does not vendor the atomics repo.',
     functionality_type: 'Adversary Emulation',
     fields: [
       {
@@ -1371,7 +1371,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'text',
         required: true,
         placeholder: '/usr/local/bin/art-runner',
-        helpText: 'Operator-installed executable. Invoked as `<runner> --technique <id>` with optional `--atomics-path`.',
+        helpText: 'Operator-installed executable. Invoked as `<runner> --technique <id> --hostname <host>` with optional `--atomics-path`.',
       },
       {
         name: 'atomics_path',
@@ -1380,6 +1380,14 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         placeholder: '/opt/atomic-red-team/atomics',
         helpText: 'Directory of Atomic YAML tests. Leave empty if the runner has its own default.',
+      },
+      {
+        name: 'allowed_hosts',
+        label: 'Allowed hosts',
+        type: 'text',
+        required: false,
+        placeholder: 'lab-win10-01, lab-dc-01',
+        helpText: 'Emulation runs only on these hosts, separated by commas; any other host is refused, and nothing runs while the list is empty. Some Atomic tests change a host in ways that cannot be undone.',
       },
     ],
     docs_url: 'https://github.com/redcanaryco/atomic-red-team',

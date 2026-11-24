@@ -2284,3 +2284,120 @@ async def start_gaps_run() -> str:
         return outcome.as_dict()
 
     return await _acall(start)
+
+
+# --- The assessment, for a caller outside Vigil (#5046) ------------------------
+
+
+def _counted(missed: dict) -> dict:
+    """``runs_rules_missed`` with each hunt and case reduced to a count."""
+    return {
+        **missed,
+        "groups": [
+            {
+                **group,
+                "runs": len(group["runs"]),
+                "confirmed_runs": len(group["confirmed_runs"]),
+                "ruled_out": len(group["ruled_out"]),
+            }
+            for group in missed.get("groups", [])
+        ],
+        "unknown": len(missed.get("unknown", [])),
+    }
+
+
+@tool("Detection gaps report", reads=True)
+@requires("detections.read")
+async def get_gaps_report() -> str:
+    """What Vigil cannot see, as its own agents read it: techniques on stored
+    alerts no active rule declares, blind spots, proven runs no rule alerted on
+    over 30 days (``runs_rules_missed``) and rules that broke (``rule_health``).
+    The hunts and cases behind a missed run are named only to a caller who may
+    read cases; others get counts. A case the caller can't read is left out."""
+    from core.detections.tools import get_security_detection_tools
+
+    async def read() -> dict:
+        report = await get_security_detection_tools().identify_gaps()
+        if permission_refusal("cases.read") is not None:
+            report["runs_rules_missed"] = _counted(report["runs_rules_missed"])
+        return report
+
+    return await _acall(read)
+
+
+@tool("Day 1 Report", reads=True)
+@requires("platform.read")
+def get_day1_report(record_id: Optional[str] = None) -> str:
+    """The Day 1 Report as the console shows it to you: the latest record, or
+    ``record_id``, with each section you may not read withheld. ``status`` says
+    whether a run is being written (``running_since``), did not complete, and
+    which record is the latest (``latest_id``)."""
+    from core.reporting.day1 import status
+    from core.reporting.day1_router import NO_REPORT, presented
+
+    principal, _ = _person()
+    if principal is None:
+        return jdump({"error": "no person is bound to this call"})
+
+    def read() -> dict:
+        report = presented(principal, record_id)
+        if report is None:
+            return {"error": NO_REPORT, "status": status()}
+        return {"status": status(), "report": report}
+
+    return _call(read)
+
+
+# Building the report reads the API's process health, which tools/ cannot reach.
+# The API that serves /mcp hands it in at startup.
+_process_health: Any = None
+_day1_runs: set = set()
+
+
+def serve_day1_runs(processes: Any) -> None:
+    global _process_health
+    _process_health = processes
+
+
+@tool("Start a Day 1 Report run")
+@requires("platform.write")
+async def start_day1_report() -> str:
+    """Run the Day 1 Report now, as you; you are notified when it is ready.
+    Returns at once with ``run_id``: poll ``get_day1_report`` until
+    ``status.latest_id`` changes, and its ``report.run_id`` is this ``run_id``."""
+    import asyncio
+
+    from core.auth import tool_principal
+    from core.reporting.day1 import run_on_demand
+
+    if tool_principal.current_claims() is not None:
+        return jdump(_OUTSIDE_ONLY)
+    if _process_health is None:
+        return jdump({"error": "a report run cannot be started from this process"})
+    principal, _ = _person()
+    if principal is None:
+        return jdump({"error": "no person is bound to this call"})
+
+    begun = asyncio.get_running_loop().create_future()
+    run = asyncio.create_task(run_on_demand(principal, _process_health, begun))
+    # Held until done, so the task is not collected mid-run.
+    _day1_runs.add(run)
+
+    def done(task: asyncio.Task) -> None:
+        _day1_runs.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "on-demand day 1 report did not complete: %s", task.exception()
+            )
+
+    run.add_done_callback(done)
+    await asyncio.wait({begun, run}, return_when=asyncio.FIRST_COMPLETED)
+    if not begun.done():
+        return jdump({"error": "the report run could not be started"})
+    return jdump(
+        {
+            "run_id": begun.result(),
+            "status": "running",
+            "message": "Poll get_day1_report for status.latest_id.",
+        }
+    )

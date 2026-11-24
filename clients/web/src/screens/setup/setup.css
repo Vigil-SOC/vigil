@@ -643,8 +643,12 @@
   font-weight: 600;
 }
 
-.su-resid.stays {
+.su-resid.your_cloud {
   color: var(--good);
+}
+
+.su-resid.unknown {
+  color: var(--fair);
 }
 
 .su-keyrow {

@@ -3,8 +3,8 @@
    gateway provider, and which model each agent uses.
 
    Providers and keys come from Bifrost; assignments from Vigil's own
-   ai_model_configs. Hosted-or-local is the setup wizard's rule
-   (providerResidency), not a second one.
+   ai_model_configs. Where each provider's calls go is the server's class
+   (core/llm/residency.py, on the routability read), labelled by shared/residency.
    ============================================================ */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
@@ -12,10 +12,11 @@ import { ConfirmDialog, EmptyState, Select, SettingsCard } from '../../shared/ui
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { type AIModelInfo, type ComponentAssignment } from '../../services/api'
-import type { BifrostKey, BifrostProvider } from '../../services/bifrostApi'
-import { bifrostStaysOnSite, residencyCopy } from '../setup/providerResidency'
+import type { BifrostProvider, BifrostRoutability } from '../../services/bifrostApi'
+import { RESIDENCY_LABEL, residencyLabel, residencyOf, type Residency, type ResidencyClass } from '../../shared/residency'
 import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
+import { ROUTABILITY_CHANGED } from './routabilityChanged'
 import { useModelAssignment } from './useSettings'
 import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
 import { InvestigationReplay } from './InvestigationReplay'
@@ -71,6 +72,12 @@ export const AGENT_MODEL_TABLE_ID = 'ai-model-for-each-agent'
 export default function AiModelsOverview({ notify }: SectionProps) {
   const ma = useModelAssignment()
   const bf = useBifrostProviders()
+  // A write in the Keys panel below (its own hook) can change a provider's class.
+  const { reload } = bf
+  useEffect(() => {
+    window.addEventListener(ROUTABILITY_CHANGED, reload)
+    return () => window.removeEventListener(ROUTABILITY_CHANGED, reload)
+  }, [reload])
   const names = bf.shown.map((p) => p.name)
   const defaultName = defaultProviderName(ma.assignments[CHAT_DEFAULT_KEY], ma.models, names)
 
@@ -85,14 +92,14 @@ export default function AiModelsOverview({ notify }: SectionProps) {
       )}
       {bf.phase === 'ready' && names.length > 0 && (
         <>
-          <ResidencyBanner providers={bf.shown} keys={bf.keys} />
+          <ResidencyBanner providers={bf.shown} verdicts={bf.verdicts} />
           <div className="aim-cards">
             {bf.shown.map((provider) => (
               <ProviderCard
                 key={provider.name}
                 provider={provider}
                 keyCount={(bf.keys[provider.name] || []).length}
-                stays={bifrostStaysOnSite(provider.name, bf.keys[provider.name] || [], provider)}
+                residency={residencyOf(bf.verdicts?.residency?.[provider.name])}
                 isDefault={provider.name === defaultName}
                 // null verdicts is "could not ask" — no badge, never Poor
                 routable={bf.verdicts ? !!bf.verdicts.providers?.[provider.name] : null}
@@ -106,20 +113,34 @@ export default function AiModelsOverview({ notify }: SectionProps) {
   )
 }
 
-// the residency copy leads with its label ("Hosted: …"); the banner names each group itself
-const residencyPhrase = (stays: boolean) => residencyCopy(stays).replace(/^(Hosted|Local): /, '')
+// One sentence per class, each naming its providers; unknown names its reason.
+const BANNER_GROUPS: { cls: ResidencyClass; text: (names: string) => string }[] = [
+  { cls: 'hosted', text: (n) => ` Hosted models (${n}): data leaves your site.` },
+  { cls: 'your_cloud', text: (n) => ` In your cloud account: ${n}.` },
+  { cls: 'local_by_address', text: (n) => ` ${RESIDENCY_LABEL.local_by_address}: ${n}.` },
+]
 
-function ResidencyBanner({ providers, keys }: { providers: BifrostProvider[]; keys: Record<string, BifrostKey[]> }) {
-  const stays = (p: BifrostProvider) => bifrostStaysOnSite(p.name, keys[p.name] || [], p)
-  const hosted = providers.filter((p) => !stays(p)).map((p) => providerLabel(p.name))
-  const local = providers.filter(stays).map((p) => providerLabel(p.name))
+function ResidencyBanner({ providers, verdicts }: { providers: BifrostProvider[]; verdicts: BifrostRoutability | null }) {
+  const of = (p: BifrostProvider) => residencyOf(verdicts?.residency?.[p.name])
+  const named = (cls: ResidencyClass) => providers.filter((p) => of(p).class === cls).map((p) => providerLabel(p.name))
+  // unknown providers grouped by the server's reason
+  const unknown = new Map<string, string[]>()
+  for (const p of providers.filter((p) => of(p).class === 'unknown')) {
+    const why = residencyLabel(of(p)).replace(/^Not known: /, '')
+    unknown.set(why, [...(unknown.get(why) || []), providerLabel(p.name)])
+  }
   return (
     <div className="aim-banner" role="status">
       <Icon name="info" size={17} />
       <span>
         <b>Where your data goes:</b>
-        {hosted.length > 0 && ` hosted models (${hosted.join(', ')}): ${residencyPhrase(false)}.`}
-        {local.length > 0 && ` Local models (${local.join(', ')}): ${residencyPhrase(true)}.`}
+        {BANNER_GROUPS.map(({ cls, text }) => {
+          const names = named(cls)
+          return names.length > 0 && <Fragment key={cls}>{text(names.join(', '))}</Fragment>
+        })}
+        {[...unknown].map(([why, names]) => (
+          <Fragment key={why}>{` Not known for ${names.join(', ')}: ${why}.`}</Fragment>
+        ))}
         {' '}Changing the default model asks you to confirm and is logged.
       </span>
     </div>
@@ -136,10 +157,10 @@ function hostOf(url: string | undefined): string | null {
   }
 }
 
-function ProviderCard({ provider, keyCount, stays, isDefault, routable }: {
+function ProviderCard({ provider, keyCount, residency, isDefault, routable }: {
   provider: BifrostProvider
   keyCount: number
-  stays: boolean
+  residency: Residency
   isDefault: boolean
   routable: boolean | null
 }) {
@@ -151,7 +172,7 @@ function ProviderCard({ provider, keyCount, stays, isDefault, routable }: {
   let keys: string
   if (keyCount > 0) keys = `${count} · ${host ?? 'via the gateway'}`
   else if (keyLess && host) keys = `No key needed · ${host}`
-  else keys = stays ? 'Local server · no key' : 'Not set up'
+  else keys = 'Not set up'
   return (
     <div className={`aim-card${isDefault ? ' default' : ''}`}>
       <div className="aim-card-top">
@@ -162,8 +183,8 @@ function ProviderCard({ provider, keyCount, stays, isDefault, routable }: {
         {routable !== null && (keyCount > 0 || keyLess) && <LevelBadge variant="pill" level={routable ? 'good' : 'poor'} />}
       </div>
       <span className="aim-card-keys" title={host ? url : undefined}>{keys}</span>
-      <span className={`aim-card-where${stays ? ' local' : ''}`}>
-        {residencyCopy(stays)}
+      <span className={`aim-card-where ${residency.class}`}>
+        {residencyLabel(residency)}
       </span>
     </div>
   )

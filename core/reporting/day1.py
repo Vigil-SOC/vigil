@@ -5,17 +5,22 @@ A start is committed there, and the record is inserted afterwards, so a
 start this process is still writing shows as running and a start left
 behind shows as not completed. That start does not start another automatic
 run. On demand takes the same lock.
+
+After the first readiness or fallback record, the report runs again on a
+cadence (``recurring``). A recurring run is read against the run before it,
+and notifies only when a settings check that passed now fails.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from core.audit.retention import view as retention_view
@@ -23,8 +28,15 @@ from core.auth import mfa_coverage, security_keys, session_policy
 from core.auth.permissions import holders, missing_permission
 from core.config import is_demo_mode
 from core.integrations import health
-from core.integrations.readiness import DESKTOP_LINE, READY, UNAVAILABLE, UNKNOWN
+from core.integrations.readiness import (
+    DESKTOP_LINE,
+    READY,
+    UNAVAILABLE,
+    UNKNOWN,
+    evaluate,
+)
 from core.platform import notices
+from core.platform.process_health import ProcessHealth
 from core.reporting.checks import (
     CHANGES,
     COVERAGE,
@@ -41,7 +53,11 @@ from core.reporting.checks import (
     spec_for,
 )
 from core.reporting.coverage import produce as produce_coverage
-from core.reporting.enablement import disabled_module_ids
+from core.reporting.enablement import (
+    RECURRING_KEY,
+    disabled_module_ids,
+    parse_recurring,
+)
 from core.reporting.estate import produce as produce_estate
 from core.reporting.forecast import failed as forecast_failed
 from core.reporting.forecast import produce as produce_forecast
@@ -65,10 +81,11 @@ SETUP_KEY = "setup.wizard"
 READINESS = "readiness"
 FALLBACK = "fallback"
 ON_DEMAND = "on_demand"
+RECURRING = "recurring"
 # The Production Start Report uses the same tables. Day 1 readers ignore both.
 PRODUCTION = "production"
 PRODUCTION_ON_DEMAND = "production_on_demand"
-DAY1_TRIGGERS = (READINESS, FALLBACK, ON_DEMAND)
+DAY1_TRIGGERS = (READINESS, FALLBACK, ON_DEMAND, RECURRING)
 
 PASS = "pass"
 FAIL = "fail"
@@ -81,6 +98,9 @@ PREFACE = "This report describes the install, not the demo data."
 NOTICE_KIND = "day1_report"
 NOTICE_TITLE = "Day 1 Report"
 NOTICE_MESSAGE = "A Day 1 Report is ready."
+RECURRING_MESSAGE = (
+    "A setting checked by the Day 1 Report got worse since the last run."
+)
 
 _ALERT_KINDS = frozenset({"pulled", "kafka", "receiver"})
 _INTEGRATION_KINDS = frozenset({"integration", "pulled"})
@@ -119,7 +139,8 @@ def consider(
     Unknown and the desktop app's unavailable state are not first readiness.
     When the fallback and first readiness fall due together, the trigger is
     readiness. A later tick that finds a start or a record for that trigger
-    starts nothing.
+    starts nothing. Once either has a record, a recurring run falls due one
+    interval after the latest record or recurring start.
     """
     now = now or utcnow()
     _ensure_anchor(session, now)
@@ -157,19 +178,51 @@ def finish(run_id: str, trigger: str, actor_id: Optional[str], state: dict) -> s
 
 def notify_finished(trigger: str, actor_id: Optional[str], record_id: str) -> None:
     """One link-only notice. Automatic runs go to platform.write holders;
-    an on-demand run goes to the person who started it. No section content."""
+    an on-demand run goes to the person who started it. No section content.
+    A recurring run notifies only when a settings check regressed."""
     link = f"/report?record={record_id}"
+    message = NOTICE_MESSAGE
+    if trigger == RECURRING:
+        try:
+            with unit_of_work() as session:
+                record = session.get(ReportRecord, record_id)
+                regressed = _regressed(session, record) if record is not None else []
+        except Exception:  # noqa: BLE001 - the record is stored; the tick goes on
+            logger.exception("day 1 report could not compare for a notice")
+            return
+        # Other modules show as worse on the page. Medic and the gaps run notify on those.
+        if not any(check.get("module") == SETTINGS.id for check in regressed):
+            return
+        message = RECURRING_MESSAGE
     if trigger == ON_DEMAND and actor_id:
         recipients = [actor_id]
     else:
         recipients = holders("platform.write")
     for principal in recipients:
         try:
-            notices.notify(
-                principal, NOTICE_KIND, NOTICE_TITLE, NOTICE_MESSAGE, link=link
-            )
+            notices.notify(principal, NOTICE_KIND, NOTICE_TITLE, message, link=link)
         except Exception:  # noqa: BLE001 - the record is already stored
             logger.exception("day 1 report notice was not sent")
+
+
+async def run_on_demand(
+    actor_id: str,
+    processes: ProcessHealth,
+    begun: Optional[asyncio.Future] = None,
+) -> str:
+    """Run the Day 1 Report now as ``actor_id``, tell them, and return the record id.
+
+    ``begun`` gets the run id once the start is committed, for a caller that
+    does not wait for the record. A failure after that leaves the start, which
+    Home shows as not completed.
+    """
+    state = await evaluate(processes)
+    run_id = await asyncio.to_thread(begin_on_demand, actor_id)
+    if begun is not None and not begun.done():
+        begun.set_result(run_id)
+    record_id = await asyncio.to_thread(finish, run_id, ON_DEMAND, actor_id, state)
+    await asyncio.to_thread(notify_finished, ON_DEMAND, actor_id, record_id)
+    return record_id
 
 
 def build(state: dict) -> dict[str, Any]:
@@ -414,6 +467,17 @@ def _present(
                 ),
             )
         checks.append(shown)
+    # A recurring record says when a section the reader can't see got worse.
+    # The check is never named.
+    hidden_worse = record.trigger == RECURRING and any(
+        check.get("module") in hidden or not _allowed(session, user_id, check)
+        for check in _regressed(session, record, compared)
+    )
+    not_run = (
+        [m for m in compared.modules or [] if m not in (record.modules or [])]
+        if compared is not None
+        else []
+    )
     evidence = record.evidence or {}
     switched_off = []
     if VISIBILITY.id not in hidden:
@@ -438,6 +502,8 @@ def _present(
         "compared_at": (
             _iso(prior_record.recorded_at) if prior_record is not None else None
         ),
+        "not_run": not_run,
+        "hidden_worse": hidden_worse,
         "checks": checks,
         "selection": _selection_public(evidence.get("selection")),
         "evidence": _readable_evidence(session, user_id, record, hidden),
@@ -542,7 +608,8 @@ def day1_anchor(
     ``started_at``. When every Day 1 record is later, the earliest, and the
     mode is ``before``. ``none`` when there is no Day 1 record.
     """
-    day1 = ReportRecord.trigger.in_(DAY1_TRIGGERS)
+    # Recurring runs are Day 1 records, and they are not this anchor.
+    day1 = ReportRecord.trigger.in_((READINESS, FALLBACK, ON_DEMAND))
     if started_at is not None:
         latest = (
             session.query(ReportRecord)
@@ -581,9 +648,17 @@ def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
 
     The latest completed record strictly earlier than this one whose trigger
     is readiness or fallback. When that record does not exist, the earliest
-    completed record. Nothing is stored.
+    completed record. A recurring record is read against the latest earlier
+    Day 1 record of any trigger. Nothing is stored.
     """
     before = ReportRecord.recorded_at < record.recorded_at
+    if record.trigger == RECURRING:
+        return (
+            session.query(ReportRecord)
+            .filter(before, ReportRecord.trigger.in_(DAY1_TRIGGERS))
+            .order_by(ReportRecord.recorded_at.desc())
+            .first()
+        )
     day1 = (
         session.query(ReportRecord)
         .filter(before, ReportRecord.trigger.in_((READINESS, FALLBACK)))
@@ -599,6 +674,36 @@ def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:
         .order_by(ReportRecord.recorded_at.asc())
         .first()
     )
+
+
+_UNSET: Any = object()
+
+
+def _regressed(
+    session: Session, record: ReportRecord, compared: Any = _UNSET
+) -> list[dict]:
+    """Checks on the full record that passed on the compared run and now fail.
+
+    A fail explained by a moved cited value or a changed selection is changed,
+    not regressed. No permission filter: whether to notify is judged on the
+    whole record.
+    """
+    if compared is _UNSET:
+        compared = _compared(session, record)
+    if compared is None:
+        return []
+    prior = {check.get("id"): check for check in compared.checks or []}
+    current_selection = (record.evidence or {}).get("selection")
+    prior_selection = (compared.evidence or {}).get("selection")
+    regressed = []
+    for check in record.checks or []:
+        before = prior.get(check.get("id"))
+        if before is None or before.get("outcome") != PASS:
+            continue
+        result = _comparison(check, before, current_selection, prior_selection)
+        if result["kind"] == "new" and "change" not in result:
+            regressed.append(check)
+    return regressed
 
 
 def _visible_checks(
@@ -738,7 +843,9 @@ def _due(session: Session, readiness: Optional[str], now: datetime) -> Optional[
     readiness_clear = READINESS not in records and READINESS not in starts
     if readiness == READY and readiness_clear:
         return READINESS
-    if not readiness_clear or FALLBACK in records or FALLBACK in starts:
+    if READINESS in records or FALLBACK in records:
+        return RECURRING if _recurring_due(session, now) else None
+    if not readiness_clear or FALLBACK in starts:
         return None
     anchor = _anchor_time(session)
     clock = _clock_start(session)
@@ -747,6 +854,30 @@ def _due(session: Session, readiness: Optional[str], now: datetime) -> Optional[
     if now >= max(anchor, clock) + FALLBACK_AFTER:
         return FALLBACK
     return None
+
+
+def _recurring_due(session: Session, now: datetime) -> bool:
+    """One interval after the latest Day 1 record or recurring start. 0 is off.
+
+    A recurring start left without a record counts, so it is tried again after
+    one interval and not on every tick.
+    """
+    row = session.get(SystemConfig, RECURRING_KEY)
+    days = parse_recurring(row.value if row is not None else None)
+    if days == 0:
+        return False
+    latest_record = (
+        session.query(func.max(ReportRecord.recorded_at))
+        .filter(ReportRecord.trigger.in_(DAY1_TRIGGERS))
+        .scalar()
+    )
+    latest_start = (
+        session.query(func.max(ReportRun.started_at))
+        .filter(ReportRun.trigger == RECURRING)
+        .scalar()
+    )
+    last = max(t for t in (latest_record, latest_start, datetime.min) if t)
+    return now >= last + timedelta(days=days)
 
 
 def _triggers(session: Session, model) -> set[str]:
