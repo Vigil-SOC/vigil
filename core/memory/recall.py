@@ -74,6 +74,7 @@ from core.memory.recall_contract import (
     recall_ranking,
 )
 from core.storage.unit_of_work import unit_of_work
+from core.workflows.redecision_hold import redecision_close
 
 Args = Dict[str, Any]
 Row = Dict[str, Any]
@@ -127,23 +128,24 @@ def _statement(
     columns: str,
     scoped: bool = True,
     collapse: bool = False,
+    hold: str = "",
 ) -> Any:
     shown = f" AND {_OFFERED}" if scoped else ""
     # A verdict returned through two keys keeps the copy with the larger burst, so
     # the rows _page folds away are accounted for on the row it keeps.
     copies = " r.burst_count DESC," if collapse else ""
     if collapse:
-        matched, page = _collapsed_laterals(table, predicate, shown)
+        matched, page = _collapsed_laterals(table, predicate, shown, hold)
     else:
         # Nothing folds, so every matched row is its own representative.
         matched = f"""
             SELECT count(*) AS total, count(*) AS reps
             FROM {table} AS c
-            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of{shown.format(alias="c")}"""
+            WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of{shown.format(alias="c")}{hold.format(alias="c")}"""
         page = f"""
             SELECT *
             FROM {table} AS p
-            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}"""
+            WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}{hold.format(alias="p")}"""
     return text(f"""
         SELECT m.total AS matched_total, m.reps AS matched_reps, {columns}
         FROM unnest(CAST(:keys AS text[])) AS k(key)
@@ -166,7 +168,9 @@ def _burst_partition(alias: str) -> str:
     )
 
 
-def _collapsed_laterals(table: str, predicate: str, shown: str) -> Tuple[str, str]:
+def _collapsed_laterals(
+    table: str, predicate: str, shown: str, hold: str = ""
+) -> Tuple[str, str]:
     """The total and page laterals with bursts folded to their newest row.
 
     In SQL and before the LIMIT, so the per-key cap counts representatives. The
@@ -184,7 +188,7 @@ def _collapsed_laterals(table: str, predicate: str, shown: str) -> Tuple[str, st
                         ORDER BY {_order_by("c")}) AS burst_rank
                     FROM unnest(CAST(:keys AS text[])) AS k(key)
                     JOIN {table} AS c ON {predicate.format(alias="c")}
-                    WHERE c.concluded_at <= :as_of{shown.format(alias="c")}
+                    WHERE c.concluded_at <= :as_of{shown.format(alias="c")}{hold.format(alias="c")}
                 ) AS c
                 GROUP BY c.id
             ) AS t"""
@@ -196,7 +200,7 @@ def _collapsed_laterals(table: str, predicate: str, shown: str) -> Tuple[str, st
                     min(p.concluded_at) OVER b AS burst_first,
                     max(p.concluded_at) OVER b AS burst_last
                 FROM {table} AS p
-                WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}
+                WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of{shown.format(alias="p")}{hold.format(alias="p")}
                 WINDOW b AS (PARTITION BY {_burst_partition("p")})
             ) AS p
             WHERE p.burst_rank = 1"""
@@ -211,6 +215,13 @@ def _collapsed_laterals(table: str, predicate: str, shown: str) -> Tuple[str, st
 # Applied to the total too, so the dropped count says nothing about such entries.
 _RESTRICTED_CASE = """(coalesce(cardinality(rc.reader_principal_ids), 0) > 0
                OR coalesce(cardinality(rc.reader_team_ids), 0) > 0)"""
+# A re-decision drops imported verdicts and gaps. Sightings stay. Live reads
+# pass drop_imported false, so the predicate adds nothing.
+_IMPORTED_HOLD = (
+    " AND (NOT CAST(:drop_imported AS boolean)"
+    " OR {alias}.investigation_kind <> 'imported')"
+)
+
 _OFFERED = f"""NOT ({{alias}}.investigation_kind = 'case'
     AND {{alias}}.investigation_id IS DISTINCT FROM CAST(:own_case AS text)
     AND EXISTS (
@@ -262,9 +273,20 @@ _NOTE_COLUMNS = "r.id, r.entity_key, r.statement, r.written_by, r.concluded_at"
 _QUERIES = {
     "sightings": _statement("episodic_sightings", _BY_KEY, _ANY_KEY, _SIGHTING_COLUMNS),
     "verdicts": _statement(
-        "episodic_verdicts", _BY_SUBJECT, _ANY_SUBJECT, _VERDICT_COLUMNS, collapse=True
+        "episodic_verdicts",
+        _BY_SUBJECT,
+        _ANY_SUBJECT,
+        _VERDICT_COLUMNS,
+        collapse=True,
+        hold=_IMPORTED_HOLD,
     ),
-    "gaps": _statement("episodic_gaps", _BY_SUBJECT, _ANY_SUBJECT, _GAP_COLUMNS),
+    "gaps": _statement(
+        "episodic_gaps",
+        _BY_SUBJECT,
+        _ANY_SUBJECT,
+        _GAP_COLUMNS,
+        hold=_IMPORTED_HOLD,
+    ),
     # Notes are an analyst's, keyed to no case: install-wide (a stated limit).
     "notes": _statement(
         "episodic_notes", _BY_KEY, _ANY_KEY, _NOTE_COLUMNS, scoped=False
@@ -603,7 +625,16 @@ def recall(
     has un-logged the read it performed. Only the tests pass one today.
     """
     normalised = normalise_keys(list(keys))
-    moment = _as_of(as_of)
+    # A marked run forces the close and ignores as_of in the arguments. recall_entity
+    # reaches that here, the same way it takes own_case from the claims. Live runs
+    # pass through with the as_of they were given.
+    claims = current_claims()
+    close = (
+        redecision_close(claims.run_id)
+        if claims is not None and claims.run_id
+        else None
+    )
+    moment = close if close is not None else _as_of(as_of)
     result: Dict[str, Any] = {
         "keys": normalised,
         "as_of": iso(moment),
@@ -622,6 +653,7 @@ def recall(
                 "as_of": moment,
                 "per_key_cap": RECALL_PER_KEY_CAP,
                 "own_case": own_case,
+                "drop_imported": close is not None,
             }
             pages: Dict[str, List[_Selected]] = {}
             for kind in KINDS:

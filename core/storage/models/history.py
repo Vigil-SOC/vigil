@@ -1,8 +1,9 @@
-"""History import ORM models (#4886, #5091): an import's record, its tickets
-and its file alerts.
+"""History import ORM models (#4886, #5091, #5092): an import's record, its
+tickets and its file alerts.
 
-The DDL (core/upgrade/versions/0106_history_imports.sql and
-0120_history_alerts.sql) states the domains.
+The DDL (core/upgrade/versions/0106_history_imports.sql,
+0120_history_alerts.sql and 0121_history_ticket_alert_ids.sql) states the
+domains.
 """
 
 from datetime import datetime
@@ -81,6 +82,11 @@ class HistoryTicket(Base):
     severity: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
     rule_id: Mapped[Optional[str]] = mapped_column(Text)
     entity_keys: Mapped[List[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    # Alert ids the ticket named. Empty for a connected pull and for an
+    # import stored before the column existed.
+    alert_ids: Mapped[List[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default=text("'{}'")
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, default="")

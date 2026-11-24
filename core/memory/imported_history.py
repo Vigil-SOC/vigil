@@ -17,7 +17,8 @@ raw disposition, which memory's rows have no place for. No closer is stored:
 ``closed_by``, assignee and owner are read only to find bulk closes.
 
 A file's alerts are also ``history_alerts``, one row per alert id (#5091).
-Sightings stay aggregated. A connected pull passes no alerts, so it writes none.
+Each kept ticket stores the alert ids it named (#5092). Sightings stay
+aggregated. A connected pull passes no alerts, so it writes none.
 """
 
 from __future__ import annotations
@@ -511,6 +512,8 @@ def _tickets(
             "severity": severity,
             "rule_id": str(rule_id)[:500] if rule_id is not None else None,
             "entity_keys": subjects,
+            # The same cap as history_alerts.alert_id. A connected pull names none.
+            "alert_ids": [ref[:500] for ref in _alert_ids(ticket)],
             "title": bounded_prose(ticket.get("title") or ""),
             "notes_fingerprint": (
                 hashlib.sha256(notes.encode()).hexdigest() if notes else None

@@ -14,6 +14,7 @@ from core.storage.models import Case, WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
 from core.telemetry import get_meter
 from core.time import utcnow
+from core.workflows.redecision_hold import MARK
 from core.workflows.run_rating import RATED_STATUS
 
 logger = logging.getLogger(__name__)
@@ -322,6 +323,11 @@ class WorkflowRunService:
                 # Deleted rows are hidden here rather than dropped from the table:
                 # the ledger behind a run is the only account of what an agent did.
                 stmt = select(WorkflowRun).where(WorkflowRun.deleted_at.is_(None))
+                # Re-decision runs stay out of every listing. A fetch by run id
+                # still returns the ledger.
+                stmt = stmt.where(
+                    WorkflowRun.trigger_context[MARK].astext.is_distinct_from("true")
+                )
                 if workflow_id:
                     stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
                 if workflow_source:
