@@ -41,6 +41,7 @@ from core.agents.projections import parse_window_instant, read_projection
 from core.config import vigil_path
 from core.detections.reconstruction import (
     _EVIDENCE_KEYS,
+    EmulatedSteps,
     coverage_report,
     steps_from_dispatch_results,
 )
@@ -246,11 +247,15 @@ async def _score(run: Mapping[str, Any], projection: Any) -> Optional[Dict[str, 
     """One projection read, then the coverage path. An empty trace is absent."""
     if projection is None:
         return None
-    trace = steps_from_dispatch_results(projection)
-    return await _scored(run, trace) if trace else None
+    read = steps_from_dispatch_results(projection)
+    return await _scored(run, read.steps, read.notes()) if read.steps else None
 
 
-async def _scored(run: Mapping[str, Any], trace: List[Any]) -> Dict[str, Any]:
+async def _scored(
+    run: Mapping[str, Any],
+    trace: List[Any],
+    notes: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     run_id = str(run["run_id"])
     reconstructed = await get_security_detection_tools().reconstruct_run(steps=trace)
     return {
@@ -258,28 +263,36 @@ async def _scored(run: Mapping[str, Any], trace: List[Any]) -> Dict[str, Any]:
         "investigation_id": run_id,
         "origin_run_id": run_id,
         "concluded_at": _stamp(run.get("finished_at")),
-        "payload": coverage_report(trace, reconstructed),
+        "payload": {**coverage_report(trace, reconstructed), **(notes or {})},
     }
 
 
 async def emulation_traces(
     start: datetime, end: datetime
 ) -> List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
-    """(run, execute trace) of each compose run finished in [start, end] with one."""
+    """(run, emulated steps) of each compose run finished in [start, end] with one."""
+    return [(run, read.steps) for run, read in await _emulated_runs(start, end)]
+
+
+async def _emulated_runs(
+    start: datetime, end: datetime
+) -> List[Tuple[Dict[str, Any], EmulatedSteps]]:
     runs = _compose_runs(start, end)
     projections = await asyncio.gather(*(read_projection(r["run_id"]) for r in runs))
     out = []
     for run, projection in zip(runs, projections):
-        trace = steps_from_dispatch_results(projection) if projection else []
-        if trace:
-            out.append((run, trace))
+        read = steps_from_dispatch_results(projection)
+        if read.steps:
+            out.append((run, read))
     return out
 
 
 async def emulation_episodes(start: datetime, end: datetime) -> List[Dict[str, Any]]:
-    """Compose runs finished in [start, end] with an execute trace, each scored."""
+    """Compose runs finished in [start, end] with emulated steps, each scored on
+    the filtered steps only: nothing set aside reaches caught or the gaps report."""
     return [
-        await _scored(run, trace) for run, trace in await emulation_traces(start, end)
+        await _scored(run, read.steps, read.notes())
+        for run, read in await _emulated_runs(start, end)
     ]
 
 
@@ -405,7 +418,8 @@ async def _emulation_by_id(run_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _strip_emulation(episode: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop host, ip, user, and command from steps and missed steps. Citations stay."""
+    """Drop host, ip, user, and command from steps, missed and set-aside steps, and
+    the hosts and handles the run's notes name. Citations stay."""
 
     def strip(steps: Any) -> List[Any]:
         return [
@@ -434,7 +448,13 @@ def _strip_emulation(episode: Dict[str, Any]) -> Dict[str, Any]:
                 "missed": strip(technique.get("missed")),
             }
         )
-    return {**episode, "payload": {**episode["payload"], "techniques": techniques}}
+    payload = {**episode["payload"], "techniques": techniques}
+    # What was set aside names hosts; the export keeps only how much.
+    if "set_aside" in payload:
+        payload["set_aside"] = strip(payload["set_aside"])
+    payload.pop("outside_hosts", None)
+    payload.pop("unfinished", None)
+    return {**episode, "payload": payload}
 
 
 def _for_export(episode: Dict[str, Any], *, identified: bool) -> Dict[str, Any]:

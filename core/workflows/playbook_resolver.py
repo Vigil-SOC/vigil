@@ -34,6 +34,7 @@ DEFAULT_RUNTIME = {"max_turns": 8, "result_cap": 20_000, "recall_limit": 3}
 EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
+EMULATION = "emulation"
 
 # What the investigate arch's lead asks for. Only telemetry_search needs an
 # integration; the rest are native tools. Naming them as capabilities is what lets
@@ -160,12 +161,22 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("azure-ad", ("aad_get_user",)),
         Candidate("okta", ("get_okta_user", "list_okta_users")),
     ),
-    # The MITRE analyst's emulation tool: the registry flattens it to
-    # atomic-red-team_atomic_red_team_execute, so the bare need binds nothing.
-    "atomic_red_team_execute": (
-        Candidate("atomic-red-team", ("atomic_red_team_execute",)),
-    ),
+    # Every outside tool the stored emulation record marks, read when resolve
+    # runs (_candidates): no tool is named here, so a person's mark is the binding.
+    EMULATION: (),
 }
+
+# A need a stored manifest may still name, and the capability it now means.
+NEED_ALIASES: Dict[str, str] = {"atomic_red_team_execute": EMULATION}
+
+
+def candidates_for(capability: str) -> Tuple[Candidate, ...]:
+    """What answers a capability; a need that is none names one catalogue tool."""
+    if capability == EMULATION:
+        from core.response.emulation import read_emulation
+
+        return tuple(Candidate(None, (tool,)) for tool in read_emulation().tools)
+    return CAPABILITIES.get(capability) or (Candidate(None, (capability,)),)
 
 
 # What one call of a capability may take and return, decided by the capability rather
@@ -207,6 +218,9 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     },
     # One account from an external API; the row cap allows a short user search.
     "identity_lookup": {"timeout_ms": 30_000, "max_rows": 20},
+    # An emulator runs one technique on one host; a runner's own limit is 180s.
+    # Its answer is a step or a few; the row cap is the bounds model's shape.
+    EMULATION: {"timeout_ms": 240_000, "max_rows": 200},
 }
 
 
@@ -219,8 +233,9 @@ def _bound_capabilities(
     needs: List[str], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
-    for capability in needs:
-        candidates = CAPABILITIES.get(capability) or (Candidate(None, (capability,)),)
+    for need in needs:
+        capability = NEED_ALIASES.get(need, need)
+        candidates = candidates_for(capability)
         found = False
         for candidate in candidates:
             name = next((n for n in candidate.names() if n in catalogue), None)
@@ -260,7 +275,11 @@ def unknown_needs(
     needs: List[str], registry: Optional["MCPRegistry"] = None
 ) -> List[str]:
     catalogue = _tool_catalogue(registry)
-    return [n for n in needs if n not in CAPABILITIES and n not in catalogue]
+    return [
+        n
+        for n in needs
+        if n not in CAPABILITIES and n not in NEED_ALIASES and n not in catalogue
+    ]
 
 
 # What an investigate run's lead holds: an operator manifest's needs, else the
@@ -477,8 +496,22 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if effect in (REVERSIBLE, IRREVERSIBLE)
     }
     writes = own | outside
+    # A tool the emulation record marks is an emulator wherever it was bound: the
+    # agent layer journals each call to it, and it gets the emulation bounds.
+    from core.response.emulation import read_emulation
+
+    emulation = read_emulation()
     return [
-        {**tool, "writes": True} if tool["id"] in writes else tool for tool in tools
+        {
+            **tool,
+            **({"writes": True} if tool["id"] in writes else {}),
+            **(
+                {**CAPABILITY_BOUNDS[EMULATION], "emulator": True}
+                if emulation.marked(tool["id"])
+                else {}
+            ),
+        }
+        for tool in tools
     ]
 
 

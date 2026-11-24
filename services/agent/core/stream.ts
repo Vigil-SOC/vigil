@@ -485,14 +485,17 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.calls.push(attempt);
     this.transcript.push({ role: "tool", call_id: call.id, content: guarded?.shown ?? wrapped.text });
     this.results += 1;
-    if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
-    else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
+    // An emulator's answer is journaled gated or not, stamped, so its steps are read
+    // only from calls the deployment marked (#5062).
+    const emulator = this.cfg.emulators?.has(call.tool) === true && tool !== undefined;
+    if (gated !== undefined) await this.journalExecuted(gated, call.tool, result, emulator);
+    else if (emulator || call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result, emulator);
     yield { type: "tool_result", call, attempt, ...(ref === undefined ? {} : { ref }) };
   }
 
   // The dispatch event's own id is the checkpoint's, so the next pass finds it by
   // the same derivation that raised the approval.
-  private async journalExecuted(checkpointId: string, tool: string, result: ToolResult): Promise<void> {
+  private async journalExecuted(checkpointId: string, tool: string, result: ToolResult, emulator = false): Promise<void> {
     const payload: DispatchPayload = {
       dispatch_id: checkpointId,
       agent_id: this.cfg.role,
@@ -500,6 +503,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       question_id: null,
       failure_reason: result.ok ? null : result.failure.kind,
       result,
+      ...(emulator ? { tool, emulator: true as const } : {}),
     };
     await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "dispatch", payload });
   }
