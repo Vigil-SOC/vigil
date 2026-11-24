@@ -917,7 +917,9 @@ def sync_repos() -> List[Any]:
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
         reports.append(accurate.sweep())
-        reports.append(caught.sweep())  # at most once a day; local reads only
+        # Verdicts at most once a day; each sync, a shadow copy not yet passing is
+        # searched once per matching emulated step, from its SIEM's budget.
+        reports.append(caught.sweep())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
