@@ -6211,7 +6211,7 @@ export interface paths {
         post?: never;
         /**
          * Remove Import
-         * @description Delete one whole import: its Verdicts, Sightings, tickets and record.
+         * @description Delete one whole import: its Verdicts, Sightings, tickets, alerts and record.
          */
         delete: operations["delete_api_memory_imports_import_id"];
         options?: never;
@@ -13451,6 +13451,13 @@ export interface components {
              */
             notes: string;
         };
+        /** DroppedColumn */
+        DroppedColumn: {
+            /** Count */
+            count: number;
+            /** Name */
+            name: string;
+        };
         /** EditRequest */
         EditRequest: {
             /**
@@ -14350,6 +14357,8 @@ export interface components {
             bulk_not_tested: number;
             /** Concluded At */
             concluded_at: string | null;
+            /** Dropped Columns */
+            dropped_columns: components["schemas"]["DroppedColumn"][];
             /** Error */
             error: string | null;
             /** Finished At */
