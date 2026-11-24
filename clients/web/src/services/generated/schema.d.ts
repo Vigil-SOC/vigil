@@ -13828,6 +13828,8 @@ export interface components {
             external_id?: string | null;
             /** Finding Id */
             finding_id?: string | null;
+            /** First Verdict At */
+            first_verdict_at?: string | null;
             /** Mitre Predictions */
             mitre_predictions?: unknown | null;
             /** Severity */

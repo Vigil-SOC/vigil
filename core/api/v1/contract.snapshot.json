@@ -3995,6 +3995,17 @@
             ],
             "title": "Finding Id"
           },
+          "first_verdict_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Verdict At"
+          },
           "mitre_predictions": {
             "anyOf": [
               {},

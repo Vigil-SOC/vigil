@@ -263,10 +263,14 @@ class DemoDataService:
     def write_ai_enrichment(
         self, finding_id: str, ai_enrichment: Dict[str, Any], *, daemon: bool, **updates
     ) -> bool:
-        from core.storage.service import merge_ai_enrichment
+        from core.storage.service import keep_first_verdict, merge_ai_enrichment
 
         for f in DemoDataService._findings:
             if f.get("finding_id") == finding_id:
+                if "first_verdict_at" in updates:
+                    f["first_verdict_at"] = keep_first_verdict(
+                        f.get("first_verdict_at"), updates.pop("first_verdict_at")
+                    )
                 f.update(updates)
                 f["ai_enrichment"] = merge_ai_enrichment(
                     f.get("ai_enrichment"), ai_enrichment, daemon=daemon
