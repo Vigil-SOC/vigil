@@ -28,7 +28,8 @@ from core.llm.providers.registry import (
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import delete_secret, secret_write_failure_detail, set_secret
-from core.storage.models import LLMProviderConfig, User
+from core.storage.config_service import write_config_audit
+from core.storage.models import AIModelConfig, LLMProviderConfig, User
 from core.storage.schemas import LLMProviderConfigSchema
 from services.api.middleware.auth import get_current_active_user
 
@@ -108,6 +109,52 @@ def _to_response(row: LLMProviderConfig) -> Dict[str, Any]:
     return d
 
 
+_AUDITED_FIELDS = (
+    "provider_type",
+    "name",
+    "base_url",
+    "default_model",
+    "is_active",
+    "is_default",
+    "config",
+)
+
+
+def _snapshot(row: Any) -> Dict[str, Any]:
+    """What the audit diffs: the row's settings, never its key."""
+    return {f: getattr(row, f) for f in _AUDITED_FIELDS}
+
+
+def _audit(
+    db: UnitOfWorkSession,
+    user: User,
+    config_key: str,
+    action: str,
+    before: Optional[Dict[str, Any]],
+    after: Optional[Dict[str, Any]],
+    *,
+    config_type: str = "llm_provider",
+) -> None:
+    """One entry on the request's session, written before any key leaves for
+    the secrets store or the gateway, so a refused entry stops the change."""
+    write_config_audit(
+        db,
+        config_type=config_type,
+        config_key=config_key,
+        action=action,
+        old_value=before,
+        new_value=after,
+        changed_by=str(user.user_id),
+    )
+
+
+def _key_change(api_key: Optional[str]) -> Dict[str, str]:
+    # Names what happened to the key without its value.
+    if api_key is None:
+        return {}
+    return {"key_change": "cleared" if api_key == "" else "set"}
+
+
 def _validate_type(provider_type: str) -> None:
     if provider_type not in VALID_PROVIDER_TYPES:
         raise HTTPException(
@@ -168,6 +215,9 @@ async def create_provider(
             status_code=409, detail=f"provider_id '{provider_id}' already exists"
         )
 
+    created = _snapshot(payload) | _key_change(payload.api_key or None)
+    _audit(db, current_user, provider_id, "create", None, created)
+
     api_key_ref: Optional[str] = None
     if payload.api_key:
         api_key_ref = _secret_ref_for(provider_id)
@@ -210,6 +260,7 @@ async def update_provider(
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
+    before = _snapshot(row)
     if payload.name is not None:
         row.name = payload.name
     if payload.base_url is not None:
@@ -223,6 +274,29 @@ async def update_provider(
         # mirror row a mirror row.
         managed = {k: v for k, v in (row.config or {}).items() if k == "managed_by"}
         row.config = {**managed, **payload.config}
+
+    if payload.is_default is True:
+        row.is_default = True
+        provider_service.clear_other_defaults(db, row.provider_type, provider_id)
+    elif payload.is_default is False:
+        if row.is_default:
+            # Guard: only enforce when transitioning True → False.
+            other_default = provider_service.find_other_default(
+                db, row.provider_type, provider_id
+            )
+            if other_default is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot unset the only default provider. "
+                        "Set another provider as default first."
+                    ),
+                )
+        row.is_default = False
+
+    after = _snapshot(row) | _key_change(payload.api_key)
+    if after != before:
+        _audit(db, current_user, provider_id, "update", before, after)
 
     if payload.api_key is not None:
         # Empty string clears the key; non-empty rotates it.
@@ -245,25 +319,6 @@ async def update_provider(
             row.api_key_ref = ref
             push_provider_key(row.provider_type, payload.api_key)
 
-    if payload.is_default is True:
-        row.is_default = True
-        provider_service.clear_other_defaults(db, row.provider_type, provider_id)
-    elif payload.is_default is False:
-        if row.is_default:
-            # Guard: only enforce when transitioning True → False.
-            other_default = provider_service.find_other_default(
-                db, row.provider_type, provider_id
-            )
-            if other_default is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Cannot unset the only default provider. "
-                        "Set another provider as default first."
-                    ),
-                )
-        row.is_default = False
-
     provider_service.settle(db, row)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"updated provider {provider_id}")
@@ -280,6 +335,19 @@ async def delete_provider(
     row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
+
+    _audit(db, current_user, provider_id, "delete", _snapshot(row), None)
+    # The cascade below clears these assignments; record each as its own route does.
+    for assigned in db.query(AIModelConfig).filter_by(provider_id=provider_id):
+        _audit(
+            db,
+            current_user,
+            assigned.component,
+            "delete",
+            {"provider_id": provider_id, "model_id": assigned.model_id},
+            None,
+            config_type="ai_model",
+        )
 
     # Guard: refuse to delete the only active default for this provider type.
     if row.is_default:
