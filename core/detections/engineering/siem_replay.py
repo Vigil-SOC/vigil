@@ -14,8 +14,9 @@ Per SIEM, two reads, each one search of that SIEM's budget:
 - **attack**: the events a person named by id, else the events of the proposal's
   Case: on its hosts, users or addresses, inside its window (its Verdict's, else
   its Findings'), padded by ``CLAIM_PAD``; the newest ``MAX_ATTACK``. A gaps-run
-  proposal has no Case: its gap's runs (``hunt:<id>``, ``case:<id>``) are read
-  instead, each Verdict's hosts inside that Verdict's own window;
+  proposal has no Case: its gap's runs (``hunt:<id>``, ``case:<id>``,
+  ``emulation:<run id>``) are read instead, each Verdict's hosts inside that
+  Verdict's own window, and each emulated step's host inside its own start to end;
 - **benign**: the newest ``MAX_BENIGN`` events in the window that hold a field the
   rule reads. Those any Case or hunt claims (a Verdict's hosts, users or
   addresses inside its window, unless the Verdict ruled the run out) are left
@@ -270,7 +271,8 @@ def claim_of(
 
 
 def ledger_claims(since_days: int) -> List[Claim]:
-    """Every Case and hunt Verdict concluded in the window, as a claim."""
+    """Every Case and hunt Verdict concluded in the window, and every emulated step
+    of a compose run finished in it, as a claim. Blocking: call off the loop."""
     from core.detections.gaps import RULED_OUT, read_ledger
 
     return [
@@ -283,7 +285,34 @@ def ledger_claims(since_days: int) -> List[Claim]:
         )
         for v in read_ledger(since_days)
         if v.get("first_seen") and v.get("last_seen")
-    ]
+    ] + asyncio.run(emulation_claims(since_days))
+
+
+async def emulation_claims(since_days: int) -> List[Claim]:
+    """One claim per emulated step (its host, user or address, started_at to
+    ended_at), ref ``emulation:<run id>``; runs on a Case the caller can't read are
+    left out. The step's text is evidence, never instructions."""
+    from core.detections.reconstruction import _entities_from_step, _window
+    from core.memory.learning_episodes import emulation_traces
+    from core.workflows.workflow_run_service import run_unreadable
+
+    end = datetime.now(timezone.utc)
+    claims = []
+    for run, trace in await emulation_traces(end - timedelta(days=since_days), end):
+        if await asyncio.to_thread(run_unreadable, run["run_id"]):
+            continue
+        for step in trace:
+            window = _window(step)
+            if window is not None:
+                claims.append(
+                    claim_of(
+                        f"emulation:{run['run_id']}",
+                        _entities_from_step(step),
+                        window[0],
+                        window[1],
+                    )
+                )
+    return claims
 
 
 def case_claim(case_id: str, claims: Sequence[Claim]) -> Optional[Claim]:

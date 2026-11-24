@@ -160,6 +160,11 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("azure-ad", ("aad_get_user",)),
         Candidate("okta", ("get_okta_user", "list_okta_users")),
     ),
+    # The MITRE analyst's emulation tool: the registry flattens it to
+    # atomic-red-team_atomic_red_team_execute, so the bare need binds nothing.
+    "atomic_red_team_execute": (
+        Candidate("atomic-red-team", ("atomic_red_team_execute",)),
+    ),
 }
 
 
