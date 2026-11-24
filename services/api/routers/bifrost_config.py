@@ -235,7 +235,7 @@ def _resolve_vertex_scope(vertex: Dict[str, Any], key_id: Optional[str]) -> None
         )
 
 
-def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
+def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> bool:
     """Fill in the endpoint an Ollama write left out, in place.
 
     ``env.OLLAMA_URL`` and friends pass straight through — a reference is not a
@@ -243,9 +243,13 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
     ``env_var`` unmasked. Anything else masked or absent falls back to our own
     copy, and a key first configured outside Vigil has none, so that case asks
     rather than pointing the gateway at nothing.
+
+    Returns True when the write points the key at a server other than the one
+    stored for it.
     """
     supplied = ollama.get("url")
     if supplied and not _is_masked(supplied):
+        stored = get_secret(_ollama_ref(key_id)) if key_id else None
         if isinstance(supplied, str) and not supplied.startswith("env."):
             # Rejected, never repaired: a URL the gateway can't dial fails
             # every request later with an error that doesn't point here.
@@ -255,7 +259,7 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-        return
+        return supplied != stored
     stored = get_secret(_ollama_ref(key_id)) if key_id else None
     if not stored:
         raise HTTPException(
@@ -267,9 +271,12 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
             ),
         )
     ollama["url"] = stored
+    return False
 
 
-def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None:
+def _resolve_optional_token(
+    body: Dict[str, Any], key_id: Optional[str], moved: bool
+) -> None:
     """Carry a bearer token through a write that didn't retype it, in place.
 
     Ollama's own server takes no credential, but the gateway does send
@@ -283,22 +290,32 @@ def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None
     "keep what is stored", so a weight edit does not silently strip the token
     off a key that needs one. An *empty* value is the operator choosing the
     unauthenticated mode, and has to survive — substituting the stored token
-    there would make the switch back impossible.
+    there would make the switch back impossible. ``moved`` is a write that
+    points the key at another server: a stored token is not carried there.
     """
+    supplied = body.get("value")
+    if supplied and not _is_masked(supplied):
+        return
+    if "value" in body and not supplied:
+        return
+    stored = get_secret(_secret_ref(key_id)) if key_id else None
+    if stored and moved:
+        # A stored token goes only to the server it was entered for.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This Ollama key's server URL changed, and its stored bearer token "
+                "would be sent to the new server. Enter the token again, or leave "
+                "it empty for no authentication."
+            ),
+        )
     if "value" not in body:
-        stored = get_secret(_secret_ref(key_id)) if key_id else None
         if stored:
             body["value"] = stored
-        return
-    supplied = body["value"]
-    if not supplied:
-        return
-    if not _is_masked(supplied):
         return
     # A mask is the console echoing what it was shown, which it does not do for
     # this field — but a third-party client might, and storing the mask as a
     # token would send the gateway off with a credential of asterisks.
-    stored = get_secret(_secret_ref(key_id)) if key_id else None
     if stored:
         body["value"] = stored
     else:
@@ -363,6 +380,10 @@ def _resolve_vertex_service_account(
     body.pop("value", None)
 
 
+# Key blocks that carry the key's own endpoint (Azure) or account (Bedrock).
+_KEY_DESTINATION_BLOCKS = ("azure_key_config", "bedrock_key_config")
+
+
 def _resolve_key_value(
     body: Dict[str, Any], key_id: Optional[str], provider: Optional[str] = None
 ) -> None:
@@ -395,8 +416,8 @@ def _resolve_key_value(
         if not isinstance(ollama, dict):
             ollama = {}
             body["ollama_key_config"] = ollama
-        _resolve_ollama_url(ollama, key_id)
-        _resolve_optional_token(body, key_id)
+        moved = _resolve_ollama_url(ollama, key_id)
+        _resolve_optional_token(body, key_id, moved)
         return
 
     vertex = body.get("vertex_key_config")
@@ -410,6 +431,13 @@ def _resolve_key_value(
 
     if not _is_masked(body.get("value")) and body.get("value"):
         return
+    if any(isinstance(body.get(b), dict) for b in _KEY_DESTINATION_BLOCKS):
+        # These blocks say where the key is sent; a stored key is not carried
+        # to a destination it was not entered for.
+        raise HTTPException(
+            status_code=400,
+            detail="This write sets where the key is sent — enter the key again.",
+        )
     stored = get_secret(_secret_ref(key_id)) if key_id else None
     if not stored:
         raise HTTPException(
@@ -531,28 +559,63 @@ def _check_custom_provider(method: str, body: Dict[str, Any]) -> None:
         )
 
 
+def _carries_secret(key: Any) -> bool:
+    """True when a read-back key holds a credential (a masked value or an env ref)."""
+    if not isinstance(key, dict):
+        return False
+    value = key.get("value")
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("ref") or value.get("env_var")
+    return bool(value) or any(
+        isinstance(key.get(block), dict)
+        for block in ("azure_key_config", "vertex_key_config", "bedrock_key_config")
+    )
+
+
 async def _with_base_url(
     method: str, provider: Optional[str], body: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """``body`` with its ``base_url`` validated and merged over the stored document."""
+    """``body`` with its ``base_url`` validated and merged over the stored document.
+
+    A stored key goes only to the host it was entered for, so a provider that
+    holds one cannot be moved to another custom host: its keys are removed
+    first and entered again for the new host. Back to the default host is
+    always allowed: that is the provider's own.
+    """
     doc: Dict[str, Any] = {}
+    keys: list = []
     if method == "PUT" and provider:
-        url = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
+        base = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
         try:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, auth=management_auth()
             ) as client:
-                current = await client.get(url)
+                current = await client.get(base)
+                listed = await client.get(f"{base}/keys")
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
         if current.status_code == 404:
             raise HTTPException(status_code=404, detail=f"No provider {provider}")
-        if current.status_code >= 400:
+        if current.status_code >= 400 or listed.status_code >= 400:
             raise HTTPException(
                 status_code=502, detail=f"Bifrost refused to read {provider}"
             )
         doc = current.json()
-    return _merge_base_url(doc if isinstance(doc, dict) else {}, body)
+        keys = (listed.json() or {}).get("keys") or []
+    doc = doc if isinstance(doc, dict) else {}
+    merged = _merge_base_url(doc, body)
+    old_host = ((doc.get("network_config") or {}).get("base_url") or "").rstrip("/")
+    new_host = (merged["network_config"].get("base_url") or "").rstrip("/")
+    if new_host and new_host != old_host and any(map(_carries_secret, keys)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{provider} has a stored key, and the gateway would send it to "
+                "the new host. Remove its keys, save the base URL, then add the "
+                "key for the new host."
+            ),
+        )
+    return merged
 
 
 # Declared before the catch-all below, which FastAPI would otherwise match

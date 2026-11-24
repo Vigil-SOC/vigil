@@ -49,6 +49,9 @@ HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
 # The Production Start Report. Day 1's build does not call these. Confidence
 # and agreement are figures only: they have no checks.
 RUNNING = ReportModule("production.running", "platform.read")
+QUIET = ReportModule("production.quiet", "findings.read")
+# Figures, no checks. The body is evidence["production.alerts"].
+ALERTS = ReportModule("production.alerts", "findings.read")
 CONFIDENCE = ReportModule("production.confidence", "platform.read")
 AGREEMENT = ReportModule("production.agreement", "platform.read")
 
@@ -284,6 +287,12 @@ CHECKS: tuple[ReportCheck, ...] = (
         RUNNING.permission,
         "At least one alert source is switched on, the same way Day 1 visibility judges it. With none, the check needs a person.",
     ),
+    ReportCheck(
+        "production.quiet",
+        QUIET.id,
+        QUIET.permission,
+        "A switched-on alert source passes when a new alert arrived in the window's last 24 hours. None in that day, or none ever, needs a person. An unhealthy source needs a person. The check names the record it read.",
+    ),
 )
 
 MODULES = {
@@ -296,6 +305,8 @@ MODULES = {
     HISTORY_TUNING.id: HISTORY_TUNING,
     FORECAST.id: FORECAST,
     RUNNING.id: RUNNING,
+    QUIET.id: QUIET,
+    ALERTS.id: ALERTS,
     CONFIDENCE.id: CONFIDENCE,
     AGREEMENT.id: AGREEMENT,
 }

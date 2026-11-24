@@ -256,7 +256,11 @@ async def create_custom_workflow(
 ):
     """Create a new custom workflow."""
     try:
-        created = service.create(payload.model_dump(), created_by=current_user.username)
+        created = service.create(
+            payload.model_dump(),
+            created_by=current_user.username,
+            changed_by=str(current_user.user_id),
+        )
         return created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -267,11 +271,14 @@ async def update_custom_workflow(
     workflow_id: str,
     payload: CustomWorkflowUpdate,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Update an existing custom workflow. Increments version only when its definition changes."""
     try:
         updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-        updated = service.update(workflow_id, updates)
+        updated = service.update(
+            workflow_id, updates, changed_by=str(current_user.user_id)
+        )
         if not updated:
             raise HTTPException(
                 status_code=404,
@@ -288,9 +295,10 @@ async def update_custom_workflow(
 async def delete_custom_workflow(
     workflow_id: str,
     service: CustomWorkflowService = Depends(provide_custom_workflows),
+    current_user: User = Depends(get_current_user),
 ):
     """Soft-delete a custom workflow (sets is_active=False)."""
-    ok = service.delete(workflow_id)
+    ok = service.delete(workflow_id, changed_by=str(current_user.user_id))
     if not ok:
         raise HTTPException(
             status_code=404,
@@ -891,6 +899,7 @@ async def _restate_summary(run_id: str, run_service: WorkflowRunService) -> None
 async def delete_workflow_run(
     run_id: str,
     run_service: WorkflowRunService = Depends(provide_workflow_runs),
+    current_user: User = Depends(get_current_user),
 ):
     """Remove a finished run from the listings.
 
@@ -907,7 +916,7 @@ async def delete_workflow_run(
             status_code=409,
             detail="This run has not finished. Cancel it before removing it.",
         )
-    if not run_service.delete_run(run_id):
+    if not run_service.delete_run(run_id, changed_by=str(current_user.user_id)):
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     return {"success": True, "run_id": run_id}
 
