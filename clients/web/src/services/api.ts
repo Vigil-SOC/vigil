@@ -1718,6 +1718,9 @@ export const orchestratorApi = {
   getStatus: () => api.get<OrchestratorStatus>('/orchestrator/status'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
+  // Queues a run as a Human Ask. no_case is only for the MITRE analyst (Emulate).
+  investigate: (body: { workflow_id: string; hypothesis: string; no_case?: boolean }) =>
+    api.post<{ success: boolean; message: string }>('/orchestrator/investigations', body),
 }
 
 /** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */

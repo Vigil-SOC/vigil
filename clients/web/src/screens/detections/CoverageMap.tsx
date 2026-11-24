@@ -4,6 +4,7 @@ import {
 } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
 import { CoverageLoading } from './DetectionsLoading'
+import Emulate from './Emulate'
 
 // The heat map is Alex Margaris's from the 1.x line (ProgramTab's HeatMap), here
 // with main's meaning of proven (an active SIEM copy passes Runs and Sees) and a
@@ -288,7 +289,10 @@ function TacticTechniques({ cells, lens, selected, onSelect }: { cells: Coverage
 function CellDetail({ cell }: { cell: CoverageCell }) {
   return (
     <div className="de-cov-detail" data-testid="coverage-cell">
-      <b>{cell.name} <span className="x1-mono x1-muted">{cell.technique}</span> · {STATES[cell.state]}{cell.caught > 0 && <span className="de-cell-caught"> · {plural(cell.caught, 'rule')} caught</span>}</b>
+      <div className="de-cov-detail-head">
+        <b>{cell.name} <span className="x1-mono x1-muted">{cell.technique}</span> · {STATES[cell.state]}{cell.caught > 0 && <span className="de-cell-caught"> · {plural(cell.caught, 'rule')} caught</span>}</b>
+        <Emulate key={cell.technique} className="btn ghost" goal={`Emulate ${cell.technique} (${cell.name}) on a listed host and report whether any rule caught it. On the coverage map it is ${STATES[cell.state].toLowerCase()}, ${plural(cell.rules, 'active rule')}, ${cell.caught} caught.`} />
+      </div>
       <span className="x1-muted">
         {plural(cell.rules, 'active rule')} declare it{cell.disabled > 0 ? `, and ${plural(cell.disabled, 'disabled rule')}` : ''}. Seen on {plural(cell.seen, 'stored alert')}.
         {cell.replayed > 0 && ` ${plural(cell.replayed, 'rule')} passed a replay on stored events.`}

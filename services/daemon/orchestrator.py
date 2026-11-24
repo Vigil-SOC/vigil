@@ -118,7 +118,11 @@ from core.threat_intel.mitre_lookup import (
 )
 from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
-from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
+from core.workflows.routing import (
+    EMULATE_WORKFLOW,
+    FALLBACK_WORKFLOW,
+    SHADOW_WORKFLOW_ID,
+)
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 from services.daemon.plan_generator import (
@@ -339,12 +343,14 @@ def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
     return username, principal
 
 
-def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
-    """What the daily gaps run's intake handed the investigation it launched: no
-    Case, and its gap proposals. None for any other run, or when the row is gone.
+def caseless_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
+    """How to queue a rerun of a run that opened no Case: the daily gaps run (a
+    schedule intake, with its gap proposals) or a person's Emulate (a Human Ask on
+    the MITRE analyst). ``kind`` is the intake kind. None for any other run, or when
+    the row is gone.
 
-    A restart of a gaps run queues it as one, so it opens no Case and the rules it
-    saves still attach to the gaps it was handed.
+    A restart of either queues it as one, so it opens no Case, and the rules a gaps
+    run saves still attach to the gaps it was handed.
     """
     from core.storage.connection import get_db_manager
     from core.storage.models import IntakeTrigger
@@ -354,15 +360,21 @@ def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
             session.query(IntakeTrigger)
             .filter(
                 IntakeTrigger.investigation_id == investigation_id,
-                IntakeTrigger.kind == "schedule",
+                IntakeTrigger.kind.in_(("schedule", "human_ask")),
             )
             .order_by(IntakeTrigger.id.desc())
             .first()
         )
+        kind = row.kind if row is not None else None
         payload = row.payload if row is not None else None
     if not isinstance(payload, dict) or not payload.get("no_case"):
         return None
+    if kind == "human_ask":
+        if payload.get("workflow_id") != EMULATE_WORKFLOW:
+            return None
+        return {"kind": kind, "no_case": True}
     return {
+        "kind": kind,
         "no_case": True,
         "gap_proposal_ids": [
             i for i in payload.get("gap_proposal_ids") or () if isinstance(i, str) and i
@@ -1513,10 +1525,11 @@ class Orchestrator:
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
             else:
-                # Only the daily gaps run hands a run its gap proposals, and only it
-                # runs with no Case.
+                # Only the daily gaps run hands a run its gap proposals. A person's
+                # Emulate (the MITRE analyst) is the one Human Ask with no Case.
                 item.pop("gap_proposal_ids", None)
-                item.pop("no_case", None)
+                if item.get("workflow_id") != EMULATE_WORKFLOW:
+                    item.pop("no_case", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1608,7 +1621,8 @@ class Orchestrator:
 
         mint = None
         # The daily gaps run keeps its record on the run and its detection
-        # proposals; every other intake with no case_id gets a Case of its own.
+        # proposals, and an Emulate on the run's coverage report; every other
+        # intake with no case_id gets a Case of its own.
         if not case_id and not item.get("no_case"):
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
