@@ -3,7 +3,7 @@ import { IntakeBanners } from '../../shared/AutoOpsOffBanner'
 import { useAutoOpsOff } from '../../shared/useAutoOpsOff'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { approvalsApi, configApi, day1Api, ingestionApi, productionStartApi, triageApi, type NeedsYouItem } from '../../services/api'
+import { approvalsApi, configApi, day1Api, ingestionApi, productionReportApi, productionStartApi, triageApi, type NeedsYouItem } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { CallArgs } from '../../shared/CallArgs'
 import { visibleText } from '../../shared/visibleText'
@@ -32,6 +32,14 @@ import { caseLabel } from '../../shared/caseLabel'
 
 const POLL_MS = 20_000
 const VISIBLE = 4
+
+function sameInstant(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (!left || !right) return false
+  const a = Date.parse(left)
+  const b = Date.parse(right)
+  if (Number.isNaN(a) || Number.isNaN(b)) return left === right
+  return a === b
+}
 
 /** datetime-local is the viewer's zone; the server takes UTC. Seconds stay, so the minute setup finished in can still be declared. */
 function dateTimeLocal(iso: string | null): string {
@@ -273,6 +281,9 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
   const [rerunning, setRerunning] = useState(false)
   const [production, setProduction] = useState<Schema<'ProductionStart'> | null>(null)
   const [productionError, setProductionError] = useState<string | null>(null)
+  const [productionReport, setProductionReport] = useState<Schema<'ProductionReportStatus'> | null>(null)
+  const [productionReportError, setProductionReportError] = useState<string | null>(null)
+  const [runningProduction, setRunningProduction] = useState(false)
   const [declareOpen, setDeclareOpen] = useState(false)
   const [declareAt, setDeclareAt] = useState('')
   const [declaring, setDeclaring] = useState(false)
@@ -308,14 +319,20 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       (res) => ({ ok: true as const, data: res.data }),
       (err: unknown) => ({ ok: false as const, err }),
     )
-    const [needsResult, pickup, readyResult, setupResult, reportResult, productionResult] = await Promise.all([
-      needs,
-      shareRead,
-      readyRead,
-      setupRead,
-      reportRead,
-      productionRead,
-    ])
+    const productionReportRead = productionReportApi.status().then(
+      (res) => ({ ok: true as const, data: res.data }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
+    const [needsResult, pickup, readyResult, setupResult, reportResult, productionResult, productionReportResult] =
+      await Promise.all([
+        needs,
+        shareRead,
+        readyRead,
+        setupRead,
+        reportRead,
+        productionRead,
+        productionReportRead,
+      ])
     if (ticket !== loadTicket.current) return
     setShare(pickup)
     if (readyResult.ok) {
@@ -347,6 +364,15 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
       setProductionError(null)
     } else {
       setProductionError(errorText(productionResult.err, 'Could not load the production start'))
+    }
+    if (productionReportResult.ok) {
+      setProductionReport(productionReportResult.data)
+      setProductionReportError(null)
+    } else if ((productionReportResult.err as { response?: { status?: number } })?.response?.status === 403) {
+      setProductionReport(null)
+      setProductionReportError(null)
+    } else {
+      setProductionReportError(errorText(productionReportResult.err, 'Could not load the Production Start Report'))
     }
     if (!needsResult.ok) {
       setError(errorText(needsResult.err, 'Could not load what needs you'))
@@ -516,6 +542,19 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
     void saveProduction(started.toISOString())
   }
 
+  const runProduction = async () => {
+    setRunningProduction(true)
+    try {
+      await productionReportApi.run()
+      notify('ok', 'Production Start Report is ready.')
+      await load()
+    } catch (err) {
+      if (!stepUpDetailOf(err)) notify('err', errorText(err, 'Could not run the Production Start Report'))
+    } finally {
+      setRunningProduction(false)
+    }
+  }
+
   const rerunReport = async () => {
     setRerunning(true)
     try {
@@ -638,6 +677,60 @@ export default function HomeScreen({ openCase, startTour, fillCommand, onCommand
                   </form>
                 )}
                 {declareError && <p role="alert">{declareError}</p>}
+                {productionReportError && <p role="alert">{productionReportError}</p>}
+                {productionReport?.running_since && (
+                  <p className="home-report-line">
+                    Running since {reportStamp(productionReport.running_since)}.
+                  </p>
+                )}
+                {productionReport?.incomplete_since && (
+                  <p className="home-report-line">
+                    Didn't complete.
+                    {canRunReport && production.started_at && (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => void runProduction()}
+                        disabled={runningProduction}
+                      >
+                        {runningProduction ? 'Running…' : 'Re-run'}
+                      </button>
+                    )}
+                  </p>
+                )}
+                {productionReport?.latest_id &&
+                  !sameInstant(production.started_at, productionReport.latest_started_at) && (
+                    <p className="home-report-line">
+                      The latest report used a different start.
+                      {canRunReport && production.started_at && (
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => void runProduction()}
+                          disabled={runningProduction}
+                        >
+                          {runningProduction ? 'Running…' : 'Run'}
+                        </button>
+                      )}
+                      {canRunReport && !production.started_at && (
+                        <button type="button" className="btn ghost" disabled>
+                          Not in production yet
+                        </button>
+                      )}
+                    </p>
+                  )}
+                {canRunReport && !production.started_at && !productionReport?.latest_id && (
+                  <p className="home-report-line">
+                    <button type="button" className="btn ghost" disabled>
+                      Not in production yet
+                    </button>
+                  </p>
+                )}
+                {productionReport?.latest_id && (
+                  <Link to={`/report?record=${encodeURIComponent(productionReport.latest_id)}`}>
+                    Latest production report
+                  </Link>
+                )}
               </div>
             )}
           </section>

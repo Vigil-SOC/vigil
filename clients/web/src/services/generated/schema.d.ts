@@ -6584,6 +6584,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/production-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Production Report
+         * @description The latest Production Start Report, or the one named by ``record``.
+         */
+        get: operations["get_api_production-report"];
+        put?: never;
+        /**
+         * Run Production Report
+         * @description Run the Production Start Report now. Tells the person who started it.
+         */
+        post: operations["post_api_production-report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/production-report/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Production Report Status
+         * @description Whether a production report is being written, failed to finish, or is ready.
+         */
+        get: operations["get_api_production-report_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/production-start": {
         parameters: {
             query?: never;
@@ -13056,6 +13100,10 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            };
             forecast?: components["schemas"]["Day1Forecast"] | null;
             history_before?: components["schemas"]["HistoryBefore"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
@@ -15726,6 +15774,53 @@ export interface components {
              * @enum {string}
              */
             medic: "off" | "running" | "down" | "unknown" | "starting" | "degraded" | "blind" | "not_recording" | "crash_looping";
+        };
+        /** ProductionReport */
+        ProductionReport: {
+            /** Actor Id */
+            actor_id?: string | null;
+            /** Actor Name */
+            actor_name?: string | null;
+            /** Checks */
+            checks: components["schemas"]["Day1Check"][];
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Modules */
+            modules: string[];
+            /** Preface */
+            preface?: string | null;
+            /** Recorded At */
+            recorded_at: string;
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at: string;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "production" | "production_on_demand";
+            /** Vigil Version */
+            vigil_version: string;
+            /** Withheld */
+            withheld: string[];
+        };
+        /** ProductionReportStatus */
+        ProductionReportStatus: {
+            /** Incomplete Since */
+            incomplete_since?: string | null;
+            /** Latest At */
+            latest_at?: string | null;
+            /** Latest Id */
+            latest_id?: string | null;
+            /** Latest Started At */
+            latest_started_at?: string | null;
+            /** Running Since */
+            running_since?: string | null;
         };
         /** ProductionStart */
         ProductionStart: {
@@ -29886,6 +29981,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProcessStates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_production-report": {
+        parameters: {
+            query?: {
+                record?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_production-report": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_production-report_status": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionReportStatus"];
                 };
             };
             /** @description Validation Error */
