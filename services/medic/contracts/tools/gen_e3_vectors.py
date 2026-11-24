@@ -1576,6 +1576,112 @@ V["v27-ungrouped-never-retires"] = {
     "incidents": {"A": inc(ERR0["id"], "+0s", "+0s", routed_at="+0s")},
 }
 
+# v35 · ingest.intel-stale (#5072): absent facts are quiet; the newest object goes
+# past stale_after and the incident opens; a fresh object clears it; then the
+# collector stops (OpenCTI down) and the frozen facts never read as stale.
+HEALTH = {
+    "id": "http.integration-health",
+    "covers": ["integration_health"],
+    "interval": "60s",
+    "service": "backend",
+    "states": [["+0s", "ok"]],
+}
+STALE_INTEL = "ingest.intel-stale"
+V["v35-intel-stale"] = {
+    "title": "OpenCTI's newest object past stale_after opens intel-stale while its facts are fresh; a stopped collector never does",
+    "covers": ["§2 age", "§2 latest absent", "§4 keep_firing_for"],
+    "end": "+95m",
+    "rules": [{"ref": "ingest-intel-stale.yaml", "params": {"stale_after": 3600}}],
+    "sensors": [HEALTH],
+    "types": {
+        "integration_health": {
+            "opencti.collected_at": "timestamp",
+            "opencti.newest_intel_at": "timestamp",
+        }
+    },
+    "series": [
+        {
+            "signal": "integration_health",
+            "key": "opencti.collected_at",
+            "steps": [["+0s", None]] + every(5, 45, ts)[1:],
+        },
+        {
+            "signal": "integration_health",
+            "key": "opencti.newest_intel_at",
+            "steps": [
+                ["+0s", None],
+                ["+5m", "2026-10-07T09:10:00Z"],
+                ["+30m", "2026-10-07T10:29:00Z"],
+            ],
+        },
+    ],
+    "expect": [
+        e("+2m", STALE_INTEL, False, "inactive", note="no facts yet: absent"),
+        e("+10m", STALE_INTEL, False, "inactive", note="exactly stale_after old"),
+        e("+10m15s", STALE_INTEL, True, "pending"),
+        e("+20m15s", STALE_INTEL, True, "firing", "A"),
+        e("+30m", STALE_INTEL, False, "resolving", "A", note="a fresh object"),
+        e("+40m", STALE_INTEL, False, "inactive"),
+        e("+60m", STALE_INTEL, False, "inactive", note="collected 15 min ago"),
+        e("+95m", STALE_INTEL, False, "inactive", note="newest past stale_after"),
+    ],
+    "incidents": {
+        "A": inc(STALE_INTEL, "+10m15s", "+20m15s", "+30m", "+40m", routed_at="+20m15s")
+    },
+}
+
+# v36 · ingest.intel-backlog-growing (#5072): a gauge's rise is unknown until the
+# window is covered, fires once it rose by more than the floor, and clears when
+# the value a window ago catches up with a backlog that stopped growing.
+BACKLOG = "ingest.intel-backlog-growing"
+
+
+def _backlog(m: int) -> int:
+    return 500 + 40 * (min(max(m, 30), 80) - 30) // 5
+
+
+V["v36-intel-backlog-growing"] = {
+    "title": "OpenCTI's backlog rising past the floor within the window opens intel-backlog-growing; it clears once the rise falls back under",
+    "covers": ["§2 increase gauge", "§4 keep_firing_for"],
+    "end": "+165m",
+    "rules": [
+        {
+            "ref": "ingest-intel-backlog-growing.yaml",
+            "params": {"window": "1h", "floor": 100},
+        }
+    ],
+    "sensors": [HEALTH],
+    "types": {
+        "integration_health": {
+            "opencti.collected_at": "timestamp",
+            "opencti.queue_messages_total": "gauge",
+        }
+    },
+    "series": [
+        {
+            "signal": "integration_health",
+            "key": "opencti.collected_at",
+            "steps": every(5, 165, ts),
+        },
+        {
+            "signal": "integration_health",
+            "key": "opencti.queue_messages_total",
+            "steps": every(5, 165, _backlog),
+        },
+    ],
+    "expect": [
+        e("+58m", BACKLOG, "unknown", "inactive", note="window not yet covered"),
+        e("+60m", BACKLOG, True, "pending", note="740 - 500 > 100"),
+        e("+75m", BACKLOG, True, "firing", "A"),
+        e("+129m", BACKLOG, True, "firing", "A", note="900 - 780 > 100"),
+        e("+130m", BACKLOG, False, "resolving", "A", note="900 - 820 <= 100"),
+        e("+160m", BACKLOG, False, "inactive"),
+    ],
+    "incidents": {
+        "A": inc(BACKLOG, "+60m", "+75m", "+130m", "+160m", routed_at="+75m")
+    },
+}
+
 for vid, body in V.items():
     doc = {
         "id": vid,
