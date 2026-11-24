@@ -344,7 +344,7 @@ def coverage_report(
         if tid not in grouped:
             grouped[tid] = {"technique_id": tid, "steps": [], "missed": []}
             order.append(tid)
-        record = judge_step(raw, record, now, lag)
+        record = judge_step(raw, record, now, lag, reconstructed.get("cut_off"))
         grouped[tid]["steps"].append(record)
         if record.get("verdict") == "missed":
             grouped[tid]["missed"].append(_missed_step(raw, record))
@@ -367,13 +367,18 @@ def coverage_report(
 
 
 def judge_step(
-    raw: Any, record: Dict[str, Any], now: datetime, lag: timedelta = LAG
+    raw: Any,
+    record: Dict[str, Any],
+    now: datetime,
+    lag: timedelta = LAG,
+    cut_off: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The step rule: the record as scored, with the step's hostname and times.
 
     Rule-origin citations make it caught whatever its exit. Otherwise a runner
     error, a null or non-zero ``exit`` (only when the step carries ``exit``: a
-    hand-written trace has none), or an end within ``lag`` of ``now`` is unknown.
+    hand-written trace has none), an end within ``lag`` of ``now``, a step with no
+    time or no host/IP/user to join on, or a cut-off Findings read is unknown.
     """
     out = dict(record)
     if not isinstance(raw, dict):
@@ -394,11 +399,15 @@ def judge_step(
         reason = "the runner reported no exit code"
     elif "exit" in raw and raw["exit"] != 0:
         reason = f"the runner exited {raw['exit']}, so the step may not have run"
-    elif window is not None and window[1] + lag > now:
+    elif window is None or not _has_entity(_entities_from_step(raw)):
+        reason = "it names no time or no host, IP or user, so no Finding can join it"
+    elif window[1] + lag > now:
         reason = (
             f"it ended under {int(lag.total_seconds() // 60)} minutes ago; "
             "alerts may still be arriving"
         )
+    elif cut_off:
+        reason = cut_off
     if reason:
         out["verdict"] = "unknown"
         out["reason"] = reason

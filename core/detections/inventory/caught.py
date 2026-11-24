@@ -209,8 +209,9 @@ def judge(
 
     The newest evidence names a version. A pass is written on a version not
     already passing whose stored result is older than the catch; a fail on a
-    version whose stored pass is an emulation of a missed step's technique on its
-    host, older than the miss, with no catch at or after the miss.
+    rule's latest version whose stored pass is an emulation of a missed step's
+    technique on its host, older than the miss, when no version of that rule
+    caught a step at or after the miss.
     """
     resolved = {
         fid: (r["rule_id"], r["version"])
@@ -244,6 +245,8 @@ def judge(
     out: Dict[Tuple[int, int], Tuple[str, Dict[str, Any]]] = {}
     # The newest catch per version, whether or not it is written.
     newest: Dict[Tuple[int, int], datetime] = {}
+    # The newest catch by any version of each rule: a flag is per rule.
+    caught_rule: Dict[int, datetime] = {}
     for e in sorted(evidence, key=lambda e: e.at, reverse=True):
         for fid in e.finding_ids:
             key = resolved.get(fid)
@@ -256,6 +259,7 @@ def judge(
             if technique is None:
                 continue
             newest[key] = e.at
+            caught_rule[key[0]] = max(caught_rule.get(key[0], e.at), e.at)
             stored = stored if isinstance(stored, dict) else {}
             if stored.get("result") == "pass":
                 continue
@@ -286,6 +290,8 @@ def judge(
         )
         .join(DetectionRule, DetectionRule.id == DetectionRuleVersion.rule_id)
         .where(
+            # Only the version the rule runs now: a flag on an old one never clears.
+            DetectionRuleVersion.version == DetectionRule.latest_version,
             held["result"].astext == "pass",
             held["hostname"].astext.isnot(None),
             held["technique"].astext.isnot(None),
@@ -303,7 +309,7 @@ def judge(
             ),
             None,
         )
-        if miss is None or (key in newest and newest[key] >= miss.at):
+        if miss is None or caught_rule.get(rid, passed_at) >= miss.at:
             continue
         out[key] = (
             source,

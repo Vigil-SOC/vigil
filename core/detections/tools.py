@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from core.agents.projections import read_projection
 from core.detections.exceptions import edit_exception
 from core.detections.gaps import (
+    FINDINGS_LIMIT,
     gap_report,
     missed_runs_report,
     read_alert_labels,
@@ -486,11 +487,18 @@ class SecurityDetectionsTools:
         """
         span = span_for_steps(steps)
         findings = DatabaseDataService().get_findings(
-            limit=10000,
+            limit=FINDINGS_LIMIT,
             timestamp_start=span[0] if span else None,
             timestamp_end=span[1] if span else None,
         )
-        return reconstruct(steps, findings)
+        out = reconstruct(steps, findings)
+        if len(findings) >= FINDINGS_LIMIT:
+            # coverage_report reads a step no rule cited as unknown, not missed.
+            out["cut_off"] = (
+                f"the steps' window holds {FINDINGS_LIMIT}+ Findings and the read "
+                "was cut off, so whether a rule alerted is unknown"
+            )
+        return out
 
 
 # How long Vigil's replay of a gap proposal may hold up the save's answer.

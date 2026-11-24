@@ -347,6 +347,8 @@ def open_flags() -> List[Dict[str, Any]]:
             }
             for row in session.execute(_flags()).all()
         ]
+        # A Caught fail names its emulation run and host: hidden as on a rule's row.
+        redact_caught(session, flags)
     flags.sort(key=lambda f: f["since"], reverse=True)
     for flag in flags:
         del flag["changed_at"]

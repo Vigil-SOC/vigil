@@ -410,7 +410,12 @@ def _strip_emulation(episode: Dict[str, Any]) -> Dict[str, Any]:
     def strip(steps: Any) -> List[Any]:
         return [
             (
-                {key: value for key, value in step.items() if key not in _EVIDENCE_KEYS}
+                {
+                    key: value
+                    for key, value in step.items()
+                    # reason may quote the runner's own error text.
+                    if key not in _EVIDENCE_KEYS and key != "reason"
+                }
                 if isinstance(step, dict)
                 else step
             )
