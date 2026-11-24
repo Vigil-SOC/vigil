@@ -596,6 +596,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
     "approval.release": "Released an action the stop was holding",
+    "approval.settle": lambda p: "Settled an unanswered "
+    + (p.get("kind") if p.get("kind") in ("recommendation", "approval") else "action")
+    + " when the case closed",
     "approval.request": lambda p: "Asked for approval"
     + (f" of {_word(p['action_type'])}" if p.get("action_type") else ""),
     trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
