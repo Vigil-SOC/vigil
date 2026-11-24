@@ -25,7 +25,7 @@ from core.auth.permissions import holders
 from core.config import get_settings, is_demo_mode
 from core.integrations.readiness import UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import MODULES, RUNNING
+from core.reporting.checks import AGREEMENT, CONFIDENCE, MODULES, RUNNING
 from core.reporting.day1 import (
     FAIL,
     LOCK,
@@ -48,6 +48,7 @@ from core.reporting.day1 import (
 from core.reporting.day1 import abandon as day1_abandon
 from core.reporting.day1 import producing_ids
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.production_agreement import agreement, confidence
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
 from core.storage.unit_of_work import unit_of_work
@@ -232,8 +233,10 @@ def build(
 ) -> dict[str, Any]:
     """Every built production module that is switched on.
 
-    A later module adds its function to :func:`_produce`. One that is not
-    built yet is skipped. Day 1's ``build`` does not call these.
+    Checks come from :func:`_produce`. A module it does not build yet is
+    skipped. Confidence and agreement are figures: each is stored at
+    ``evidence[module id]``, and a failed read is not-checked for that id
+    only. Day 1's ``build`` does not call these.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
@@ -249,12 +252,20 @@ def build(
         modules.append(module_id)
         checks.extend(produced)
     end = _iso(window_end)
-    evidence = {
+    evidence: dict[str, Any] = {
         "production": {
             "started_at": started_at,
             "window": {"start": started_at, "end": end},
         }
     }
+    for module_id, produce in (
+        (CONFIDENCE.id, confidence),
+        (AGREEMENT.id, agreement),
+    ):
+        if module_id in disabled:
+            continue
+        modules.append(module_id)
+        evidence[module_id] = produce(started_at, window_end)
     return {
         "modules": modules,
         "checks": checks,

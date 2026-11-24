@@ -10,6 +10,7 @@ import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
+import { ProductionFigures } from './ProductionFigures'
 import { reportStamp } from './stamp'
 import './report.css'
 
@@ -41,6 +42,8 @@ const MODULE_TITLE: Record<string, string> = {
   'history.tuning': 'Tuning candidates',
   'history.forecast': 'Cost forecast',
   'production.running': 'What is running',
+  'production.confidence': 'How sure the investigations were',
+  'production.agreement': 'Agreement',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -53,6 +56,8 @@ const MODULE_PERMISSION: Record<string, string> = {
   'history.tuning': 'findings.read',
   'history.forecast': 'platform.read',
   'production.running': 'platform.read',
+  'production.confidence': 'platform.read',
+  'production.agreement': 'platform.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -61,6 +66,8 @@ const REPORT_SECTIONS = new Set([
   'history.recheck',
   'history.tuning',
   'history.forecast',
+  'production.confidence',
+  'production.agreement',
 ])
 
 const SETTINGS_TIP = {
@@ -967,6 +974,7 @@ export default function ReportScreen() {
             )}
           </section>
         )}
+        {produced && <ProductionFigures report={produced} />}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">
