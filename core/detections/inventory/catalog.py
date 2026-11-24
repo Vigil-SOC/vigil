@@ -1494,6 +1494,8 @@ def _health_rows(
                 "tool": tool_of(rule.source),
                 "status": rule.status,
                 "techniques": list(rule.techniques or []),
+                # Named in an Emulate's goal: the version a catch proves.
+                "version": rule.latest_version,
                 "where": _where(checks, tool_of(rule.source)),
                 "health": state,
                 "flags": flags,

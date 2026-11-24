@@ -18,6 +18,8 @@ ROUTED_WORKFLOWS = frozenset(
 SCHEDULED_WORKFLOW = "threat-hunt"
 # Once a day, mitre_analyst drafts and checks rules for the listed detection gaps.
 DETECTION_GAPS_WORKFLOW = "agent-run-mitre_analyst"
+# A person's Emulate (rule, gap or technique) runs the same analyst, with no Case.
+EMULATE_WORKFLOW = DETECTION_GAPS_WORKFLOW
 # Run beside every admitted finding, executing nothing.
 SHADOW_WORKFLOW_ID = "shadow-adjudication"
 

@@ -16,6 +16,7 @@ import { Empty, Failure } from '../shared/x1'
 import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
 import { caseLabel } from '../../shared/caseLabel'
 import HuntRef from './HuntRef'
+import Emulate from './Emulate'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
@@ -322,8 +323,15 @@ function ProposalDetail({ id, row, onChanged, onDismissed }: { id: string; row: 
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
-          {decision && !asking && (
-            <button type="button" className="btn" onClick={() => setAsking(true)}>{ASK[decision].button}</button>
+          {((decision && !asking) || proposal.technique) && (
+            <div className="de-prop-acts">
+              {proposal.technique && (
+                <Emulate key={proposal.proposal_id} className="btn ghost" goal={`Test the gap of proposal ${proposal.proposal_id} on ${proposal.technique}${main ? `, answered by rule ${main.rule_id} "${main.title}" version ${main.version}` : ', which has no rule yet'}: emulate ${proposal.technique} on a listed host and read whether ${main ? 'that version' : 'any rule'} caught it.`} />
+              )}
+              {decision && !asking && (
+                <button type="button" className="btn" onClick={() => setAsking(true)}>{ASK[decision].button}</button>
+              )}
+            </div>
           )}
         </div>
         {(proposal.rule_ids.length > 0 || ended) && <p className="de-card-sub">{decisionLine(main, row, canWrite, ended)}</p>}
