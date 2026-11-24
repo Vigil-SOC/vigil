@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { Link } from 'react-router-dom'
 import type { Schema } from '../../services/apiTypes'
 import { InfoTip } from '../../shared/InfoTip'
 import { reportStamp } from './stamp'
@@ -348,3 +349,306 @@ export function AlertsSection({ evidence, tip }: { evidence: Alerts; tip: typeof
 }
 
 export { ALERTS_TIP, QUIET_TIP }
+
+const CHANGES_TIP = {
+  source: 'The audit trail, exclusion rows, and integration health, since the Day 1 Report this run is read against',
+  calculation:
+    'Act flags, per-workflow tiers, and scheduled collection come from config changes. Exclusions are rows added or removed in that window. An alert source that was checked then and is off now, on either collection path, is switched off since that report.',
+  limit:
+    'Audit changes need audit.read. Exclusions need findings.read. Switched-off sources need integrations.read. A missing permission names what is withheld. Not checked is never a pass.',
+}
+
+type ChangeFlag = { name: string; old: boolean; new: boolean }
+type TierWord = 'act' | 'assist'
+type ChangeTier = { workflow: string; old: TierWord | null; new: TierWord | null }
+type ChangePair = { old: unknown; new: unknown }
+
+type ChangeItem =
+  | { kind: 'autonomy'; at: string | null; screen: string; flags: ChangeFlag[]; tiers: ChangeTier[] }
+  | { kind: 'collection'; at: string | null; screen: string; old: unknown; new: unknown }
+  | {
+      kind: 'source'
+      at: string | null
+      screen: string
+      source_id: string
+      enabled: ChangePair
+      interval_seconds: ChangePair
+      cap: ChangePair
+      min_severity: ChangePair
+      current_min_severity: string | null
+      current_floor_unread: boolean
+    }
+  | { kind: 'exclusion'; at: string | null; screen: string; action: 'added' | 'removed'; ip: string; hidden_findings: number | null }
+  | { kind: 'switched_off'; at: string | null; screen: string; source_id: string }
+
+type Changes = {
+  not_checked?: string
+  anchor_at: string | null
+  before_not_shown: boolean
+  audit_not_checked?: string
+  exclusions_not_checked?: string
+  health_not_checked?: string
+  health_anchor_unread: boolean
+  items: ChangeItem[]
+  withheld: string[]
+}
+
+function textOf(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null
+}
+
+function pairOf(value: unknown): ChangePair {
+  if (!isRecord(value)) return { old: null, new: null }
+  return { old: value.old ?? null, new: value.new ?? null }
+}
+
+function readItem(raw: Record<string, unknown>): ChangeItem | null {
+  const screen = textOf(raw.screen) ?? ''
+  const at = textOf(raw.at)
+  switch (raw.kind) {
+    case 'autonomy':
+      return {
+        kind: 'autonomy',
+        at,
+        screen,
+        flags: Array.isArray(raw.flags)
+          ? raw.flags.flatMap((flag) => {
+              if (!isRecord(flag) || typeof flag.name !== 'string') return []
+              if (typeof flag.old !== 'boolean' || typeof flag.new !== 'boolean') return []
+              return [{ name: flag.name, old: flag.old, new: flag.new }]
+            })
+          : [],
+        tiers: Array.isArray(raw.tiers)
+          ? raw.tiers.flatMap((tier) => {
+              if (!isRecord(tier) || typeof tier.workflow !== 'string') return []
+              const old = tier.old === 'act' || tier.old === 'assist' ? tier.old : null
+              const next = tier.new === 'act' || tier.new === 'assist' ? tier.new : null
+              return [{ workflow: tier.workflow, old, new: next }]
+            })
+          : [],
+      }
+    case 'collection':
+      return { kind: 'collection', at, screen, old: raw.old ?? null, new: raw.new ?? null }
+    case 'source':
+      if (typeof raw.source_id !== 'string' || !raw.source_id) return null
+      return {
+        kind: 'source',
+        at,
+        screen,
+        source_id: raw.source_id,
+        enabled: pairOf(raw.enabled),
+        interval_seconds: pairOf(raw.interval_seconds),
+        cap: pairOf(raw.cap),
+        min_severity: pairOf(raw.min_severity),
+        current_min_severity: textOf(raw.current_min_severity),
+        current_floor_unread: raw.current_floor_unread === true,
+      }
+    case 'exclusion':
+      if (typeof raw.ip !== 'string' || !raw.ip) return null
+      if (raw.action !== 'added' && raw.action !== 'removed') return null
+      return {
+        kind: 'exclusion',
+        at,
+        screen,
+        action: raw.action,
+        ip: raw.ip,
+        hidden_findings: typeof raw.hidden_findings === 'number' ? raw.hidden_findings : null,
+      }
+    case 'switched_off':
+      if (typeof raw.source_id !== 'string' || !raw.source_id) return null
+      return { kind: 'switched_off', at, screen, source_id: raw.source_id }
+    default:
+      return null
+  }
+}
+
+export function changesEvidence(value: unknown): Changes | null {
+  if (!isRecord(value)) return null
+  const items = Array.isArray(value.items)
+    ? value.items.flatMap((item) => {
+        if (!isRecord(item)) return []
+        const read = readItem(item)
+        return read ? [read] : []
+      })
+    : []
+  return {
+    not_checked: textOf(value.not_checked) ?? undefined,
+    anchor_at: textOf(value.anchor_at),
+    before_not_shown: value.before_not_shown === true,
+    audit_not_checked: textOf(value.audit_not_checked) ?? undefined,
+    exclusions_not_checked: textOf(value.exclusions_not_checked) ?? undefined,
+    health_not_checked: textOf(value.health_not_checked) ?? undefined,
+    health_anchor_unread: value.health_anchor_unread === true,
+    items,
+    withheld: Array.isArray(value.withheld)
+      ? value.withheld.filter((line): line is string => typeof line === 'string')
+      : [],
+  }
+}
+
+function settingName(path: string): string {
+  if (path.includes('section=autoinvestigate')) return 'Limits & autonomy'
+  if (path.includes('section=federation')) return 'Alert collection'
+  if (path.includes('section=integrations')) return 'Integrations'
+  if (path.startsWith('/dashboard')) return 'Findings'
+  return 'Settings'
+}
+
+function onOff(value: unknown): string {
+  if (value === true) return 'on'
+  if (value === false) return 'off'
+  if (typeof value === 'number') return String(value)
+  if (typeof value === 'string' && value) return value
+  return 'none'
+}
+
+function flagName(name: string): string {
+  switch (name) {
+    case 'reversible':
+      return 'Reversible changes'
+    case 'irreversible':
+      return 'Irreversible changes'
+    default:
+      return name
+  }
+}
+
+function seconds(value: unknown): string {
+  if (typeof value === 'number') return `${value} s`
+  if (typeof value === 'string' && value) return `${value} s`
+  return 'none'
+}
+
+function tierName(value: TierWord | null): string {
+  switch (value) {
+    case 'act':
+      return 'Act'
+    case 'assist':
+      return 'Assist'
+    case null:
+      return 'the fleet'
+    default: {
+      const never: never = value
+      return never
+    }
+  }
+}
+
+function changeText(item: ChangeItem, anchor: string | null): string {
+  switch (item.kind) {
+    case 'autonomy':
+      return [
+        ...item.flags.map(
+          (flag) => `${flagName(flag.name)}: ${flag.old ? 'on' : 'off'}, then ${flag.new ? 'on' : 'off'}.`,
+        ),
+        ...item.tiers.map(
+          (tier) => `${tier.workflow}: ${tierName(tier.old)}, then ${tierName(tier.new)}.`,
+        ),
+      ].join(' ')
+    case 'collection':
+      if (item.new === true && item.old !== true) return 'Scheduled collection turned on.'
+      if (item.new === false && item.old !== false) return 'Scheduled collection turned off.'
+      return `Scheduled collection: ${onOff(item.old)}, then ${onOff(item.new)}.`
+    case 'source':
+      return (
+        `${item.source_id}: enabled ${onOff(item.enabled.old)} then ${onOff(item.enabled.new)}, ` +
+        `interval ${seconds(item.interval_seconds.old)} then ${seconds(item.interval_seconds.new)}, ` +
+        `cap ${onOff(item.cap.old)} then ${onOff(item.cap.new)}, ` +
+        `severity floor ${onOff(item.min_severity.old)} then ${onOff(item.min_severity.new)}.`
+      )
+    case 'exclusion': {
+      const verb = item.action === 'added' ? 'Added' : 'Removed'
+      const hides =
+        item.action === 'added' && item.hidden_findings != null
+          ? ` Hides ${item.hidden_findings} ${item.hidden_findings === 1 ? 'alert' : 'alerts'}.`
+          : ''
+      return `${verb} exclusion ${item.ip}.${hides}`
+    }
+    case 'switched_off': {
+      const when = anchor ? ` of ${reportStamp(anchor)}` : ''
+      return `${item.source_id}: switched off since the Day 1 Report${when}.`
+    }
+    default: {
+      const never: never = item
+      return never
+    }
+  }
+}
+
+function floorLine(item: ChangeItem): string | null {
+  if (item.kind !== 'source') return null
+  const floor = item.current_floor_unread ? 'not checked' : (item.current_min_severity ?? 'none')
+  return `Current severity floor: ${floor}.`
+}
+
+function ChangeRow({ item, anchor }: { item: ChangeItem; anchor: string | null }) {
+  const floor = floorLine(item)
+  return (
+    <div className="d1-row has-link">
+      <p>{changeText(item, anchor)}</p>
+      {floor && <p className="d1-facts">{floor}</p>}
+      {item.at && <p className="d1-facts">{reportStamp(item.at)}</p>}
+      {item.screen && <Link to={item.screen}>{settingName(item.screen)}</Link>}
+    </div>
+  )
+}
+
+export function ChangesSection({ evidence, tip }: { evidence: Changes | null; tip: typeof CHANGES_TIP }) {
+  const anchor = evidence?.anchor_at ?? null
+  const items = evidence?.items ?? []
+  const notes = [
+    evidence?.audit_not_checked,
+    evidence?.exclusions_not_checked,
+    evidence?.health_not_checked,
+  ].filter((line): line is string => Boolean(line))
+  const withheld = evidence?.withheld ?? []
+  const onlySentence = Boolean(evidence?.not_checked && !anchor)
+  const nothing =
+    !onlySentence &&
+    items.length === 0 &&
+    notes.length === 0 &&
+    !evidence?.health_anchor_unread &&
+    withheld.length === 0
+  return (
+    <section className="d1-card" aria-label="What changed">
+      <div className="d1-card-head">
+        <h2>What changed</h2>
+        <InfoTip label="How what changed is read" align="start" {...tip} />
+      </div>
+      {onlySentence && <p className="d1-quiet">{evidence?.not_checked}</p>}
+      {evidence?.before_not_shown && anchor && (
+        <p className="d1-facts">
+          Changes before the Day 1 Report of {reportStamp(anchor)} are not shown.
+        </p>
+      )}
+      {evidence?.health_anchor_unread && anchor && (
+        <p className="d1-quiet">
+          not checked: the Day 1 Report of {reportStamp(anchor)} couldn&apos;t read integration health
+        </p>
+      )}
+      {notes.map((line) => (
+        <p className="d1-quiet" key={line}>
+          {line}
+        </p>
+      ))}
+      {items.length > 0 && (
+        <div className="d1-rows">
+          {items.map((item, index) => (
+            <ChangeRow key={`${item.kind}-${item.at ?? index}-${index}`} item={item} anchor={anchor} />
+          ))}
+        </div>
+      )}
+      {nothing && anchor && (
+        <p className="d1-quiet">Nothing changed since the Day 1 Report of {reportStamp(anchor)}.</p>
+      )}
+      {nothing && !anchor && !onlySentence && <p className="d1-quiet">Nothing to report in this section.</p>}
+      {withheld.map((line) => (
+        <p className="d1-withheld" key={line}>
+          {line}
+        </p>
+      ))}
+    </section>
+  )
+}
+
+export { CHANGES_TIP }
