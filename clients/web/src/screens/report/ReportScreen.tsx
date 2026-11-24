@@ -10,6 +10,7 @@ import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
+import { ProductionFigures } from './ProductionFigures'
 import {
   ALERTS_TIP,
   AlertsSection,
@@ -55,6 +56,8 @@ const MODULE_TITLE: Record<string, string> = {
   'production.quiet': 'Sources and rules gone quiet',
   'production.alerts': 'What happened to every alert',
   'production.tuning': 'Tuning since Production Start',
+  'production.confidence': 'How sure the investigations were',
+  'production.agreement': 'Agreement',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -70,6 +73,8 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.quiet': 'findings.read',
   'production.alerts': 'findings.read',
   'production.tuning': 'findings.read',
+  'production.confidence': 'platform.read',
+  'production.agreement': 'platform.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -78,16 +83,19 @@ const REPORT_SECTIONS = new Set([
   'history.recheck',
   'history.tuning',
   'history.forecast',
+  'production.confidence',
+  'production.agreement',
 ])
 
 const SETTINGS_TIP = {
   source: 'The session policy and the audit-trail retention period',
   calculation:
-    'A value passes when it is at or stricter than the cited value. An unset period fails. The MFA count is shown beside the setting and does not change the outcome.',
+    'A value passes when it is at or stricter than the value for your selection. No cited value is not a pass or a fail. An unset period fails when a value is in force. The MFA count is shown beside the setting and does not change the outcome.',
   limit: 'Session checks need sessions.manage. Retention needs audit.read. Not checked is never a pass.',
 }
 
-const OUTCOMES: Outcome[] = ['pass', 'fail', 'not_checked', 'needs_a_person']
+type ScoredOutcome = Exclude<Outcome, 'no_value'>
+const OUTCOMES: ScoredOutcome[] = ['pass', 'fail', 'not_checked', 'needs_a_person']
 
 const TIP = {
   source: 'Integration Health and the install readiness read',
@@ -140,6 +148,8 @@ function outcomeWord(outcome: Outcome): string {
       return 'Not checked'
     case 'needs_a_person':
       return 'Needs a person'
+    case 'no_value':
+      return 'No cited value'
     default: {
       const never: never = outcome
       return never
@@ -157,6 +167,8 @@ function outcomeTone(outcome: Outcome): string {
       return 'idle'
     case 'needs_a_person':
       return 'needs'
+    case 'no_value':
+      return 'idle'
     default: {
       const never: never = outcome
       return never
@@ -183,20 +195,24 @@ function triggerWord(trigger: Trigger, name: string | null): string {
   }
 }
 
-function comparisonWord(comparison: Comparison, outcome: Outcome): string {
+function comparisonWord(comparison: Comparison, outcome: Outcome, module: string): string {
+  const change = comparison.change
+  const setting = module === 'settings'
   switch (comparison.kind) {
     case 'new':
-      return 'New'
+      return change ?? (setting ? 'New. The setting changed.' : 'New')
     case 'fixed':
-      return 'Fixed'
+      return change ?? (setting ? 'Fixed. The setting changed.' : 'Fixed')
     case 'unchanged':
       return 'Unchanged'
     case 'not_in_compared_run':
       return 'Not in the compared run'
-    case 'named':
-      return comparison.prior_outcome
+    case 'named': {
+      const base = comparison.prior_outcome
         ? `${outcomeWord(comparison.prior_outcome)} then ${outcomeWord(outcome)}`
         : outcomeWord(outcome)
+      return change ? `${base}. ${change}` : base
+    }
     default: {
       const never: never = comparison.kind
       return never
@@ -572,31 +588,84 @@ function Versus({ check, comparedAt }: { check: Check; comparedAt: string | null
   const priorEvidence = showEvidence ? storedLine(comparison.prior_evidence) : null
   return (
     <div className="d1-versus">
-      <p className="d1-versus-kind">{comparisonWord(comparison, check.outcome)}</p>
+      <p className="d1-versus-kind">{comparisonWord(comparison, check.outcome, check.module)}</p>
       {currentEvidence && <p className="d1-facts">This report: {currentEvidence}</p>}
       {priorEvidence && comparedAt && <p className="d1-facts">{reportStamp(comparedAt)}: {priorEvidence}</p>}
     </div>
   )
 }
 
+function LinkedSource({ check }: { check: Check }) {
+  const name = check.source_id ?? ''
+  const href = pieces(check.link)[0]
+  if (!href) return name
+  return (
+    <a href={href} target="_blank" rel="noreferrer">
+      {name}
+    </a>
+  )
+}
+
+function ValueLine({ check }: { check: Check }) {
+  const proposed = check.proposed ?? []
+  return (
+    <>
+      {check.scope && check.cited_value && (
+        <p className="d1-facts">Value for your selection: {check.cited_value}.</p>
+      )}
+      {check.scope && check.source_id && (
+        <p className="d1-compare">
+          Cited for {check.scope} by <LinkedSource check={check} />
+          {check.clause ? `, ${check.clause}` : ''}.{check.date_checked ? ` Checked ${check.date_checked}.` : ''}
+        </p>
+      )}
+      {!check.scope && (
+        <>
+          <Citation check={check} />
+          {check.cited_value && (
+            <p className="d1-facts">
+              Cited value: {check.cited_value}.
+              {check.date_checked ? ` Checked ${check.date_checked}.` : ''}
+            </p>
+          )}
+        </>
+      )}
+      {proposed.map((item) => (
+        <p className="d1-facts" key={`${item.scope}-${item.source_id}`}>
+          proposed, not yet law: {item.cited_value} ({item.source_id})
+        </p>
+      ))}
+      {check.window && <p className="d1-facts">{check.window}</p>}
+      {check.gap && <p className="d1-facts">Stated gap: {check.gap}</p>}
+    </>
+  )
+}
+
+function selectionText(selection: NonNullable<Report['selection']>): string {
+  if (selection.unreadable) return selection.unreadable
+  const places = (selection.jurisdictions ?? []).join(', ')
+  const kinds = selection.kinds ?? []
+  if (kinds.length === 0) return places ? `${places}. No kind is stated.` : 'No kind is stated.'
+  const named = kinds.join('; ')
+  return places ? `${places}. ${named}.` : `${named}.`
+}
+
 function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
-  const tone = outcomeTone(check.outcome)
+  const silent = check.outcome === 'no_value'
+  const tone = silent ? '' : outcomeTone(check.outcome)
   const screen = check.evidence?.screen
   const prerequisites = check.evidence?.prerequisites ?? []
   return (
     <div className="d1-row has-link">
-      <span className={`state-pill ${tone}`}>
-        <span className="state-dot" aria-hidden="true" />
-        {outcomeWord(check.outcome)}
-      </span>
-      <p className="d1-reason">{check.reason}</p>
-      <Citation check={check} />
-      {check.cited_value && (
-        <p className="d1-facts">
-          Cited value: {check.cited_value}.
-          {check.date_checked ? ` Checked ${check.date_checked}.` : ''}
-        </p>
+      {!silent && (
+        <span className={`state-pill ${tone}`}>
+          <span className="state-dot" aria-hidden="true" />
+          {outcomeWord(check.outcome)}
+        </span>
       )}
+      {silent && <p className="d1-facts">no cited value for your selection</p>}
+      <p className="d1-reason">{check.reason}</p>
+      <ValueLine check={check} />
       {check.evidence?.coverage && <p className="d1-facts">{check.evidence.coverage}</p>}
       {prerequisites.map((line) => (
         <p className="d1-facts" key={line}>
@@ -648,9 +717,11 @@ function CheckRow({
   )
 }
 
-/** The first three non-pass checks, in the order the checklist shows them. */
+/** The first three non-pass checks, in the order the checklist shows them. No cited value is left out. */
 function summaryActions(report: Report): Check[] {
-  return report.checks.filter((check) => check.outcome !== 'pass').slice(0, 3)
+  return report.checks
+    .filter((check) => check.outcome !== 'pass' && check.outcome !== 'no_value')
+    .slice(0, 3)
 }
 
 function Summary({ report }: { report: Report }) {
@@ -727,7 +798,9 @@ function Summary({ report }: { report: Report }) {
                       ? (seeVisibility && check.module === 'visibility') ||
                         (seeEstate && check.module === 'estate')
                       : check.module === id
-                  if (included) counts[check.outcome] += 1
+                  if (!included) continue
+                  if (check.outcome === 'no_value') continue
+                  counts[check.outcome] += 1
                 }
                 return (
                   <tr key={id}>
@@ -917,6 +990,17 @@ export default function ReportScreen() {
   return (
     <div className="d1-page">
       <div className="d1-screen">
+        {day1?.selection && (
+          <p className="d1-selection">
+            {selectionText(day1.selection)}
+            {canRun && (
+              <>
+                {' '}
+                <Link to="/settings?section=jurisdictions">System tab</Link>
+              </>
+            )}
+          </p>
+        )}
         {report?.preface && <p className="d1-preface">{report.preface}</p>}
         {produced && span && (
           <p className="d1-preface">
@@ -1007,6 +1091,7 @@ export default function ReportScreen() {
         {produced && !withheld.includes('production.alerts') && (produced.modules ?? []).includes('production.alerts') && alertsBody && (
           <AlertsSection evidence={alertsBody} tip={ALERTS_TIP} />
         )}
+        {produced && <ProductionFigures report={produced} />}
         {day1 && withheld.includes('visibility') && <Withheld id="visibility" />}
         {day1 && showVisibility && (
           <section className="d1-card" aria-label="What Vigil can see">

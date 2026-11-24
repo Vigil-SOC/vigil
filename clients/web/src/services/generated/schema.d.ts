@@ -12897,6 +12897,8 @@ export interface components {
             /** Date Checked */
             date_checked?: string | null;
             evidence?: components["schemas"]["Day1Evidence"];
+            /** Gap */
+            gap?: string | null;
             /** Id */
             id: string;
             /** Link */
@@ -12907,14 +12909,22 @@ export interface components {
              * Outcome
              * @enum {string}
              */
-            outcome: "pass" | "fail" | "not_checked" | "needs_a_person";
+            outcome: "pass" | "fail" | "not_checked" | "needs_a_person" | "no_value";
+            /** Proposed */
+            proposed?: components["schemas"]["Day1Proposed"][];
             /** Reason */
             reason: string;
+            /** Scope */
+            scope?: string | null;
             /** Source Id */
             source_id?: string | null;
+            /** Window */
+            window?: string | null;
         };
         /** Day1Comparison */
         Day1Comparison: {
+            /** Change */
+            change?: string | null;
             /**
              * Kind
              * @enum {string}
@@ -12922,7 +12932,7 @@ export interface components {
             kind: "new" | "fixed" | "unchanged" | "not_in_compared_run" | "named";
             prior_evidence?: components["schemas"]["Day1Evidence"] | null;
             /** Prior Outcome */
-            prior_outcome?: ("pass" | "fail" | "not_checked" | "needs_a_person") | null;
+            prior_outcome?: ("pass" | "fail" | "not_checked" | "needs_a_person" | "no_value") | null;
         };
         /** Day1Evidence */
         Day1Evidence: {
@@ -13090,6 +13100,15 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** Day1Proposed */
+        Day1Proposed: {
+            /** Cited Value */
+            cited_value: string;
+            /** Scope */
+            scope: string;
+            /** Source Id */
+            source_id: string;
+        };
         /** Day1Report */
         Day1Report: {
             /** Actor Id */
@@ -13118,6 +13137,7 @@ export interface components {
             recorded_at: string;
             /** Run Id */
             run_id: string;
+            selection?: components["schemas"]["Day1Selection"] | null;
             /** Started At */
             started_at: string;
             /** Switched Off */
@@ -13131,6 +13151,15 @@ export interface components {
             vigil_version: string;
             /** Withheld */
             withheld: string[];
+        };
+        /** Day1Selection */
+        Day1Selection: {
+            /** Jurisdictions */
+            jurisdictions?: string[];
+            /** Kinds */
+            kinds?: string[];
+            /** Unreadable */
+            unreadable?: string | null;
         };
         /** Day1Status */
         Day1Status: {

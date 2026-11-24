@@ -101,6 +101,8 @@ function outcomeWord(outcome: Outcome): string {
       return 'Not checked'
     case 'needs_a_person':
       return 'Needs a person'
+    case 'no_value':
+      return 'No cited value'
     default: {
       const never: never = outcome
       return never
@@ -118,6 +120,8 @@ function outcomeTone(outcome: Outcome): string {
       return 'idle'
     case 'needs_a_person':
       return 'needs'
+    case 'no_value':
+      return 'idle'
     default: {
       const never: never = outcome
       return never

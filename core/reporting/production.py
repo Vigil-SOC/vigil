@@ -25,7 +25,15 @@ from core.auth.permissions import holders
 from core.config import get_settings, is_demo_mode
 from core.integrations.readiness import UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import ALERTS, MODULES, QUIET, RUNNING, TUNING
+from core.reporting.checks import (
+    AGREEMENT,
+    ALERTS,
+    CONFIDENCE,
+    MODULES,
+    QUIET,
+    RUNNING,
+    TUNING,
+)
 from core.reporting.day1 import (
     FAIL,
     LOCK,
@@ -48,6 +56,7 @@ from core.reporting.day1 import (
 from core.reporting.day1 import abandon as day1_abandon
 from core.reporting.day1 import producing_ids
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.production_agreement import agreement, confidence
 from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
 from core.reporting.production_tuning import tuning as produce_tuning
@@ -235,9 +244,9 @@ def build(
 ) -> dict[str, Any]:
     """Every built production module that is switched on.
 
-    A later module adds its function to :func:`_produce`. One that is not
-    built yet returns None and is skipped. A module with no checks is still
-    listed. Day 1's ``build`` does not call these.
+    Each module returns its checks and, when it has figures, its evidence.
+    One that is not built yet returns None and is skipped. A failed read is
+    not-checked for that module only. Day 1's ``build`` does not call these.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
@@ -285,6 +294,10 @@ def _produce(
         return [], produce_alerts(started_at, window_end)
     if module_id == TUNING.id:
         return [], produce_tuning(started_at, window_end)
+    if module_id == CONFIDENCE.id:
+        return [], confidence(started_at, window_end)
+    if module_id == AGREEMENT.id:
+        return [], agreement(started_at, window_end)
     return None
 
 
