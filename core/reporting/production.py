@@ -25,7 +25,7 @@ from core.auth.permissions import holders
 from core.config import get_settings, is_demo_mode
 from core.integrations.readiness import UNAVAILABLE, UNKNOWN
 from core.platform import notices
-from core.reporting.checks import MODULES, RUNNING
+from core.reporting.checks import ALERTS, MODULES, QUIET, RUNNING
 from core.reporting.day1 import (
     FAIL,
     LOCK,
@@ -48,6 +48,8 @@ from core.reporting.day1 import (
 from core.reporting.day1 import abandon as day1_abandon
 from core.reporting.day1 import producing_ids
 from core.reporting.enablement import disabled_module_ids
+from core.reporting.production_alerts import alerts as produce_alerts
+from core.reporting.production_alerts import quiet as produce_quiet
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
 from core.storage.unit_of_work import unit_of_work
@@ -233,28 +235,32 @@ def build(
     """Every built production module that is switched on.
 
     A later module adds its function to :func:`_produce`. One that is not
-    built yet is skipped. Day 1's ``build`` does not call these.
+    built yet returns None and is skipped. A module with no checks is still
+    listed. Day 1's ``build`` does not call these.
     """
     disabled = disabled_module_ids()
     checks: list[dict[str, Any]] = []
     modules: list[str] = []
-    for module_id in MODULES:
-        if not module_id.startswith("production."):
-            continue
-        if module_id in disabled:
-            continue
-        produced = _produce(module_id, state)
-        if produced is None:
-            continue
-        modules.append(module_id)
-        checks.extend(produced)
     end = _iso(window_end)
-    evidence = {
+    evidence: dict[str, Any] = {
         "production": {
             "started_at": started_at,
             "window": {"start": started_at, "end": end},
         }
     }
+    for module_id in MODULES:
+        if not module_id.startswith("production."):
+            continue
+        if module_id in disabled:
+            continue
+        produced = _produce(module_id, state, started_at, window_end)
+        if produced is None:
+            continue
+        module_checks, module_evidence = produced
+        modules.append(module_id)
+        checks.extend(module_checks)
+        if module_evidence is not None:
+            evidence[module_id] = module_evidence
     return {
         "modules": modules,
         "checks": checks,
@@ -263,10 +269,19 @@ def build(
     }
 
 
-def _produce(module_id: str, state: dict) -> Optional[list[dict[str, Any]]]:
-    """The checks one production module contributes. None when it is not built yet."""
+def _produce(
+    module_id: str,
+    state: dict,
+    started_at: Optional[str],
+    window_end: datetime,
+) -> Optional[tuple[list[dict[str, Any]], Optional[dict[str, Any]]]]:
+    """Checks and evidence for one module. None when it is not built yet."""
     if module_id == RUNNING.id:
-        return _running_checks(state)
+        return _running_checks(state), None
+    if module_id == QUIET.id:
+        return produce_quiet(started_at, window_end)
+    if module_id == ALERTS.id:
+        return [], produce_alerts(started_at, window_end)
     return None
 
 
