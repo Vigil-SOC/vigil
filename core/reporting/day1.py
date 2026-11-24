@@ -595,10 +595,11 @@ def _change_detail(
 
 
 def _citation_of(check: dict) -> Optional[dict]:
+    """The stored citation, or the legacy snapshot a record before scoped values shows."""
     stored = check.get("citation")
     if isinstance(stored, dict):
         return stored
-    return None
+    return LEGACY_CITATIONS.get(str(check.get("id") or ""))
 
 
 def _value_phrase(citation: dict) -> str:
@@ -622,15 +623,11 @@ def _value_move(current: dict, prior: dict) -> Optional[str]:
     before = _citation_of(prior)
     if after is None or before is None:
         return None
-    if (
-        after.get("cited_value"),
-        after.get("source_id"),
-        after.get("scope"),
-    ) == (
-        before.get("cited_value"),
-        before.get("source_id"),
-        before.get("scope"),
-    ):
+    fields = ("cited_value", "source_id", "scope")
+    # A legacy citation names no scope. Its value and source are compared alone.
+    if after.get("scope") is None or before.get("scope") is None:
+        fields = ("cited_value", "source_id")
+    if all(after.get(field) == before.get(field) for field in fields):
         return None
     return (
         "The cited value moved from "
