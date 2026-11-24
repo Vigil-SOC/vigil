@@ -70,29 +70,55 @@ export function costOf(events: readonly { kind: string; seq?: number; payload: u
 
 // One run's spend events, for every run kind. Null when the run journaled none:
 // that is not a priced zero. A call nobody could price is counted and adds nothing.
+// Token totals sum each event's TokenCounts. A missing field is zero.
 export interface SpendAccount {
   calls: number;
   unpriced_calls: number;
   cost_usd: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+function tokenCount(tokens: unknown, key: keyof TokenCounts): number {
+  if (typeof tokens !== "object" || tokens === null) return 0;
+  const value = (tokens as Partial<TokenCounts>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function spendOf(events: readonly { kind: string; payload: unknown }[]): SpendAccount | null {
   let calls = 0;
   let unpriced = 0;
   let cost = 0;
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
   for (const event of events) {
     if (event.kind !== "spend") continue;
     calls += 1;
     const payload = event.payload;
-    const priced =
-      typeof payload === "object" && payload !== null
-        ? (payload as SpendPayload).cost_usd
-        : null;
+    const record =
+      typeof payload === "object" && payload !== null ? (payload as SpendPayload) : null;
+    const priced = record ? record.cost_usd : null;
     if (typeof priced === "number") cost += priced;
     else unpriced += 1;
+    input += tokenCount(record?.tokens, "input");
+    output += tokenCount(record?.tokens, "output");
+    cacheRead += tokenCount(record?.tokens, "cache_read");
+    cacheWrite += tokenCount(record?.tokens, "cache_write");
   }
   if (calls === 0) return null;
-  return { calls, unpriced_calls: unpriced, cost_usd: roundCost(cost) };
+  return {
+    calls,
+    unpriced_calls: unpriced,
+    cost_usd: roundCost(cost),
+    input,
+    output,
+    cache_read: cacheRead,
+    cache_write: cacheWrite,
+  };
 }
 
 // A value, never a throw: the exhaustiveness argument applies here or nowhere.

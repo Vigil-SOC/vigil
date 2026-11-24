@@ -41,7 +41,7 @@ const CHAT = "/chat/stream";
 const CHECK = "/plugins/check";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
-// GET /runs/<id>/spend -- priced and unpriced model calls on that run.
+// GET /runs/<id>/spend -- priced and unpriced model calls, and token totals, on that run.
 const SPEND = /^\/runs\/([0-9a-fA-F-]{36})\/spend$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;

@@ -34,6 +34,7 @@ from core.reporting.checks import (
     QUIET,
     RUNNING,
     SETTINGS,
+    SPEND,
     TIME,
     TUNING,
 )
@@ -64,6 +65,7 @@ from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
 from core.reporting.production_changes import present as present_changes
 from core.reporting.production_changes import produce as produce_changes
+from core.reporting.production_spend import spend as produce_spend
 from core.reporting.production_time import report as time_report
 from core.reporting.production_tuning import tuning as produce_tuning
 from core.storage.config_service import get_config_service, get_session
@@ -310,6 +312,8 @@ def _produce(
         return [], confidence(started_at, window_end)
     if module_id == AGREEMENT.id:
         return [], agreement(started_at, window_end)
+    if module_id == SPEND.id:
+        return [], produce_spend(started_at, window_end)
     if module_id == CHANGES.id:
         return [], produce_changes(started_at, window_end)
     if module_id == TIME.id:

@@ -18,6 +18,7 @@ from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunServic
 logger = logging.getLogger(__name__)
 
 READ_TIMEOUT_S = 10
+_TOKEN_TOTALS = ("input", "output", "cache_read", "cache_write")
 
 # None = no read yet, True = failing, False = ok. An outage logs one ERROR; the
 # first success after it, or a process's first read of all, logs one recovery line.
@@ -93,7 +94,7 @@ async def read_projection(
 
 
 async def read_spend(run_id: str) -> Optional[Dict[str, Any]]:
-    """``{calls, unpriced_calls, cost_usd}`` for one run.
+    """``{calls, unpriced_calls, cost_usd, input, output, cache_read, cache_write}``.
 
     ``None`` is the agent layer's 404: the run has no spend events. That is
     not a failed read. Anything else that is not the summary raises, so a
@@ -123,17 +124,22 @@ async def read_spend(run_id: str) -> Optional[Dict[str, Any]]:
         body.get("unpriced_calls"),
         body.get("cost_usd"),
     )
-    numbers = (calls, unpriced, cost)
+    tokens = tuple(body.get(name) for name in _TOKEN_TOTALS)
+    numbers = (calls, unpriced, cost, *tokens)
     if not all(
         isinstance(part, (int, float)) and not isinstance(part, bool)
         for part in numbers
     ):
         raise RuntimeError("the agent layer returned no spend summary")
-    return {
+    summary = {
         "calls": int(calls),
         "unpriced_calls": int(unpriced),
         "cost_usd": float(cost),
     }
+    summary.update(
+        {name: int(round(float(value))) for name, value in zip(_TOKEN_TOTALS, tokens)}
+    )
+    return summary
 
 
 # What episodic memory reads once a run has ended, folded on the side that owns

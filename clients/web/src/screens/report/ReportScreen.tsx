@@ -11,6 +11,7 @@ import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
 import { ProductionFigures } from './ProductionFigures'
+import { SpendSection } from './ProductionSpend'
 import {
   ALERTS_TIP,
   AlertsSection,
@@ -63,6 +64,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.tuning': 'Tuning since Production Start',
   'production.confidence': 'How sure the investigations were',
   'production.agreement': 'Agreement',
+  'production.spend': 'Spend since Production Start',
   'production.changes': 'What changed',
   'production.time': 'Time to first verdict and time to close',
 }
@@ -82,6 +84,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.tuning': 'findings.read',
   'production.confidence': 'platform.read',
   'production.agreement': 'platform.read',
+  'production.spend': 'platform.read',
   'production.changes': 'platform.read',
   'production.time': 'findings.read',
 }
@@ -94,6 +97,7 @@ const REPORT_SECTIONS = new Set([
   'history.forecast',
   'production.confidence',
   'production.agreement',
+  'production.spend',
   'production.changes',
 ])
 
@@ -1248,6 +1252,10 @@ export default function ReportScreen() {
           <AlertsSection evidence={alertsBody} tip={ALERTS_TIP} />
         )}
         {produced && <ProductionFigures report={produced} />}
+        {produced && withheld.includes('production.spend') && <Withheld id="production.spend" />}
+        {produced && !withheld.includes('production.spend') && (produced.modules ?? []).includes('production.spend') && (
+          <SpendSection evidence={produced.evidence?.['production.spend']} />
+        )}
         {produced && withheld.includes('production.time') && <Withheld id="production.time" />}
         {produced && !withheld.includes('production.time') && (produced.modules ?? []).includes('production.time') && (
           <TimeSection evidence={produced.evidence?.['production.time']} />
