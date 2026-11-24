@@ -370,7 +370,12 @@ class ApprovalService:
             config: the confidence band; read from Settings when omitted so
                 the no-arg form callers use still honours env (#916).
         """
-        self.config = config or ResponseConfig.from_settings()
+        # None reads the band live (env plus an applied INTENT.md revision).
+        self._config = config
+
+    @property
+    def config(self) -> ResponseConfig:
+        return self._config or ResponseConfig.from_settings()
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed

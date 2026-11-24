@@ -1685,7 +1685,11 @@ export const entityFactsApi = {
 // The rule-rollout limits (#4058): promotion cap, days in shadow, hits a day. The SIEM
 // Quiet/Noisy/Silent thresholds ride along read only; they are edited on the integration.
 export type RolloutLimits = Schema<'RolloutLimitsResponse'>
+// Which outside tools are emulators, and the one host list they run on (#5061).
+export type Emulation = Schema<'EmulationResponse'>
 export const autonomyApi = {
+  emulation: () => api.get<Emulation>('/autonomy/emulation'),
+  updateEmulation: (body: Schema<'EmulationBody'>) => api.put<Emulation>('/autonomy/emulation', body),
   rolloutLimits: () => api.get<RolloutLimits>('/autonomy/rollout-limits'),
   updateRolloutLimits: (body: Schema<'RolloutLimitsBody'>) =>
     api.put<RolloutLimits>('/autonomy/rollout-limits', body),

@@ -27,6 +27,7 @@ from sqlalchemy import select
 
 from core.intent import (
     FIELDS_BY_KEY,
+    INTENT_FILE_NAME,
     IntentDiff,
     _normalize,
     diff_intent,
@@ -36,7 +37,11 @@ from core.intent import (
     read_intent,
 )
 from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
-from core.response.config import ResponseConfig, approval_requirement
+from core.response.config import (
+    ResponseConfig,
+    applied_intent,
+    approval_requirement,
+)
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction
 from core.time import utcnow
@@ -57,20 +62,43 @@ def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
         return dataclasses.replace(config, sources=sources)
     stored, found = loaded
     locked = environment_locks_act()
-    origin = "db" if found else "default"
+    found_origin = "db" if found else "default"
+
+    def origin(path: str) -> str:
+        return "declared" if sources.get(path) == "declared" else found_origin
+
     sources["ceiling.act_reversible"] = (
-        "env" if locked and stored.act_reversible else origin
+        "env" if locked and stored.act_reversible else origin("ceiling.act_reversible")
     )
     sources["ceiling.act_irreversible"] = (
-        "env" if locked and stored.act_irreversible else origin
+        "env"
+        if locked and stored.act_irreversible
+        else origin("ceiling.act_irreversible")
     )
-    sources["ceiling.four_eyes"] = origin
+    sources["ceiling.four_eyes"] = origin("ceiling.four_eyes")
     ceiling = CeilingConfig(
         act_reversible=False if locked else stored.act_reversible,
         act_irreversible=False if locked else stored.act_irreversible,
         four_eyes=stored.four_eyes,
     )
     return dataclasses.replace(config, ceiling=ceiling, sources=sources)
+
+
+def applied_directory() -> Optional[Dict[str, Any]]:
+    """The ``intent.applied`` row when a declared directory is enforced, else None.
+
+    Every process reads it, so a backend replica without the directory mounted
+    still reports what the daemon applied.
+    """
+    applied = applied_intent()
+    return applied if applied.get("directory") else None
+
+
+def report_path() -> Path:
+    applied = applied_directory()
+    if applied is not None:
+        return Path(applied["directory"]) / INTENT_FILE_NAME
+    return intent_file()
 
 
 def intent_report(
@@ -81,9 +109,17 @@ def intent_report(
 ) -> Optional[List[IntentDiff]]:
     """Rows for declared keys, or ``None`` when the manifest is unreadable.
 
-    Differing rows only, unless ``include_same`` (the Settings card).
+    Differing rows only, unless ``include_same`` (the Settings card). With a
+    declared directory applied, the declared values are the applied row's.
     """
-    declared = read_intent(path)
+    applied = applied_directory() if path is None else None
+    if applied is not None:
+        declared = {
+            key: meta.get("declared")
+            for key, meta in (applied.get("keys") or {}).items()
+        }
+    else:
+        declared = read_intent(path)
     if declared is None:
         return None
     config = _overlay_ceiling(config or DaemonConfig.from_env())
@@ -107,7 +143,7 @@ def report_intent(config: Optional[DaemonConfig] = None) -> None:
     if not rows:
         logger.info(
             "INTENT.md: no declared key differs from effective daemon config (%s)",
-            intent_file(),
+            report_path(),
         )
         return
     for line in format_rows(rows):
@@ -294,7 +330,7 @@ def load_replay_rows(since: timedelta) -> List[ReplayApproval]:
 
 def _report_main() -> int:
     rows = intent_report()
-    path = intent_file()
+    path = report_path()
     if rows is None:
         print(f"no intent report: {path} could not be read")
         return 0

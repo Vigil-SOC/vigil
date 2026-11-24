@@ -366,9 +366,7 @@ def _processor_pipeline(processor: Any) -> Dict[str, Any]:
             getattr(processor, "_enrich_breaker_tripped", False)
         ),
         "enrich_paused_until": _enrich_paused_until(processor),
-        "auto_triage_enabled": bool(
-            getattr(getattr(processor, "config", None), "auto_triage_enabled", False)
-        ),
+        "auto_triage_enabled": bool(getattr(processor, "auto_triage", False)),
     }
 
 

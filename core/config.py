@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     vigil_frontend_url: str = ""
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
+    # A directory holding INTENT.md and a REVISION marker. When set, the daemon
+    # applies each new revision (services/daemon/intent_apply.py); empty is
+    # observe mode only.
+    vigil_intent_dir: str = ""
     # One extra root of SKILL.md directories, read alongside core/skills/library
     # and written by the skills API. A top-level folder without its own SKILL.md
     # is searched where `npx skills add` searches a repo, so category folders

@@ -1,14 +1,15 @@
 """Atomic Red Team MCP server (stdio).
 
-Thin invoke of one Atomic technique on a ``hostname`` the operator has
-listed in ``allowed_hosts``; anything else is refused before the runner. The
+Thin invoke of one Atomic technique on a ``hostname``. Vigil marks this tool
+as an emulator and refuses a call on a host not listed under Settings → Limits
+& autonomy before it reaches this server (``core.response.emulation``). The
 operator installs the runner, which must accept ``--technique`` and
 ``--hostname``; this slice does not vendor the atomics repo. The execute tool's JSON is the interface — an action-trace step in the
 spelling ``core.detections.reconstruction`` joins on, not fabricated sensor
 events and not a ledger write.
 
-Config comes from the descriptor: ``runner_path``, ``atomics_path`` and
-``allowed_hosts`` from the stored integration config under the ``atomic-red-team`` id.
+Config comes from the descriptor: ``runner_path`` and ``atomics_path`` from the
+stored integration config under the ``atomic-red-team`` id.
 """
 
 import sys
@@ -56,35 +57,12 @@ def result(data: Any) -> List[types.TextContent]:
     ]
 
 
-_SETTINGS_POINTER = "Settings → Integrations → Atomic Red Team"
-
-
-def _parse_hosts(raw: Any) -> List[str]:
-    """Split ``allowed_hosts`` on commas/newlines; drop entries that could
-    reach the runner as a flag or that hold more than one name."""
-    hosts: List[str] = []
-    for entry in re.split(r"[,\n]", str(raw or "")):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if entry.startswith("-") or re.search(r"\s", entry):
-            logger.warning(
-                "atomic-red-team: ignoring allowed_hosts entry %r "
-                "(starts with '-' or contains whitespace)",
-                entry,
-            )
-            continue
-        hosts.append(entry)
-    return hosts
-
-
 def _load_config() -> Dict[str, Any]:
     # Read on every call so a Settings edit applies without a restart.
     config = resolve(ATOMIC_RED_TEAM)
     return {
         "runner_path": (config.get("runner_path") or "").strip(),
         "atomics_path": (config.get("atomics_path") or "").strip(),
-        "allowed_hosts": _parse_hosts(config.get("allowed_hosts")),
     }
 
 
@@ -107,29 +85,18 @@ def execute_atomic(
     *,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> Dict[str, Any]:
-    """Invoke one Atomic technique. An unlisted host, an empty host list or a
-    technique that is not an ATT&CK id refuses before the runner.
+    """Invoke one Atomic technique. A missing hostname or a technique that is
+    not an ATT&CK id refuses before the runner; the host list is Vigil's check.
 
     The returned trace uses the reconstruction spelling (``technique_id``,
     ``started_at`` / ``ended_at``, ``hostname``) so a journaled result joins to
     Findings in ``core.detections.reconstruction`` without translation.
     """
     args = arguments or {}
-    allowed = list(config.get("allowed_hosts") or [])
-    if not allowed:
-        return {
-            "error": "Atomic Red Team emulation is off: no hosts are listed. "
-            f"List the hosts it may run on under {_SETTINGS_POINTER}."
-        }
-
     hostname = str(args.get("hostname") or "").strip()
-    match = next((h for h in allowed if h.lower() == hostname.lower()), None)
-    if not hostname or match is None:
-        return {
-            "error": f"hostname {hostname!r} is not an allowed host; "
-            f"Atomic Red Team runs only on: {', '.join(allowed)}"
-        }
-    hostname = match
+    # Never something the runner could read as a flag, or two names.
+    if not hostname or hostname.startswith("-") or re.search(r"\s", hostname):
+        return {"error": f"hostname {hostname!r} is not one hostname"}
 
     technique = str(args.get("technique") or "").strip()
     if not TECHNIQUE_ID.match(technique):
@@ -189,9 +156,9 @@ async def handle_list_tools() -> List[types.Tool]:
             name="atomic_red_team_execute",
             description=(
                 "Execute one Atomic Red Team technique on a named hostname. "
-                "Hosts are limited to the list the operator keeps in the "
-                "integration's settings; any other hostname is refused and the "
-                "refusal names the allowed hosts. Returns an action trace step "
+                "Hosts are limited to the ones the operator lists in Settings → "
+                "Limits & autonomy; any other hostname is refused and the "
+                "refusal names the listed hosts. Returns an action trace step "
                 "(technique_id, hostname, command, exit, stdout/stderr, "
                 "started_at/ended_at) that reconstruct_run and "
                 "analyze_coverage join to Findings. Does not capture or invent "
@@ -208,7 +175,7 @@ async def handle_list_tools() -> List[types.Tool]:
                         "type": "string",
                         "description": (
                             "Host the technique runs on, as sensors report it. "
-                            "Must be one of the operator's allowed hosts; "
+                            "Must be one of the hosts listed for emulation; "
                             "echoed on the trace so Findings on that host can "
                             "be correlated."
                         ),

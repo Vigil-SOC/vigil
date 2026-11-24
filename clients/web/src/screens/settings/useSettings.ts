@@ -18,6 +18,7 @@ import api, {
   type AIConfigResponse,
   type AIModelInfo,
   type BudgetQuotaResponse,
+  type Emulation,
   type BudgetSettings,
   type Ceiling,
   type ComponentAssignment,
@@ -1689,4 +1690,37 @@ export function useIngestionJob(dataType: 'finding' | 'history' = 'finding') {
   )
 
   return { job, attaching, upload, start }
+}
+
+/** The stored emulators and host list (GET/PUT /api/autonomy/emulation), shared with the tool rows' mark. */
+export function useEmulation() {
+  const [data, setData] = useState<Emulation | null>(null)
+  const [failed, setFailed] = useState(false)
+  const load = useCallback(
+    () =>
+      autonomyApi
+        .emulation()
+        .then((r) => {
+          setData(r.data)
+          setFailed(false)
+        })
+        .catch(() => setFailed(true)),
+    [],
+  )
+  useEffect(() => {
+    void load()
+  }, [load])
+  // refetch after a failure too: a 409 may mean someone stopped or edited meanwhile
+  const save = useCallback(
+    async (body: { tools?: string[]; hosts?: string[] }) => {
+      try {
+        setData((await autonomyApi.updateEmulation(body)).data)
+      } catch (err) {
+        await load()
+        throw err
+      }
+    },
+    [load],
+  )
+  return { data, failed, save }
 }

@@ -81,7 +81,8 @@ class SOCAgentLibrary:
 
 class AgentManager:
     def __init__(self):
-        self.agents = SOCAgentLibrary.get_all_agents()
+        self._band = ResponseConfig.from_settings()
+        self._agents = SOCAgentLibrary.get_all_agents(self._band)
         # Load DB-backed custom agents at startup so /agents/agents returns
         # a unified list without waiting for a later CRUD call to trigger
         # refresh. Failures (DB not ready) are logged inside the helper,
@@ -109,7 +110,7 @@ class AgentManager:
             return 0
 
         try:
-            config = ResponseConfig.from_settings()
+            config = self._band
             skills = agent_skills()
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:
@@ -127,13 +128,33 @@ class AgentManager:
         self._swap_customs(customs)
         return len(customs)
 
+    @property
+    def agents(self) -> Dict[str, AgentProfile]:
+        """Every profile; rebuilt when the confidence band their prompts carry
+        changes (an applied INTENT.md revision), so no restart is needed."""
+        band = ResponseConfig.from_settings()
+        if band != self._band:
+            self._band = band
+            builtins = SOCAgentLibrary.get_all_agents(band)
+            # Built-ins swap in with the current customs, never alone.
+            self._agents = {
+                **builtins,
+                **{
+                    k: v
+                    for k, v in self._agents.items()
+                    if k.startswith(CUSTOM_AGENT_ID_PREFIX)
+                },
+            }
+            self.refresh_custom_agents()
+        return self._agents
+
     def _swap_customs(self, customs: Dict[str, AgentProfile]) -> None:
         builtins = {
             k: v
-            for k, v in list(self.agents.items())
+            for k, v in list(self._agents.items())
             if not k.startswith(CUSTOM_AGENT_ID_PREFIX)
         }
-        self.agents = {**builtins, **customs}
+        self._agents = {**builtins, **customs}
 
     def get_agent_list(self) -> List[Dict]:
         """One row per agent, with what the Agents tab shows beside it.

@@ -1,8 +1,8 @@
-"""Approved isolations, disables and Cloudflare blocks no tool ran go back to pending (#5059)."""
+"""Atomic Red Team's own host list moves to the one ``emulation`` row (#5061)."""
 
 from core.upgrade.revision import run_sql
 
-revision = "0116_reopen_unrun_containment"
+revision = "0116_emulation_hosts"
 down_revision = "0115_containment_undo_tools"
 
 
