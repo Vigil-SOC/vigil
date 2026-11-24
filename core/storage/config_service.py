@@ -494,6 +494,38 @@ def write_config_audit(
     )
 
 
+@contextmanager
+def audited_change(
+    changed_by: str,
+    *,
+    config_type: str,
+    config_key: str,
+    action: str,
+    old_value: Optional[Dict[str, Any]],
+    new_value: Optional[Dict[str, Any]],
+):
+    """Record a change whose state lives outside the database (a State
+    Directory file, the skills folder), then let the caller make it.
+
+    The entry is written first, so a refused one stops the change; an
+    exception in the block rolls the entry back.
+    """
+    from core.storage.unit_of_work import unit_of_work
+
+    with unit_of_work() as session:
+        write_config_audit(
+            session,
+            config_type=config_type,
+            config_key=config_key,
+            action=action,
+            old_value=old_value,
+            new_value=new_value,
+            changed_by=changed_by,
+        )
+        session.flush()
+        yield session
+
+
 def get_config_service(user_id: str = "system") -> ConfigService:
     """A config service whose writes are audited as ``user_id``.
 
