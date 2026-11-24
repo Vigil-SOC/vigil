@@ -104,6 +104,11 @@ Every hook is optional, and the kernel calls each at a fixed point:
 `runSubturn` runs one turn under a role, prompt and grants of the plugin's
 choosing, journaling its calls under that role. It is for work that is an
 authored sequence rather than one agent's judgement. Compose's phases use it.
+With `resume` set, as compose sets it, a step picked up again continues from the
+calls journaled under its role, and a call it parked on that a person approved
+runs once from its checkpoint before the step's first model call; a later
+identical ask is served from the ledger. Rootcause v3 reuses roles across turns
+on purpose, so it leaves `resume` off and each turn starts from its task alone.
 
 ## The plugins
 

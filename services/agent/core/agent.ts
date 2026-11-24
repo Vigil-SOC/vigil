@@ -562,6 +562,8 @@ async function* work(ctx: PluginContext, held: Ledger, clock: { turn: number }):
         spoken = "";
         first = true;
       } else if (seen.type === "tool_result") {
+        // A result before any model call is the approved one, on a turn of its own as the parking turn was.
+        if (clock.turn === used) clock.turn += 1;
         count += 1;
         const call: CallPayload = {
           ref: seen.ref ?? `${CALL_REF}${count}`,
@@ -683,6 +685,7 @@ function turnFor(
     // The plugin's own conclude tool is the answer's tool, so the kernel offers no second one.
     ...(plugin.finish_with === "tool" && options.conversation === undefined ? { submit: false } : {}),
     history: options.conversation === undefined ? historyOf(agentCalls(calls)) : conversationHistory(options.conversation.history, agentCalls(calls)),
+    ...(options.conversation === undefined ? { resume_approved: true } : {}),
     // Across the whole run: a resume continues the allowance rather than refilling it.
     max_turns: Math.max(0, limit - used),
     approvals: approvalsFor(options),
@@ -807,7 +810,8 @@ function openingKeys(spec: RunSpec): readonly string[] {
 }
 
 // The transcript a resume continues from. A call with no record parked the run and is
-// left out, so the model asks again and an approved call is served, not re-run.
+// left out: once approved, the stream runs it from its checkpoint before the model is
+// asked anything (resume_approved), and a later identical ask is served, not re-run.
 export function historyOf(calls: readonly CallPayload[]): Message[] {
   const turns = new Map<number, CallPayload[]>();
   for (const call of calls) turns.set(call.turn, [...(turns.get(call.turn) ?? []), call]);
@@ -912,6 +916,10 @@ export interface Subturn {
   cite?: boolean;
   // Whether a denied call parks the run (#3306). Off, the step reads the denial.
   park_on_denial?: boolean;
+  // Whether the step continues from its own calls on this run, those journaled under its
+  // role, and runs the call it parked on once approved (#5077). Only for a role that
+  // names one step: a role reused across turns on purpose would see the others' calls.
+  resume?: boolean;
 }
 
 export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<Outcome<T>> {
@@ -923,6 +931,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
   const calls = callsIn(await harness.state.read(options.run_id));
   turn = calls.reduce((max, call) => Math.max(max, call.turn), 0);
   let count = calls.length;
+  const own = sub.resume === true ? calls.filter((call) => call.role === sub.role) : [];
   const cfg: TurnConfig = {
     run_id: options.run_id,
     run_kind: options.run_kind,
@@ -931,6 +940,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     system: sub.system,
     task: sub.task,
     schema: sub.schema,
+    ...(sub.resume === true ? { history: historyOf(own), resume_approved: true } : {}),
     max_turns: sub.max_turns ?? options.spec.runtime.max_turns,
     answer_within_cap: true,
     approvals: approvalsFor(options),
@@ -942,8 +952,9 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     ...(sub.cite === true ? { refs: { prefix: CALL_REF, offset: count } } : {}),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
-  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, sub.skills ?? [], []);
+  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, sub.skills ?? [], own.map((call) => call.ref));
   const stream = streamTurn<T, Kinds>(cfg, scoped);
+  let asked = false;
   for (;;) {
     const next = await stream.next();
     if (next.done === true) return next.value;
@@ -952,8 +963,16 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
       await harness.state.append(options.run_id, framer.events(seen.frame) as Event[]);
       continue;
     }
-    if (seen.type === "usage") turn += 1;
+    if (seen.type === "usage") {
+      turn += 1;
+      asked = true;
+    }
     if (seen.type !== "tool_result") continue;
+    // A result before any model call is the approved one, on a turn of its own as the parking turn was.
+    if (!asked) {
+      turn += 1;
+      asked = true;
+    }
     count += 1;
     const call: CallPayload = {
       ref: `${CALL_REF}${count}`,

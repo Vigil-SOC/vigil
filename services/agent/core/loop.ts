@@ -79,6 +79,9 @@ export interface TurnConfig {
   // Turns the caller already holds, seeded before the loop. A stateless client
   // posts the whole conversation each time and the run is one turn of it.
   history?: readonly Message[];
+  // On a resume, the approved tool call this role parked on and has not made runs once,
+  // through the invoke door under its checkpoint, before the first model call (#5077).
+  resume_approved?: boolean;
   // The harness's own cap on tool turns, held whatever a workflow asks for.
   max_turns: number;
   // Which tools ask a human first is deployment's answer, not a property of the
