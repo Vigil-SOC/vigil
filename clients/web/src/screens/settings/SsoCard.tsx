@@ -40,6 +40,15 @@ const toForm = (s: SsoSettings): Form => ({
 
 const same = (a: Form, b: Form) => JSON.stringify(a) === JSON.stringify(b)
 
+/** The save refuses an empty secret when one is stored and both fields are
+ * filled with a discovery URL or client ID different from the saved values. */
+const identityNeedsSecret = (saved: SsoSettings, discovery: string, clientId: string) =>
+  !!saved.client_secret_set &&
+  discovery.trim() !== '' &&
+  clientId.trim() !== '' &&
+  (discovery.trim() !== (saved.discovery_url ?? '').trim() ||
+    clientId.trim() !== (saved.client_id ?? '').trim())
+
 /** Settings › Team & access: the single sign-on provider (GET/PUT /api/auth/sso/settings).
  * A save that changes the provider is checked against its discovery document by the server;
  * the group → role list appears once one has reached it. Shown only to roles.manage. */
@@ -103,6 +112,26 @@ export default function SsoCard({ notify }: SectionProps) {
   }
 
   const set = (patch: Partial<Form>) => setForm({ ...form, ...patch })
+  // Entering from Replace drops a secret typed for the saved registration.
+  // Leaving only when both fields match the saved values again drops one typed
+  // for the other registration. A secret typed while the prompt is up stays,
+  // including across a cleared field, and is what the save sends.
+  const setIdentity = (patch: Partial<Pick<Form, 'discovery_url' | 'client_id'>>) => {
+    const next = { ...form, ...patch }
+    const was = identityNeedsSecret(saved, form.discovery_url, form.client_id)
+    const now = identityNeedsSecret(saved, next.discovery_url, next.client_id)
+    const matchesSaved =
+      next.discovery_url.trim() === (saved.discovery_url ?? '').trim() &&
+      next.client_id.trim() === (saved.client_id ?? '').trim()
+    if (!was && now) {
+      if (replacing || !form.client_secret) next.client_secret = ''
+      setReplacing(false)
+    } else if (was && !now && matchesSaved) {
+      next.client_secret = ''
+      setReplacing(false)
+    }
+    setForm(next)
+  }
   const setRow = (i: number, patch: Partial<Mapping>) =>
     set({ group_roles: form.group_roles.map((g, j) => (j === i ? { ...g, ...patch } : g)) })
   const move = (i: number, by: number) => {
@@ -112,6 +141,7 @@ export default function SsoCard({ notify }: SectionProps) {
   }
 
   const reached = !!saved.issuer
+  const askForSecret = identityNeedsSecret(saved, form.discovery_url, form.client_id)
   // While required, the provider and SSO itself stay as saved: turn Require off first.
   const locked = !!saved.require_sso
   const syncOn = !!(sync?.sync_enabled || saved.sync_enabled)
@@ -219,7 +249,7 @@ export default function SsoCard({ notify }: SectionProps) {
             disabled={busy || providerLocked}
             title={providerLockTitle}
             spellCheck={false}
-            onChange={(e) => set({ discovery_url: e.target.value })}
+            onChange={(e) => setIdentity({ discovery_url: e.target.value })}
           />
           {reached && (
             <span className="sso-reached">
@@ -229,9 +259,20 @@ export default function SsoCard({ notify }: SectionProps) {
         </div>
         <div className="sso-pair">
           <Field label="Client ID">
-            <TextInput className="mono" value={form.client_id} disabled={busy || providerLocked} title={providerLockTitle} spellCheck={false} onChange={(e) => set({ client_id: e.target.value })} />
+            <TextInput className="mono" value={form.client_id} disabled={busy || providerLocked} title={providerLockTitle} spellCheck={false} onChange={(e) => setIdentity({ client_id: e.target.value })} />
           </Field>
-          {saved.client_secret_set && !replacing ? (
+          {askForSecret ? (
+            <Field label="Client secret">
+              <PasswordInput
+                value={form.client_secret}
+                disabled={busy}
+                required
+                aria-required
+                autoComplete="new-password"
+                onChange={(e) => set({ client_secret: e.target.value })}
+              />
+            </Field>
+          ) : saved.client_secret_set && !replacing && !form.client_secret ? (
             <Field label="Client secret" hint="Saved. It is never shown again.">
               <span className="sso-line">
                 <TextInput className="mono" value="••••••••••••••••" readOnly aria-label="Client secret, saved" tabIndex={-1} />
