@@ -26,6 +26,7 @@ from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.overlay import save_rule
 from core.detections.reconstruction import (
+    EmulatedSteps,
     coverage_report,
     reconstruct,
     span_for_steps,
@@ -126,6 +127,7 @@ class SecurityDetectionsTools:
         }
 
     async def _run_coverage(self, run_id: Optional[str], steps: Any) -> Dict:
+        read: Optional[EmulatedSteps] = None
         if isinstance(steps, list) and steps:
             trace: List = steps
         elif run_id:
@@ -138,11 +140,15 @@ class SecurityDetectionsTools:
                     "techniques": [],
                     "error": "no readable run",
                 }
-            trace = steps_from_dispatch_results(projection.get("results"))
+            read = steps_from_dispatch_results(projection)
+            trace = read.steps
         else:
             trace = steps if isinstance(steps, list) else []
         reconstructed = await self.reconstruct_run(steps=trace)
         report = coverage_report(trace, reconstructed)
+        if read is not None:
+            # What the run's emulators reported that is not scored, beside the techniques.
+            report.update(read.notes())
         await asyncio.to_thread(_name_rules, report)
         if run_id:
             report["run_id"] = run_id

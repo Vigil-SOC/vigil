@@ -14,18 +14,20 @@ below: take what the goal in your brief needs.
 
 When the brief names no technique, read what to emulate next with
 `emulate_next`: techniques with no active rule come first, then a rule not
-proven, then proven with nothing caught. It does not know which tests the
-Atomic Red Team runner holds. `analyze_coverage` and `identify_gaps` say what
+proven, then proven with nothing caught. It does not know which tests your emulators
+hold. `analyze_coverage` and `identify_gaps` say what
 covers a technique today and which gaps are already on record.
 
 ## Emulate on the listed hosts
 
-`atomic_red_team_execute` runs one test on one host, and only on a host the
-operator listed for it. Pick a host from that list; when a call is refused, the
-refusal names the hosts you may use. Never ask for a host the list does not
-name. At the default autonomy ceiling every call waits in Approvals for a
-person before it runs: say what it will run and where, and do not treat a call
-that is waiting as one that ran.
+An emulator tool you hold runs one technique on one host, and only on a host
+the operator listed for emulation. Pick a host from that list; when a call is
+refused, the refusal names the hosts you may use. Never ask for a host the list
+does not name. Whether a call waits in Approvals for a person depends on the
+deployment's autonomy ceiling: when it waits, say what it will run and where,
+and do not treat a call that is waiting as one that ran. An answer with
+`done: false` and a `handle` is still running: call the emulator again with
+that handle to read the rest before you report.
 
 ## Read each step's result
 
@@ -33,7 +35,8 @@ that is waiting as one that ran.
 both, or missed, with the Findings it matched. The run's coverage report
 (`analyze_coverage` with the run's id) scores each emulated step, and there a
 step whose runner failed, or that ended too recently for alerts to land, is
-unknown, not missed. Say which it is.
+unknown, not missed. Say which it is. A step with no host or time, or on a host
+not listed, is set aside with its reason and never scored; say so too.
 
 ## A miss, and proving a rule
 

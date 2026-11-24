@@ -111,6 +111,10 @@ export interface DispatchPayload {
   // What a gated call returned. Written by the harness and by nothing else, and
   // what makes an approved call run once however many times the run resumes.
   result?: unknown;
+  // Set on a call to a tool the deployment marks as an emulator, gated or not:
+  // the only results whose steps an emulation's coverage report reads.
+  tool?: string;
+  emulator?: true;
 }
 
 // A capability, or a phase's tool, this deployment cannot answer: journalled once

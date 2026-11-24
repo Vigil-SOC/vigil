@@ -84,6 +84,9 @@ export interface TurnConfig {
   // Which tools ask a human first is deployment's answer, not a property of the
   // tool: the same tool needs approval in one deployment and not in another.
   approvals: ReadonlySet<string>;
+  // Tools the deployment marks as emulators (`emulator` on a tool spec). Each call
+  // to one is journaled with its result, gated or not.
+  emulators?: ReadonlySet<string>;
   // Whether a denied call parks the run on its reason. A conversation's turn gets
   // the denial as a result instead: the person is there to read it.
   park_on_denial?: boolean;
