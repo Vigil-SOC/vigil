@@ -279,6 +279,9 @@ QUIET = ReportModule("production.quiet", "findings.read")
 ALERTS = ReportModule("production.alerts", "findings.read")
 CONFIDENCE = ReportModule("production.confidence", "platform.read")
 AGREEMENT = ReportModule("production.agreement", "platform.read")
+# Information only: no checks. Day 1's build does not call it. The page
+# already requires platform.read, and each item keeps its own permission.
+CHANGES = ReportModule("production.changes", "platform.read")
 
 # Ids are not prefixes of each other: spec_for also matches "id.".
 CHECKS: tuple[ReportCheck, ...] = (
@@ -748,6 +751,7 @@ MODULES = {
     ALERTS.id: ALERTS,
     CONFIDENCE.id: CONFIDENCE,
     AGREEMENT.id: AGREEMENT,
+    CHANGES.id: CHANGES,
 }
 
 
