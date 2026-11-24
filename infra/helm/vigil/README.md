@@ -140,3 +140,44 @@ to those two pods when `networkPolicies.enabled` is set.
 - **A server on its own runner** is a second runner Deployment plus
   `MCP_RUNNER_URL_<SERVER>` on the backend and daemon. The chart does not
   render that yet.
+
+## Declared intent directory
+
+Set `VIGIL_INTENT_DIR` on the daemon to a directory holding `INTENT.md` and
+`REVISION`, and the daemon applies each new revision without a restart. Unset,
+`INTENT.md` stays observe-only. Mount it on the daemon only: the daemon is the
+one applier, and the backend reads what it applied from the database.
+
+| Value | Default | |
+|---|---|---|
+| `daemon.extraVolumes` | `[]` | The volume holding the directory. |
+| `daemon.extraVolumeMounts` | `[]` | Where the daemon sees it; read-only is enough. |
+| `daemon.extraEnv` | `[]` | `VIGIL_INTENT_DIR`, the mount path. |
+
+```yaml
+daemon:
+  extraVolumes:
+    - name: intent
+      configMap:
+        name: vigil-intent   # INTENT.md and REVISION, rendered by Flux or Argo CD
+  extraVolumeMounts:
+    - name: intent
+      mountPath: /etc/vigil/intent
+      readOnly: true
+  extraEnv:
+    - {name: VIGIL_INTENT_DIR, value: /etc/vigil/intent}
+```
+
+- **Revision.** The first line of `REVISION` names it, and the change reason of
+  each `config.change` entry the apply writes says it. Vigil does not read
+  `.git` and does not verify it. A GitOps controller writes the commit into the
+  ConfigMap; a plain checkout writes it in a post-merge hook
+  (`git rev-parse HEAD > REVISION`). Without the file the revision is `unknown`.
+- **Polling.** The daemon re-reads both files every 30 seconds and acts only
+  when their content changes, so a ConfigMap's symlink swap is picked up.
+- **What a revision does.** It is rejected whole, naming the file and line, if
+  the frontmatter does not parse, names an unknown key or has a value of the
+  wrong type. Otherwise only the keys whose declared value changed are written;
+  a tightening applies at once, a loosening is recorded as pending and waits
+  for a person. A missing directory keeps the last revision, state `degraded`.
+  `GET /api/config/intent` shows the revision, its state and the pending keys.

@@ -45,7 +45,6 @@ from core.integrations.integration_secrets import (
     unstorable_secret_fields,
 )
 from core.integrations.readiness import evaluate, sources_settled
-from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.security import MAX_SYSTEM_PROMPT_BYTES
 from core.llm.system_prompt import OPERATOR_INSTRUCTIONS_KEY, validate_system_prompt
@@ -77,7 +76,7 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
-from services.daemon.intent import intent_report
+from services.daemon.intent import applied_directory, intent_report, report_path
 
 router = APIRouter()
 
@@ -1907,6 +1906,12 @@ class IntentReportResponse(BaseModel):
     path: str
     readable: bool
     rows: list[IntentDiffRow] = Field(default_factory=list)
+    # Set when VIGIL_INTENT_DIR is applied by the daemon: the applied
+    # revision, ok | degraded | rejected and why, and loosenings not written.
+    revision: Optional[str] = None
+    state: Optional[str] = None
+    reason: Optional[str] = None
+    pending: list[str] = Field(default_factory=list)
 
 
 @router.get("/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ)
@@ -1917,12 +1922,20 @@ def get_intent_report() -> IntentReportResponse:
     rows, so the Settings card can say so in one line.
     """
     rows = intent_report(include_same=True)
-    path = str(intent_file())
+    path = str(report_path())
+    applied = applied_directory() or {}
+    status = {
+        "revision": applied.get("revision"),
+        "state": applied.get("state"),
+        "reason": applied.get("reason"),
+        "pending": applied.get("pending") or [],
+    }
     if rows is None:
-        return IntentReportResponse(path=path, readable=False, rows=[])
+        return IntentReportResponse(path=path, readable=False, rows=[], **status)
     return IntentReportResponse(
         path=path,
         readable=True,
+        **status,
         rows=[
             IntentDiffRow(
                 key=row.key,

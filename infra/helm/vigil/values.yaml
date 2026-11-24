@@ -98,6 +98,11 @@ daemon:
   tolerations: []
   affinity: {}
   extraEnv: []
+  # Declared intent (README: "Declared intent directory"). Mount a directory
+  # holding INTENT.md and REVISION here, and set VIGIL_INTENT_DIR to its path
+  # in extraEnv. Only the daemon mounts it: it is the one applier.
+  extraVolumes: []
+  extraVolumeMounts: []
 
 # -----------------------------------------------------------------------------
 # LLM Worker (ARQ worker, processes Claude requests off Redis queue)

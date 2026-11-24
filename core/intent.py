@@ -9,7 +9,9 @@ effective value came from and whether applying the declared value would
 ``tighten`` or ``loosen`` autonomy.
 
 Effective values come from ``DaemonConfig.from_env()`` in ``services/daemon``;
-this module is pure so ``core`` never imports the deployables.
+this module is pure so ``core`` never imports the deployables. Enforced mode
+(``VIGIL_INTENT_DIR``) parses with :func:`parse_intent_strict` and is applied
+by ``services/daemon/intent_apply.py``; ``VIGIL_INTENT_PATH`` stays observe-only.
 """
 
 from __future__ import annotations
@@ -20,7 +22,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from core.config import REPO_ROOT, get_settings
-from core.frontmatter import FrontmatterError, split_frontmatter
+from core.frontmatter import (
+    FrontmatterError,
+    frontmatter_key_lines,
+    split_frontmatter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +133,46 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
 
 FIELDS_BY_KEY: Dict[str, IntentField] = {f.key: f for f in INTENT_FIELDS}
 
+# Keys whose value is a number; every other key is a boolean.
+NUMERIC_KEYS = frozenset(
+    {
+        "respond.confidence_threshold",
+        "respond.review_threshold",
+        "respond.monitor_threshold",
+        "investigate.max_cost_per_investigation",
+        "investigate.max_total_hourly_cost",
+        "investigate.max_runtime_per_investigation",
+    }
+)
+
+# Enforced mode rejects a number outside these; the budgets match the bounds
+# the Settings card enforces (OrchestratorSettingsConfig), so an applied value
+# never makes the console's next save invalid.
+NUMERIC_BOUNDS: Dict[str, Tuple[float, float]] = {
+    "respond.confidence_threshold": (0.0, 1.0),
+    "respond.review_threshold": (0.0, 1.0),
+    "respond.monitor_threshold": (0.0, 1.0),
+    "investigate.max_cost_per_investigation": (0.5, 100.0),
+    "investigate.max_total_hourly_cost": (1.0, 500.0),
+    "investigate.max_runtime_per_investigation": (60.0, 86400.0),
+}
+INTEGER_KEYS = frozenset({"investigate.max_runtime_per_investigation"})
+
+# Enforced mode (VIGIL_INTENT_DIR): the directory holds INTENT.md and this
+# marker, whose first line names the revision.
+INTENT_FILE_NAME = "INTENT.md"
+REVISION_FILE_NAME = "REVISION"
+
+
+class IntentRejected(ValueError):
+    """A declared revision that is not applied at all, and where it went wrong."""
+
+    def __init__(self, file: str, line: Optional[int], reason: str):
+        super().__init__(f"{file}:{line or 1}: {reason}")
+        self.file = file
+        self.line = line or 1
+        self.reason = reason
+
 
 @dataclass(frozen=True)
 class IntentDiff:
@@ -181,6 +227,47 @@ def read_intent(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
         logger.warning("INTENT.md declares no known key (%s)", path)
         return None
     return declared
+
+
+def parse_intent_strict(
+    content: str, name: str = INTENT_FILE_NAME
+) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Declared values and the line each key is on, or :class:`IntentRejected`.
+
+    Enforced mode: unlike :func:`read_intent`, an unknown key or a value of the
+    wrong type rejects the whole file instead of being dropped.
+    """
+    try:
+        front, _ = split_frontmatter(content)
+    except FrontmatterError as exc:
+        # The YAML problem alone; its own line numbers count from the block.
+        problem = getattr(exc.__cause__, "problem", None)
+        reason = f"invalid YAML: {problem}" if problem else str(exc)
+        raise IntentRejected(name, exc.line, reason) from exc
+    if front is None:
+        raise IntentRejected(name, 1, "no YAML frontmatter")
+    lines = frontmatter_key_lines(content)
+    declared = _flatten(front)
+    for key in sorted(declared, key=lambda k: lines.get(k, 0)):
+        value = declared[key]
+        if key not in FIELDS_BY_KEY:
+            raise IntentRejected(name, lines.get(key), f"unknown key {key!r}")
+        norm = _normalize(value)
+        want = float if key in NUMERIC_KEYS else bool
+        if norm is None or type(norm) is not want:
+            raise IntentRejected(
+                name,
+                lines.get(key),
+                f"{key}: {value!r} is not a {'number' if want is float else 'boolean'}",
+            )
+        if key in INTEGER_KEYS and not float(norm).is_integer():
+            raise IntentRejected(name, lines.get(key), f"{key}: {value!r} is not whole")
+        low, high = NUMERIC_BOUNDS.get(key, (norm, norm))
+        if not low <= norm <= high:
+            raise IntentRejected(
+                name, lines.get(key), f"{key}: {value!r} is outside {low:g}..{high:g}"
+            )
+    return declared, {k: lines.get(k, 1) for k in declared}
 
 
 def effective_values(config: Any) -> Dict[str, Any]:

@@ -1762,8 +1762,8 @@ class Orchestrator:
             "current_step": 1,
             "priority": priority,
             "max_iterations": self.config.max_iterations_per_agent,
-            "max_cost_usd": self.config.max_cost_per_investigation,
-            "max_runtime_seconds": self.config.max_runtime_per_investigation,
+            "max_cost_usd": self._max_cost(),
+            "max_runtime_seconds": self._max_runtime(),
             "otel_traceparent": _tp,
             "run_id": run_id_for(inv_id),
         }
@@ -1935,9 +1935,9 @@ class Orchestrator:
                             )
 
                     cost = inv_dict.get("cost_usd", 0.0)
-                    max_cost = inv_dict.get(
-                        "max_cost_usd", self.config.max_cost_per_investigation
-                    )
+                    max_cost = inv_dict.get("max_cost_usd")
+                    if max_cost is None:
+                        max_cost = self._max_cost()
                     if cost >= max_cost:
                         logger.warning(
                             "supervisor.kill cost inv_id=%s cost_usd=%.4f "
@@ -2084,8 +2084,15 @@ class Orchestrator:
             "overrides": {
                 "budgets": {
                     "max_calls": self.config.max_iterations_per_agent,
-                    "max_cost_usd": self.config.max_cost_per_investigation,
-                    "max_wall_ms": self.config.max_runtime_per_investigation * 1000,
+                    # The run's own budgets, set from the live settings at
+                    # creation; a record without them reads the live ones.
+                    "max_cost_usd": (
+                        inv_record.get("max_cost_usd") or self._max_cost()
+                    ),
+                    "max_wall_ms": (
+                        inv_record.get("max_runtime_seconds") or self._max_runtime()
+                    )
+                    * 1000,
                 }
             },
         }
@@ -2417,10 +2424,11 @@ class Orchestrator:
             logger.error(f"Failed to read hourly cost: {e}")
             return None
 
-    def _hourly_cost_limit(self) -> float:
-        """The cap as saved in Settings, falling back to startup config.
+    def _live_setting(self, name: str, cast, fallback):
+        """One value as saved in ``orchestrator.settings``, else startup config.
 
-        Read live so a saved change reaches the running daemon at once.
+        Read live so a saved change (Settings, or an applied INTENT.md
+        revision) reaches the running daemon at once.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -2433,12 +2441,31 @@ class Orchestrator:
                     .first()
                 )
                 if cfg and isinstance(cfg.value, dict):
-                    saved = cfg.value.get("max_total_hourly_cost")
+                    saved = cfg.value.get(name)
                     if saved is not None:
-                        return float(saved)
+                        return cast(saved)
         except Exception as e:
-            logger.warning("Hourly cost limit read failed, using config: %s", e)
-        return self.config.max_total_hourly_cost
+            logger.warning("Orchestrator %s read failed, using config: %s", name, e)
+        return fallback
+
+    def _hourly_cost_limit(self) -> float:
+        return self._live_setting(
+            "max_total_hourly_cost", float, self.config.max_total_hourly_cost
+        )
+
+    def _max_cost(self) -> float:
+        return self._live_setting(
+            "max_cost_per_investigation",
+            float,
+            self.config.max_cost_per_investigation,
+        )
+
+    def _max_runtime(self) -> int:
+        return self._live_setting(
+            "max_runtime_per_investigation",
+            int,
+            self.config.max_runtime_per_investigation,
+        )
 
     def _hourly_budget_exhausted(self) -> bool:
         """Gate intake on the rolling hour; logs once per pause/resume transition.
@@ -2914,6 +2941,8 @@ class Orchestrator:
                     max_iterations=inv_record.get(
                         "max_iterations", self.config.max_iterations_per_agent
                     ),
+                    # Set by the caller from the live budgets; the fallbacks
+                    # are the startup config.
                     max_cost_usd=inv_record.get(
                         "max_cost_usd", self.config.max_cost_per_investigation
                     ),
@@ -3160,7 +3189,7 @@ class Orchestrator:
             # never touches, so the pause is reported here.
             "hourly_paused": self._hourly_pause_decision(spent, limit),
             "hourly_limit_usd": round(limit, 4),
-            "per_investigation_limit": self.config.max_cost_per_investigation,
+            "per_investigation_limit": self._max_cost(),
         }
 
     async def purge_all_investigations(self) -> Dict[str, Any]:

@@ -30,6 +30,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 from sqlalchemy import event, select, text
 
 from core.config import Settings, get_settings
+from core.response.config import applied_values
 from core.storage import config_service as config_store
 from core.storage.connection import get_db_session
 from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
@@ -110,11 +111,14 @@ def environment_locks_act(settings: Optional[Settings] = None) -> bool:
     """Force-approval, or auto-response turned off, beats a stored act flag.
 
     Neither variable can turn an act flag on. ``DAEMON_AUTO_RESPONSE`` defaults
-    to true, which is not a grant.
+    to true, which is not a grant. An applied INTENT.md ``respond.auto_response:
+    false`` locks too; a declared true never clears the env lock.
     """
     settings = get_settings() if settings is None else settings
-    return bool(settings.daemon_force_approval) or not bool(
-        settings.daemon_auto_response
+    return (
+        bool(settings.daemon_force_approval)
+        or not bool(settings.daemon_auto_response)
+        or applied_values().get("respond.auto_response") is False
     )
 
 
