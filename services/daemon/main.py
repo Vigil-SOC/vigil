@@ -54,7 +54,6 @@ class SOCDaemon:
         self._poller = None
         self._kafka_ingestor = None
         self._processor = None
-        self._executor = None
         self._scheduler = None
         self._orchestrator = None
         self._metrics_server = None
@@ -95,9 +94,7 @@ class SOCDaemon:
             set_process_mcp_client,
         )
         from core.response.approval_service import ApprovalService
-        from core.response.autonomous_response_service import AutonomousResponseService
         from core.storage.connection import get_db_manager
-        from services.daemon.executor import ApprovedActionExecutor
         from services.daemon.kafka_ingestor import KafkaIngestor
         from services.daemon.metrics import MetricsServer
         from services.daemon.orchestrator import Orchestrator
@@ -119,9 +116,6 @@ class SOCDaemon:
         set_process_mcp_client(build_mcp_client())
         approvals = ApprovalService(config=self.config.response)
 
-        self._executor = ApprovedActionExecutor(
-            AutonomousResponseService(approvals=approvals, config=self.config.response)
-        )
         self._scheduler = TaskScheduler(self.config.scheduler)
         self._orchestrator = Orchestrator(
             self.config.orchestrator,
@@ -139,7 +133,6 @@ class SOCDaemon:
         self._metrics_server.poller = self._poller
         self._metrics_server.kafka_ingestor = self._kafka_ingestor
         self._metrics_server.processor = self._processor
-        self._metrics_server.executor = self._executor
         self._metrics_server.scheduler = self._scheduler
         self._metrics_server.orchestrator = self._orchestrator
 
@@ -189,9 +182,6 @@ class SOCDaemon:
 
         if self._processor:
             start("processor", self._processor, "Finding processor")
-
-        if self._executor:
-            start("executor", self._executor, "Approved-action executor")
 
         if self._scheduler:
             start("scheduler", self._scheduler, "Task scheduler")

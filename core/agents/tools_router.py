@@ -39,7 +39,12 @@ from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
 from core.response.approval_service import ActionStatus, ApprovalService
-from core.response.ceiling import gated_tools, unattended_refusal
+from core.response.ceiling import (
+    STOPPED,
+    execution_held,
+    gated_tools,
+    unattended_refusal,
+)
 from core.routing import Auth, RouterMeta
 from core.skills.skill_library import READ_SKILL_TOOL
 from core.skills.skill_usage import record_skill_read
@@ -83,6 +88,8 @@ class InvokeRequest(BaseModel):
     # an approval, and the row is what names the call and its arguments.
     run_id: Optional[str] = None
     checkpoint_id: Optional[str] = None
+    # Or an approved row that names this call itself: a containment (#5059).
+    action_id: Optional[str] = None
 
 
 def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
@@ -284,6 +291,8 @@ def _direct_action_refusal(
     """
     if tool not in gated_tools([tool]):
         return None
+    if body.action_id:
+        return _approved_row_refusal(body.action_id, tool, args)
     if not body.run_id or not body.checkpoint_id:
         return f"{tool} changes the estate and no approval covers this call"
     try:
@@ -302,6 +311,35 @@ def _direct_action_refusal(
         if _args_match(params.get("args"), args):
             return None
     return f"{tool} changes the estate and no approval covers this call"
+
+
+def _approved_row_refusal(
+    action_id: str, tool: str, args: Dict[str, Any]
+) -> Optional[str]:
+    """None when ``action_id`` is an approved, unheld row naming this exact call,
+    claimed for running (core/response/containment.py carry_out)."""
+    try:
+        action = ApprovalService().get_action(action_id)
+    except Exception:  # noqa: BLE001 — unreadable is not approved
+        logger.exception("could not read approval %s", action_id)
+        return f"{tool} changes the estate and its approval could not be read"
+    params = (action.parameters or {}) if action is not None else {}
+    if (
+        action is not None
+        and action.status == ActionStatus.APPROVED.value
+        and not action.held
+        and (action.execution_result or {}).get("state") == "running"
+        and not params.get("checkpoint_id")
+        and params.get("tool") == tool
+        and _args_match(params.get("args"), args)
+    ):
+        return None
+    return f"{tool} changes the estate and no approval covers this call"
+
+
+def _stopped(tool: str) -> bool:
+    """A stop refuses every gated outside call, whoever makes it (#5059)."""
+    return tool in gated_tools([tool]) and execution_held()
 
 
 class Denied(Exception):
@@ -338,12 +376,17 @@ def _note_unbound(tool: str) -> None:
         logger.exception("refusal of unbound %s was not recorded", tool)
 
 
-def _recording(tool: str) -> Optional[Claims]:
-    """The claims an effectful, attributed call records. A read-only call has none."""
+def _recording(tool: str, body: InvokeRequest) -> Optional[Claims]:
+    """The claims an effectful, attributed call records. A read-only call has none.
+
+    A person running an approved row is attributed to themselves.
+    """
     claims = current_claims()
-    if claims is None or not effectful(tool) or not attributed(claims):
+    if claims is None or not effectful(tool):
         return None
-    return claims
+    if attributed(claims) or (body.action_id and claims.person_id):
+        return claims
+    return None
 
 
 def _intent(claims: Claims, tool: str, args: Dict[str, Any]) -> None:
@@ -376,12 +419,14 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
     # (#4358): it reads that case at every step, so its next call is refused.
     if denial is None and claims is not None:
         denial = await asyncio.to_thread(lost_reader)
+    if denial is None and await asyncio.to_thread(_stopped, tool):
+        denial = STOPPED
     if denial is not None:
-        if attributed(claims):
+        if attributed(claims) or _recording(tool, body) is not None:
             _outcome(claims, tool, raw, "denied")
         raise Denied(denial)
 
-    record = _recording(tool)
+    record = _recording(tool, body)
     if record is not None:
         _intent(record, tool, raw)
     outcome = "failed"
@@ -503,6 +548,10 @@ async def invoke(
     except tool_principal.InvalidPrincipal:
         accepted(what)
         raise HTTPException(status_code=401, detail="bad or expired principal")
+    # An approved row runs from its approval, in-process, never from here.
+    if body.action_id is not None:
+        accepted(what)
+        return _failure("refused", detail="an approved action runs from its approval")
     # An approved action names its run. The principal has to name that same run.
     refusal = authorise_run(what, body.run_id, claims=claims)
     if refusal:
