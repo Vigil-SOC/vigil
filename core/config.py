@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     demo_mode: Optional[bool] = None
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    # Any request body over this is refused before the app reads it; only the
+    # upload routes, for a signed-in caller, take more (services/api/middleware/body_limit.py).
+    max_request_body_mb: int = 10
     # Uploads parsed whole in the API process (a history import, or a findings
     # JSON file the streaming reader rejects) are held to this smaller cap.
     max_in_memory_import_mb: int = 25

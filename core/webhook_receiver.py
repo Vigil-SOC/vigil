@@ -68,13 +68,23 @@ async def read_signed_json(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"{vendor} webhook receiver not configured ({secret_name} missing)",
         )
-    raw = await request.body()
     max_body_bytes = get_max_body_bytes()
-    if len(raw) > max_body_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Body exceeds {max_body_bytes} bytes",
-        )
+    too_large = HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=f"Body exceeds {max_body_bytes} bytes",
+    )
+    # Refuse on the declared length, and stop reading at the cap, so an
+    # unsigned body is never held whole.
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > max_body_bytes:
+        raise too_large
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > max_body_bytes:
+            raise too_large
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     expected = hmac.new(secret.encode("utf-8"), raw, sha256).hexdigest().encode()
     # Bytes, because compare_digest raises TypeError on a non-ASCII str, and
     # Starlette decodes header bytes as latin-1.
