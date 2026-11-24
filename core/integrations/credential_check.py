@@ -234,7 +234,7 @@ async def _opencti() -> Outcome:
         timeout=_REQUEST_TIMEOUT,
     )
     try:
-        # about { version } with the token: a bad token and a wrong URL differ.
+        # me { name } with the token: a bad token and a wrong URL differ.
         return await service.test_connection()
     finally:
         await service.close()

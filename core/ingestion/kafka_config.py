@@ -3,7 +3,7 @@
 Lives with the consumer that reads it rather than in the daemon's config
 module: core/ingestion/ owns the Kafka ingestion path, and a capability
 domain must not reach up into a deployable for its own settings.
-services/daemon/config.py re-exports it for DaemonConfig.
+core/daemon_config.py re-exports it for DaemonConfig.
 """
 
 from dataclasses import dataclass, field

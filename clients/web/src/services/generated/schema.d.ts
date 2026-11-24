@@ -545,6 +545,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/approvals/{action_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo Action
+         * @description Release an executed isolation, or enable an executed account disable.
+         *
+         *     Inserts a row linked by ``parameters.undoes``, approved by the caller, that
+         *     carries the vendor's undo tool on the same vendor ID, and runs it at once as
+         *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
+         *     involved. The action returned is that row. The original records ``released``
+         *     or ``enabled`` once the vendor reports it. 409 when the original is not
+         *     executed and contained or disabled, or a lift of it is still open.
+         */
+        post: operations["post_api_approvals_action_id_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/attack/techniques/rollup": {
         parameters: {
             query?: never;
@@ -3459,7 +3486,7 @@ export interface paths {
         };
         /**
          * Get Intent Report
-         * @description Declared intent beside effective config.
+         * @description Declared intent beside effective config, and what a declared directory manages.
          *
          *     A missing or unreadable manifest is 200 with ``readable`` false and no
          *     rows, so the Settings card can say so in one line.
@@ -3467,6 +3494,29 @@ export interface paths {
         get: operations["get_api_config_intent"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/intent/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Intent Pending
+         * @description Apply the pending loosenings of the applied revision. A person's act.
+         *
+         *     Each key's declared value goes into its store under the person's name,
+         *     with the revision on the audit entry. No timer, and not over /mcp.
+         */
+        post: operations["post_api_config_intent_accept"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8687,6 +8737,33 @@ export interface paths {
          *     cancelled with the supplied reason.
          */
         post: operations["post_api_v1_approvals_action_id_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/approvals/{action_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo Action
+         * @description Release an executed isolation, or enable an executed account disable.
+         *
+         *     Inserts a row linked by ``parameters.undoes``, approved by the caller, that
+         *     carries the vendor's undo tool on the same vendor ID, and runs it at once as
+         *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
+         *     involved. The action returned is that row. The original records ``released``
+         *     or ``enabled`` once the vendor reports it. 409 when the original is not
+         *     executed and contained or disabled, or a lift of it is still open.
+         */
+        post: operations["post_api_v1_approvals_action_id_undo"];
         delete?: never;
         options?: never;
         head?: never;
@@ -14459,18 +14536,56 @@ export interface components {
             };
         };
         /**
+         * IntentAcceptBody
+         * @description The revision (and hash) the person reviewed; a newer one is a 409.
+         */
+        IntentAcceptBody: {
+            /** Hash */
+            hash?: string | null;
+            /** Revision */
+            revision: string;
+        };
+        /**
          * IntentDiffRow
          * @description One manifest key beside the value the daemon is running with.
          */
         IntentDiffRow: {
             /** Declared */
             declared: unknown;
+            /**
+             * Drift
+             * @default false
+             */
+            drift: boolean;
             /** Effective */
             effective: unknown;
+            /**
+             * Env Ignored
+             * @default false
+             */
+            env_ignored: boolean;
+            /** Env Value */
+            env_value?: unknown;
+            /** File */
+            file?: string | null;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /** Line */
+            line?: number | null;
+            /**
+             * Managed
+             * @default false
+             */
+            managed: boolean;
+            /**
+             * Pending
+             * @default false
+             */
+            pending: boolean;
+            /** Revision */
+            revision?: string | null;
             /** Source */
             source: string;
         };
@@ -14479,6 +14594,14 @@ export interface components {
          * @description Declared INTENT.md beside effective daemon config. Read-only.
          */
         IntentReportResponse: {
+            /** Applied At */
+            applied_at?: string | null;
+            /** Directory */
+            directory?: string | null;
+            /** Hash */
+            hash?: string | null;
+            /** In Sync */
+            in_sync?: boolean | null;
             /** Path */
             path: string;
             /** Pending */
@@ -14487,12 +14610,20 @@ export interface components {
             readable: boolean;
             /** Reason */
             reason?: string | null;
+            /** Rejected */
+            rejected?: {
+                [key: string]: unknown;
+            } | null;
             /** Revision */
             revision?: string | null;
+            /** Revision On Disk */
+            revision_on_disk?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
             /** State */
             state?: string | null;
+            /** Verification */
+            verification?: string | null;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {
@@ -15611,6 +15742,12 @@ export interface components {
             executed_at?: string | null;
             /** Execution Result */
             execution_result?: unknown | null;
+            /**
+             * Held
+             * @description An approved action a stop is holding: releasing the hold runs it.
+             * @default false
+             */
+            held: boolean;
             /** Idempotency Key */
             idempotency_key?: string | null;
             /** Parameters */
@@ -15966,6 +16103,8 @@ export interface components {
             actor_name?: string | null;
             /** Checks */
             checks: components["schemas"]["Day1Check"][];
+            /** Compared At */
+            compared_at?: string | null;
             /** Evidence */
             evidence?: {
                 [key: string]: unknown;
@@ -19266,6 +19405,8 @@ export interface operations {
                 status?: string | null;
                 /** @description Restrict to approvals linked to this workflow run. */
                 workflow_run_id?: string | null;
+                /** @description Only actions on this case, among the newest ``limit``. Requested containments are read from the vendor again first. */
+                case_id?: string | null;
                 limit?: number;
             };
             header?: {
@@ -19451,6 +19592,39 @@ export interface operations {
                 "application/json": components["schemas"]["RejectRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_approvals_action_id_undo: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -24606,6 +24780,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_intent_accept: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntentAcceptBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -33990,6 +34199,8 @@ export interface operations {
                 status?: string | null;
                 /** @description Restrict to approvals linked to this workflow run. */
                 workflow_run_id?: string | null;
+                /** @description Only actions on this case, among the newest ``limit``. Requested containments are read from the vendor again first. */
+                case_id?: string | null;
                 limit?: number;
             };
             header?: {
@@ -34175,6 +34386,39 @@ export interface operations {
                 "application/json": components["schemas"]["RejectRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalActionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_v1_approvals_action_id_undo: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

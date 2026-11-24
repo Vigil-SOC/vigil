@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.config import validate_settings_or_exit
 
 if TYPE_CHECKING:
-    from services.daemon.config import DaemonConfig
+    from core.daemon_config import DaemonConfig
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class SOCDaemon:
         # Log declared-vs-effective intent (#915). Enforcement, when a
         # directory is declared, is the applier task started in run().
         try:
-            from services.daemon.intent import report_intent
+            from core.intent_report import report_intent
 
             report_intent(self.config)
         except Exception as _intent_err:
@@ -235,7 +235,7 @@ class SOCDaemon:
 def main():
     """Entry point for the daemon."""
     validate_settings_or_exit()
-    from services.daemon.config import DaemonConfig
+    from core.daemon_config import DaemonConfig
 
     config = DaemonConfig.from_env()
     daemon = SOCDaemon(config)

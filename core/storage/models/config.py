@@ -308,6 +308,9 @@ class SourceHealth(Base):
     labels: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+    # What a collector read from the source itself (OpenCTI's version, newest
+    # intelligence, backlog). Null until its first read; the judge does not read it.
+    facts: Mapped[Optional[dict]] = mapped_column(JSONB)
     # Last real check (credential_check), apart from attempts that only probe.
     last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_check_ok: Mapped[Optional[bool]] = mapped_column(Boolean)

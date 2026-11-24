@@ -6,6 +6,11 @@ finds is stored on ``parameters.containment`` as candidates. Approving names one
 its tool and arguments become ``parameters.tool``/``args`` and the call runs at
 once through ``_run``, as the approver. The row records what the vendor answered
 in ``execution_result.state``; a ``requested`` state is read again on read.
+
+The way back (#5060): Release or Enable on an executed one inserts a row linked
+by ``parameters.undoes``, approved by the person, carrying the table's undo tool
+on the same vendor ID. It runs through ``carry_out`` like any approval; once the
+vendor reports it, the original records ``released`` or ``enabled`` too.
 """
 
 from __future__ import annotations
@@ -26,7 +31,12 @@ from core.response.approval_service import (
     screen_actions,
 )
 from core.response.ceiling import STOPPED
-from core.response.proposal_targets import CONTAINMENT_TOOLS, DONE_STATE
+from core.response.proposal_targets import (
+    CONTAINMENT_TOOLS,
+    DONE_STATE,
+    UNDONE_LOOKUP,
+    UNDONE_STATE,
+)
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -60,6 +70,25 @@ def _entry(kind: str, vendor: Any) -> Optional[Dict[str, Any]]:
     return next(
         (e for e in CONTAINMENT_TOOLS.get(kind, ()) if e["vendor"] == vendor), None
     )
+
+
+def _undoes(action: PendingAction) -> Optional[str]:
+    return (action.parameters or {}).get("undoes") or None
+
+
+def _as_state(action: PendingAction, state: str) -> str:
+    """A vendor's state word, as this row records it: an undo row's act reads
+    as done when its vendor reports the original's state gone."""
+    if _undoes(action) and state == DONE_STATE.get(action.action_type):
+        return UNDONE_STATE[action.action_type]
+    return state
+
+
+def _lookup_done(action: PendingAction) -> str:
+    """The lookup's state word once this row's act holds."""
+    if _undoes(action):
+        return UNDONE_LOOKUP[action.action_type]
+    return DONE_STATE[action.action_type]
 
 
 async def _dial_vendors() -> None:
@@ -322,7 +351,11 @@ async def carry_out(action: PendingAction, claims, registry) -> PendingAction:
             service.mark_failed,
             action.action_id,
             str(exc) or type(exc).__name__,
-            {"state": FAILED, "tool": params.get("tool")},
+            dict(
+                zip(("vendor", "vendor_id"), _vendor_of(params)),
+                state=FAILED,
+                tool=params.get("tool"),
+            ),
         )
         return failed or action
 
@@ -341,7 +374,12 @@ async def _carry_out(
         answer, error = await _call(
             registry, tool, args, action.action_id, _ACT_TIMEOUT_MS
         )
-    base = {"tool": tool, "vendor": vendor, "vendor_id": vendor_id}
+    base = {
+        "tool": tool,
+        "vendor": vendor,
+        "vendor_id": vendor_id,
+        "run_by": claims.username,
+    }
     if error == STOPPED:
         # Stopped after the approval: held until a person releases it.
         held = await asyncio.to_thread(service.unclaim_run, action.action_id, True)
@@ -353,6 +391,8 @@ async def _carry_out(
     else:
         entry = _entry(action.action_type, vendor)
         state = entry["act_state"](answer or {}) if entry else REQUESTED
+        # A vendor that answers the act at once (Defender's machine action).
+        state = _as_state(action, state) if entry else state
         result = {**base, "state": state, "answer": answer}
         if state == FAILED:
             updated = await asyncio.to_thread(
@@ -368,7 +408,27 @@ async def _carry_out(
     if updated is None or updated.status not in ("executed", "failed"):
         return updated or action
     record_execution(updated, claims.username)
+    await _mark_undone(updated)
     return await read_state(updated, registry)
+
+
+async def _mark_undone(action: PendingAction) -> None:
+    """An undo row that reached its state: the original records it too."""
+    original = _undoes(action)
+    state = (action.execution_result or {}).get("state")
+    if not original or state != UNDONE_STATE.get(action.action_type):
+        return
+    await asyncio.to_thread(
+        ApprovalService().update_row,
+        original,
+        ActionStatus.EXECUTED.value,
+        None,
+        {
+            "state": state,
+            "undone_by": action.action_id,
+            "undone_at": utcnow().isoformat(),
+        },
+    )
 
 
 async def read_state(action: PendingAction, registry) -> PendingAction:
@@ -396,7 +456,7 @@ async def read_state(action: PendingAction, registry) -> PendingAction:
         if error:
             logger.info("state of %s not read: %s", action.action_id, error)
             return action
-        state = entry["read_state"](answer or {})
+        state = _as_state(action, entry["read_state"](answer or {}))
     else:
         answer, error = await _call(
             registry, _flat(entry, "lookup"), entry["lookup_args"](action.target)
@@ -412,10 +472,8 @@ async def read_state(action: PendingAction, registry) -> PendingAction:
             ),
             None,
         )
-        if record is not None and entry["state"](record) == DONE_STATE.get(
-            action.action_type
-        ):
-            state = DONE_STATE[action.action_type]
+        if record is not None and entry["state"](record) == _lookup_done(action):
+            state = _as_state(action, DONE_STATE[action.action_type])
     if state is None or state == REQUESTED:
         return action
     service = ApprovalService()
@@ -436,7 +494,8 @@ async def read_state(action: PendingAction, registry) -> PendingAction:
         )
     if updated is None:
         return action
-    record_execution(updated, None)
+    record_execution(updated, result.get("run_by"))
+    await _mark_undone(updated)
     return updated
 
 
@@ -491,3 +550,65 @@ async def refresh_open(registry) -> None:
         logger.exception("containments not refreshed")
         return
     await asyncio.gather(*(_refresh(action, registry) for action in rows))
+
+
+# ---- The way back (#5060) --------------------------------------------------
+
+
+def _lift(original: PendingAction, offered: set) -> Any:
+    """The undo row's title and parameters for ``original``, or why there is none."""
+    result = original.execution_result or {}
+    vendor, vendor_id = result.get("vendor"), result.get("vendor_id")
+    entry = _entry(original.action_type, vendor)
+    if entry is None or vendor_id in (None, ""):
+        return f"{original.action_id} records no vendor ID to undo"
+    tool = _flat(entry, "undo")
+    if tool not in offered:
+        return f"No connected server offers {tool}"
+    verb = "Release" if original.action_type == "isolate_host" else "Enable"
+    args = {
+        entry["id_arg"]: vendor_id,
+        entry["note_arg"]: f"Vigil: {verb} {original.target}, undoing "
+        f"{original.action_id}"[:500],
+    }
+    stored = (original.parameters or {}).get("containment") or {}
+    name = next(
+        (
+            c.get("name")
+            for c in stored.get("candidates") or []
+            if c.get("vendor") == vendor and c.get("vendor_id") == vendor_id
+        ),
+        original.target,
+    )
+    candidate = {
+        "id": f"{vendor}:{vendor_id}",
+        "vendor": vendor,
+        "tool": tool,
+        "args": args,
+        "vendor_id": vendor_id,
+        "name": name,
+        "state": DONE_STATE[original.action_type],
+    }
+    return f"{verb} {name}", {
+        "tool": tool,
+        "args": json.dumps(args, sort_keys=True),
+        "containment": {"candidates": [candidate], "servers": [vendor]},
+    }
+
+
+async def undo(action_id: str, claims, registry) -> PendingAction:
+    """Release or enable what ``action_id`` contained, as ``claims``' person: the
+    approved undo row, run at once (held when stopped). Raises ``NotUndoable``."""
+    registry = await live_registry(registry)
+    offered = set(registry.get_tool_names())
+    person = getattr(claims, "person_id", None)
+    row = await asyncio.to_thread(
+        ApprovalService().create_undo,
+        action_id,
+        lambda original: _lift(original, offered),
+        claims.username,
+        person,
+    )
+    if row.held:
+        return row
+    return await carry_out(row, claims, registry)

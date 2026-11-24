@@ -1,3 +1,9 @@
+"""The daemon's configuration (``DaemonConfig``), read from env and the stores.
+
+In ``core`` so the intent report (``core.intent_report``) builds it for
+GET /intent and the /mcp tool alike.
+"""
+
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List

@@ -6,9 +6,10 @@ threshold in env moves every branch rather than one. Defaults are the literals
 the code carried before, so a default install behaves as it did.
 
 Lives in ``core/`` because ``core`` must not import ``services``;
-``services.daemon.config`` re-exports it as part of ``DaemonConfig``.
+``core.daemon_config`` re-exports it as part of ``DaemonConfig``.
 """
 
+import json
 import logging
 import re
 import time
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
+from core.intent import FIELDS_BY_KEY, label
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,70 @@ def applied_intent(*, fresh: bool = False) -> Dict[str, Any]:
         logger.debug("intent.applied not read; keeping last: %s", exc)
     _applied_cache = (now, value)
     return value
+
+
+def managed_widening(
+    key: str, requested: Any, applied: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
+    """Why a local write of ``requested`` to a managed key is refused, or None.
+
+    Refused when it is looser than the declared value. Compared with the
+    declared value, not the current one, so setting it back is the reset.
+    """
+    applied = applied_intent(fresh=True) if applied is None else applied
+    meta = (applied.get("keys") or {}).get(key) if applied.get("directory") else None
+    if not meta or requested is None:
+        return None
+    declared = meta.get("declared")
+    if label(FIELDS_BY_KEY[key].rule, requested, declared) != "loosen":
+        return None
+    return (
+        f"{key} is managed by {meta.get('file')}:{meta.get('line')} at revision "
+        f"{meta.get('revision') or 'unknown'} (declared {json.dumps(declared)}); a local "
+        f"change may only narrow it. Change it in the declared directory "
+        f"{applied['directory']}."
+    )
+
+
+def settle_pending(values: Dict[str, Any], user_id: str) -> None:
+    """Drop from the row's pending list each key a person just set to its declared value.
+
+    That write is the accept for that key; left listed, a later narrowing of
+    it would read as pending rather than drift. Best-effort.
+    """
+    try:
+        from core.storage.config_service import get_config_service
+
+        service = get_config_service(user_id)
+        row = service.read_system_config(INTENT_APPLIED_KEY)
+        if not isinstance(row, dict) or not row.get("pending"):
+            return
+        keys = row.get("keys") or {}
+        settled = [
+            k
+            for k in row["pending"]
+            if k in values
+            and k in keys
+            and label(FIELDS_BY_KEY[k].rule, values[k], keys[k].get("declared"))
+            == "same"
+        ]
+        if not settled:
+            return
+        note = (
+            f"INTENT.md revision {row.get('revision')}: "
+            f"{', '.join(settled)} set to the declared value"
+        )
+        pending = [k for k in row["pending"] if k not in settled]
+        service.set_system_config(
+            key=INTENT_APPLIED_KEY,
+            value={**row, "pending": pending, "reason": note},
+            description="Declared INTENT.md revision applied by the daemon",
+            config_type="intent",
+            change_reason=note,
+        )
+        applied_intent(fresh=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("intent.applied pending not settled: %s", exc)
 
 
 def applied_values() -> Dict[str, Any]:

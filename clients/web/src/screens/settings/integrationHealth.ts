@@ -1,6 +1,6 @@
 import type { Level } from '../../shared/LevelBadge'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
-import type { IntegrationHealthSource, IntegrationHealthState } from '../../services/api'
+import type { IntegrationHealthSource, IntegrationHealthState, SourceFacts } from '../../services/api'
 import { getIntegrationForServer } from './integrationsData'
 
 /** `last_test` of GET /config/integrations: the result POST .../test stored. The wizard still shows it. */
@@ -226,4 +226,28 @@ export function relativeTime(iso: string, now = Date.now()): string {
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
   return `${Math.floor(s / 86400)} d ago`
+}
+
+/** The facts a collector read from the source (OpenCTI), as one line; empty when there are none. */
+export function factsPhrase(facts: SourceFacts | null | undefined, now = Date.now()): string {
+  if (!facts?.collected_at) return ''
+  const missing = new Set((facts.missing ?? []).map((m) => m.fact))
+  const parts: string[] = []
+  const age = now - Date.parse(facts.collected_at)
+  if (age > 2 * (facts.interval_seconds || 300) * 1000) parts.push(`Unknown since ${relativeTime(facts.collected_at, now)}`)
+  if (!missing.has('newest_intel')) {
+    parts.push(facts.newest_intel_at ? `Newest intelligence: ${relativeTime(facts.newest_intel_at, now)}` : 'No intelligence yet')
+  }
+  if (facts.connectors && facts.queue_messages_total != null) {
+    const held = facts.connectors
+      .filter((c) => c.queue_messages > 0)
+      .sort((a, b) => b.queue_messages - a.queue_messages)
+      .map((c) => `${c.name} ${c.queue_messages.toLocaleString()}${c.active ? '' : ' (inactive)'}`)
+    const total = facts.queue_messages_total.toLocaleString()
+    parts.push(held.length ? `Backlog: ${total} messages (${held.join(', ')})` : 'Backlog: none')
+  }
+  // each reason names the fact: "backlog: the token's role lacks …"
+  for (const m of facts.missing ?? []) parts.push(m.reason.charAt(0).toUpperCase() + m.reason.slice(1))
+  if (facts.version) parts.push(`OpenCTI ${facts.version}`)
+  return parts.join(' · ')
 }

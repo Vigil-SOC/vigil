@@ -1,14 +1,10 @@
-"""Observe-mode intent report: INTENT.md declared values beside the effective ones.
+"""Intent CLI: INTENT.md declared values beside the effective ones.
 
 Run from a shell without a daemon:  python -m services.daemon.intent
 
 ``--replay`` re-decides recent approval actions under the
 declared manifest and the effective config, and prints the rows whose
-outcome would differ. Read-only.
-
-The daemon calls :func:`report_intent` once at startup. Lives in ``services``
-because the effective values come from ``DaemonConfig.from_env()``, which
-``core`` may not import.
+outcome would differ. Read-only. The report itself is ``core.intent_report``.
 """
 
 from __future__ import annotations
@@ -20,142 +16,26 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import select
 
+from core.daemon_config import DaemonConfig
 from core.intent import (
     FIELDS_BY_KEY,
-    INTENT_FILE_NAME,
-    IntentDiff,
     _normalize,
-    diff_intent,
     effective_values,
     format_rows,
     intent_file,
     read_intent,
 )
-from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
-from core.response.config import (
-    ResponseConfig,
-    applied_intent,
-    approval_requirement,
-)
+from core.intent_report import effective_daemon_config, intent_report, report_path
+from core.response.config import ResponseConfig, approval_requirement
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction
 from core.time import utcnow
-from services.daemon.config import CeilingConfig, DaemonConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
-    """Effective act flags from the ceiling row, forced off by the environment.
-
-    A missing row is the seeded off state. A failed read stays off and does
-    not report a grant. The file still does not enforce.
-    """
-    sources = dict(config.sources)
-    loaded = try_read_stored_ceiling()
-    if loaded is None:
-        return dataclasses.replace(config, sources=sources)
-    stored, found = loaded
-    locked = environment_locks_act()
-    found_origin = "db" if found else "default"
-
-    def origin(path: str) -> str:
-        return "declared" if sources.get(path) == "declared" else found_origin
-
-    sources["ceiling.act_reversible"] = (
-        "env" if locked and stored.act_reversible else origin("ceiling.act_reversible")
-    )
-    sources["ceiling.act_irreversible"] = (
-        "env"
-        if locked and stored.act_irreversible
-        else origin("ceiling.act_irreversible")
-    )
-    sources["ceiling.four_eyes"] = origin("ceiling.four_eyes")
-    ceiling = CeilingConfig(
-        act_reversible=False if locked else stored.act_reversible,
-        act_irreversible=False if locked else stored.act_irreversible,
-        four_eyes=stored.four_eyes,
-    )
-    return dataclasses.replace(config, ceiling=ceiling, sources=sources)
-
-
-def applied_directory() -> Optional[Dict[str, Any]]:
-    """The ``intent.applied`` row when a declared directory is enforced, else None.
-
-    Every process reads it, so a backend replica without the directory mounted
-    still reports what the daemon applied.
-    """
-    applied = applied_intent()
-    return applied if applied.get("directory") else None
-
-
-def report_path() -> Path:
-    applied = applied_directory()
-    if applied is not None:
-        return Path(applied["directory"]) / INTENT_FILE_NAME
-    return intent_file()
-
-
-def intent_report(
-    config: Optional[DaemonConfig] = None,
-    path: Optional[Path] = None,
-    *,
-    include_same: bool = False,
-) -> Optional[List[IntentDiff]]:
-    """Rows for declared keys, or ``None`` when the manifest is unreadable.
-
-    Differing rows only, unless ``include_same`` (the Settings card). With a
-    declared directory applied, the declared values are the applied row's.
-    """
-    applied = applied_directory() if path is None else None
-    if applied is not None:
-        declared = {
-            key: meta.get("declared")
-            for key, meta in (applied.get("keys") or {}).items()
-        }
-    else:
-        declared = read_intent(path)
-    if declared is None:
-        return None
-    config = _overlay_ceiling(config or DaemonConfig.from_env())
-    return diff_intent(
-        declared,
-        effective_values(config),
-        config.sources,
-        include_same=include_same,
-    )
-
-
-def report_intent(config: Optional[DaemonConfig] = None) -> None:
-    """Log the report. Never raises: a broken manifest must not stop the daemon."""
-    try:
-        rows = intent_report(config)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Intent report failed (non-fatal): %s", exc)
-        return
-    if rows is None:
-        return
-    if not rows:
-        logger.info(
-            "INTENT.md: no declared key differs from effective daemon config (%s)",
-            report_path(),
-        )
-        return
-    for line in format_rows(rows):
-        logger.info(line)
-
-
-def effective_daemon_config(config: DaemonConfig) -> DaemonConfig:
-    """Effective config with the ceiling overlay applied.
-
-    Env already lives on ``config``. The ceiling row is the other input.
-    """
-    return _overlay_ceiling(config)
 
 
 def declared_daemon_config(

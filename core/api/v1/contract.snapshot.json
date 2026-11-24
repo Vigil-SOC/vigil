@@ -4902,6 +4902,12 @@
             ],
             "title": "Execution Result"
           },
+          "held": {
+            "default": false,
+            "description": "An approved action a stop is holding: releasing the hold runs it.",
+            "title": "Held",
+            "type": "boolean"
+          },
           "idempotency_key": {
             "anyOf": [
               {
@@ -6385,6 +6391,24 @@
             }
           },
           {
+            "description": "Only actions on this case, among the newest ``limit``. Requested containments are read from the vendor again first.",
+            "in": "query",
+            "name": "case_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only actions on this case, among the newest ``limit``. Requested containments are read from the vendor again first.",
+              "title": "Case Id"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -6754,6 +6778,64 @@
           }
         },
         "summary": "Reject Action",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{action_id}/undo": {
+      "post": {
+        "operationId": "post_api_v1_approvals_action_id_undo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "title": "Action Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Action",
         "tags": [
           "approvals"
         ]
