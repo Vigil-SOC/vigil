@@ -40,6 +40,7 @@ from core.llm import residency, statements
 from core.platform import notices
 from core.platform.process_health import ProcessHealth
 from core.reporting.checks import (
+    CHANGES,
     COVERAGE,
     ESTATE,
     FORECAST,
@@ -444,16 +445,24 @@ def _present(
     withheld = [
         module_id
         for module_id in record.modules or []
-        if missing_permission(user_id, MODULES[module_id].permission, session)
+        if module_id != CHANGES.id
+        and missing_permission(user_id, MODULES[module_id].permission, session)
         is not None
     ]
     hidden = set(withheld)
-    # A production record is not read against a Day 1 run.
+    # A production record stays off _compared. Its settings checks are read
+    # against the Day 1 anchor; nothing else on it is compared.
     production_run = record.trigger in (PRODUCTION, PRODUCTION_ON_DEMAND)
-    compared = None if production_run else _compared(session, record)
+    anchor = None
+    compared = None
+    if production_run:
+        anchor, _mode = day1_anchor(session, _production_started(record.evidence or {}))
+    else:
+        compared = _compared(session, record)
+    prior_record = anchor if anchor is not None else compared
     prior = (
-        _visible_checks(session, user_id, compared, hidden)
-        if compared is not None
+        _visible_checks(session, user_id, prior_record, hidden)
+        if prior_record is not None
         else {}
     )
     checks = []
@@ -472,12 +481,19 @@ def _present(
                 "citation": check.get("citation"),
             }
         )
-        if compared is not None:
+        if compared is not None or (
+            anchor is not None and check.get("module") == SETTINGS.id
+        ):
+            baseline = anchor if anchor is not None else compared
             shown["comparison"] = _comparison(
                 check,
                 prior.get(check.get("id")),
                 (record.evidence or {}).get("selection"),
-                (compared.evidence or {}).get("selection"),
+                (
+                    (baseline.evidence or {}).get("selection")
+                    if baseline is not None
+                    else None
+                ),
             )
         checks.append(shown)
     # A recurring record says when a section the reader can't see got worse.
@@ -512,7 +528,9 @@ def _present(
         "preface": record.preface,
         "modules": list(record.modules or []),
         "withheld": withheld,
-        "compared_at": _iso(compared.recorded_at) if compared is not None else None,
+        "compared_at": (
+            _iso(prior_record.recorded_at) if prior_record is not None else None
+        ),
         "not_run": not_run,
         "hidden_worse": hidden_worse,
         "checks": checks,
@@ -549,6 +567,10 @@ def _readable_evidence(
         if key == "production":
             if missing_permission(user_id, "platform.read", session) is None:
                 shown[key] = body
+            continue
+        # Item gates are applied in present(), not by withholding the module.
+        if key == CHANGES.id:
+            shown[key] = body
             continue
         module = MODULES.get(key)
         if module is None or key in hidden:
@@ -595,6 +617,59 @@ def _annotate(check: dict) -> dict:
     if legacy is None:
         return check
     return {**check, **legacy}
+
+
+def _production_started(evidence: Any) -> Optional[datetime]:
+    if not isinstance(evidence, dict):
+        return None
+    production = evidence.get("production")
+    if not isinstance(production, dict):
+        return None
+    return _parse(production.get("started_at"))
+
+
+def day1_anchor(
+    session: Session, started_at: Optional[datetime]
+) -> tuple[Optional[ReportRecord], str]:
+    """The Day 1 record a production report is read against. Not ``_compared``.
+
+    The latest readiness, fallback, or on-demand record at or before
+    ``started_at``. When every Day 1 record is later, the earliest, and the
+    mode is ``before``. ``none`` when there is no Day 1 record.
+    """
+    # Recurring runs are Day 1 records, and they are not this anchor.
+    day1 = ReportRecord.trigger.in_((READINESS, FALLBACK, ON_DEMAND))
+    if started_at is not None:
+        latest = (
+            session.query(ReportRecord)
+            .filter(day1, ReportRecord.recorded_at <= started_at)
+            .order_by(ReportRecord.recorded_at.desc())
+            .first()
+        )
+        if latest is not None:
+            return latest, "at"
+    earliest = (
+        session.query(ReportRecord)
+        .filter(day1)
+        .order_by(ReportRecord.recorded_at.asc())
+        .first()
+    )
+    if earliest is None:
+        return None, "none"
+    return earliest, "before"
+
+
+def collect_settings() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Settings checks and the selection snapshot they were scored against."""
+    view, problem = _read_selection()
+    snapshot = _selection_snapshot(view, problem)
+    if problem or view is None:
+        checks = _unchecked_settings(
+            problem or "not checked: the selection could not be read."
+        )
+    else:
+        checks = _settings_checks(view)
+    return checks, snapshot
 
 
 def _compared(session: Session, record: ReportRecord) -> Optional[ReportRecord]:

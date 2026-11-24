@@ -15966,6 +15966,8 @@ export interface components {
             actor_name?: string | null;
             /** Checks */
             checks: components["schemas"]["Day1Check"][];
+            /** Compared At */
+            compared_at?: string | null;
             /** Evidence */
             evidence?: {
                 [key: string]: unknown;

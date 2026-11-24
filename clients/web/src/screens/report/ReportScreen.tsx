@@ -14,11 +14,14 @@ import { ProductionFigures } from './ProductionFigures'
 import {
   ALERTS_TIP,
   AlertsSection,
+  CHANGES_TIP,
+  ChangesSection,
   QUIET_TIP,
   QuietSection,
   TUNING_TIP,
   TuningSection,
   alertsEvidence,
+  changesEvidence,
   quietEvidence,
   tuningEvidence,
 } from './ProductionSections'
@@ -59,6 +62,7 @@ const MODULE_TITLE: Record<string, string> = {
   'production.tuning': 'Tuning since Production Start',
   'production.confidence': 'How sure the investigations were',
   'production.agreement': 'Agreement',
+  'production.changes': 'What changed',
 }
 
 const MODULE_PERMISSION: Record<string, string> = {
@@ -76,6 +80,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   'production.tuning': 'findings.read',
   'production.confidence': 'platform.read',
   'production.agreement': 'platform.read',
+  'production.changes': 'platform.read',
 }
 
 // A report section has figures and no outcomes, so it stays out of the summary grid.
@@ -86,6 +91,7 @@ const REPORT_SECTIONS = new Set([
   'history.forecast',
   'production.confidence',
   'production.agreement',
+  'production.changes',
 ])
 
 const SETTINGS_TIP = {
@@ -198,13 +204,26 @@ function triggerWord(trigger: Trigger, name: string | null): string {
   }
 }
 
-function comparisonWord(comparison: Comparison, outcome: Outcome, module: string): string {
+function comparisonWord(
+  comparison: Comparison,
+  outcome: Outcome,
+  module: string,
+  sinceAt: string | null,
+): string {
   const change = comparison.change
   const setting = module === 'settings'
   switch (comparison.kind) {
     case 'new':
+      if (sinceAt) {
+        const lead = `New since ${reportStamp(sinceAt)}`
+        return change ? `${lead}. ${change}` : lead
+      }
       return change ?? (setting ? 'New. The setting changed.' : 'New')
     case 'fixed':
+      if (sinceAt) {
+        const lead = `Fixed since ${reportStamp(sinceAt)}`
+        return change ? `${lead}. ${change}` : lead
+      }
       return change ?? (setting ? 'Fixed. The setting changed.' : 'Fixed')
     case 'unchanged':
       return 'Unchanged'
@@ -314,11 +333,16 @@ function pieces(value: string | null | undefined): string[] {
 
 function screenName(path: string): string {
   if (path.includes('section=data')) return 'Data & uploads'
+  if (path.includes('section=audit')) return 'Audit trail'
+  if (path.includes('section=federation')) return 'Alert collection'
+  if (path.includes('section=autoinvestigate')) return 'Limits & autonomy'
+  if (path.includes('section=integrations')) return 'Integrations'
   if (path.includes('section=ai-config')) {
     const provider = new URLSearchParams(path.split('?')[1] ?? '').get('provider')
     return provider ? `Statements for ${provider}` : 'AI models'
   }
-  return path.includes('section=audit') ? 'Audit trail' : 'Session settings'
+  if (path.startsWith('/dashboard')) return 'Findings'
+  return 'Session settings'
 }
 
 function figure(value: number): string {
@@ -586,7 +610,15 @@ function Citation({ check }: { check: Check }) {
   )
 }
 
-function Versus({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+function Versus({
+  check,
+  comparedAt,
+  since,
+}: {
+  check: Check
+  comparedAt: string | null
+  since?: boolean
+}) {
   const comparison = check.comparison
   if (!comparison) return null
   const showEvidence =
@@ -595,7 +627,9 @@ function Versus({ check, comparedAt }: { check: Check; comparedAt: string | null
   const priorEvidence = showEvidence ? storedLine(comparison.prior_evidence) : null
   return (
     <div className="d1-versus">
-      <p className="d1-versus-kind">{comparisonWord(comparison, check.outcome, check.module)}</p>
+      <p className="d1-versus-kind">
+        {comparisonWord(comparison, check.outcome, check.module, since ? comparedAt : null)}
+      </p>
       {currentEvidence && <p className="d1-facts">This report: {currentEvidence}</p>}
       {priorEvidence && comparedAt && <p className="d1-facts">{reportStamp(comparedAt)}: {priorEvidence}</p>}
     </div>
@@ -657,7 +691,15 @@ function selectionText(selection: NonNullable<Report['selection']>): string {
   return places ? `${places}. ${named}.` : `${named}.`
 }
 
-function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string | null }) {
+function SettingsRow({
+  check,
+  comparedAt,
+  since,
+}: {
+  check: Check
+  comparedAt: string | null
+  since?: boolean
+}) {
   const silent = check.outcome === 'no_value'
   const tone = silent ? '' : outcomeTone(check.outcome)
   const screen = check.evidence?.screen
@@ -681,7 +723,7 @@ function SettingsRow({ check, comparedAt }: { check: Check; comparedAt: string |
       ))}
       <ProviderLines providers={check.evidence?.providers ?? []} />
       {check.evidence?.counsel && <p className="d1-facts">Not scored: {check.evidence.counsel}</p>}
-      <Versus check={check} comparedAt={comparedAt} />
+      <Versus check={check} comparedAt={comparedAt} since={since} />
       {screen && <Link to={screen}>{screenName(screen)}</Link>}
     </div>
   )
@@ -1033,6 +1075,7 @@ export default function ReportScreen() {
     (check) => !coverageGrouped.some((group) => group.checks.includes(check)),
   )
   const comparedAt = day1?.compared_at ?? null
+  const settingsComparedAt = produced?.compared_at ?? comparedAt
   const span = produced ? productionWindow(produced) : null
   const runningChecks = produced
     ? produced.checks.filter((check) => check.module === 'production.running')
@@ -1042,6 +1085,7 @@ export default function ReportScreen() {
     : []
   const quietBody = quietEvidence(produced?.evidence?.['production.quiet'])
   const alertsBody = alertsEvidence(produced?.evidence?.['production.alerts'])
+  const changesBody = changesEvidence(produced?.evidence?.['production.changes'])
   const tuningBody = tuningEvidence(produced?.evidence?.['production.tuning'])
 
   return (
@@ -1257,21 +1301,37 @@ export default function ReportScreen() {
               <h2>{MODULE_TITLE.settings}</h2>
               <InfoTip label="How Vigil's own settings are judged" align="start" {...SETTINGS_TIP} />
             </div>
+            {produced && !produced.compared_at && (
+              <p className="d1-quiet">not checked: no Day 1 Report to compare with</p>
+            )}
             {settingProblems.length > 0 && (
               <div className="d1-rows">
                 {settingProblems.map((check) => (
-                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                  <SettingsRow
+                    key={check.id}
+                    check={check}
+                    comparedAt={settingsComparedAt}
+                    since={produced !== null}
+                  />
                 ))}
               </div>
             )}
             {settingSettled.length > 0 && (
               <div className="d1-rows">
                 {settingSettled.map((check) => (
-                  <SettingsRow key={check.id} check={check} comparedAt={comparedAt} />
+                  <SettingsRow
+                    key={check.id}
+                    check={check}
+                    comparedAt={settingsComparedAt}
+                    since={produced !== null}
+                  />
                 ))}
               </div>
             )}
           </section>
+        )}
+        {produced && (produced.modules ?? []).includes('production.changes') && (
+          <ChangesSection evidence={changesBody} tip={CHANGES_TIP} />
         )}
         {coverageRan && withheld.includes('coverage') && <Withheld id="coverage" />}
         {showCoverage && (

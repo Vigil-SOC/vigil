@@ -28,10 +28,12 @@ from core.platform import notices
 from core.reporting.checks import (
     AGREEMENT,
     ALERTS,
+    CHANGES,
     CONFIDENCE,
     MODULES,
     QUIET,
     RUNNING,
+    SETTINGS,
     TUNING,
 )
 from core.reporting.day1 import (
@@ -54,11 +56,13 @@ from core.reporting.day1 import (
     _present,
 )
 from core.reporting.day1 import abandon as day1_abandon
-from core.reporting.day1 import producing_ids
+from core.reporting.day1 import collect_settings, producing_ids
 from core.reporting.enablement import disabled_module_ids
 from core.reporting.production_agreement import agreement, confidence
 from core.reporting.production_alerts import alerts as produce_alerts
 from core.reporting.production_alerts import quiet as produce_quiet
+from core.reporting.production_changes import present as present_changes
+from core.reporting.production_changes import produce as produce_changes
 from core.reporting.production_tuning import tuning as produce_tuning
 from core.storage.config_service import get_config_service, get_session
 from core.storage.models import ReportRecord, ReportRun
@@ -271,6 +275,12 @@ def build(
         checks.extend(module_checks)
         if module_evidence is not None:
             evidence[module_id] = module_evidence
+    # The same settings checks Day 1 stores, under their existing ids.
+    # ``settings`` is not a production module.
+    if SETTINGS.id not in disabled:
+        setting_checks, selection = collect_settings()
+        checks.extend(setting_checks)
+        evidence["selection"] = selection
     return {
         "modules": modules,
         "checks": checks,
@@ -298,6 +308,8 @@ def _produce(
         return [], confidence(started_at, window_end)
     if module_id == AGREEMENT.id:
         return [], agreement(started_at, window_end)
+    if module_id == CHANGES.id:
+        return [], produce_changes(started_at, window_end)
     return None
 
 
@@ -451,7 +463,26 @@ def read_record(user_id: str, record_id: Optional[str]) -> Optional[dict[str, An
             return None
         run = session.get(ReportRun, record.run_id)
         started = run.started_at if run is not None else record.recorded_at
-        return _present(session, record, started, user_id)
+        body = _present(session, record, started, user_id)
+    return _gate_changes(user_id, body)
+
+
+def _gate_changes(user_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Apply audit, findings and integrations gates inside production.changes.
+
+    The module itself is not withheld: a missing gate names what is left out
+    and the other items stay.
+    """
+    evidence = body.get("evidence")
+    if not isinstance(evidence, dict):
+        return body
+    if CHANGES.id not in (body.get("modules") or []) and CHANGES.id not in evidence:
+        return body
+    stored = evidence.get(CHANGES.id)
+    evidence[CHANGES.id] = present_changes(
+        user_id, stored if isinstance(stored, dict) else {}
+    )
+    return body
 
 
 def _automatic_exists(session: Session) -> bool:

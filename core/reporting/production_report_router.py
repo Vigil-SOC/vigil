@@ -54,6 +54,9 @@ class ProductionReport(BaseModel):
     preface: Optional[str] = None
     modules: List[str]
     withheld: List[str]
+    # The Day 1 anchor the settings checks were read against. Nothing else
+    # on this record is compared.
+    compared_at: Optional[str] = None
     checks: List[Day1Check]
     evidence: Dict[str, Any] = Field(default_factory=dict)
 
