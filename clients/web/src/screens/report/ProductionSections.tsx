@@ -281,6 +281,227 @@ export function QuietSection({
   )
 }
 
+type TuningGroup = 'rule' | 'title'
+
+type TuningCauses = {
+  expected: number
+  too_broad: number
+  data: number
+  other: number
+  not_given: number
+  false_person: number
+  false_agent: number
+  case_close: number
+}
+
+type TuningRow = {
+  group: TuningGroup
+  source: string
+  title: string | null
+  name: string | null
+  native_key: string | null
+  address: string | null
+  alerts: number
+  real: number
+  judged: number
+  analyst: number
+  agent: number
+  window_start: string
+  window_end: string
+  benign_k?: number
+  benign_n?: number
+  benign?: number
+  true_positive_share?: number | null
+  low?: number | null
+  high?: number | null
+  causes?: TuningCauses
+  on_history_tuning?: boolean
+  history_recorded_at?: string
+}
+
+type TuningLeftOut = {
+  sample: number
+  probe: number
+  restricted: number
+}
+
+type Tuning = {
+  not_checked?: string
+  line?: string
+  left_out?: TuningLeftOut
+  groups?: TuningRow[]
+  candidates?: TuningRow[]
+}
+
+const TUNING_TIP = {
+  source: 'Findings stored since Production Start, and the latest Day 1 tuning list',
+  calculation:
+    'A resolved Kibana, Wazuh or Splunk rule is one group, across versions. Every other alert is its source and title. A person\'s judgement wins, else Vigil\'s. At 20 judgements, under 10% true positive is a candidate. Under 20 anywhere, the line is too few to judge yet.',
+  limit:
+    'Hidden without findings.read. Sample alerts, probes and restricted cases are left out and counted. The report does not change a rule or add an exclusion. Not checked is never a pass.',
+}
+
+const CAUSE_LABEL: Record<keyof TuningCauses, string> = {
+  expected: 'expected',
+  too_broad: 'too broad',
+  data: 'data',
+  other: 'other',
+  not_given: 'not given',
+  false_person: 'marked by a person',
+  false_agent: 'marked by Vigil',
+  case_close: 'false-positive close',
+}
+
+function groupWord(group: TuningGroup): string {
+  switch (group) {
+    case 'rule':
+      return 'Rule'
+    case 'title':
+      return 'Title'
+    default: {
+      const never: never = group
+      return never
+    }
+  }
+}
+
+function tuningLabel(row: TuningRow): string {
+  if (row.group === 'rule') return row.name || row.native_key || 'Unnamed rule'
+  return row.title ? row.title : 'blank title'
+}
+
+function excludeHref(address: string, reportId: string, runId: string): string {
+  const query = new URLSearchParams({ exclude: address, report: reportId, run: runId })
+  return `/dashboard?${query.toString()}`
+}
+
+function spanOf(row: TuningRow): string {
+  return `${reportStamp(row.window_start)} to ${reportStamp(row.window_end)}`
+}
+
+function historyLine(row: TuningRow): string | null {
+  if (!row.history_recorded_at) return null
+  const named = `run ${reportStamp(row.history_recorded_at)}`
+  return row.on_history_tuning
+    ? `On the Day 1 tuning list, ${named}.`
+    : `Not on the Day 1 tuning list, ${named}.`
+}
+
+function causeLine(causes: TuningCauses): string {
+  return (Object.keys(CAUSE_LABEL) as (keyof TuningCauses)[])
+    .map((key) => `${CAUSE_LABEL[key]} ${causes[key] ?? 0}`)
+    .join(', ')
+}
+
+function TuningLines({
+  row,
+  reportId,
+  runId,
+  candidate,
+}: {
+  row: TuningRow
+  reportId: string
+  runId: string
+  candidate: boolean
+}) {
+  const range =
+    row.low != null && row.high != null ? ` (${pct(row.low)}–${pct(row.high)})` : ''
+  const share =
+    row.true_positive_share != null ? `, ${pct(row.true_positive_share)}` : ''
+  const history = historyLine(row)
+  return (
+    <div className="d1-row">
+      <p>
+        {groupWord(row.group)} {tuningLabel(row)}
+      </p>
+      {candidate ? (
+        <p>
+          {row.real} of {row.judged} true positives{share}
+          {range}. Benign {row.benign ?? row.judged - row.real}. Person {row.analyst}, Vigil {row.agent}.
+        </p>
+      ) : (
+        <p>
+          {row.alerts} {row.alerts === 1 ? 'alert' : 'alerts'}. Benign {row.benign_k ?? 0} of {row.benign_n ?? 0}.
+        </p>
+      )}
+      {candidate && row.causes && <p className="d1-facts">{causeLine(row.causes)}.</p>}
+      <p className="d1-facts">
+        {row.source} · window {spanOf(row)}
+      </p>
+      {history && <p className="d1-facts">{history}</p>}
+      {row.address && (
+        <Link to={excludeHref(row.address, reportId, runId)}>Exclude this address</Link>
+      )}
+    </div>
+  )
+}
+
+export function tuningEvidence(value: unknown): Tuning | null {
+  return isRecord(value) ? (value as Tuning) : null
+}
+
+export function TuningSection({
+  evidence,
+  reportId,
+  runId,
+  tip,
+}: {
+  evidence: Tuning | null
+  reportId: string
+  runId: string
+  tip: typeof TUNING_TIP
+}) {
+  const left = evidence?.left_out
+  const candidates = (evidence?.candidates ?? []).filter((row) => row.group === 'rule' || row.group === 'title')
+  const groups = (evidence?.groups ?? []).filter((row) => row.group === 'rule' || row.group === 'title')
+  return (
+    <section className="d1-card" aria-label="Tuning since Production Start">
+      <div className="d1-card-head">
+        <h2>Tuning since Production Start</h2>
+        <InfoTip label="How tuning since Production Start is judged" align="start" {...tip} />
+      </div>
+      {!evidence ? (
+        <p className="d1-quiet">Nothing to report in this section.</p>
+      ) : evidence.not_checked ? (
+        <p className="d1-quiet">{evidence.not_checked}</p>
+      ) : (
+        <>
+          <div className="d1-rows">
+            {left && (
+              <div className="d1-row">
+                <p>
+                  Left out of every group: {left.sample} sample, {left.probe} probe, {left.restricted} on
+                  restricted cases.
+                </p>
+              </div>
+            )}
+            {evidence.line && (
+              <div className="d1-row">
+                <p>{evidence.line}</p>
+              </div>
+            )}
+            {candidates.map((row, index) => (
+              <TuningLines
+                key={`candidate-${index}`}
+                row={row}
+                reportId={reportId}
+                runId={runId}
+                candidate
+              />
+            ))}
+            {groups.map((row, index) => (
+              <TuningLines key={`group-${index}`} row={row} reportId={reportId} runId={runId} candidate={false} />
+            ))}
+          </div>
+          {!evidence.line && candidates.length === 0 && groups.length === 0 && (
+            <p className="d1-quiet">Nothing to report in this section.</p>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 export function AlertsSection({ evidence, tip }: { evidence: Alerts; tip: typeof ALERTS_TIP }) {
   const held =
     evidence.close_held != null
@@ -348,7 +569,7 @@ export function AlertsSection({ evidence, tip }: { evidence: Alerts; tip: typeof
   )
 }
 
-export { ALERTS_TIP, QUIET_TIP }
+export { ALERTS_TIP, QUIET_TIP, TUNING_TIP }
 
 const CHANGES_TIP = {
   source: 'The audit trail, exclusion rows, and integration health, since the Day 1 Report this run is read against',

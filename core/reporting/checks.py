@@ -282,6 +282,8 @@ RUNNING = ReportModule("production.running", "platform.read")
 QUIET = ReportModule("production.quiet", "findings.read")
 # Figures, no checks. The body is evidence["production.alerts"].
 ALERTS = ReportModule("production.alerts", "findings.read")
+# Figures, no checks. The body is evidence["production.tuning"].
+TUNING = ReportModule("production.tuning", "findings.read")
 CONFIDENCE = ReportModule("production.confidence", "platform.read")
 AGREEMENT = ReportModule("production.agreement", "platform.read")
 # Information only: no checks. Day 1's build does not call it. The page
@@ -809,6 +811,7 @@ MODULES = {
     RUNNING.id: RUNNING,
     QUIET.id: QUIET,
     ALERTS.id: ALERTS,
+    TUNING.id: TUNING,
     CONFIDENCE.id: CONFIDENCE,
     AGREEMENT.id: AGREEMENT,
     CHANGES.id: CHANGES,

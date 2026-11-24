@@ -17,7 +17,7 @@ import { AgentDrawer } from './AgentDrawer'
 import { SkillDeleteModal, SkillDrawer } from './SkillDrawer'
 import { SkillLibraryPanel } from './SkillLibraryPanel'
 import { SkillImportDialog } from './SkillImportDialog'
-import { skillsApi } from '../../services/skillsApi'
+import { skillsApi, skillsManagedText } from '../../services/skillsApi'
 import { useAuth } from '../../contexts/AuthContext'
 import { ReaderPicker, useReaderNames } from '../cases/RestrictCase'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -4280,6 +4280,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
     : null
   const offeredText = offered === null ? '…' : offered.join(', ')
   const cards = useMemo(() => groupSkillCards(rows), [rows])
+  // Skills under the declared directory change by commit there; every write control is off with this reason.
+  const managed = rows.find((r) => r.managed)?.managed ?? null
+  const managedText = managed ? skillsManagedText(managed) : undefined
   const openLibrary = cards.find((c): c is Extract<SkillCard, { kind: 'library' }> => c.kind === 'library' && c.key === libraryKey)
 
   const importFile = (file: File | undefined) => {
@@ -4314,11 +4317,16 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
         {canWrite && (
           <>
             <input ref={fileInput} type="file" accept=".md,.zip" hidden aria-label="Skill file" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = '' }} />
-            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing ? 1 : 0.5 }} onClick={() => setImportOpen(true)}><Icon name="upload" /> {importing ? 'Importing…' : 'Import'}</button>
-            <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready'} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
+            <button className="btn ghost h-[34px] rounded-[10px] font-semibold shrink-0" disabled={phase !== 'ready' || importing || !!managed} title={managedText} style={{ borderColor: 'var(--ln2)', color: 'var(--tx0)', opacity: phase === 'ready' && !importing && !managed ? 1 : 0.5 }} onClick={() => setImportOpen(true)}><Icon name="upload" /> {importing ? 'Importing…' : 'Import'}</button>
+            <button className="btn primary h-[34px] rounded-[10px] font-semibold" disabled={phase !== 'ready' || !!managed} title={managedText} onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build a skill</button>
           </>
         )}
       </div>
+      {managed && (
+        <div role="status" className="px-[22px] pt-2 text-[12.5px] text-tx-2 break-words">
+          Managed by <span className="mono break-all">{managed.directory}</span> at <span className="mono break-all">{managed.revision}</span>. Change these skills by committing there; Vigil does not save, import, update or delete them.
+        </div>
+      )}
       {importNotice && (
         <div role={importNotice.error ? 'alert' : 'status'} className={`px-[22px] pt-2 text-[12.5px]${importNotice.error ? '' : ' text-tx-2'}`} style={importNotice.error ? { color: 'var(--crit)' } : undefined}>{importNotice.text}</div>
       )}
@@ -4355,7 +4363,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   </button>
                   <div className="sk-meta">
                     <SkillUsage skill={usage} align={align} />
-                    {canWrite && <button className="btn ghost" onClick={() => setDeleteLibrary(first)}>Delete</button>}
+                    {managed
+                      ? <span className="sk-ro" title={managedText}>Managed</span>
+                      : canWrite && <button className="btn ghost" onClick={() => setDeleteLibrary(first)}>Delete</button>}
                   </div>
                 </div>
               )
@@ -4379,7 +4389,9 @@ function SkillsTab({ feed, workflows, agents }: { feed: Feed<Skill>; workflows: 
                   <SkillUsage skill={s} align={align} />
                   {s.bundled
                     ? <span className="sk-ro">Read-only</span>
-                    : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
+                    : managed
+                      ? <span className="sk-ro" title={managedText}>Managed</span>
+                      : canWrite && <button className="btn ghost" onClick={() => setDeleteSkill(s)}>Delete</button>}
                 </div>
               </div>
             )

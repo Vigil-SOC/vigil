@@ -117,9 +117,15 @@ spec:
             - name: investigations
               mountPath: {{ .Values.daemon.persistence.mountPath }}
             {{- end }}
+            {{- with .Values.daemon.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
         {{- include "vigil.caBundleVolume" . | nindent 8 }}
+        {{- with .Values.daemon.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.daemon.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

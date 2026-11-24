@@ -5116,6 +5116,59 @@
       color: var(--tx0);
    }
 
+   /* Emulators: the mark beside a tool's class, and the host list under its row */
+   .lim-emu-mark {
+      display: inline-block;
+      margin-right: 4px;
+      padding: 0 7px;
+      border-radius: 999px;
+      border: 1px solid var(--fair);
+      font-size: 11px;
+      font-weight: 650;
+      color: var(--fair);
+   }
+
+   .lim-emu-add {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .lim-emu-add .field-input {
+      width: 180px;
+   }
+
+   .lim-emu-chips {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+   }
+
+   .lim-emu-chips .chip {
+      white-space: normal;
+   }
+
+   .lim-emu-x {
+      display: inline-flex;
+      padding: 2px;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--tx3);
+      cursor: pointer;
+   }
+
+   .lim-emu-x:hover {
+      color: var(--tx0);
+   }
+
+   .lim-emu-err {
+      grid-column: 1 / -1;
+      justify-self: end;
+      font-size: 12px;
+      color: var(--poor);
+   }
+
    @container main (max-width: 900px) {
       .lim-profiles,
       .lim-classes {
@@ -5150,6 +5203,27 @@
 
       .lim-row.lim-held .lim-held-ctl {
          justify-content: flex-start;
+      }
+
+      /* Emulator rows with an input: the input and its button go under the title */
+      .lim-row.lim-emu-wide {
+         grid-template-columns: minmax(0, 1fr);
+      }
+
+      .lim-row.lim-emu-wide .lim-row-ctl {
+         grid-column: 1;
+         grid-row: 3;
+         justify-self: stretch;
+      }
+
+      .lim-emu-add .field-input {
+         flex: 1;
+         width: auto;
+         min-width: 0;
+      }
+
+      .lim-emu-err {
+         justify-self: start;
       }
    }
 

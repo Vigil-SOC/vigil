@@ -13,6 +13,7 @@ import { agreementText, falseCloseText, workflowTier, type WorkflowTier } from '
 import {
   matchesProfile,
   useCeiling,
+  useEmulation,
   useInvestigateWorkflows,
   useOrchestrator,
   useUnverifiedTools,
@@ -24,6 +25,7 @@ import {
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
+import EmulatorsBlock from './EmulatorsBlock'
 import {
   approvalsApi,
   detectionRulesApi,
@@ -205,6 +207,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const investigate = useInvestigateWorkflows()
   const [floor, setFloor] = useState('')
   const unverified = useUnverifiedTools()
+  const emulation = useEmulation()
   const [allTools, setAllTools] = useState(false)
   const { hasPermission } = useAuth()
   // write raises, resumes and switches four-eyes; stop stops and lowers
@@ -535,6 +538,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span title={server}>{server || 'Unknown server'}</span>
         </span>
         <span className={`lim-row-tag${t.effect_class ? '' : ' fair'}`}>
+          {emulation.data?.tools.includes(t.name) && <span className="lim-emu-mark">Emulator</span>}{' '}
           {t.effect_class ? 'Runs as a read, unconfirmed' : 'Unclassified, waits for a person'}
         </span>
         <span className="lim-row-ctl">
@@ -1007,6 +1011,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
+            <EmulatorsBlock
+              emulation={emulation}
+              stopped={ceil.stopped}
+              canRaise={canRaise}
+              canLower={canLower}
+              notify={notify}
+            />
           </>
         )}
       </SettingsCard>

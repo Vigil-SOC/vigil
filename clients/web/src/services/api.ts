@@ -1097,6 +1097,8 @@ interface MetricNotes { source: string; unknown: string[] }
 export interface CoverageSiem {
   copies: number
   proven: number
+  /** Copies whose latest version caught a real attack step. */
+  caught: number
   failing: number
   state: 'proven' | 'unproven'
 }
@@ -1114,6 +1116,8 @@ export interface CoverageCell {
   disabled: number
   seen: number
   replayed: number
+  /** Active rules whose latest version caught a real attack step, counted once across copies. */
+  caught: number
   siems: Partial<Record<CoverageSiemName, CoverageSiem>>
 }
 
@@ -1124,6 +1128,10 @@ export interface DetectionCoverage {
   /** Every SIEM with a listed (active or disabled) rule, in order, whether or not its rules declare a technique. */
   siems: CoverageSiemName[]
   summary: Record<CoverageState, number>
+  /** Techniques with any caught rule. */
+  caught_techniques: number
+  /** Technique ids in the order to emulate next: no rule, unproven, proven with nothing caught, then the rest. */
+  emulate_next: string[]
   rule_total: number
   mapped: number
   source: string
@@ -1677,7 +1685,11 @@ export const entityFactsApi = {
 // The rule-rollout limits (#4058): promotion cap, days in shadow, hits a day. The SIEM
 // Quiet/Noisy/Silent thresholds ride along read only; they are edited on the integration.
 export type RolloutLimits = Schema<'RolloutLimitsResponse'>
+// Which outside tools are emulators, and the one host list they run on (#5061).
+export type Emulation = Schema<'EmulationResponse'>
 export const autonomyApi = {
+  emulation: () => api.get<Emulation>('/autonomy/emulation'),
+  updateEmulation: (body: Schema<'EmulationBody'>) => api.put<Emulation>('/autonomy/emulation', body),
   rolloutLimits: () => api.get<RolloutLimits>('/autonomy/rollout-limits'),
   updateRolloutLimits: (body: Schema<'RolloutLimitsBody'>) =>
     api.put<RolloutLimits>('/autonomy/rollout-limits', body),
@@ -1690,7 +1702,7 @@ export const autonomyApi = {
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),
-  // Clears the stop's hold. The row stays approved; the next executor pass runs it.
+  // Clears the stop's hold and runs the row at once, as the person releasing it.
   releaseHeld: (actionId: string) =>
     api.post<Ceiling>(`/autonomy/held/${encodeURIComponent(actionId)}/release`),
   releaseAllHeld: () => api.post<Ceiling>('/autonomy/held/release'),
@@ -1710,6 +1722,9 @@ export const orchestratorApi = {
   getStatus: () => api.get<OrchestratorStatus>('/orchestrator/status'),
   kill: () => api.post('/orchestrator/kill'),
   purgeAll: () => api.post('/orchestrator/investigations/purge'),
+  // Queues a run as a Human Ask. no_case is only for the MITRE analyst (Emulate).
+  investigate: (body: { workflow_id: string; hypothesis: string; no_case?: boolean }) =>
+    api.post<{ success: boolean; message: string }>('/orchestrator/investigations', body),
 }
 
 /** The trail filter (core.audit.trail.make_query): the list and the export send the same one. */

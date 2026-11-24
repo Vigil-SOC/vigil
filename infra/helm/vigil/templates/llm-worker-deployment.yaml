@@ -89,9 +89,15 @@ spec:
           volumeMounts:
             {{- include "vigil.stateVolumeMount" . | nindent 12 }}
             {{- include "vigil.caBundleVolumeMount" . | nindent 12 }}
+            {{- with .Values.llmWorker.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         {{- include "vigil.stateVolume" . | nindent 8 }}
         {{- include "vigil.caBundleVolume" . | nindent 8 }}
+        {{- with .Values.llmWorker.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.llmWorker.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

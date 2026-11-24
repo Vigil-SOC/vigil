@@ -11,6 +11,7 @@ import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
 import DeployAgain from './DeployAgain'
+import Emulate from './Emulate'
 import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
 import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
@@ -47,6 +48,8 @@ interface RuleRow extends StageFields {
   language: string
   tool: string
   techniques: string[]
+  /** Its latest version: the one an Emulate proves. */
+  version: number | null
   /** The data source its Sees check reads: an index pattern, decoder or index/sourcetype. */
   where: string | null
   health: RuleHealth
@@ -643,6 +646,9 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
                     )}
                     {waiting?.again && canWrite && (
                       <span>· <DeployAgain ruleId={r.rule_id} className="de-st-revert" onDone={() => refreshRule(r.rule_id)} /></span>
+                    )}
+                    {r.techniques.length > 0 && r.health !== 'disabled' && (
+                      <span>· <Emulate goal={`Prove rule ${r.rule_id} "${r.name}" (${SIEM_NAME[r.tool] ?? r.tool}${r.version != null ? `, version ${r.version}` : ''}): emulate ${r.techniques.join(' or ')} on a listed host and read whether this version caught it.`} /></span>
                     )}
                   </div>
                   <div className="de-toggles">

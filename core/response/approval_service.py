@@ -16,7 +16,7 @@ other existing callers) keep working.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -49,13 +49,41 @@ logger = logging.getLogger(__name__)
 
 _pending_gauge: Any = None
 
-# Action types something executes once approved (AutonomousResponseService). A
-# pending row of any other type, outside a run or checkpoint, is a recommendation.
-EXECUTABLE_ACTION_TYPES = frozenset({"waf_block", "gateway_block", "access_revoke"})
-# What a stop holds: the rows execute_approved_actions would run.
-HELD_ACTION_TYPES = EXECUTABLE_ACTION_TYPES | frozenset({"isolate_host"})
-# Rollout acts on these once approved (rollout_approval), not the executor above.
+# Rollout acts on these once approved (rollout_approval).
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
+# Kinds the backend carries out on approval through a vendor's tool (#5059).
+CONTAINMENT_TYPES = frozenset({"isolate_host", "disable_user"})
+# execution_result.state while the call is out: claimed, so it runs once.
+RUNNING = "running"
+# A claim this old outlived its process: the row may be approved again.
+_STALE_RUN = timedelta(minutes=15)
+
+
+def _stale_run(row: ApprovalActionRow) -> bool:
+    result = row.execution_result if isinstance(row.execution_result, dict) else {}
+    if result.get("state") != RUNNING:
+        return False
+    try:
+        started = datetime.fromisoformat(result.get("started_at") or "")
+    except ValueError:
+        return True
+    return utcnow() - started >= _STALE_RUN
+
+
+def runs_here(params: Any) -> bool:
+    """A row the backend runs once approved: it carries a tool and is no run's
+    checkpoint, which its own run calls when it resumes."""
+    params = params if isinstance(params, dict) else {}
+    tool = params.get("tool")
+    return isinstance(tool, str) and bool(tool) and not params.get("checkpoint_id")
+
+
+# runs_here, as a query filter: what a stop holds (#5059).
+def _runs_here_clause():
+    params = ApprovalActionRow.parameters
+    return (func.coalesce(params["tool"].astext, "") != "") & (
+        func.coalesce(params["checkpoint_id"].astext, "") == ""
+    )
 
 
 class AlreadyDecided(Exception):
@@ -342,7 +370,12 @@ class ApprovalService:
             config: the confidence band; read from Settings when omitted so
                 the no-arg form callers use still honours env (#916).
         """
-        self.config = config or ResponseConfig.from_settings()
+        # None reads the band live (env plus an applied INTENT.md revision).
+        self._config = config
+
+    @property
+    def config(self) -> ResponseConfig:
+        return self._config or ResponseConfig.from_settings()
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -592,13 +625,16 @@ class ApprovalService:
         action_id: str,
         approved_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
+        call: Optional[tuple[str, str]] = None,
     ) -> Optional[PendingAction]:
         """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending.
 
+        A failed containment may be approved again. ``call`` is the tool and
+        JSON arguments the approval runs, set on the row as it is approved.
         With the ceiling's ``four_eyes`` on, raises ``FourEyesRefused`` when the
         approver created the action or is the person its run acted for. Checked
         here, at approve time, so rows already pending are covered. An approval
-        while stopped holds an outside action the executor runs.
+        while stopped holds a row the backend would run.
         """
         try:
             db = get_db_manager()
@@ -613,7 +649,11 @@ class ApprovalService:
                     logger.warning("Action %s not found", action_id)
                     return None
                 _refuse_unreadable(row)
-                if row.status != ActionStatus.PENDING.value:
+                retry = row.action_type in CONTAINMENT_TYPES and (
+                    row.status == ActionStatus.FAILED.value
+                    or (row.status == ActionStatus.APPROVED.value and _stale_run(row))
+                )
+                if row.status != ActionStatus.PENDING.value and not retry:
                     decided = row.status
                 elif (
                     four_eyes
@@ -631,7 +671,14 @@ class ApprovalService:
                         if approved_by_principal_id is not None
                         else ("system" if approved_by == "system" else None)
                     )
-                    if stopped and row.action_type in HELD_ACTION_TYPES:
+                    if call is not None:
+                        # A new dict: an in-place change to a JSON column is not flushed.
+                        row.parameters = {
+                            **(row.parameters or {}),
+                            "tool": call[0],
+                            "args": call[1],
+                        }
+                    if stopped and runs_here(row.parameters):
                         row.held = True
                     session.flush()
                     case_trail.append_approval(
@@ -730,7 +777,7 @@ class ApprovalService:
     ) -> Optional[PendingAction]:
         """Clear the stop's hold. The row stays approved. Raises ``NotHeld``.
 
-        The next executor pass runs it, unless autonomy is still stopped.
+        The caller runs it (core/response/containment.py).
         """
         db = get_db_manager()
         not_held = False
@@ -776,7 +823,7 @@ class ApprovalService:
                     select(ApprovalActionRow)
                     .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
                     .where(ApprovalActionRow.held.is_(True))
-                    .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                    .where(_runs_here_clause())
                     .order_by(ApprovalActionRow.created_at.asc())
                     .with_for_update()
                 )
@@ -830,8 +877,9 @@ class ApprovalService:
         self,
         action_id: str,
         error: str,
+        result: Optional[Dict] = None,
     ) -> Optional[PendingAction]:
-        """Mark an action as failed."""
+        """Mark an action as failed. ``result`` is recorded beside the error."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -840,13 +888,73 @@ class ApprovalService:
                     return None
                 row.status = ActionStatus.FAILED.value
                 row.executed_at = utcnow()
-                row.execution_result = {"error": error}
+                row.execution_result = {**(result or {}), "error": error}
                 session.flush()
                 logger.error("Action %s failed: %s", action_id, error)
                 return _row_to_pending(row)
         except SQLAlchemyError as e:
             logger.error("DB error marking action %s failed: %s", action_id, e)
             return None
+
+    def update_row(
+        self,
+        action_id: str,
+        status: str,
+        parameters: Optional[Dict] = None,
+        execution_result: Optional[Dict] = None,
+        held: Optional[bool] = None,
+    ) -> Optional[PendingAction]:
+        """Merge into a row's parameters or execution result, or set its hold,
+        if it is still in ``status``. None when it is not (#5059)."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None or row.status != status:
+                return None
+            if parameters:
+                row.parameters = {**(row.parameters or {}), **parameters}
+            if execution_result:
+                row.execution_result = {
+                    **(row.execution_result or {}),
+                    **execution_result,
+                }
+            if held is not None:
+                row.held = held
+            session.flush()
+            return _row_to_pending(row)
+
+    def claim_run(self, action_id: str, by: str) -> Optional[PendingAction]:
+        """Mark an approved, unheld row running, once. None when it is not one,
+        or another call already holds it."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if (
+                row is None
+                or row.status != ActionStatus.APPROVED.value
+                or row.held
+                or (row.execution_result or {}).get("state") == RUNNING
+            ):
+                return None
+            row.execution_result = {
+                "state": RUNNING,
+                "by": by,
+                "started_at": utcnow().isoformat(),
+            }
+            session.flush()
+            return _row_to_pending(row)
+
+    def unclaim_run(self, action_id: str, held: bool) -> Optional[PendingAction]:
+        """Drop a running claim on a row still approved, holding it if ``held``."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None or row.status != ActionStatus.APPROVED.value:
+                return None
+            row.execution_result = None
+            row.held = held
+            session.flush()
+            return _row_to_pending(row)
 
     def get_stats(self) -> Dict:
         """Get statistics about actions."""
@@ -947,11 +1055,11 @@ def _release_actor(principal_id: Optional[str], username: str) -> Optional[str]:
 
 
 def stamp_held_approvals(session) -> None:
-    """Mark approved executor rows held, in the caller's transaction."""
+    """Mark approved rows the backend runs held, in the caller's transaction."""
     session.execute(
         update(ApprovalActionRow)
         .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
-        .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+        .where(_runs_here_clause())
         .values(held=True)
     )
 
@@ -965,7 +1073,7 @@ def held_for_ceiling() -> List[dict]:
                 select(ApprovalActionRow)
                 .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
                 .where(ApprovalActionRow.held.is_(True))
-                .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                .where(_runs_here_clause())
                 .order_by(
                     ApprovalActionRow.approved_at.asc().nulls_last(),
                     ApprovalActionRow.created_at.asc(),
@@ -1334,9 +1442,16 @@ def _kind_for_action(action: PendingAction) -> str:
         checkpoint = checkpoint.strip()
     if checkpoint:
         return "checkpoint"
+    # Approving it runs a tool: it carries one, or a containment resolved to one.
+    containment = params.get("containment")
+    runs = runs_here(params) or (
+        isinstance(containment, dict) and bool(containment.get("candidates"))
+    )
     # Nothing executes it once approved, so it is advice, not a decision.
-    if not action.workflow_run_id and action.action_type not in (
-        EXECUTABLE_ACTION_TYPES | ROLLOUT_ACTION_TYPES
+    if (
+        not action.workflow_run_id
+        and not runs
+        and action.action_type not in ROLLOUT_ACTION_TYPES
     ):
         return "recommendation"
     return "approval"
@@ -1524,6 +1639,7 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 ),
                 "run_id": action.workflow_run_id,
                 "waiting": action.waiting,
+                "containment": (action.parameters or {}).get("containment"),
                 **_checkpoint_fields(action),
             }
         )

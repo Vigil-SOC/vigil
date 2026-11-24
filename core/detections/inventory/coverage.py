@@ -10,10 +10,18 @@ ATT&CK tactic columns, with its state:
   alerts show it.
 
 Each row is split by SIEM (Elastic, Splunk, Wazuh): that SIEM's active copies
-declaring it and how many are proven. A rule counts once however many copies
+declaring it and how many are proven and caught. A rule counts once however many copies
 it has (``catalog._rule_of_copy``, as the Rules page counts rules). A disabled
 rule is no coverage, but each technique says how many disabled rules declare it,
 so the map lists every technique the Rules page counts as declared (``mapped``).
+
+Each row also says how many active rules were ``caught``: their copy's latest
+version passed the caught check (``catalog.CAUGHT``: it alerted on a real
+attack step, #3803). ``caught`` is a detail beside the state; it does
+not change what proven means. ``emulate_next`` lists the techniques in the
+order to emulate next: no rule, then unproven, then proven with nothing
+caught, then the rest; most alerts seen first within each. It says nothing
+about which tests an emulation runner holds (#5050).
 
 Ported from Alex Margaris's heat map on the 1.x line (vigil-1.x d0a56ef6 and
 7ee99b3f, ``core/detections/engineering/program.py::coverage``), without its
@@ -47,7 +55,7 @@ STATES = ("proven", "unproven", "no_rule")
 
 def _copies(session: Any) -> List[Any]:
     """Each listed (active or disabled) copy's techniques, tactics, source and
-    latest Runs, Sees and replay, as the Rules page lists copies."""
+    latest Runs, Sees, caught and replay, as the Rules page lists copies."""
     return session.execute(
         select(
             DetectionRule.id,
@@ -58,6 +66,7 @@ def _copies(session: Any) -> List[Any]:
             DetectionRule.tactics,
             catalog.RUNS.label("runs"),
             catalog.SEES.label("sees"),
+            catalog.CAUGHT.label("caught"),
             DetectionRuleVersion.checks["replay"]["result"].astext.label("replay"),
             DetectionRuleVersion.checks["replay"]["source"].astext.label(
                 "replay_source"
@@ -114,6 +123,19 @@ def _siem_of(source: str) -> Optional[str]:
     return None if source.startswith(catalog.REPO_PREFIX) else source
 
 
+def emulate_next(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The rows in the order to emulate next: no rule, unproven, proven with
+    nothing caught, then the rest; within each, most alerts seen first, then
+    the map's order."""
+
+    def group(row: Dict[str, Any]) -> int:
+        if row["state"] != "proven":
+            return 0 if row["state"] == "no_rule" else 1
+        return 3 if row["caught"] else 2
+
+    return sorted(rows, key=lambda r: (group(r), -r["seen"], r["technique"]))
+
+
 def coverage() -> Dict[str, Any]:
     """The heat map: each technique's state and SIEM split, the tactics in
     order, and the totals."""
@@ -124,6 +146,7 @@ def coverage() -> Dict[str, Any]:
     rules: Dict[str, Set[Any]] = {}
     disabled: Dict[str, Set[Any]] = {}
     replayed: Dict[str, Set[Any]] = {}
+    caught: Dict[str, Set[Any]] = {}
     siems: Dict[str, Dict[str, Dict[str, int]]] = {}
     declared: Dict[str, str] = {}
     for copy in copies:
@@ -142,14 +165,18 @@ def coverage() -> Dict[str, Any]:
                 and copy.replay_source == "siem"
             ):
                 replayed.setdefault(technique, set()).add(rule)
+            if copy.caught == "pass":
+                caught.setdefault(technique, set()).add(rule)
             if siem is None:
                 continue
             tally = siems.setdefault(technique, {}).setdefault(
-                siem, {"copies": 0, "proven": 0, "failing": 0}
+                siem, {"copies": 0, "proven": 0, "caught": 0, "failing": 0}
             )
             tally["copies"] += 1
             if copy.runs == copy.sees == "pass":
                 tally["proven"] += 1
+            if copy.caught == "pass":
+                tally["caught"] += 1
             if "fail" in (copy.runs, copy.sees):
                 tally["failing"] += 1
     order = tactic_order()
@@ -173,6 +200,7 @@ def coverage() -> Dict[str, Any]:
                 ),
                 "seen": seen.get(technique, 0),
                 "replayed": len(replayed.get(technique, ())),
+                "caught": len(caught.get(technique, ())),
                 "siems": {
                     siem: {
                         **split[siem],
@@ -192,6 +220,9 @@ def coverage() -> Dict[str, Any]:
         # declare no technique has no row to show it by.
         "siems": [s for s in SIEMS if s in listed_siems],
         "summary": {s: sum(1 for row in rows if row["state"] == s) for s in STATES},
+        # Techniques with any caught rule, beside the states, not one of them.
+        "caught_techniques": sum(1 for row in rows if row["caught"]),
+        "emulate_next": [row["technique"] for row in emulate_next(rows)],
         "rule_total": len(
             {rule_of.get(c.id, (c.id,)) for c in copies if c.status == "active"}
         ),
@@ -201,7 +232,11 @@ def coverage() -> Dict[str, Any]:
             "Active and disabled rules in the inventory (detection_rules, their "
             "latest version's checks) and alerts mapped to a technique "
             "(finding_mitre_predictions). Proven: an active SIEM copy passes Runs "
-            "and Sees. A disabled rule is no coverage. A rule counts once however "
-            "many copies it has."
+            "and Sees. Caught: an active rule's latest version passed the caught "
+            "check (it alerted on a real attack step: a scored run, or a proven "
+            "hunt or Case). The emulate-next order is no rule, then unproven, then "
+            "proven with nothing caught, then the rest, most alerts seen first; it "
+            "says nothing about which tests an emulation runner holds. A disabled "
+            "rule is no coverage. A rule counts once however many copies it has."
         ),
     }

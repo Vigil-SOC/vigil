@@ -80,6 +80,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "identify_gaps": "detections.read",
     "get_coverage_stats": "detections.read",
     "detection_metrics": "detections.read",
+    "emulate_next": "detections.read",
     "get_detection_count": "detections.read",
     "lint_detections": "detections.read",
     "check_detection_candidate": "detections.read",
@@ -1151,6 +1152,7 @@ _SECURITY_TOOLS = frozenset(
         "identify_gaps",
         "get_coverage_stats",
         "detection_metrics",
+        "emulate_next",
         "get_detection_count",
         "lint_detections",
         "check_detection_candidate",
@@ -1293,10 +1295,14 @@ def list_pending_approvals(**args: Any) -> Any:
     return [asdict(action) for action in screen_actions(actions)]
 
 
-def get_approval_action(*, action_id: str) -> Args:
+# A containment is resolved, or its requested state read again, as it is read (#5059).
+async def get_approval_action(*, action_id: str) -> Args:
+    from core.response import containment
     from core.response.approval_service import screen_action
 
-    return _decided(screen_action(_approvals().get_action(action_id)), "read")
+    action = await asyncio.to_thread(_approvals().get_action, action_id)
+    action = await containment.on_read(action, await containment.live_registry())
+    return _decided(screen_action(action), "read")
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it

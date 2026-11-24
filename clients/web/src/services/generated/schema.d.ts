@@ -444,6 +444,7 @@ export interface paths {
          *
          *     Declared before ``/approvals/{action_id}`` so the literal path is not
          *     read as an action id. Uncapped: the decisions list stops at 500.
+         *     Containments are resolved, and requested ones read again, first.
          */
         get: operations["get_api_approvals_needs-you"];
         put?: never;
@@ -484,7 +485,7 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description Fetch a single approval action.
+         * @description Fetch a single approval action, resolving or re-reading a containment.
          */
         get: operations["get_api_approvals_action_id"];
         put?: never;
@@ -509,7 +510,10 @@ export interface paths {
          * @description Approve a pending action.
          *
          *     If the action is linked to a paused workflow run, the run resumes
-         *     automatically and the resume result is included in the response.
+         *     automatically and the resume result is included in the response. An
+         *     isolation or account disable names a resolved candidate (``candidate``);
+         *     its call runs at once, as the approver, and the action returned says what
+         *     the vendor answered. A failed one may be approved again.
          */
         post: operations["post_api_approvals_action_id_approve"];
         delete?: never;
@@ -1611,6 +1615,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/emulation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Emulation */
+        get: operations["get_api_autonomy_emulation"];
+        /**
+         * Put Emulation
+         * @description Mark or unmark emulators, and edit the hosts they may run on.
+         *
+         *     Adding a mark or a host lets an emulator act where it could not: a
+         *     person's ``ai_autonomy.write``, refused while stopped, as loosening a
+         *     tool's class is. Removing either is ``ai_autonomy.stop``. One trail entry
+         *     names who changed what.
+         */
+        put: operations["put_api_autonomy_emulation"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/held/release": {
         parameters: {
             query?: never;
@@ -1622,9 +1652,9 @@ export interface paths {
         put?: never;
         /**
          * Post Release Held
-         * @description Clear the hold on every held action this person may decide.
+         * @description Clear the hold on every held action this person may decide, and run them.
          *
-         *     Executes nothing. Each released row writes one trail entry.
+         *     Each released row writes one trail entry.
          */
         post: operations["post_api_autonomy_held_release"];
         delete?: never;
@@ -1644,9 +1674,7 @@ export interface paths {
         put?: never;
         /**
          * Post Release Action
-         * @description Clear the hold on one action. The next executor pass runs it.
-         *
-         *     Executes nothing itself.
+         * @description Clear the hold on one action and run it, as the person releasing it.
          */
         post: operations["post_api_autonomy_held_action_id_release"];
         delete?: never;
@@ -6457,7 +6485,8 @@ export interface paths {
          *     A run's id is derived from its investigation id and its ledger is terminal
          *     once finished, so the same investigation cannot run twice. The failure stays
          *     on record; the restart is a fresh Human Ask over the same workflow and findings.
-         *     A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
+         *     A daily gaps run restarts as a gaps run: no Case, the same gap proposals. An
+         *     Emulate restarts as an Emulate, with no Case.
          */
         post: operations["post_api_orchestrator_investigations_investigation_id_wake"];
         delete?: never;
@@ -8563,6 +8592,7 @@ export interface paths {
          *
          *     Declared before ``/approvals/{action_id}`` so the literal path is not
          *     read as an action id. Uncapped: the decisions list stops at 500.
+         *     Containments are resolved, and requested ones read again, first.
          */
         get: operations["get_api_v1_approvals_needs-you"];
         put?: never;
@@ -8603,7 +8633,7 @@ export interface paths {
         };
         /**
          * Get Approval
-         * @description Fetch a single approval action.
+         * @description Fetch a single approval action, resolving or re-reading a containment.
          */
         get: operations["get_api_v1_approvals_action_id"];
         put?: never;
@@ -8628,7 +8658,10 @@ export interface paths {
          * @description Approve a pending action.
          *
          *     If the action is linked to a paused workflow run, the run resumes
-         *     automatically and the resume result is included in the response.
+         *     automatically and the resume result is included in the response. An
+         *     isolation or account disable names a resolved candidate (``candidate``);
+         *     its call runs at once, as the approver, and the action returned says what
+         *     the vendor answered. A failed one may be approved again.
          */
         post: operations["post_api_v1_approvals_action_id_approve"];
         delete?: never;
@@ -8775,9 +8808,9 @@ export interface paths {
         put?: never;
         /**
          * Post Release Held
-         * @description Clear the hold on every held action this person may decide.
+         * @description Clear the hold on every held action this person may decide, and run them.
          *
-         *     Executes nothing. Each released row writes one trail entry.
+         *     Each released row writes one trail entry.
          */
         post: operations["post_api_v1_autonomy_held_release"];
         delete?: never;
@@ -8797,9 +8830,7 @@ export interface paths {
         put?: never;
         /**
          * Post Release Action
-         * @description Clear the hold on one action. The next executor pass runs it.
-         *
-         *     Executes nothing itself.
+         * @description Clear the hold on one action and run it, as the person releasing it.
          */
         post: operations["post_api_v1_autonomy_held_action_id_release"];
         delete?: never;
@@ -10786,6 +10817,11 @@ export interface components {
              * @description Identity of the approving analyst. Defaults to 'analyst'.
              */
             approved_by?: string | null;
+            /**
+             * Candidate
+             * @description An isolation or account disable: the id of the stored candidate (parameters.containment.candidates) to act on. May be omitted when there is one.
+             */
+            candidate?: string | null;
         };
         /**
          * AuditEntry
@@ -13357,6 +13393,33 @@ export interface components {
             token: string;
         };
         /**
+         * EmulationBody
+         * @description The marked tools and the host list, each replacing what is stored.
+         *
+         *     An omitted field stays as it is. A host is one hostname: no whitespace and
+         *     no leading ``-``.
+         */
+        EmulationBody: {
+            /** Hosts */
+            hosts?: string[] | null;
+            /** Tools */
+            tools?: string[] | null;
+        };
+        /**
+         * EmulationResponse
+         * @description Which outside tools are emulators, the hosts they may run on, and the defaults.
+         */
+        EmulationResponse: {
+            /** Defaults */
+            defaults: {
+                [key: string]: string[];
+            };
+            /** Hosts */
+            hosts: string[];
+            /** Tools */
+            tools: string[];
+        };
+        /**
          * EndSignInsRequest
          * @description Why a manager, service account or playbook ends sign-ins. Kept in the trail.
          */
@@ -14418,10 +14481,18 @@ export interface components {
         IntentReportResponse: {
             /** Path */
             path: string;
+            /** Pending */
+            pending?: string[];
             /** Readable */
             readable: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Revision */
+            revision?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
+            /** State */
+            state?: string | null;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {
@@ -14440,6 +14511,11 @@ export interface components {
             hypothesis_subjects?: {
                 [key: string]: string[];
             } | null;
+            /**
+             * No Case
+             * @default false
+             */
+            no_case: boolean;
             /**
              * Priority
              * @default medium
@@ -14626,6 +14702,8 @@ export interface components {
         };
         /** InvokeRequest */
         InvokeRequest: {
+            /** Action Id */
+            action_id?: string | null;
             /** Agent Id */
             agent_id?: string | null;
             /** Args */
@@ -15185,6 +15263,13 @@ export interface components {
              * @description The run's own checkpoint this item answers, so a page reading the run can tell it was answered.
              */
             checkpoint_id?: string | null;
+            /**
+             * Containment
+             * @description An isolation or account disable: the vendor IDs its target resolved to (candidates), or which tool is missing (missing).
+             */
+            containment?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Created At
              * @description '' when nothing recorded when it started waiting.
@@ -16864,6 +16949,7 @@ export interface components {
             file_count: number;
             /** Files */
             files: components["schemas"]["SkillFile"][];
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /** Operator Root Set */
@@ -17073,6 +17159,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17184,6 +17271,7 @@ export interface components {
             description: string;
             /** File Count */
             file_count: number;
+            managed?: components["schemas"]["SkillsManaged"] | null;
             /** Name */
             name: string;
             /**
@@ -17217,6 +17305,16 @@ export interface components {
             source?: string | null;
             /** Version */
             version?: number | null;
+        };
+        /**
+         * SkillsManaged
+         * @description The operator root is under the declared directory: Vigil writes none of it.
+         */
+        SkillsManaged: {
+            /** Directory */
+            directory: string;
+            /** Revision */
+            revision: string;
         };
         /**
          * SourceEvidence
@@ -21165,6 +21263,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy_emulation: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmulationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_autonomy_emulation: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmulationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmulationResponse"];
                 };
             };
             /** @description Validation Error */

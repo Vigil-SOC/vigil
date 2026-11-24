@@ -334,7 +334,10 @@
 .de-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--ln1); }
 .de-cov-detail { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg2); font-size: 12.5px; }
 .de-cov-detail b { color: var(--tx0); }
-.de-cov-siems { border-collapse: collapse; font-size: 12px; width: max-content; }
+.de-cov-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.de-prop-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.de-emulate-said { font-size: 12.5px; color: var(--tx2); }
+.de-cov-siems { border-collapse: collapse; font-size: 12px; justify-self: start; }
 .de-cov-siems th, .de-cov-siems td { padding: 3px 14px 3px 0; text-align: left; font-variant-numeric: tabular-nums; }
 .de-cov-siems th { color: var(--tx2); font-weight: 600; }
 .de-cov-siems td.proven { color: var(--good); }
@@ -351,9 +354,18 @@
 .de-tac-seg.proven { background: var(--good); }
 .de-tac-seg.unproven { background: var(--fair); }
 .de-tac-seg.no_rule { background: var(--poor); opacity: .55; }
-.de-tac-counts { font-size: 12px; color: var(--tx2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.de-tac-counts { font-size: 12px; color: var(--tx2); font-variant-numeric: tabular-nums; }
+/* Wraps between counts, never inside one, so a narrow card is not pushed wider. */
+.de-tac-counts > span { white-space: nowrap; }
 .de-tac-counts .proven { color: var(--good); }
 .de-tac-counts .unproven { color: var(--fair); }
+.de-tac-counts .caught, .de-cov-caught, .de-cell .de-cell-caught { color: var(--good); }
+.de-cell-caught { white-space: nowrap; }
+/* Emulate next: the techniques in the server's order, one block per group. */
+.de-next { display: grid; gap: 12px; min-width: 0; }
+.de-next-group { display: grid; gap: 6px; }
+.de-next-group h4 { margin: 0; font-size: 12.5px; color: var(--tx0); }
+.de-cov-lens-b:disabled { opacity: .5; cursor: default; }
 .de-tac-body { display: grid; gap: 10px; padding: 4px 12px 12px; }
 .de-tac-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; align-items: start; }
 .de-tac-group { display: grid; gap: 4px; }

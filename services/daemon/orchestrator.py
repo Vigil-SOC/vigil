@@ -118,7 +118,11 @@ from core.threat_intel.mitre_lookup import (
 )
 from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
-from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
+from core.workflows.routing import (
+    EMULATE_WORKFLOW,
+    FALLBACK_WORKFLOW,
+    SHADOW_WORKFLOW_ID,
+)
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import AGENT_RUN_PREFIX, WorkflowsService
 from services.daemon.plan_generator import (
@@ -339,12 +343,14 @@ def _caller(investigation_id: str) -> tuple[Optional[str], Optional[str]]:
     return username, principal
 
 
-def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
-    """What the daily gaps run's intake handed the investigation it launched: no
-    Case, and its gap proposals. None for any other run, or when the row is gone.
+def caseless_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
+    """How to queue a rerun of a run that opened no Case: the daily gaps run (a
+    schedule intake, with its gap proposals) or a person's Emulate (a Human Ask on
+    the MITRE analyst). ``kind`` is the intake kind. None for any other run, or when
+    the row is gone.
 
-    A restart of a gaps run queues it as one, so it opens no Case and the rules it
-    saves still attach to the gaps it was handed.
+    A restart of either queues it as one, so it opens no Case, and the rules a gaps
+    run saves still attach to the gaps it was handed.
     """
     from core.storage.connection import get_db_manager
     from core.storage.models import IntakeTrigger
@@ -354,15 +360,21 @@ def gaps_run_of(investigation_id: str) -> Optional[Dict[str, Any]]:
             session.query(IntakeTrigger)
             .filter(
                 IntakeTrigger.investigation_id == investigation_id,
-                IntakeTrigger.kind == "schedule",
+                IntakeTrigger.kind.in_(("schedule", "human_ask")),
             )
             .order_by(IntakeTrigger.id.desc())
             .first()
         )
+        kind = row.kind if row is not None else None
         payload = row.payload if row is not None else None
     if not isinstance(payload, dict) or not payload.get("no_case"):
         return None
+    if kind == "human_ask":
+        if payload.get("workflow_id") != EMULATE_WORKFLOW:
+            return None
+        return {"kind": kind, "no_case": True}
     return {
+        "kind": kind,
         "no_case": True,
         "gap_proposal_ids": [
             i for i in payload.get("gap_proposal_ids") or () if isinstance(i, str) and i
@@ -1513,10 +1525,11 @@ class Orchestrator:
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
             else:
-                # Only the daily gaps run hands a run its gap proposals, and only it
-                # runs with no Case.
+                # Only the daily gaps run hands a run its gap proposals. A person's
+                # Emulate (the MITRE analyst) is the one Human Ask with no Case.
                 item.pop("gap_proposal_ids", None)
-                item.pop("no_case", None)
+                if item.get("workflow_id") != EMULATE_WORKFLOW:
+                    item.pop("no_case", None)
             await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
@@ -1608,7 +1621,8 @@ class Orchestrator:
 
         mint = None
         # The daily gaps run keeps its record on the run and its detection
-        # proposals; every other intake with no case_id gets a Case of its own.
+        # proposals, and an Emulate on the run's coverage report; every other
+        # intake with no case_id gets a Case of its own.
         if not case_id and not item.get("no_case"):
             mint = CaseSpec(
                 title=_human_ask_case_title(hypothesis, findings, workflow_id),
@@ -1748,8 +1762,8 @@ class Orchestrator:
             "current_step": 1,
             "priority": priority,
             "max_iterations": self.config.max_iterations_per_agent,
-            "max_cost_usd": self.config.max_cost_per_investigation,
-            "max_runtime_seconds": self.config.max_runtime_per_investigation,
+            "max_cost_usd": self._max_cost(),
+            "max_runtime_seconds": self._max_runtime(),
             "otel_traceparent": _tp,
             "run_id": run_id_for(inv_id),
         }
@@ -1921,9 +1935,9 @@ class Orchestrator:
                             )
 
                     cost = inv_dict.get("cost_usd", 0.0)
-                    max_cost = inv_dict.get(
-                        "max_cost_usd", self.config.max_cost_per_investigation
-                    )
+                    max_cost = inv_dict.get("max_cost_usd")
+                    if max_cost is None:
+                        max_cost = self._max_cost()
                     if cost >= max_cost:
                         logger.warning(
                             "supervisor.kill cost inv_id=%s cost_usd=%.4f "
@@ -2070,8 +2084,15 @@ class Orchestrator:
             "overrides": {
                 "budgets": {
                     "max_calls": self.config.max_iterations_per_agent,
-                    "max_cost_usd": self.config.max_cost_per_investigation,
-                    "max_wall_ms": self.config.max_runtime_per_investigation * 1000,
+                    # The run's own budgets, set from the live settings at
+                    # creation; a record without them reads the live ones.
+                    "max_cost_usd": (
+                        inv_record.get("max_cost_usd") or self._max_cost()
+                    ),
+                    "max_wall_ms": (
+                        inv_record.get("max_runtime_seconds") or self._max_runtime()
+                    )
+                    * 1000,
                 }
             },
         }
@@ -2403,10 +2424,11 @@ class Orchestrator:
             logger.error(f"Failed to read hourly cost: {e}")
             return None
 
-    def _hourly_cost_limit(self) -> float:
-        """The cap as saved in Settings, falling back to startup config.
+    def _live_setting(self, name: str, cast, fallback):
+        """One value as saved in ``orchestrator.settings``, else startup config.
 
-        Read live so a saved change reaches the running daemon at once.
+        Read live so a saved change (Settings, or an applied INTENT.md
+        revision) reaches the running daemon at once.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -2419,12 +2441,31 @@ class Orchestrator:
                     .first()
                 )
                 if cfg and isinstance(cfg.value, dict):
-                    saved = cfg.value.get("max_total_hourly_cost")
+                    saved = cfg.value.get(name)
                     if saved is not None:
-                        return float(saved)
+                        return cast(saved)
         except Exception as e:
-            logger.warning("Hourly cost limit read failed, using config: %s", e)
-        return self.config.max_total_hourly_cost
+            logger.warning("Orchestrator %s read failed, using config: %s", name, e)
+        return fallback
+
+    def _hourly_cost_limit(self) -> float:
+        return self._live_setting(
+            "max_total_hourly_cost", float, self.config.max_total_hourly_cost
+        )
+
+    def _max_cost(self) -> float:
+        return self._live_setting(
+            "max_cost_per_investigation",
+            float,
+            self.config.max_cost_per_investigation,
+        )
+
+    def _max_runtime(self) -> int:
+        return self._live_setting(
+            "max_runtime_per_investigation",
+            int,
+            self.config.max_runtime_per_investigation,
+        )
 
     def _hourly_budget_exhausted(self) -> bool:
         """Gate intake on the rolling hour; logs once per pause/resume transition.
@@ -2900,6 +2941,8 @@ class Orchestrator:
                     max_iterations=inv_record.get(
                         "max_iterations", self.config.max_iterations_per_agent
                     ),
+                    # Set by the caller from the live budgets; the fallbacks
+                    # are the startup config.
                     max_cost_usd=inv_record.get(
                         "max_cost_usd", self.config.max_cost_per_investigation
                     ),
@@ -3146,7 +3189,7 @@ class Orchestrator:
             # never touches, so the pause is reported here.
             "hourly_paused": self._hourly_pause_decision(spent, limit),
             "hourly_limit_usd": round(limit, 4),
-            "per_investigation_limit": self.config.max_cost_per_investigation,
+            "per_investigation_limit": self._max_cost(),
         }
 
     async def purge_all_investigations(self) -> Dict[str, Any]:
