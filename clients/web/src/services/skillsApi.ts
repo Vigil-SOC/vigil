@@ -20,6 +20,19 @@ export interface ApiSkill {
   scan?: ApiSkillScan
   /** Set for a skill installed from a git repo: the repo, the commit, and how many skills came with it. */
   source?: ApiSkillSource | null
+  /** Set on every row while the operator root is under the declared directory (VIGIL_INTENT_DIR): Vigil writes none of it. */
+  managed?: ApiSkillsManaged | null
+}
+
+export interface ApiSkillsManaged {
+  directory: string
+  /** First line of the directory's REVISION marker; "unknown" without one. */
+  revision: string
+}
+
+/** Why every save, import, update and delete is off while skills are managed (#5070). */
+export function skillsManagedText(m: ApiSkillsManaged): string {
+  return `Skills are managed by ${m.directory} at revision ${m.revision}. Change them by committing there; Vigil does not write them.`
 }
 
 export interface ApiSkillSource {

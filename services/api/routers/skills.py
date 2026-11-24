@@ -9,7 +9,7 @@ bundled library is never modified.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
@@ -44,6 +44,7 @@ from core.skills.skill_library import (
     install_uploaded_skills,
     is_bundled,
     load_skills,
+    managed_skills,
     operator_skills_root,
     read_skill_file,
     skill_body,
@@ -118,6 +119,13 @@ class SkillSource(BaseModel):
     skills: int
 
 
+class SkillsManaged(BaseModel):
+    """The operator root is under the declared directory: Vigil writes none of it."""
+
+    directory: str
+    revision: str
+
+
 class SkillResponse(BaseModel):
     name: str
     description: str
@@ -132,6 +140,8 @@ class SkillResponse(BaseModel):
     scan: SkillScanSummary
     # Set for a skill installed from a git repo.
     source: Optional[SkillSource] = None
+    # Set on every row while VIGIL_SKILLS_PATH is under VIGIL_INTENT_DIR (#5070).
+    managed: Optional[SkillsManaged] = None
 
 
 class SkillApproveRequest(BaseModel):
@@ -357,6 +367,7 @@ def _response(
     state: ScanState,
     usage: Optional[Dict[str, Tuple[int, int]]] = None,
     sources: Optional[Dict[str, dict]] = None,
+    managed: Any = ...,  # read here unless the caller read it once for many rows
 ) -> SkillResponse:
     reads, agents = (usage or {}).get(skill.name, (0, 0))
     source = (sources or {}).get(skill.name)
@@ -370,7 +381,13 @@ def _response(
         agents_7d=agents,
         scan=SkillScanSummary(**_scan_summary(state)),
         source=SkillSource(**source) if source else None,
+        managed=_managed() if managed is ... else managed,
     )
+
+
+def _managed() -> Optional[SkillsManaged]:
+    managed = managed_skills()
+    return SkillsManaged(**vars(managed)) if managed else None
 
 
 def _state_of(skill: Skill) -> ScanState:
@@ -468,7 +485,8 @@ async def list_skills():
     skills = load_skills(skill_roots())
     states = await asyncio.to_thread(scan_states, skills)
     sources = await asyncio.to_thread(_sources, [skill.name for skill in skills])
-    return [_response(s, states[s.name], usage, sources) for s in skills]
+    managed = _managed()
+    return [_response(s, states[s.name], usage, sources, managed) for s in skills]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -485,7 +503,7 @@ async def get_skill(name: str):
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
     state = await asyncio.to_thread(_state_of, skill)
     sources = await asyncio.to_thread(_sources, [skill.name])
-    listed = _response(skill, state, _usage_by_skill(), sources)
+    listed = _response(skill, state, _usage_by_skill(), sources, _managed())
     return SkillDetail(
         **listed.model_dump(exclude={"scan"}),
         scan=_scan_detail(state),
