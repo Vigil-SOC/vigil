@@ -212,6 +212,8 @@ class PlatformDatabaseProxyConfig(BaseModel):
     proxy_password: str = ""
     ssh_private_key_path: str = ""
     ssh_key_passphrase: str = ""
+    # Required for ssh_tunnel: the bastion's public host key.
+    ssh_host_key: str = ""
     verify_proxy_tls: bool = True
     # Not stored: proves the saver already holds the database login that a
     # moved proxy would receive (see set_platform_database_config).
@@ -537,6 +539,7 @@ _PLATFORM_DB_PROXY_KEYS = {
     "proxy_password": "PLATFORM_DB_PROXY_PASSWORD",
     "ssh_private_key_path": "PLATFORM_DB_SSH_PRIVATE_KEY_PATH",
     "ssh_key_passphrase": "PLATFORM_DB_SSH_KEY_PASSPHRASE",
+    "ssh_host_key": "PLATFORM_DB_SSH_HOST_KEY",
     "verify_proxy_tls": "PLATFORM_DB_VERIFY_PROXY_TLS",
 }
 _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
@@ -605,6 +608,11 @@ def _require_proxy_credentials(
         or (config.proxy_host or "") != stored["proxy_host"]
         or (str(config.proxy_port) if config.proxy_port else "") != stored["proxy_port"]
         or (proxy_type == "pgbouncer" and stored_verify and not config.verify_proxy_tls)
+        # The host key is part of the destination: a new key is a new server.
+        or (
+            proxy_type == "ssh_tunnel"
+            and (config.ssh_host_key or "").strip() != stored["ssh_host_key"]
+        )
     )
     if not moved:
         return
@@ -659,6 +667,19 @@ def set_platform_database_config(
             ),
         )
 
+    if proxy_type == "ssh_tunnel":
+        from core.storage.db_proxy import parse_ssh_host_key
+
+        if not (config.ssh_host_key or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="SSH tunnel needs the bastion's SSH host key",
+            )
+        try:
+            parse_ssh_host_key(config.ssh_host_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     _require_proxy_credentials(config, proxy_type)
 
     # Non-secret fields — always overwrite so disabling a setting
@@ -669,6 +690,9 @@ def set_platform_database_config(
         "proxy_port": str(config.proxy_port) if config.proxy_port else "",
         "proxy_username": config.proxy_username or "",
         "ssh_private_key_path": config.ssh_private_key_path or "",
+        "ssh_host_key": (
+            (config.ssh_host_key or "").strip() if proxy_type == "ssh_tunnel" else ""
+        ),
         "verify_proxy_tls": "true" if config.verify_proxy_tls else "false",
     }
     # Secret fields — only overwrite when caller supplied a non-empty

@@ -715,6 +715,7 @@ export const configApi = {
     proxy_password?: string
     ssh_private_key_path?: string
     ssh_key_passphrase?: string
+    ssh_host_key?: string
     verify_proxy_tls?: boolean
     database_password?: string
   }) => api.post('/config/platform-database', data),
@@ -800,6 +801,7 @@ export interface PlatformDatabaseProxyConfig {
   proxy_port: number
   proxy_username: string
   ssh_private_key_path: string
+  ssh_host_key: string
   verify_proxy_tls: boolean
   // Booleans only — secret values are never returned by the API.
   has_proxy_password: boolean
