@@ -259,6 +259,20 @@ def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     )
 
 
+def _emulation(p: Mapping[str, Any]) -> str:
+    parts = [
+        f"{verb} {', '.join(p[key])}"
+        for key, verb in (
+            ("tools_added", "marked emulator"),
+            ("tools_removed", "unmarked emulator"),
+            ("hosts_added", "listed host"),
+            ("hosts_removed", "removed host"),
+        )
+        if p.get(key)
+    ]
+    return "Emulators: " + "; ".join(parts) if parts else "Changed the emulators"
+
+
 def _proof_export(p: Mapping[str, Any]) -> str:
     n = p.get("rule_count")
     if not p.get("kind"):
@@ -461,6 +475,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
+    "autonomy.emulation_changed": _emulation,
+    "emulation.unlisted_host": lambda p: f"{p.get('tool') or 'An emulator'} reported steps "
+    f"on hosts not listed for emulation: {', '.join(p.get('hosts') or []) or 'unknown'}",
     "detections.rule_staged": _staged,
     "detections.proposal_rejected": lambda p: "Dismissed detection proposal"
     + (f" {p['proposal_id']}" if p.get("proposal_id") else "")
