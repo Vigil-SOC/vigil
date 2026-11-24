@@ -89,8 +89,9 @@ def routability_body(snap: Snapshot) -> Dict[str, Any]:
         raise exc
     body = snap["routability"]
     if not body:
-        return {"providers": {}, "keys": {}}
-    return body
+        return {"providers": {}, "keys": {}, "residency": {}}
+    residency = body.get("residency") or {}
+    return {**body, "residency": {n: r.public() for n, r in residency.items()}}
 
 
 async def _refresh() -> Snapshot:
