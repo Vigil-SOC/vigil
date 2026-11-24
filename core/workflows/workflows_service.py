@@ -25,6 +25,7 @@ from core.threat_intel.mitre_lookup import iter_techniques, rank_by_confidence
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.enablement import disabled_message, is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
+from core.workflows.redecision_hold import NOT_STARTED_HERE, WORKFLOW_ID
 from core.workflows.workflow_run_service import WorkflowRunService
 
 logger = logging.getLogger(__name__)
@@ -663,10 +664,7 @@ class WorkflowsService:
         if not workflow:
             return {"success": False, "error": f"Workflow not found: {workflow_id}"}
         # The re-decision starter calls begin_run and enqueue_run itself. The
-        # console, MCP and the handoff all come through here. Imported in the
-        # function: that starter imports this service.
-        from core.workflows.redecision import NOT_STARTED_HERE, WORKFLOW_ID
-
+        # console, MCP and the handoff all come through here.
         if workflow.id == WORKFLOW_ID:
             return {"success": False, "error": NOT_STARTED_HERE}
         # The one check every starter reaches, the router and the handoff alike.

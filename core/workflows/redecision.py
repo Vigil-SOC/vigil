@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import select
 
@@ -32,8 +32,8 @@ from core.memory.imported_history import _keys, _severity
 from core.memory.recall_contract import bounded_prose
 from core.reporting.analytics_service import _NOT_REAL, _REAL
 from core.storage.models.history import HistoryAlert, HistoryTicket
-from core.storage.models.workflow import WorkflowRun
 from core.storage.unit_of_work import unit_of_work
+from core.workflows.redecision_hold import MARK, WORKFLOW_ID, as_utc, remember_close
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import (
     INVESTIGATE_RUN_KIND,
@@ -43,13 +43,6 @@ from core.workflows.workflows_service import (
 
 logger = logging.getLogger(__name__)
 
-# The workflow file's directory name. Intake, the agent-runs API and Settings
-# all refuse it; the starter below is the only way it runs.
-WORKFLOW_ID = "re-decision"
-# The mark on trigger_context. Recall, the search ceiling and the run lists
-# read this, not a run kind of its own.
-MARK = "re_decision"
-NOT_STARTED_HERE = "this workflow is not started here"
 NO_ALERT_ROW = "could not re-check: no alert row"
 COULD_NOT = "could not re-check"
 
@@ -57,54 +50,6 @@ _CONNECTED = {
     "microsoft_defender": "defender",
     "azure_sentinel": "sentinel",
 }
-_MISSING = object()
-_CLOSES: Dict[str, Optional[datetime]] = {}
-
-
-def _aware(moment: datetime) -> datetime:
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc)
-
-
-def _parse_close(value: Any) -> Optional[datetime]:
-    if isinstance(value, datetime):
-        return _aware(value)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return _aware(datetime.fromisoformat(value.strip().replace("Z", "+00:00")))
-    except ValueError:
-        return None
-
-
-def marked(trigger_context: Optional[Mapping[str, Any]]) -> bool:
-    """True when this run is a re-decision. A live run's context is not."""
-    return bool(trigger_context) and trigger_context.get(MARK) is True
-
-
-def redecision_close(run_id: Optional[str]) -> Optional[datetime]:
-    """The close time on a marked run, else None. Live runs pass through."""
-    if not run_id:
-        return None
-    cached = _CLOSES.get(run_id, _MISSING)
-    if cached is not _MISSING:
-        return cached  # type: ignore[return-value]
-    close = _read_close(run_id)
-    if len(_CLOSES) > 256:
-        _CLOSES.clear()
-    _CLOSES[run_id] = close
-    return close
-
-
-def _read_close(run_id: str) -> Optional[datetime]:
-    with unit_of_work() as session:
-        context = session.scalar(
-            select(WorkflowRun.trigger_context).where(WorkflowRun.run_id == run_id)
-        )
-    if not marked(context if isinstance(context, dict) else None):
-        return None
-    return _parse_close(context.get("closed_at"))
 
 
 def redecision_result(
@@ -165,7 +110,7 @@ def _keys_of(entity_context: Mapping[str, Any]) -> List[str]:
     return _keys({"entity_context": kept})
 
 
-def _prompt(alerts: List[Mapping[str, Any]]) -> str:
+def _prompt(alerts: Sequence[Mapping[str, Any]]) -> str:
     """The run's opening text: the allow-listed fields, and nothing else."""
     blocks = []
     for alert in alerts:
@@ -323,16 +268,18 @@ async def start_redecision(
 
     source = ticket.source_system or ""
     vendor = _vendor(import_id, source)
+    alerts: List[Dict[str, Any]]
     if vendor is None:
         alerts = _file_alerts(ticket)
         if not alerts:
             return _refused(NO_ALERT_ROW)
     else:
-        alerts = await _vendor_alerts(vendor, ticket_id)
-        if not alerts:
+        fetched = await _vendor_alerts(vendor, ticket_id)
+        if not fetched:
             return _refused(COULD_NOT)
+        alerts = fetched
 
-    close = _aware(ticket.closed_at)
+    close = as_utc(ticket.closed_at)
     prompt = _prompt(alerts)
     keys: List[str] = []
     for alert in alerts:
@@ -423,5 +370,5 @@ async def start_redecision(
         note_terminal(run_id, "failed", "")
         return _refused("run queue unavailable")
 
-    _CLOSES[run_id] = close
+    remember_close(run_id, close)
     return {"success": True, "run_id": run_id, "job_id": job_id}

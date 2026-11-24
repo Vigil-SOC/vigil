@@ -74,7 +74,7 @@ from core.memory.recall_contract import (
     recall_ranking,
 )
 from core.storage.unit_of_work import unit_of_work
-from core.workflows.redecision import redecision_close
+from core.workflows.redecision_hold import redecision_close
 
 Args = Dict[str, Any]
 Row = Dict[str, Any]
