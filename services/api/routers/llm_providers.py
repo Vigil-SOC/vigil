@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.auth.permissions import deny_unless, permission_gate
-from core.llm import residency
+from core.llm import residency, statements
 from core.llm.bifrost.admin import sync_all_provider_models
 from core.llm.providers import provider_service
 from core.llm.providers.base_url import validate_base_url_shape
@@ -83,6 +83,17 @@ class LLMProviderUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
+    # Provider Statements, name -> value; written onto every active row of the type.
+    statements: Optional[Dict[str, str]] = None
+
+
+class StatementView(BaseModel):
+    value: Optional[str] = None
+    state: Literal["held", "pending", "cleared", "absent"]
+    by: Optional[str] = None
+    by_name: Optional[str] = None
+    at: Optional[str] = None
+    why: Optional[str] = None
 
 
 class LLMProviderResponse(BaseModel):
@@ -102,6 +113,8 @@ class LLMProviderResponse(BaseModel):
     updated_at: Optional[str]
     # Where this provider's calls go; the class only, never the address.
     residency: ProviderResidency
+    # The type's Provider Statements, as every row of the type holds them.
+    statements: Dict[str, StatementView] = Field(default_factory=dict)
 
 
 async def _gateway_for(rows: List[LLMProviderConfig]) -> Optional[Dict[str, Residency]]:
@@ -111,13 +124,71 @@ async def _gateway_for(rows: List[LLMProviderConfig]) -> Optional[Dict[str, Resi
     return await residency.gateway_residency()
 
 
-def _to_response(
-    row: LLMProviderConfig, gateway: Optional[Dict[str, Residency]]
-) -> Dict[str, Any]:
-    d = LLMProviderConfigSchema.dump(row)
-    d.pop("api_key_ref", None)
-    d["residency"] = residency.row_residency(row, gateway).public()
-    return d
+async def _responses(
+    db: UnitOfWorkSession, shown: List[LLMProviderConfig]
+) -> List[Dict[str, Any]]:
+    """``shown`` as responses, each with its type's statements."""
+    types = sorted({r.provider_type for r in shown})
+    # The type's active rows; a type with none is read from the row shown.
+    by_type = {
+        t: statements.rows_of_type(db, t)
+        or [next(r for r in shown if r.provider_type == t)]
+        for t in types
+    }
+    every = {r.provider_id: r for rows in by_type.values() for r in rows}
+    every.update({r.provider_id: r for r in shown})
+    gateway = await _gateway_for(list(every.values()))
+    res = {pid: residency.row_residency(r, gateway) for pid, r in every.items()}
+    names = statements.account_names(db, statements.authors(every.values()))
+    views: Dict[str, Dict[str, Any]] = {}
+    for t, rows in by_type.items():
+        if statements.unknown(res[r.provider_id] for r in rows):
+            views[t] = {}  # nothing to compare a statement with
+            continue
+        region = await statements.region_for(t)
+        views[t] = statements.type_view(rows, res, region, names)
+    out = []
+    for row in shown:
+        d = LLMProviderConfigSchema.dump(row)
+        d.pop("api_key_ref", None)
+        # The statement records (hashes, counters) are read through ``statements``.
+        d["config"] = statements.without_owned(d.get("config"))
+        d["residency"] = res[row.provider_id].public()
+        d["statements"] = views[row.provider_type]
+        out.append(d)
+    return out
+
+
+async def _record_statements(
+    db: UnitOfWorkSession,
+    user: User,
+    row: LLMProviderConfig,
+    written: Dict[str, str],
+) -> None:
+    """Write ``written`` onto every active row of ``row``'s type, ``row`` included.
+
+    Each statement is tied to that row's own address hash. ``row``'s audit entry
+    is the update's own; every other row gets its own entry from ``_audit``.
+    """
+    problem = statements.validate(written)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    rows = statements.rows_of_type(db, row.provider_type, row)
+    gateway = await _gateway_for(rows)
+    res = {r.provider_id: residency.row_residency(r, gateway) for r in rows}
+    why = statements.unknown(res.values())
+    if why:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A statement is tied to this provider's address, which isn't known: {why}",
+        )
+    region = await statements.region_for(row.provider_type)
+    by = str(user.user_id)
+    for r in rows:
+        before = _snapshot(r)
+        r.config = statements.stated(r.config, written, by, res[r.provider_id], region)
+        if r is not row and _snapshot(r) != before:
+            _audit(db, user, r.provider_id, "update", before, _snapshot(r))
 
 
 _AUDITED_FIELDS = (
@@ -133,7 +204,9 @@ _AUDITED_FIELDS = (
 
 def _snapshot(row: Any) -> Dict[str, Any]:
     """What the audit diffs: the row's settings, never its key."""
-    return {f: getattr(row, f) for f in _AUDITED_FIELDS}
+    snap = {f: getattr(row, f) for f in _AUDITED_FIELDS}
+    snap["config"] = statements.audited(snap["config"])
+    return snap
 
 
 def _audit(
@@ -205,9 +278,7 @@ async def list_providers(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    rows = provider_service.list_providers(db)
-    gateway = await _gateway_for(rows)
-    return [_to_response(r, gateway) for r in rows]
+    return await _responses(db, provider_service.list_providers(db))
 
 
 @router.post("", response_model=LLMProviderResponse, status_code=201)
@@ -248,7 +319,8 @@ async def create_provider(
         default_model=payload.default_model,
         is_active=payload.is_active,
         is_default=payload.is_default,
-        config=payload.config or {},
+        # Statements are written by their own field on an update, never here.
+        config=statements.without_owned(payload.config),
     )
     provider_service.insert(db, row, make_default=payload.is_default)
     if api_key_ref and row.is_active:
@@ -257,7 +329,7 @@ async def create_provider(
         provider_service.reconcile_bifrost_key_for_type(db, row.provider_type)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"created provider {provider_id}")
-    return _to_response(row, await _gateway_for([row]))
+    return (await _responses(db, [row]))[0]
 
 
 @router.put("/{provider_id}", response_model=LLMProviderResponse)
@@ -298,9 +370,18 @@ async def update_provider(
         row.is_active = payload.is_active
     if payload.config is not None:
         # The write replaces config, but must not erase the marker that makes a
-        # mirror row a mirror row.
-        managed = {k: v for k, v in (row.config or {}).items() if k == "managed_by"}
-        row.config = {**managed, **payload.config}
+        # mirror row a mirror row, nor the type's Provider Statements.
+        kept = {
+            k: v
+            for k, v in (row.config or {}).items()
+            if k == "managed_by" or k in statements.KEPT_KEYS
+        }
+        row.config = {**kept, **statements.without_owned(payload.config)}
+    if payload.api_key is not None:
+        # A credential set or cleared: the type's statements need re-confirming.
+        statements.bump_type(db, row.provider_type)
+    if payload.statements:
+        await _record_statements(db, current_user, row, payload.statements)
 
     if payload.is_default is True:
         row.is_default = True
@@ -354,7 +435,7 @@ async def update_provider(
     provider_service.settle(db, row)
     _refresh_self_hosted_attestation(db)
     _schedule_catalog_resync(f"updated provider {provider_id}")
-    return _to_response(row, await _gateway_for([row]))
+    return (await _responses(db, [row]))[0]
 
 
 @router.delete("/{provider_id}")
