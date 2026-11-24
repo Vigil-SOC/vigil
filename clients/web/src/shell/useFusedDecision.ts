@@ -23,7 +23,7 @@ export function useFusedDecision(failText: (err: unknown) => string) {
   )
 
   const approve = useCallback(
-    (item: NeedsYouItem) => fuse(item, 'Approving', 'Approved', () => approvalsApi.approve(item.source_id)),
+    (item: NeedsYouItem, candidate?: string) => fuse(item, 'Approving', 'Approved', () => approvalsApi.approve(item.source_id, candidate)),
     [fuse],
   )
 

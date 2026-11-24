@@ -309,3 +309,7 @@ CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
 
 # What the act is for, in the state words above.
 DONE_STATE = {"isolate_host": "contained", "disable_user": "disabled"}
+# The way back (#5060): what a row carrying ``undoes`` records once the vendor
+# reports it, and the lookup's word (``state`` above) for that state.
+UNDONE_STATE = {"isolate_host": "released", "disable_user": "enabled"}
+UNDONE_LOOKUP = {"isolate_host": "not_contained", "disable_user": "enabled"}

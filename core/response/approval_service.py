@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from opentelemetry.metrics import Observation
 from sqlalchemy import func, or_, select, text, update
@@ -113,6 +113,29 @@ class NotHeld(Exception):
     def __init__(self, action_id: str):
         super().__init__(f"Action {action_id} is not held")
         self.action_id = action_id
+
+
+class NotUndoable(Exception):
+    """The row is not an executed containment in its done state, or a lift of
+    it is still open (#5060)."""
+
+
+def _open_lift(session, action_id: str) -> Optional[str]:
+    """Why ``action_id`` can't be lifted again: a row undoing it is still open."""
+    rows = session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.parameters["undoes"].astext == action_id)
+        .where(
+            or_(
+                ApprovalActionRow.status == ActionStatus.APPROVED.value,
+                (ApprovalActionRow.status == ActionStatus.EXECUTED.value)
+                & (ApprovalActionRow.execution_result["state"].astext == "requested"),
+            )
+        )
+    ).scalars()
+    # A claim that outlived its process does not hold the way back shut.
+    open_id = next((r.action_id for r in rows if not _stale_run(r)), None)
+    return f"{open_id} is already undoing {action_id}" if open_id else None
 
 
 class FourEyesRefused(Exception):
@@ -923,6 +946,103 @@ class ApprovalService:
             session.flush()
             return _row_to_pending(row)
 
+    def create_undo(
+        self,
+        action_id: str,
+        build: Callable[[PendingAction], Union[str, tuple[str, Dict[str, Any]]]],
+        approved_by: str,
+        approved_by_principal_id: Optional[str],
+    ) -> PendingAction:
+        """Insert the row that undoes an executed containment, approved by the
+        caller (#5060). ``build`` turns the original into the row's title and
+        parameters, or says why it can't. No proposal is involved, so four-eyes
+        does not apply.
+
+        Raises ``NotUndoable`` unless the original is executed and in its done
+        state with no lift of it still open; ``ActionNotFound`` as approving does.
+        """
+        from core.response.proposal_targets import DONE_STATE
+
+        found = self.get_action(action_id)
+        if found is None:
+            raise ActionNotFound(action_id)
+        case_ids = case_ids_for(found)
+        refusal: Optional[str] = None
+        pending: Optional[PendingAction] = None
+        db = get_db_manager()
+        # A refusal is raised after the transaction: session_scope logs any
+        # exception inside it as a database failure.
+        with db.session_scope() as session:
+            stopped, _four_eyes = locked_flags(session)
+            # The original's lock serialises lifts: a double click inserts one.
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None:
+                raise ActionNotFound(action_id)
+            _refuse_unreadable(row)
+            original = _row_to_pending(row)
+            state = (original.execution_result or {}).get("state")
+            done = DONE_STATE.get(original.action_type)
+            built = None
+            if done is None or (original.parameters or {}).get("undoes"):
+                refusal = f"{action_id} is not an isolation or account disable"
+            elif original.status != ActionStatus.EXECUTED.value or state != done:
+                refusal = (
+                    f"{action_id} is {state or original.status}, not {done}: "
+                    "there is nothing to undo"
+                )
+            else:
+                refusal = _open_lift(session, action_id)
+            if refusal is None:
+                built = build(original)
+                if isinstance(built, str):
+                    refusal = built
+            if refusal is None and isinstance(built, tuple):
+                title, parameters = built
+                now = utcnow()
+                undo = ApprovalActionRow(
+                    action_id=f"action-{now.strftime('%Y%m%d-%H%M%S-%f')}",
+                    action_type=original.action_type,
+                    title=title,
+                    description=f"Undoes {action_id}: {original.title}",
+                    target=original.target,
+                    confidence=1.0,
+                    reason=f"{approved_by} undid {action_id}",
+                    evidence=list(original.evidence or []),
+                    created_at=now,
+                    created_by=approved_by,
+                    created_by_principal_id=approved_by_principal_id,
+                    requires_approval=True,
+                    status=ActionStatus.APPROVED.value,
+                    approved_at=now,
+                    approved_by=approved_by,
+                    approved_by_principal_id=approved_by_principal_id,
+                    # The original's cases, named outright: readers and the trail follow them.
+                    parameters={
+                        **parameters,
+                        "undoes": action_id,
+                        "case_ids": case_ids,
+                    },
+                    reversibility=row.reversibility,
+                    # A stop holds it, as it holds any approval that carries a call.
+                    held=stopped,
+                )
+                session.add(undo)
+                session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.APPROVE,
+                    principal_id=approved_by_principal_id,
+                    action_id=undo.action_id,
+                    username=approved_by,
+                )
+                pending = _row_to_pending(undo)
+        if refusal is not None or pending is None:
+            raise NotUndoable(refusal or f"{action_id} could not be undone")
+        logger.info(
+            "Action %s undoes %s, by %s", pending.action_id, action_id, approved_by
+        )
+        return pending
+
     def claim_run(self, action_id: str, by: str) -> Optional[PendingAction]:
         """Mark an approved, unheld row running, once. None when it is not one,
         or another call already holds it."""
@@ -1210,6 +1330,12 @@ def case_ids_for(action: PendingAction) -> List[str]:
     """One action's cases, resolved as ``needs_you`` resolves them."""
     lookups = _case_lookups([action])
     return _case_ids_for_action(action, *lookups[:3])
+
+
+def on_case(actions: List[PendingAction], case_id: str) -> List[PendingAction]:
+    """Of ``actions``, those on ``case_id``, resolved as ``needs_you`` resolves them."""
+    lookups = _case_lookups(actions)
+    return [a for a in actions if case_id in _case_ids_for_action(a, *lookups[:3])]
 
 
 def _evidence_ids(action: PendingAction) -> List[str]:
