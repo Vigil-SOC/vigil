@@ -53,6 +53,7 @@ from core.supervisory.feedback import (
 )
 
 MISSED_MARGIN = 2
+RUN_LOOKBACK = timedelta(days=14)
 TABLE_ROWS = 8
 _SHADOW_KIND = "adjudicate"
 
@@ -67,11 +68,18 @@ class Limit:
         cap: str,
         raise_to: Callable[[float], float],
         show: Callable[[float], str],
+        prefix: str = "",
+        suffix: str = "",
     ):
         self.key, self.attr, self.token, self.label = key, attr, token, label
         # The Investigation column holding the cap this run was started with.
         self.cap = cap
         self.raise_to, self.show = raise_to, show
+        # How the value reads in a sentence: "$8.0", "2700 s", "40 calls".
+        self.prefix, self.suffix = prefix, suffix
+
+    def say(self, value: float) -> str:
+        return f"{self.prefix}{self.show(value)}{self.suffix}"
 
 
 # Half as high again, on Settings' own step, never past its maximum. Shown as
@@ -85,6 +93,8 @@ LIMITS = (
         "max_cost_usd",
         lambda v: min(100.0, math.ceil(v * 1.5 * 2) / 2),
         lambda v: str(float(v)),
+        "$",
+        "",
     ),
     Limit(
         "investigate.max_runtime_per_investigation",
@@ -94,6 +104,8 @@ LIMITS = (
         "max_runtime_seconds",
         lambda v: min(86_400, math.ceil(v * 1.5 / 60) * 60),
         lambda v: f"{int(v)}",
+        "",
+        " s",
     ),
     Limit(
         "investigate.max_iterations_per_agent",
@@ -103,6 +115,8 @@ LIMITS = (
         "max_iterations",
         lambda v: min(500, math.ceil(v * 1.5)),
         lambda v: f"{int(v)}",
+        "",
+        " calls",
     ),
 )
 
@@ -172,7 +186,14 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
         )
         # The latest run, finished or not: a newer rerun still running means
         # the stop is not the last word.
-        .where(*counted, WorkflowRun.started_at < end).subquery()
+        .where(
+            *counted,
+            # A run that finished in the window started at most a run's length
+            # before it: the runtime cap is a day at most, so two weeks is ample
+            # and keeps the scan on the indexed start time.
+            WorkflowRun.started_at >= start - RUN_LOOKBACK,
+            WorkflowRun.started_at < end,
+        ).subquery()
     )
     closed = (
         select(CaseClosureInfo.closure_category)
@@ -258,7 +279,6 @@ def _proposal(
     real = sum(1 for s in stops if s[2] is True)
     shown_from, shown_to = limit.show(current), limit.show(target)
     extra = _extra(limit, current, target, len(stops))
-    ordered = stops
     return {
         "fn": "investigation",
         "key": limit.key,
@@ -272,12 +292,12 @@ def _proposal(
                 f"{limit.label} were later closed as real attacks"
             ),
             "evidence": f"{labelled} closed cases · {WINDOW_DAYS} days",
-            "replay": f"{real} real attacks were cut off at {shown_from}",
+            "replay": f"{real} real attacks were cut off at {limit.say(current)}",
             "check": None,
             "plain_words": (
                 f"Investigations keep reaching the {limit.label} before they finish, "
                 f"and {real} of them turned out to be real attacks. Raising it to "
-                f"{shown_to} gives runs like those room to finish; {extra}."
+                f"{limit.say(target)} gives runs like those room to finish; {extra}."
             ),
             "table": {
                 "title": f"Investigations stopped at the {limit.label}",
@@ -292,7 +312,7 @@ def _proposal(
                         {"text": run_id},
                         {"text": _judged(verdict), "attack": verdict is True},
                     ]
-                    for case_id, run_id, verdict in ordered[:TABLE_ROWS]
+                    for case_id, run_id, verdict in stops[:TABLE_ROWS]
                 ],
                 "foot": (
                     f"{len(stops) - TABLE_ROWS} more · all from the last {WINDOW_DAYS} days"
@@ -300,7 +320,7 @@ def _proposal(
                     else f"All from the last {WINDOW_DAYS} days"
                 ),
             },
-            "replay_title": f"Last {WINDOW_DAYS} days at {shown_from}",
+            "replay_title": f"Last {WINDOW_DAYS} days at {limit.say(current)}",
             "replay_rows": [
                 {
                     "label": f"Stopped at the {limit.label}",
@@ -337,4 +357,4 @@ def _judged(verdict: Any) -> str:
         return "real attack"
     if verdict is False:
         return "not real"
-    return "not closed by a person"
+    return "no real or not-real verdict yet"
