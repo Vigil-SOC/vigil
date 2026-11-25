@@ -120,6 +120,9 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
         logger.exception("supervisory hold sweep failed")
         incidents, swept = None, None
         failed.append("medic_hold")
+    # Importing the package registers the built-in checks.
+    import core.supervisory.checks  # noqa: F401
+
     for name, check in list(_CHECKS.items()):
         try:
             for proposal in check():
