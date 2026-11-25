@@ -20,6 +20,12 @@ What a higher limit would have done cannot be replayed from history: a run cut
 off does not say how much more it needed. The card says how many real attacks
 were cut off and the most it could cost, not a promised result. The 30 labelled
 investigation cases are not run against the new value here.
+
+Only a stop at a cap at least today's counts, read from the cap the
+investigation was started with, so the runs that led to a raise do not suggest
+it again. A Case counts once however many investigations stopped on it. A run
+the AI gateway refused, whose reason names no limit, is not counted, and
+neither is a run a newer rerun has replaced; both lean toward not suggesting.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import exists, func, or_, select
 
 from core.cases.closure import PERSON_CHANNELS, closure_says_real
 from core.daemon_config import DaemonConfig
@@ -58,28 +64,34 @@ class Limit:
         attr: str,
         token: str,
         label: str,
+        cap: str,
         raise_to: Callable[[float], float],
         show: Callable[[float], str],
     ):
         self.key, self.attr, self.token, self.label = key, attr, token, label
+        # The Investigation column holding the cap this run was started with.
+        self.cap = cap
         self.raise_to, self.show = raise_to, show
 
 
-# Half as high again, on Settings' own step, never past its maximum.
+# Half as high again, on Settings' own step, never past its maximum. Shown as
+# the settings list shows the value.
 LIMITS = (
     Limit(
         "investigate.max_cost_per_investigation",
         "max_cost_per_investigation",
         "cost_exhausted",
         "cost cap",
+        "max_cost_usd",
         lambda v: min(100.0, math.ceil(v * 1.5 * 2) / 2),
-        lambda v: f"{v:g}",
+        lambda v: str(float(v)),
     ),
     Limit(
         "investigate.max_runtime_per_investigation",
         "max_runtime_per_investigation",
         "wall_exhausted",
         "runtime cap",
+        "max_runtime_seconds",
         lambda v: min(86_400, math.ceil(v * 1.5 / 60) * 60),
         lambda v: f"{int(v)}",
     ),
@@ -88,6 +100,7 @@ LIMITS = (
         "max_iterations_per_agent",
         "calls_exhausted",
         "call limit",
+        "max_iterations",
         lambda v: min(500, math.ceil(v * 1.5)),
         lambda v: f"{int(v)}",
     ),
@@ -103,10 +116,11 @@ def check() -> list[dict[str, Any]]:
     if labelled < FLOOR:
         return []
     orchestrator = DaemonConfig.from_env().orchestrator
+    stopped = _stopped(start, now)
     proposals = []
     for limit in LIMITS:
         current = float(getattr(orchestrator, limit.attr))
-        stops = _stops(limit.token, start, now)
+        stops = _at(limit, current, stopped)
         real = sum(1 for s in stops if s[2] is True)
         target = limit.raise_to(current)
         if real < MISSED_MARGIN or target <= current:
@@ -115,25 +129,50 @@ def check() -> list[dict[str, Any]]:
     return proposals
 
 
-def _stops(token: str, start: datetime, end: datetime) -> list[tuple[str, str, Any]]:
-    """(case id, run id, closed as real: True, False, or None when not closed by a
-    person) for each investigation whose last run in the window stopped at the limit."""
+def _at(
+    limit: Limit, current: float, stopped: list[dict[str, Any]]
+) -> list[tuple[str, str, Any]]:
+    """(case id, run id, closed as real) for each Case whose investigation stopped
+    at ``limit`` while it was at least today's value. A stop at a lower cap says
+    nothing about today's, so a raise is not suggested again on the runs that
+    led to it. One row per Case, so one attack counts once."""
+    seen: dict[str, tuple[str, str, Any]] = {}
+    for row in stopped:
+        if limit.token not in (row["reason"] or ""):
+            continue
+        cap = row[limit.cap]
+        if cap is None or float(cap) < current - 1e-9:
+            continue
+        seen.setdefault(row["case_id"], (row["case_id"], row["run_id"], row["real"]))
+    return sorted(seen.values(), key=lambda s: (s[2] is not True, s[0]))
+
+
+def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
+    """Each investigation whose last run in the window ended at a budget, with its
+    caps and how a person closed its Case. One read for every limit."""
     investigation_id = WorkflowRun.trigger_context["investigation_id"].astext
-    latest = (
+    counted = (
+        WorkflowRun.deleted_at.is_(None),
+        func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
+        != _SHADOW_KIND,
+        investigation_id.isnot(None),
+    )
+    ranked = (
         select(
+            WorkflowRun.run_id,
+            WorkflowRun.outcome,
+            WorkflowRun.reason,
             investigation_id.label("investigation_id"),
-            func.max(WorkflowRun.finished_at).label("finished_at"),
+            func.row_number()
+            .over(
+                partition_by=investigation_id,
+                order_by=(WorkflowRun.started_at.desc(), WorkflowRun.run_id.desc()),
+            )
+            .label("n"),
         )
-        .where(
-            WorkflowRun.finished_at >= start,
-            WorkflowRun.finished_at < end,
-            WorkflowRun.deleted_at.is_(None),
-            func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
-            != _SHADOW_KIND,
-            investigation_id.isnot(None),
-        )
-        .group_by(investigation_id)
-        .subquery()
+        # The latest run, finished or not: a newer rerun still running means
+        # the stop is not the last word.
+        .where(*counted, WorkflowRun.started_at < end).subquery()
     )
     closed = (
         select(CaseClosureInfo.closure_category)
@@ -144,33 +183,49 @@ def _stops(token: str, start: datetime, end: datetime) -> list[tuple[str, str, A
         .correlate(Investigation)
         .scalar_subquery()
     )
-    rows = (
-        select(Investigation.case_id, WorkflowRun.run_id, closed.label("category"))
-        .select_from(
-            WorkflowRun.__table__.join(
-                latest,
-                and_(
-                    latest.c.investigation_id == investigation_id,
-                    latest.c.finished_at == WorkflowRun.finished_at,
-                ),
-            ).join(Investigation, Investigation.investigation_id == investigation_id)
+    query = (
+        select(
+            Investigation.case_id,
+            ranked.c.run_id,
+            ranked.c.reason,
+            Investigation.max_cost_usd,
+            Investigation.max_runtime_seconds,
+            Investigation.max_iterations,
+            closed.label("category"),
         )
+        .join(
+            Investigation, Investigation.investigation_id == ranked.c.investigation_id
+        )
+        .join(WorkflowRun, WorkflowRun.run_id == ranked.c.run_id)
         .where(
-            WorkflowRun.outcome == "budget_exhausted",
-            WorkflowRun.reason.contains(token, autoescape=True),
+            ranked.c.n == 1,
+            ranked.c.outcome == "budget_exhausted",
+            WorkflowRun.finished_at >= start,
+            WorkflowRun.finished_at < end,
             Investigation.case_id.isnot(None),
-            ~_sample_case(),
+            ~_not_real_data(),
         )
     )
     with unit_of_work() as session:
         return [
-            (case_id, run_id, closure_says_real(category) if category else None)
-            for case_id, run_id, category in session.execute(rows)
+            {
+                "case_id": case_id,
+                "run_id": run_id,
+                "reason": reason,
+                "max_cost_usd": cost,
+                "max_runtime_seconds": runtime,
+                "max_iterations": iterations,
+                "real": closure_says_real(category) if category else None,
+            }
+            for case_id, run_id, reason, cost, runtime, iterations, category in (
+                session.execute(query)
+            )
         ]
 
 
-def _sample_case():
-    return (
+def _not_real_data():
+    """The investigation's Case, or a finding that started it, is a sample or probe."""
+    in_case = (
         exists()
         .where(
             case_findings.c.case_id == Investigation.case_id,
@@ -179,6 +234,18 @@ def _sample_case():
         )
         .correlate(Investigation)
     )
+    trigger_ids = select(
+        func.jsonb_array_elements_text(Investigation.trigger_ids)
+    ).correlate(Investigation)
+    started_by = (
+        exists()
+        .where(
+            Finding.finding_id.in_(trigger_ids),
+            Finding.data_source.in_(_NOT_REAL_DATA),
+        )
+        .correlate(Investigation)
+    )
+    return or_(in_case, started_by)
 
 
 def _proposal(
@@ -191,7 +258,7 @@ def _proposal(
     real = sum(1 for s in stops if s[2] is True)
     shown_from, shown_to = limit.show(current), limit.show(target)
     extra = _extra(limit, current, target, len(stops))
-    ordered = sorted(stops, key=lambda s: (s[2] is not True, s[0]))
+    ordered = stops
     return {
         "fn": "investigation",
         "key": limit.key,
@@ -201,8 +268,8 @@ def _proposal(
         "widens_autonomy": False,
         "card": {
             "why": (
-                f"{real} of {len(stops)} investigations stopped at the {limit.label} "
-                "were later closed as real attacks"
+                f"{real} of {len(stops)} Cases whose investigation stopped at the "
+                f"{limit.label} were later closed as real attacks"
             ),
             "evidence": f"{labelled} closed cases · {WINDOW_DAYS} days",
             "replay": f"{real} real attacks were cut off at {shown_from}",
@@ -238,14 +305,14 @@ def _proposal(
                 {
                     "label": f"Stopped at the {limit.label}",
                     "now": str(len(stops)),
-                    "next": "fewer",
-                    "effect": "better",
+                    "next": "not replayed",
+                    "effect": "same",
                 },
                 {
-                    "label": "Of those, real attacks",
+                    "label": "Of those, closed as real attacks",
                     "now": str(real),
-                    "next": "given room to finish",
-                    "effect": "better",
+                    "next": "not replayed",
+                    "effect": "same",
                 },
             ],
         },
