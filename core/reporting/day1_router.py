@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -274,6 +274,27 @@ class HistoryTuning(BaseModel):
     candidates: List[HistoryTuningEntry] = Field(default_factory=list)
 
 
+class LayerMove(BaseModel):
+    technique: str
+    name: Optional[str] = None
+    layer: str
+    kind: Literal["improved", "regressed"]
+    before: str
+    after: str
+
+
+class LayerCounts(BaseModel):
+    improved: int
+    regressed: int
+    unchanged: int
+    not_compared: int
+
+
+class LayersComparison(BaseModel):
+    counts: LayerCounts
+    moves: List[LayerMove] = Field(default_factory=list)
+
+
 class Day1Report(BaseModel):
     id: str
     run_id: str
@@ -301,6 +322,10 @@ class Day1Report(BaseModel):
     history_recheck: Optional[HistoryRecheck] = None
     history_tuning: Optional[HistoryTuning] = None
     forecast: Optional[Day1Forecast] = None
+    # Coverage by layer against the compared run. Read, never stored.
+    coverage_comparison: Union[
+        LayersComparison, Literal["not_in_compared_run"], None
+    ] = None
 
 
 class Day1Module(BaseModel):

@@ -321,3 +321,18 @@
 
   @page { margin: 12mm; }
 }
+
+.d1-hide-names {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tx1);
+}
+
+.d1-versus .d1-compare { margin: 0; }
+
+/* Phone width: each technique's layers stack under it, as the outcome grid does. */
+@container main (max-width: 699px) {
+  .d1-layer-grid tr { padding: 6px 0; border-top: 1px solid var(--ln0); }
+}

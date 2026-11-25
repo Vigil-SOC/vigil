@@ -8,6 +8,7 @@ not read demo findings.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -412,3 +413,16 @@ def _tool(tool: str) -> str:
 def _suffix(value: Any) -> str:
     text = str(value or "").strip() or "unknown"
     return " ".join(text.split())
+
+
+def by_layer() -> dict[str, Any]:
+    """The by-layer read (scope all) as stored figures, without its source line.
+
+    Read after :func:`produce`, so it sees the rule checks that run refreshed.
+    It applies no demo filter; neither does the rest of this module.
+    """
+    from core.detections.inventory.coverage import by_layer as read_by_layer
+
+    body = asyncio.run(read_by_layer(technique_coverage(), "all"))
+    body.pop("source", None)
+    return body

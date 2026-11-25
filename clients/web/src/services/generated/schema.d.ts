@@ -13478,6 +13478,8 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            /** Coverage Comparison */
+            coverage_comparison?: components["schemas"]["LayersComparison"] | "not_in_compared_run" | null;
             /** Evidence */
             evidence?: {
                 [key: string]: unknown;
@@ -15339,6 +15341,41 @@ export interface components {
             statements?: {
                 [key: string]: string;
             } | null;
+        };
+        /** LayerCounts */
+        LayerCounts: {
+            /** Improved */
+            improved: number;
+            /** Not Compared */
+            not_compared: number;
+            /** Regressed */
+            regressed: number;
+            /** Unchanged */
+            unchanged: number;
+        };
+        /** LayerMove */
+        LayerMove: {
+            /** After */
+            after: string;
+            /** Before */
+            before: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "improved" | "regressed";
+            /** Layer */
+            layer: string;
+            /** Name */
+            name?: string | null;
+            /** Technique */
+            technique: string;
+        };
+        /** LayersComparison */
+        LayersComparison: {
+            counts: components["schemas"]["LayerCounts"];
+            /** Moves */
+            moves?: components["schemas"]["LayerMove"][];
         };
         /** LedgerCountOut */
         LedgerCountOut: {
