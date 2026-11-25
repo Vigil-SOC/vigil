@@ -575,6 +575,7 @@ function deleteImportBody(
   row: HistoryImport | null,
   ledgers: number | null,
   ledgerError: string | null,
+  queued: number | null,
 ): string {
   const verdicts = row?.verdicts_written ?? 0
   const sightings = row?.sightings_written ?? 0
@@ -587,7 +588,9 @@ function deleteImportBody(
   else if (ledgers === 0) sentences.push('No re-decision ledgers stay.')
   else if (ledgers === 1) sentences.push('1 re-decision ledger stays.')
   else sentences.push(`${ledgers} re-decision ledgers stay.`)
-  // A later sentence, the queued reviews that will leave the queue, appends here.
+  if (queued === 0) sentences.push('No queued review leaves the queue.')
+  else if (queued === 1) sentences.push('1 queued review leaves the queue.')
+  else if (queued !== null) sentences.push(`${queued} queued reviews leave the queue.`)
   return sentences.join(' ')
 }
 
@@ -619,6 +622,7 @@ export function HistoryImportCard({
   const [source, setSource] = useState('')
   const [removing, setRemoving] = useState<HistoryImport | null>(null)
   const [ledgerCount, setLedgerCount] = useState<number | null>(null)
+  const [queuedReviews, setQueuedReviews] = useState<number | null>(null)
   const [ledgerError, setLedgerError] = useState<string | null>(null)
   const [erasing, setErasing] = useState<{ importId: string; runIds: string[]; count: number } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -640,9 +644,14 @@ export function HistoryImportCard({
     if (!removing) return
     let live = true
     setLedgerCount(null)
+    setQueuedReviews(null)
     setLedgerError(null)
     importsApi.ledgers(removing.import_id).then(
-      (res) => { if (live) setLedgerCount(res.data.count) },
+      (res) => {
+        if (!live) return
+        setLedgerCount(res.data.count)
+        setQueuedReviews(res.data.queued_reviews)
+      },
       (e) => { if (live) setLedgerError(errorText(e, 'Could not count re-decision ledgers.')) },
     )
     return () => { live = false }
@@ -707,7 +716,13 @@ export function HistoryImportCard({
     try {
       const res = await importsApi.eraseLedgers(erasing.importId, erasing.runIds)
       const n = res.data.erased
-      notify('ok', n === 1 ? 'Erased 1 re-decision ledger.' : `Erased ${n} re-decision ledgers.`)
+      const spared = (res.data.cases ?? []).map((row) => row.case_id)
+      const kept = spared.length === 0
+        ? ''
+        : spared.length === 1
+          ? ` Left ${spared[0]}. That run was not erased.`
+          : ` Left ${spared.join(', ')}. Those runs were not erased.`
+      notify('ok', (n === 1 ? 'Erased 1 re-decision ledger.' : `Erased ${n} re-decision ledgers.`) + kept)
       setErasing(null)
     } catch (e) {
       if (!stepUpDetailOf(e)) notify('err', errorText(e, 'Could not erase the ledgers.'))
@@ -828,6 +843,7 @@ export function HistoryImportCard({
                           aria-label={`Delete the ${name} import`}
                           onClick={() => {
                             setLedgerCount(null)
+                            setQueuedReviews(null)
                             setLedgerError(null)
                             setRemoving(row)
                           }}
@@ -864,7 +880,7 @@ export function HistoryImportCard({
       <ConfirmDialog
         open={removing !== null}
         title="Delete import"
-        body={deleteImportBody(removing, ledgerCount, ledgerError)}
+        body={deleteImportBody(removing, ledgerCount, ledgerError, queuedReviews)}
         confirmLabel="Delete"
         busy={busy}
         confirmDisabled={ledgerCount === null || ledgerError !== null}

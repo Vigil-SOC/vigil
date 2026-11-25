@@ -6377,8 +6377,8 @@ export interface paths {
          * Remove Ledgers
          * @description Erase marked re-decision ledgers once the import is gone.
          *
-         *     A run a Case was opened from is not passed. ``cases`` names those, and
-         *     is empty until that link is recorded. Any other id erases nothing.
+         *     A run a Case was opened from is not passed. ``cases`` names those.
+         *     Any other id erases nothing.
          */
         post: operations["post_api_memory_imports_ledgers_import_id"];
         delete?: never;
@@ -6937,6 +6937,88 @@ export interface paths {
          */
         put: operations["put_api_production-start"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Queue
+         * @description Unconfirmed tickets, then confirmed ones. The two are not one list.
+         *
+         *     ``cases.read`` is the screen. Titles still drop without ``automation.read``.
+         */
+        get: operations["get_api_recheck-review"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ticket
+         * @description Alert fields and tool results. Verdicts stay off until a call is stored.
+         */
+        get: operations["get_api_recheck-review_ticket_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/case": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Case
+         * @description Open a Case from the first confirming call. No finding, no intake.
+         */
+        post: operations["post_api_recheck-review_ticket_id_case"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Confirm
+         * @description Record the call. A token or a service account is refused.
+         */
+        post: operations["post_api_recheck-review_ticket_id_confirm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10964,6 +11046,26 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** ActionOut */
+        ActionOut: {
+            /**
+             * Action Type
+             * @default
+             */
+            action_type: string;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -11062,6 +11164,21 @@ export interface components {
             skills?: string[];
             /** Updated At */
             updated_at?: string | null;
+        };
+        /** AlertOut */
+        AlertOut: {
+            /** Description */
+            description: string;
+            /** Entity Keys */
+            entity_keys: string[];
+            /** Rule */
+            rule: string;
+            /** Severity */
+            severity: string;
+            /** Time */
+            time: string;
+            /** Title */
+            title: string;
         };
         /** ApprovalActionResult */
         ApprovalActionResult: {
@@ -11712,6 +11829,7 @@ export interface components {
             reader_teams?: string[];
             /** Readers */
             readers?: string[];
+            recheck?: components["schemas"]["RecheckMarkView"] | null;
             /**
              * Resolution Steps
              * @default []
@@ -11719,6 +11837,11 @@ export interface components {
             resolution_steps: unknown[];
             /** Restricted */
             readonly restricted: boolean;
+            /**
+             * Reviewers Differ
+             * @default false
+             */
+            reviewers_differ: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -13117,6 +13240,14 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConfirmIn */
+        ConfirmIn: {
+            /**
+             * Call
+             * @enum {string}
+             */
+            call: "real" | "not real" | "can't tell";
+        };
         /**
          * ConfirmItRequest
          * @description Confirm it's you for a privileged change. ``strong``: the password and,
@@ -13952,6 +14083,13 @@ export interface components {
             source?: string | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /** EvidenceOut */
+        EvidenceOut: {
+            /** Result */
+            result: string;
+            /** Tool */
+            tool: string;
         };
         /** ExclusionCreate */
         ExclusionCreate: {
@@ -15518,6 +15656,8 @@ export interface components {
             count: number;
             /** Erase Permission */
             erase_permission: string;
+            /** Queued Reviews */
+            queued_reviews: number;
             /** Run Ids */
             run_ids: string[];
         };
@@ -16015,6 +16155,11 @@ export interface components {
             all: boolean;
             /** Ids */
             ids?: number[] | null;
+        };
+        /** OpenedOut */
+        OpenedOut: {
+            /** Case Id */
+            case_id: string;
         };
         /**
          * OperatorInstructions
@@ -16736,6 +16881,38 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** QueueItem */
+        QueueItem: {
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Id */
+            id: number;
+            /** Recorded */
+            recorded: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Source */
+            source: string;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** QueueOut */
+        QueueOut: {
+            /** Pending */
+            pending: components["schemas"]["QueueItem"][];
+            /** Reviewed */
+            reviewed: components["schemas"]["QueueItem"][];
+        };
         /** Range */
         Range: {
             /** Max */
@@ -16786,6 +16963,18 @@ export interface components {
         ReassignRequest: {
             /** Accountable */
             accountable: string;
+        };
+        /**
+         * RecheckMarkView
+         * @description The one mark on a Case opened from a re-check.
+         */
+        RecheckMarkView: {
+            /** Closed At */
+            closed_at: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source: string;
         };
         /**
          * RecoveryCodesResponse
@@ -18604,6 +18793,62 @@ export interface components {
              * @default dark
              */
             theme: string;
+        };
+        /** TicketOut */
+        TicketOut: {
+            /** Alerts */
+            alerts?: components["schemas"]["AlertOut"][] | null;
+            /**
+             * Alerts Hidden
+             * @default false
+             */
+            alerts_hidden: boolean;
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Closure Verdict */
+            closure_verdict?: string | null;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceOut"][] | null;
+            /**
+             * Evidence Hidden
+             * @default false
+             */
+            evidence_hidden: boolean;
+            /** Id */
+            id: number;
+            /** Notice */
+            notice?: string | null;
+            /** Proposed Actions */
+            proposed_actions?: components["schemas"]["ActionOut"][] | null;
+            /** Recorded */
+            recorded: boolean;
+            /**
+             * Removed
+             * @default false
+             */
+            removed: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /** Source */
+            source: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+            /** Vigil Verdict */
+            vigil_verdict?: string | null;
         };
         /**
          * TimelineEvent
@@ -31652,6 +31897,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductionStart"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_recheck-review": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_recheck-review_ticket_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_case": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_confirm": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
                 };
             };
             /** @description Validation Error */

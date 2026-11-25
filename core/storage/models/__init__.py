@@ -100,6 +100,7 @@ from core.storage.models.medic import (
     MedicLastSeen,
     MedicWatchState,
 )
+from core.storage.models.recheck_review import RecheckReview
 from core.storage.models.report import ReportRecord, ReportRun
 from core.storage.models.skill import SkillInstall, SkillRead, SkillScan
 from core.storage.models.team import Team, TeamMembership
@@ -128,6 +129,7 @@ __all__ = [
     "Base",
     "CappedRecheckBatch",
     "CappedRecheckTicket",
+    "RecheckReview",
     "Case",
     "CaseAttachment",
     "CaseAuditLog",
