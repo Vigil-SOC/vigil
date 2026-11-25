@@ -26,6 +26,16 @@ investigation was started with, so the runs that led to a raise do not suggest
 it again. A Case counts once however many investigations stopped on it. A run
 the AI gateway refused, whose reason names no limit, is not counted, and
 neither is a run a newer rerun has replaced; both lean toward not suggesting.
+
+A hunt Vigil starts for an investigation runs under the same cost and runtime
+caps, but at a cap it parks for a person rather than ending, so a hunt still
+parked at one counts as stopped there: a refusal names the cap, and "spent its
+allowance" is the cost cap. A hunt out of turns does not count, nor does a hunt's
+call stop: its turns, and the call meter they raise, are the hunt's own, not a
+Vigil setting. A park that later ends (extended, concluded by a person, or
+aborted past its time to live) no longer says which cap it met, so it does not
+count. A root-cause trace's stop names no cap and its budgets are fixed in code,
+so it does not count either.
 """
 
 from __future__ import annotations
@@ -35,7 +45,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 
 from core.cases.closure import PERSON_CHANNELS, closure_says_real
 from core.daemon_config import DaemonConfig
@@ -51,7 +61,11 @@ from core.supervisory.feedback import (
     _investigation,
     _naive,
 )
+from core.workflows.workflows_service import HUNT_RUN_KIND
 
+# What a hunt parked at its own cost check says; a refusal carries the token.
+_HUNT_COST_PARK = "spent its allowance"
+_PARKED = "paused"
 MISSED_MARGIN = 2
 RUN_LOOKBACK = timedelta(days=14)
 TABLE_ROWS = 8
@@ -152,7 +166,7 @@ def _at(
     led to it. One row per Case, so one attack counts once."""
     seen: dict[str, tuple[str, str, Any]] = {}
     for row in stopped:
-        if limit.token not in (row["reason"] or ""):
+        if limit.token not in _caps_met(row):
             continue
         cap = row[limit.cap]
         if cap is None or float(cap) < current - 1e-9:
@@ -161,10 +175,23 @@ def _at(
     return sorted(seen.values(), key=lambda s: (s[2] is not True, s[0]))
 
 
+def _caps_met(row: dict[str, Any]) -> set[str]:
+    """The limit tokens a stopped run's reason says it reached."""
+    reason = row["reason"] or ""
+    met = {limit.token for limit in LIMITS if limit.token in reason}
+    if row["kind"] == HUNT_RUN_KIND:
+        if reason.startswith(_HUNT_COST_PARK):
+            met.add("cost_exhausted")
+        met.discard("calls_exhausted")
+    return met
+
+
 def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
-    """Each investigation whose last run in the window ended at a budget, with its
-    caps and how a person closed its Case. One read for every limit."""
+    """Each investigation whose last run in the window ended at a budget, or is a
+    hunt parked at one, with its caps and how a person closed its Case. One read
+    for every limit."""
     investigation_id = WorkflowRun.trigger_context["investigation_id"].astext
+    run_kind = WorkflowRun.trigger_context["run_kind"].astext
     counted = (
         WorkflowRun.deleted_at.is_(None),
         func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
@@ -175,7 +202,9 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
         select(
             WorkflowRun.run_id,
             WorkflowRun.outcome,
+            WorkflowRun.status,
             WorkflowRun.reason,
+            run_kind.label("kind"),
             investigation_id.label("investigation_id"),
             func.row_number()
             .over(
@@ -209,6 +238,7 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
             Investigation.case_id,
             ranked.c.run_id,
             ranked.c.reason,
+            ranked.c.kind,
             Investigation.max_cost_usd,
             Investigation.max_runtime_seconds,
             Investigation.max_iterations,
@@ -220,9 +250,19 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
         .join(WorkflowRun, WorkflowRun.run_id == ranked.c.run_id)
         .where(
             ranked.c.n == 1,
-            ranked.c.outcome == "budget_exhausted",
-            WorkflowRun.finished_at >= start,
-            WorkflowRun.finished_at < end,
+            or_(
+                and_(
+                    ranked.c.outcome == "budget_exhausted",
+                    WorkflowRun.finished_at >= start,
+                    WorkflowRun.finished_at < end,
+                ),
+                # Parked, so not finished: started in the window.
+                and_(
+                    ranked.c.kind == HUNT_RUN_KIND,
+                    ranked.c.status == _PARKED,
+                    WorkflowRun.started_at >= start,
+                ),
+            ),
             Investigation.case_id.isnot(None),
             ~_not_real_data(),
         )
@@ -233,12 +273,13 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
                 "case_id": case_id,
                 "run_id": run_id,
                 "reason": reason,
+                "kind": kind,
                 "max_cost_usd": cost,
                 "max_runtime_seconds": runtime,
                 "max_iterations": iterations,
                 "real": closure_says_real(category) if category else None,
             }
-            for case_id, run_id, reason, cost, runtime, iterations, category in (
+            for case_id, run_id, reason, kind, cost, runtime, iterations, category in (
                 session.execute(query)
             )
         ]
