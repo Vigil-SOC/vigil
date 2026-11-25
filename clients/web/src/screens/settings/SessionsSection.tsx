@@ -31,12 +31,12 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   {
-    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min',
-    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not.',
+    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not. 0: no idle limit.',
   },
   {
-    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min',
-    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. It cannot exceed the idle limit.',
+    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. Also how long a Confirm-it\'s-you lasts, up to 12 hours; at 0, 10 minutes. 0: no idle limit.',
   },
   {
     key: 'absolute_hours', title: 'Sign-in length', unit: 'hours',

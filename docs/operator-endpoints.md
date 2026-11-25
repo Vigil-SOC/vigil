@@ -39,12 +39,12 @@ curl -s -X POST "$API/api/config/secrets/migrate-to-encrypted" \
 
 A script can still sign in with a password and use the bearer token the login returns, but that is a person's sign-in and it follows the person's rules:
 
-- It ends at the idle limit and at the length limit.
+- It ends at the idle limit and at the length limit. Each idle limit is 0 (no idle limit) to 720 minutes (12 hours), and the two are set independently. 0 does not end the sign-in for idleness.
 - Where an admin has set a sign-in limit, it counts toward that limit and a newer sign-in can end it. The limit is off by default.
 - It is bound to the `User-Agent` it signed in with. Send the same one on every call.
 - Every `POST` must pass the CSRF check, unless `VIGIL_CSRF_ENABLED=false` or `VIGIL_CSRF_REPORT_ONLY=true`. The check compares the `X-CSRF-Token` header with the `csrf_token` cookie, so a script can pick any value and send it as both. This applies to the login call too.
 - With two-step sign-in on, the login needs a current `mfa_code`.
-- A privileged write such as `migrate-to-encrypted` asks it to confirm it's you. With Require MFA off, a person with no second factor confirms with their password, and a password sign-in by that person opens the confirmation window. Otherwise, with no two-step sign-in the call is refused until they set it up. With two-step sign-in, the call works only inside the confirmation window; after that it is refused until the person confirms again.
+- A privileged write such as `migrate-to-encrypted` asks it to confirm it's you. With Require MFA off, a person with no second factor confirms with their password, and a password sign-in by that person opens the confirmation window. Otherwise, with no two-step sign-in the call is refused until they set it up. With two-step sign-in, the call works only inside the confirmation window: the privileged idle limit, up to 12 hours, or 10 minutes when that limit is 0. After that it is refused until the person confirms again, and the refusal names that length in minutes.
 
 ## `GET /api/config/secrets/status`
 
