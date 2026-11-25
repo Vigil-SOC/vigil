@@ -1,9 +1,11 @@
 """Confirm it's you (#4179, epic #4164 decision 11).
 
 A privileged change asks the person again unless their sign-in passed MFA inside
-the privileged idle window (``session_policy.idle_privileged_minutes``). The
-window is ``sign_ins.confirmed_at``: completing MFA at sign-in, a one-factor
-confirmation or a strong check sets it. Which permissions ask is
+the confirmation window. The window is the privileged idle limit
+(``session_policy.idle_privileged_minutes``), up to 12 hours; when that limit
+is 0 (no idle limit) the window is 10 minutes. It is ``sign_ins.confirmed_at``:
+completing MFA at sign-in, a one-factor confirmation or a strong check sets it.
+Which permissions ask is
 ``permissions.STEP_UP``, declared beside the registry. Agent runs, service
 accounts and every other non-person caller are never asked.
 
@@ -48,7 +50,16 @@ BAD_STRONG = "That didn't work. Check your password and code, then try again."
 
 
 def window() -> timedelta:
-    return timedelta(minutes=session_policy.policy().idle_privileged_minutes)
+    """How long a Confirm-it's-you lasts.
+
+    A nonzero privileged idle limit is the window, up to 12 hours. At 0 (no
+    idle limit) the window is 10 minutes: turning the idle limit off neither
+    switches off nor tightens this check. ``window_end``, the refusal's
+    ``window_minutes``, the recovery-code step-down and the confirmation's
+    ``window_ends_at`` all read this.
+    """
+    minutes = session_policy.policy().idle_privileged_minutes or 10
+    return timedelta(minutes=minutes)
 
 
 def window_end(confirmed_at: Optional[datetime]) -> Optional[datetime]:

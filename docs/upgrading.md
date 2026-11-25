@@ -130,6 +130,21 @@ Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at
 
 Revision `0077_email_confirmed` marks every account's email confirmed (`users.is_verified = true`). An address already on the account when you upgrade can be used for a password reset straight away. After the upgrade, only a person changing their own email leaves the new address unconfirmed, until they open the 24-hour link mailed to it. A new account's email, and an email an identity provider sets, counts as confirmed and is not sent that link.
 
+## Idle limits of 0 to 12 hours
+
+Both idle limits accept 0 (no idle limit) through 720 minutes (12 hours), set independently of each other. The defaults stay 15 minutes for a standard sign-in and 10 for a privileged one. A value already saved inside the previous ranges (standard 1–60, privileged 1–30, and the privileged limit not above the standard one) behaves the same after the upgrade. Nothing is migrated, and there is no second reader.
+
+A privileged idle of 0 does not turn off Confirm it's you. That window stays 10 minutes. A nonzero privileged idle is the window, up to 12 hours.
+
+**Rolling back** to the previous release after saving an idle of 0, a value above the previous range, or a privileged limit above the standard one makes the stored policy unreadable until an administrator saves Settings > Sessions again. That is what an unreadable policy already does:
+
+- Sessions shows the defaults and says the stored policy could not be read.
+- Token mint and rotate are refused.
+- The unused-token sweep stops: no reminder and no revocation.
+- The Day 1 session checks read "Could not read the session settings."
+
+Saving Settings > Sessions again writes a policy the previous release can read, and those stop.
+
 ## What the sign-in changes do on upgrade day
 
 An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.

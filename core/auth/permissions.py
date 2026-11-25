@@ -235,7 +235,8 @@ PLATFORM_EQUIVALENT = frozenset({"integrations.install"})
 
 
 # Permissions whose writes ask "Confirm it's you" unless the sign-in confirmed
-# inside the privileged idle window (#4179, core/auth/step_up.py). The value is
+# inside the window: the privileged idle limit, up to 12 hours, or 10 minutes
+# when that limit is 0 (#4179, core/auth/step_up.py). The value is
 # the action the dialog's title names. A route that gates on one of these through
 # ``deny_unless`` asks by itself, so ``require_permission`` and an inline check
 # are covered alike; a handler that records its own 403s adds ``step_up.gate``.

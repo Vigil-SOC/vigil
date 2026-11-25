@@ -1440,7 +1440,7 @@ def _judge_session(
     rows = (
         (
             "settings.idle",
-            policy.idle_standard_minutes,
+            None if _looser_idle(policy) == 0 else _looser_idle(policy),
             _idle_reason(policy),
             None,
             False,
@@ -1940,10 +1940,38 @@ def _level(actual: str, cited: str, above: Optional[str]) -> tuple[str, str]:
     return FAIL, _WEAKER
 
 
+def _looser_idle(policy) -> int:
+    """The looser idle limit, in minutes. 0 (no idle limit) is the loosest."""
+    standard, privileged = policy.idle_standard_minutes, policy.idle_privileged_minutes
+    if standard == 0 or privileged == 0:
+        return 0
+    return max(standard, privileged)
+
+
 def _idle_reason(policy) -> str:
+    """Name the looser limit, or both when they are equal. 0 reads as no idle limit."""
+    standard = policy.idle_standard_minutes
+    privileged = policy.idle_privileged_minutes
+    if standard == privileged:
+        if standard == 0:
+            return (
+                "Session inactivity: both the standard and the privileged "
+                "idle limits are no idle limit."
+            )
+        return (
+            "Session inactivity: both the standard and the privileged idle "
+            f"limits end a sign-in after {standard} minutes with no activity."
+        )
+    # 0 is looser than any length; otherwise the longer one is.
+    if standard == 0 or (privileged != 0 and standard > privileged):
+        which, minutes = "standard", standard
+    else:
+        which, minutes = "privileged", privileged
+    if minutes == 0:
+        return f"Session inactivity: the {which} idle limit is no idle limit."
     return (
-        "Session inactivity: a standard sign-in ends after "
-        f"{policy.idle_standard_minutes} minutes with no activity."
+        f"Session inactivity: the {which} idle limit ends a sign-in after "
+        f"{minutes} minutes with no activity."
     )
 
 

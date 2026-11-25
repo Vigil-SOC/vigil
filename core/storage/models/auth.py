@@ -75,13 +75,15 @@ class SignIn(Base):
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     end_reason: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # When MFA was last passed: completing MFA at sign-in, a confirmation or a
-    # strong check. The privileged idle window counts from it (core/auth/step_up.py).
+    # strong check. Confirm it's you counts from it (core/auth/step_up.py): the
+    # privileged idle limit, up to 12 hours, or 10 minutes when that limit is 0.
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Failed confirmations in a row; the third ends the sign-in.
     confirm_failures: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
-    # The person's last own action: what the idle limit counts from.
+    # The person's last own action: what the idle limit counts from. An idle
+    # setting of 0 is no idle limit, so idleness does not end the sign-in.
     last_action_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )

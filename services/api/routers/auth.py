@@ -424,7 +424,11 @@ def _get_user(session: Session, user_id: str, lock: bool = False) -> Optional[Us
 
 
 def _limits(user: User, session: Session) -> session_policy.Limits:
-    """The session limits for this account, by the permissions it holds."""
+    """The session limits for this account, by the permissions it holds.
+
+    An idle of 0 is no idle limit: ``limits`` returns None, and a refresh does
+    not end the sign-in for idleness.
+    """
     held = AuthService.get_user_permissions(user.user_id, session)
     return session_policy.limits(
         [name for name, on in held.items() if on], _is_service_account(user)
@@ -2507,9 +2511,10 @@ async def refresh_token(
 
 
 def _sign_in_timing(request: Request, user: User, session: Session) -> Optional[dict]:
-    """Seconds until this sign-in goes idle (None: no idle limit) and reaches its
-    absolute end, as the server counts them. Relative, so the browser's clock
-    does not matter. None when the request has no sign-in (dev mode)."""
+    """Seconds until this sign-in goes idle (None: no idle limit, including an
+    idle setting of 0) and reaches its absolute end, as the server counts them.
+    Relative, so the browser's clock does not matter. None when the request has
+    no sign-in (dev mode)."""
     sid = _session_sid(request)
     row = session.get(SignIn, sid) if sid else None
     if row is None:

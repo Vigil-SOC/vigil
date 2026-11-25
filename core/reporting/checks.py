@@ -324,7 +324,7 @@ CHECKS: tuple[ReportCheck, ...] = (
         "settings.idle",
         SETTINGS.id,
         _SESSIONS,
-        "A standard sign-in ends after the idle limit with no activity.",
+        "A sign-in ends after the looser of the standard and privileged idle limits with no activity. 0 is no idle limit.",
         (
             _cited(
                 _EVERY,

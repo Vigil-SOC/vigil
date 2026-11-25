@@ -7089,10 +7089,13 @@ export interface paths {
         get: operations["get_api_session-policy"];
         /**
          * Put Policy
-         * @description Replace the policy. An idle limit above its standard, or a stale version, is refused.
+         * @description Replace the policy. A stale version is refused.
          *
-         *     ``dry_run`` checks the version like a save, then saves nothing and answers whether
-         *     the body would loosen the policy now in force.
+         *     Each idle limit is 0 (no idle limit) through 720 minutes (12 hours), set
+         *     independently of the other. A privileged idle of 0 leaves Confirm it's you
+         *     at 10 minutes. ``dry_run`` checks the version like a save, then saves nothing
+         *     and answers whether the body would loosen the policy now in force. 0 is the
+         *     loosest idle value, so a machine caller may not set it.
          */
         put: operations["put_api_session-policy"];
         post?: never;
@@ -16164,11 +16167,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
@@ -17129,11 +17134,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
