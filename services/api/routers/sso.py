@@ -449,7 +449,10 @@ def get_sync(session: UnitOfWorkSession, _: User = Depends(_MANAGE)):
 
 @router.post("/sync", response_model=SyncOut)
 def post_sync(
-    body: SyncIn, session: UnitOfWorkSession, user: User = Depends(_PERSON_MANAGE)
+    request: Request,
+    body: SyncIn,
+    session: UnitOfWorkSession,
+    user: User = Depends(_PERSON_MANAGE),
 ):
     """Turn directory sync on, or change its claim, and optionally mint a new token.
 
@@ -459,13 +462,17 @@ def post_sync(
     _sync_caller(user, session)
     try:
         current = sso_settings.read_row(session)[0].settings
+        claims = getattr(request.state, "access_claims", None)
+        sign_in = claims.get("sid") if isinstance(claims, dict) else None
         token = None
         if not current.sync_enabled:
-            token = directory_sync.turn_on(session, user, body.directory_id_claim)
+            token = directory_sync.turn_on(
+                session, user, body.directory_id_claim, sign_in
+            )
         else:
             directory_sync.set_claim(session, user, body.directory_id_claim)
             if body.mint:
-                token = directory_sync.remint(session, user)
+                token = directory_sync.remint(session, user, sign_in)
     except directory_sync.SyncRefused as refusal:
         raise HTTPException(status_code=refusal.status, detail=refusal.detail) from None
     return _sync_out(session, token)

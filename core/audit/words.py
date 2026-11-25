@@ -321,6 +321,32 @@ def _saved(p: Mapping[str, Any]) -> str:
     return f"Saved {rule}{version}{language}"
 
 
+def _signed_in(p: Mapping[str, Any]) -> str:
+    method = p.get("method")
+    if method == "sso":
+        return "Signed in through single sign-on"
+    how = {
+        "password": " with a password",
+        "mfa": " with two-step sign-in",
+        "mfa_step_down": " with an authenticator code while keys were unavailable",
+        "recovery_step_down": " with a recovery code while keys were unavailable",
+        "break_glass": " as a break-glass account",
+    }.get(method, "")
+    return "Signed in" + how
+
+
+def _confirmed(p: Mapping[str, Any]) -> str:
+    if p.get("strong"):
+        return "Confirmed it's them with a password and a second step"
+    how = {
+        "password": " with their password",
+        "code": " with a code",
+        "key": " with a security key",
+        "provider": " at their SSO provider",
+    }.get(p.get("factor"), "")
+    return "Confirmed it's them" + how
+
+
 def _ingested(p: Mapping[str, Any]) -> str:
     collapsed = p.get("collapsed")
     total = collapsed.get("count") if isinstance(collapsed, Mapping) else None
@@ -335,12 +361,10 @@ _COUNTED = frozenset({"findings.ingested"})
 
 _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
-    "auth.sign_in": lambda p: "Signed in"
-    + (" through single sign-on" if p.get("method") == "sso" else ""),
+    "auth.sign_in": _signed_in,
     "auth.sign_out": "Signed out",
     "auth.sign_in_ended": _sign_in_ended,
-    "auth.confirmed": lambda p: "Confirmed it's them"
-    + (" with a password and a second step" if p.get("strong") else ""),
+    "auth.confirmed": _confirmed,
     "auth.confirmation_failed": "Failed to confirm it's them",
     "auth.everyone_signed_out": "Signed everyone out",
     "auth.sign_in_failed": lambda p: "Failed to sign in"

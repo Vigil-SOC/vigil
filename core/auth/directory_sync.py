@@ -277,13 +277,19 @@ def _revoke_tokens(session: Session, account: User, actor: str) -> None:
             )
 
 
-def _mint(session: Session, account: User, actor: str) -> str:
+def _mint(
+    session: Session, account: User, actor: str, sign_in: Optional[str] = None
+) -> str:
     try:
         # The policy before the token rows, the order a save of it takes them in.
         token_policy.current(session)
         _revoke_tokens(session, account, actor)
         minted = mcp_credential_service.mint(
-            account.user_id, TOKEN_LABEL, session=session, actor=actor
+            account.user_id,
+            TOKEN_LABEL,
+            session=session,
+            actor=actor,
+            sign_in=sign_in,
         )
     except token_policy.PolicyUnreadable as exc:
         raise SyncRefused(str(exc)) from exc
@@ -292,7 +298,9 @@ def _mint(session: Session, account: User, actor: str) -> str:
     return minted.token
 
 
-def turn_on(session: Session, actor: User, claim: str) -> str:
+def turn_on(
+    session: Session, actor: User, claim: str, sign_in: Optional[str] = None
+) -> str:
     """Turn sync on and mint its token. The token is returned once."""
     claim = claim_name(claim)
     # The policy before anything is recorded or locked: a save of it holds it, then
@@ -307,7 +315,7 @@ def turn_on(session: Session, actor: User, claim: str) -> str:
     if not sso.is_on(old.settings):
         raise SyncRefused("Turn single sign-on on before directory sync")
     account = _ensure_account(session, actor)
-    token = _mint(session, account, actor.principal_id)
+    token = _mint(session, account, actor.principal_id, sign_in)
     version = old.version + 1
     new = old.settings.model_copy(
         update={"sync_enabled": True, "directory_id_claim": claim}
@@ -346,7 +354,7 @@ def set_claim(session: Session, actor: User, claim: str) -> sso_settings.SsoSett
     return new
 
 
-def remint(session: Session, actor: User) -> str:
+def remint(session: Session, actor: User, sign_in: Optional[str] = None) -> str:
     """Mint a replacement token and revoke the one it replaces. Sync stays on."""
     old, _found = sso_settings.read_row(session, lock=True)
     if not old.settings.sync_enabled:
@@ -354,7 +362,7 @@ def remint(session: Session, actor: User) -> str:
     account = session.query(User).filter(User.username == USERNAME).one_or_none()
     if account is None or not account.is_active:
         raise SyncRefused("The directory sync account is not active")
-    return _mint(session, account, actor.principal_id)
+    return _mint(session, account, actor.principal_id, sign_in)
 
 
 def turn_off(session: Session, reason: str) -> int:

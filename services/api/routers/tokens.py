@@ -154,6 +154,13 @@ def _confirm(request: Request, user: User, action: str) -> None:
     step_up.check(request, user.user_id, action)
 
 
+def _sign_in(request: Request) -> Optional[str]:
+    """The sign-in this request is, for the token's trail entry."""
+    claims = getattr(request.state, "access_claims", None)
+    sid = claims.get("sid") if isinstance(claims, dict) else None
+    return sid or None
+
+
 def _may_mint_for(caller: User, holder: User) -> bool:
     """A person for themselves, or a person holding users.write for a service
     account that is not Medic's (Medic's is minted from the host only)."""
@@ -280,6 +287,7 @@ def mint(
             body.label,
             body.expires_in_days,
             actor=current_user.principal_id,
+            sign_in=_sign_in(request),
         )
     )
     if minted is None:
@@ -344,6 +352,7 @@ def rotate(
                 body.suspected_compromise,
                 body.expires_in_days,
                 actor=current_user.principal_id,
+                sign_in=_sign_in(request),
             )
         )
     except tokens.NotRotatable as exc:

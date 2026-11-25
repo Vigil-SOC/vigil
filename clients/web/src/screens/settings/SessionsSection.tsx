@@ -457,6 +457,9 @@ export default function SessionsSection({ notify }: SectionProps) {
             {confirm?.without_mfa != null && (
               <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
             )}
+            {next?.require_mfa === 'off' && saved.require_mfa !== 'off' && (
+              <p>People without MFA will confirm privileged changes and create tokens with their password.</p>
+            )}
             {confirm?.without_key != null && <p>{noKeyText(confirm.without_key)}.</p>}
             {saved.unreadable && <p>The stored policy could not be read, so this save replaces whatever it held with the values above and the defaults for every other setting.</p>}
             {confirm?.shortened && <p>{confirm.shortened} will end sooner, no later than the new maximum counted from now, and their holders are told. No token is ever lengthened.</p>}
