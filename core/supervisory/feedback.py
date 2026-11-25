@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from core.cases.closure import (
@@ -100,6 +100,8 @@ def _triage(session: Session, start: datetime, end: datetime) -> int:
         Finding.first_verdict_at >= start,
         Finding.first_verdict_at < end,
         Finding.data_source.notin_(_NOT_REAL_DATA),
+        # Only a noise mark or a person's close can make a person's determination.
+        or_(Finding.noise_marked_at.isnot(None), _in_person_closed_case()),
     )
     closes = _closes(session, *where, sources=None)
     rows = session.execute(
@@ -113,6 +115,22 @@ def _triage(session: Session, start: datetime, end: datetime) -> int:
         if won is not None and won[1]:
             judged += 1
     return judged
+
+
+def _in_person_closed_case():
+    """A finding sits in a Case a person closed. Aliased: callers join these tables too."""
+    link = case_findings.alias("judged_link")
+    closure = aliased(CaseClosureInfo, name="judged_closure")
+    return (
+        select(link.c.finding_id)
+        .join(closure, closure.case_id == link.c.case_id)
+        .where(
+            link.c.finding_id == Finding.finding_id,
+            closure.close_channel.in_(PERSON_CHANNELS),
+        )
+        .correlate(Finding)
+        .exists()
+    )
 
 
 def _investigation(session: Session, start: datetime, end: datetime) -> int:
