@@ -1,41 +1,58 @@
-"""How each investigation run was done, rolled up per model, by rules only.
+"""How each agent run was done, rolled up per run kind and model, by rules only.
 
-Read-only. A judged run is an investigation's own ``investigate`` run that
-ended in the window with an answer: ``completed``, or ``data_starved``, which
-still reports a verdict though it could not look and so is exactly what the
-tool flags are for. Other kinds (hunts, compose, root cause) answer through
-tools of their own and are not compared here. Shadow runs, removed runs, and
-investigations of sample alerts or probes (through their Case or the findings
-that started them) are left out. Four flags, each a rule on what the run
-recorded:
+Read-only. Every agent-run kind that investigates is judged: ``investigate``,
+``hunt``, ``root_cause`` and ``compose``. ``adjudicate`` is a second look at
+another run's verdict and is left out, as are removed runs and runs on an
+investigation of sample alerts or probes (through its Case or the findings that
+started it). A run is judged only once it answered, which each kind does its
+own way:
+
+- investigate: ``completed``, or ``data_starved``, which still reports a verdict
+  though it could not look and so is exactly what the tool flags are for;
+- hunt: ``completed`` or ``data_starved``, the hunt ended and reported, every
+  hypothesis settled or set inconclusive. A hunt out of turns or budget with a
+  hypothesis open parks without ending, so it is not judged until it does;
+- root_cause: ``completed``, the trace ended on a root cause, a false positive or
+  inconclusive;
+- compose: ``completed``, every phase ran.
+
+Four flags, each a rule on what the run recorded:
 
 - thin evidence: its report cites nothing (``citation_count`` 0) or its review
-  found it ungrounded (``grounded`` false). Null is unsaid, never a flag.
-- gave up on tools: a tool call failed and no tool call after it succeeded. The
-  kernel's own tools count on neither side, so the conclude call is not a recovery.
-- skipped steps: no tool call gathered evidence. A call gathers evidence when it
-  succeeded, is not one of the kernel's own tools (the hypothesis record, the
-  playbook loader, and conclude and the other tools a run answers through), and
-  its tool is not stored as one that acts
-  (``reversible`` or ``irreversible`` in ``tool_effect_classes``). Vigil's own
-  tools carry no class and count as reads: an investigation run takes no action.
+  found it ungrounded (``grounded`` false). Null is unsaid, never a flag. Only
+  investigate and hunt report these; root_cause and compose never do, so the
+  flag does not apply to them.
+- gave up on tools: a tool call failed and no tool call after it succeeded.
+- skipped steps: no tool call gathered evidence.
 - ran out of turns: the turn cap ended it (``capped``), and it still answered.
+  Only investigate and hunt report it; root_cause and compose do not apply.
 
-A run's model is the one its own agent calls used, as each call's spend event
-on the agent ledger records it (role ``agent``; the reviewer's calls are not the
-run's). A run whose agent calls used more than one model, or none recorded, is
-counted under no model.
+A tool call gathers evidence when it succeeded, is not one of the run's own
+tools, and is not a tool stored as one that acts (``reversible`` or
+``irreversible`` in ``tool_effect_classes``); Vigil's own tools carry no class
+and count as reads, since no judged run takes an action. A run's own tools count
+on neither side of the first two flags: they keep its notes or carry its answer,
+and none looks at the estate. They are the kernel's hypothesis record, playbook
+loader and answer tools, and a hunt's own tools (the hunt plugin's HUNT_TOOLS and
+``expand``). root_cause and compose have none beyond the playbook loader.
 
-Only investigation is judged. Triage records no model per finding and makes no
-tool calls, and there is no response model setting: response proposals come out
-of investigation runs.
+A run's model is the one its spend events on the agent ledger record. For
+investigate and hunt, only the run's own agent counts (role ``agent``; the
+reviewer's and critic's calls are not the run's answer). root_cause spends under
+the name of each move and compose under each phase, so every role counts for
+them. A run that used more than one model, or recorded none, is counted under
+no model.
 
-:func:`check` proposes a ``model.investigation`` change only when the model the
-investigation component resolves to now is clearly worse than another on these
-runs: both with ``FLOOR`` judged runs, and on some flag a gap of ``GAP`` (in
-rate) and ``GAP_RUNS`` (more flagged runs than the other model's rate would give
-it), with no flag clearly the other way. Changing a model needs platform.write,
-so the card cannot be applied from here.
+Models are compared only within one run kind. Triage records no model per
+finding and there is no response model setting, so neither is judged.
+
+Every kind takes its model from the ``investigation`` component, so
+:func:`check` can propose only ``model.investigation``. It proposes another model
+only when the one the component resolves to now is clearly worse on some kind
+and the other is clearly worse on none: clearly worse is, with ``FLOOR`` judged
+runs each in that kind, a gap of ``GAP`` in rate and ``GAP_RUNS`` more flagged
+runs than the other model's rate would give, on a flag that applies. Changing a
+model needs platform.write, so the card cannot be applied from here.
 """
 
 from __future__ import annotations
@@ -78,10 +95,34 @@ LABELS = {
     "skipped_steps": "Answered without gathering evidence",
     "out_of_turns": "Ran out of turns and still answered",
 }
-# The kernel's own tools: the hypothesis record, the playbook loader, and the
-# tools a run answers through (conclude is journaled as a call like any other).
-# None of them looks at the estate.
-_BOOKKEEPING = (
+KINDS = ("investigate", "hunt", "root_cause", "compose")
+KIND_LABELS = {
+    "investigate": "Investigations",
+    "hunt": "Threat hunts",
+    "root_cause": "Root-cause traces",
+    "compose": "Workflows",
+}
+# What each kind reports: root_cause and compose never set citation_count,
+# grounded or capped, so those two flags do not apply to them.
+APPLIES = {
+    "investigate": FLAGS,
+    "hunt": FLAGS,
+    "root_cause": ("gave_up", "skipped_steps"),
+    "compose": ("gave_up", "skipped_steps"),
+}
+_ANSWERED = {
+    "investigate": ("completed", "data_starved"),
+    "hunt": ("completed", "data_starved"),
+    "root_cause": ("completed",),
+    "compose": ("completed",),
+}
+# Kinds whose answer is one agent's: other roles on their ledger are reviewers.
+_AGENT_ONLY = ("investigate", "hunt")
+# A run's own tools. The kernel's: the hypothesis record, the playbook loader,
+# and the tools a run answers through (conclude is journaled as a call like any
+# other). A hunt's: services/agent/plugins/hunt/hooks.ts HUNT_TOOLS, and expand,
+# which reads the run's own ledger.
+_OWN_TOOLS = (
     "propose_hypothesis",
     "link_evidence",
     "open_question",
@@ -89,11 +130,17 @@ _BOOKKEEPING = (
     "conclude",
     "submit_answer",
     "emit",
+    "hunt_status",
+    "record_evidence",
+    "validate_hypothesis",
+    "abandon_hypothesis",
+    "handoff_ir",
+    "close_question",
+    "ask_operator",
+    "conclude_hunt",
+    "expand",
 )
 _ACTING = ("reversible", "irreversible")
-# Shadow runs are "adjudicate", so naming the kind leaves them out too.
-_RUN_KIND = "investigate"
-_ANSWERED = ("completed", "data_starved")
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
 _events = table(
@@ -109,30 +156,37 @@ _tool_classes = table(
 
 
 def rates(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any]:
-    """Per model, judged runs and how many raised each flag; and runs with no model."""
+    """Per run kind and model, judged runs and how many raised each flag that
+    applies; and per kind, the runs with no model."""
     end = _naive(now or datetime.now(UTC))
     runs = _judged_runs(end - timedelta(days=days), end)
     with unit_of_work() as session:
         rows = session.execute(
             select(
+                runs.c.kind,
                 runs.c.model,
                 runs.c.models,
                 func.count(),
                 *(func.count().filter(runs.c[f]) for f in FLAGS),
-            ).group_by(runs.c.model, runs.c.models)
+            ).group_by(runs.c.kind, runs.c.model, runs.c.models)
         ).all()
-    models: dict[str, dict[str, int]] = {}
-    unattributed = 0
-    for model, n_models, n, *flagged in rows:
+    kinds: dict[str, dict[str, dict[str, int]]] = {k: {} for k in KINDS}
+    unattributed = {k: 0 for k in KINDS}
+    for kind, model, n_models, n, *flagged in rows:
         if n_models != 1 or model is None:
-            unattributed += n
+            unattributed[kind] += n
             continue
-        models[model] = {"runs": n, **dict(zip(FLAGS, flagged))}
-    return {"days": days, "models": models, "unattributed": unattributed}
+        counts = dict(zip(FLAGS, flagged))
+        kinds[kind][model] = {
+            "runs": n,
+            **{f: counts[f] for f in APPLIES[kind]},
+        }
+    return {"days": days, "kinds": kinds, "unattributed": unattributed}
 
 
 def _judged_runs(start: datetime, end: datetime):
-    """One row per judged run: its model, how many models it used, and its flags."""
+    """One row per judged run: its kind, model, how many models, and its flags."""
+    kind = WorkflowRun.trigger_context["run_kind"].astext
     ledger = case(
         (
             WorkflowRun.run_id.op("~*")(_UUID),
@@ -141,17 +195,20 @@ def _judged_runs(start: datetime, end: datetime):
         else_=None,
     )
 
-    def events(alias: str, kind: str):
+    def events(alias: str, event_kind: str):
         e = _events.alias(alias)
-        return e, and_(e.c.run_id == ledger, e.c.kind == kind)
+        return e, and_(e.c.run_id == ledger, e.c.kind == event_kind)
 
     spend, own_spend = events("judge_spend", "spend")
-    agent_spend = and_(own_spend, spend.c.payload["role"].astext == "agent")
+    its_spend = and_(
+        own_spend,
+        or_(kind.notin_(_AGENT_ONLY), spend.c.payload["role"].astext == "agent"),
+    )
     model_of = spend.c.payload["model_id"].astext
     models = (
-        select(func.count(func.distinct(model_of))).where(agent_spend).scalar_subquery()
+        select(func.count(func.distinct(model_of))).where(its_spend).scalar_subquery()
     )
-    model = select(func.min(model_of)).where(agent_spend).scalar_subquery()
+    model = select(func.min(model_of)).where(its_spend).scalar_subquery()
 
     failed, own_failed = events("judge_failed", "call")
     later, own_later = events("judge_later", "call")
@@ -159,14 +216,14 @@ def _judged_runs(start: datetime, end: datetime):
     gave_up = exists().where(
         own_failed,
         _ok(failed).is_(False),
-        _tool(failed).notin_(_BOOKKEEPING),
+        _tool(failed).notin_(_OWN_TOOLS),
         # Explicit: nested two deep, the run and the failed call are outer rows.
         ~exists()
         .where(
             own_later,
             later.c.seq > failed.c.seq,
             _ok(later).is_(True),
-            _tool(later).notin_(_BOOKKEEPING),
+            _tool(later).notin_(_OWN_TOOLS),
         )
         .correlate_except(later),
     )
@@ -176,23 +233,35 @@ def _judged_runs(start: datetime, end: datetime):
     skipped = ~exists().where(
         own_gathered,
         _ok(gathered).is_(True),
-        _tool(gathered).notin_(_BOOKKEEPING),
+        _tool(gathered).notin_(_OWN_TOOLS),
         _tool(gathered).notin_(acting),
     )
-    thin = or_(
-        func.coalesce(WorkflowRun.citation_count == 0, False),
-        func.coalesce(WorkflowRun.grounded.is_(False), False),
+    reports = kind.in_(_AGENT_ONLY)
+    thin = and_(
+        reports,
+        or_(
+            func.coalesce(WorkflowRun.citation_count == 0, False),
+            func.coalesce(WorkflowRun.grounded.is_(False), False),
+        ),
+    )
+    capped = and_(reports, func.coalesce(WorkflowRun.capped.is_(True), False))
+    answered = or_(
+        *(
+            and_(kind == k, WorkflowRun.outcome.in_(outcomes))
+            for k, outcomes in _ANSWERED.items()
+        )
     )
     return (
         select(
+            kind.label("kind"),
             model.label("model"),
             models.label("models"),
             thin.label("thin_evidence"),
             gave_up.label("gave_up"),
             skipped.label("skipped_steps"),
-            func.coalesce(WorkflowRun.capped.is_(True), False).label("out_of_turns"),
+            capped.label("out_of_turns"),
         )
-        .join(
+        .outerjoin(
             Investigation,
             Investigation.investigation_id
             == WorkflowRun.trigger_context["investigation_id"].astext,
@@ -201,9 +270,9 @@ def _judged_runs(start: datetime, end: datetime):
             WorkflowRun.finished_at >= start,
             WorkflowRun.finished_at < end,
             WorkflowRun.deleted_at.is_(None),
-            WorkflowRun.outcome.in_(_ANSWERED),
-            WorkflowRun.trigger_context["run_kind"].astext == _RUN_KIND,
-            ~_not_real_data(),
+            kind.in_(KINDS),
+            answered,
+            or_(Investigation.investigation_id.is_(None), ~_not_real_data()),
         )
         .subquery("judged_runs")
     )
@@ -243,31 +312,35 @@ def _not_real_data():
 
 
 def check() -> list[dict[str, Any]]:
-    """At most one proposal: a better model for investigation runs, or none."""
+    """At most one proposal: a better model for the investigation component, or none."""
     current = _current_model()
     if current is None:
         return []
     measured = rates()
-    models = measured["models"]
-    now = models.get(current)
-    if now is None or now["runs"] < FLOOR:
+    kinds = measured["kinds"]
+    others = {m for by_model in kinds.values() for m in by_model} - {current}
+    offers = []
+    for other in sorted(others):
+        better, worse = [], []
+        for kind, by_model in kinds.items():
+            a, b = by_model.get(current), by_model.get(other)
+            if a is None or b is None or min(a["runs"], b["runs"]) < FLOOR:
+                continue
+            if _clearly_worse(a, b, kind):
+                better.append(kind)
+            if _clearly_worse(b, a, kind):
+                worse.append(kind)
+        if better and not worse:
+            total = sum(_rate(kinds[k][other], f) for k in better for f in APPLIES[k])
+            offers.append((-len(better), total, other, better))
+    if not offers:
         return []
-    better = [
-        (sum(_rate(stats, f) for f in FLAGS), name, stats)
-        for name, stats in models.items()
-        if name != current
-        and stats["runs"] >= FLOOR
-        and _clearly_worse(now, stats)
-        and not _clearly_worse(stats, now)
-    ]
-    if not better:
-        return []
-    _, name, stats = min(better)
-    return [_proposal(current, now, name, stats, measured["days"])]
+    _, _, other, better = min(offers)
+    return [_proposal(current, other, better, kinds, measured["days"])]
 
 
 def _current_model() -> str | None:
-    """The model an investigation run is handed now, as the run itself records it."""
+    """The model a run is handed now, as the run itself records it."""
     from core.llm import target
 
     resolved = target.resolve_component(COMPONENT)
@@ -279,9 +352,9 @@ def _rate(stats: dict[str, int], flag: str) -> Fraction:
     return Fraction(stats[flag], stats["runs"])
 
 
-def _clearly_worse(a: dict[str, int], b: dict[str, int]) -> bool:
-    """On some flag, ``a`` is GAP worse in rate and GAP_RUNS worse in runs than ``b``."""
-    return any(_gap(a, b, f) for f in FLAGS)
+def _clearly_worse(a: dict[str, int], b: dict[str, int], kind: str) -> bool:
+    """On a flag that applies to ``kind``, ``a`` is GAP and GAP_RUNS worse than ``b``."""
+    return any(_gap(a, b, f) for f in APPLIES[kind])
 
 
 def _gap(a: dict[str, int], b: dict[str, int], flag: str) -> bool:
@@ -294,19 +367,30 @@ def _pct(stats: dict[str, int], flag: str) -> str:
 
 
 def _proposal(
-    current: str, now: dict[str, int], other: str, then: dict[str, int], days: int
+    current: str,
+    other: str,
+    better: list[str],
+    kinds: dict[str, dict[str, dict[str, int]]],
+    days: int,
 ) -> dict[str, Any]:
-    worst = max(FLAGS, key=lambda f: _rate(now, f) - _rate(then, f))
+    lead = better[0]
+    now, then = kinds[lead][current], kinds[lead][other]
+    flags = [f for f in APPLIES[lead] if _gap(now, then, f)]
+    worst = max(flags, key=lambda f: _rate(now, f) - _rate(then, f))
+    named = ", ".join(KIND_LABELS[k].lower() for k in better)
     why = (
-        f"{LABELS[worst]}: {_pct(now, worst)} of {current}'s investigation runs, "
-        f"{_pct(then, worst)} of {other}'s"
+        f"{KIND_LABELS[lead]}: {LABELS[worst].lower()} in {_pct(now, worst)} of "
+        f"{current}'s runs, {_pct(then, worst)} of {other}'s"
     )
     plain = (
-        f"On investigation runs over the last {days} days, {other} raised fewer of "
-        f"these flags than {current}. The flags are rules on what each run recorded, "
-        "not a judge of its verdict: change the model in AI settings if you agree."
+        f"Over the last {days} days {other} raised fewer of these flags than "
+        f"{current} on {named}, and more on none of the kinds both have run. "
+        "Investigations, hunts, root-cause traces and workflows all use this one "
+        "setting. The flags are rules on what each run recorded, not a judge of its "
+        "verdict: change the model in AI settings if you agree."
     )
-    gaps = [f for f in FLAGS if _gap(now, then, f)]
+    shown = [k for k in KINDS if current in kinds[k] and other in kinds[k]]
+    judged = sum(kinds[k][m]["runs"] for k in shown for m in (current, other))
     return {
         "fn": "investigation",
         "key": KEY,
@@ -316,32 +400,42 @@ def _proposal(
         "widens_autonomy": False,
         "card": {
             "why": why,
-            "evidence": (
-                f"{now['runs'] + then['runs']} investigation runs · {days} days"
-            ),
+            "evidence": f"{judged} agent runs · {days} days",
             "replay": "; ".join(
-                f"{LABELS[f].lower()} {_pct(now, f)} → {_pct(then, f)}" for f in gaps
+                f"{KIND_LABELS[k].lower()}: "
+                + ", ".join(
+                    f"{LABELS[f].lower()} {_pct(kinds[k][current], f)} → "
+                    f"{_pct(kinds[k][other], f)}"
+                    for f in APPLIES[k]
+                    if _gap(kinds[k][current], kinds[k][other], f)
+                )
+                for k in better
             ),
             "check": None,
             "plain_words": plain,
             "table": {
-                "title": "Investigation runs flagged, by model",
+                "title": "Agent runs flagged, by kind and model",
                 "columns": [
-                    {"label": "Flag", "kind": "text"},
+                    {"label": "Kind · flag", "kind": "text"},
                     {"label": current, "kind": "mono"},
                     {"label": other, "kind": "mono"},
                 ],
                 "rows": [
                     [
-                        {"text": LABELS[f]},
-                        {"text": f"{now[f]} of {now['runs']}"},
-                        {"text": f"{then[f]} of {then['runs']}"},
+                        {"text": f"{KIND_LABELS[k]} · {LABELS[f]}"},
+                        {"text": _of(kinds[k][current], f)},
+                        {"text": _of(kinds[k][other], f)},
                     ]
-                    for f in FLAGS
+                    for k in shown
+                    for f in APPLIES[k]
                 ],
-                "foot": f"All from the last {days} days",
+                "foot": (
+                    f"All from the last {days} days; kinds are compared only where "
+                    f"both models have {FLOOR} runs"
+                ),
             },
-            "replay_title": f"Last {days} days: {current} and {other}",
+            "replay_title": f"{KIND_LABELS[lead]}, last {days} days: "
+            f"{current} and {other}",
             "replay_rows": [
                 {
                     "label": LABELS[f],
@@ -349,10 +443,14 @@ def _proposal(
                     "next": _pct(then, f),
                     "effect": _effect(now, then, f),
                 }
-                for f in FLAGS
+                for f in APPLIES[lead]
             ],
         },
     }
+
+
+def _of(stats: dict[str, int], flag: str) -> str:
+    return f"{stats[flag]} of {stats['runs']}"
 
 
 def _effect(now: dict[str, int], then: dict[str, int], flag: str) -> str:
