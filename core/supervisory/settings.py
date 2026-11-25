@@ -19,7 +19,7 @@ from core.config import get_settings
 from core.daemon_config import DaemonConfig
 from core.intent import INTENT_FIELDS
 from core.intent_report import effective_daemon_config
-from core.response.ceiling import environment_locks_act
+from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
 from core.workflows.playbook_resolver import DEFAULT_RUNTIME
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,9 @@ _SOURCE = {
 }
 
 _ENV_ONLY = "Set in the environment or INTENT.md; Vigil has no write for it"
+_APPLIED = "Set by an earlier INTENT.md revision; Vigil has no write for it"
+_CEILING_UNREAD = "The autonomy ceiling could not be read"
+_STOPPED = "Autonomy is stopped: resume it first"
 _MANAGED = "Managed by INTENT.md: Vigil can only tighten it"
 _RESTART = "Saved at once; the daemon reads it when it starts"
 _ACT_LOCKED = "The environment forces it off"
@@ -65,6 +68,7 @@ _STARTUP_LIMITS = (
 
 # Components whose model and effort change phase 1 results.
 _COMPONENTS = ("triage", "investigation")
+_EFFORTS = ("low", "medium", "high")
 
 
 def settings() -> list[dict[str, Any]]:
@@ -72,7 +76,9 @@ def settings() -> list[dict[str, Any]]:
     config = effective_daemon_config(DaemonConfig.from_env())
     env_set = get_settings().model_fields_set
     locked = environment_locks_act()
-    rows = [_intent_row(f, config, locked) for f in INTENT_FIELDS]
+    loaded = try_read_stored_ceiling()
+    ceiling = None if loaded is None else loaded[0]
+    rows = [_intent_row(f, config, locked, ceiling) for f in INTENT_FIELDS]
     for key, attr, setting in _STARTUP_LIMITS:
         path = f"orchestrator.{attr}"
         source = config.sources.get(path) or (
@@ -96,20 +102,30 @@ def settings() -> list[dict[str, Any]]:
             DEFAULT_RUNTIME["max_turns"],
             "default",
             False,
-            "Fixed in code; there is no setting for it",
+            "The investigation workflows' default, fixed in code; only a workflow"
+            " definition can set its own",
         )
     )
     rows.extend(_model_rows())
     return rows
 
 
-def _intent_row(field: Any, config: DaemonConfig, locked: bool) -> dict[str, Any]:
+def _intent_row(
+    field: Any, config: DaemonConfig, locked: bool, ceiling: Any
+) -> dict[str, Any]:
+    """``ceiling`` is the stored autonomy row, None when it could not be read."""
     target: Any = config
     for part in field.path.split("."):
         target = getattr(target, part)
     source = config.sources.get(field.path, "default")
     if field.key not in _WRITABLE:
-        return _row(field.key, target, source, False, _ENV_ONLY)
+        reason = _APPLIED if source == "db" else _ENV_ONLY
+        return _row(field.key, target, source, False, reason)
+    if field.key.startswith("act."):
+        if ceiling is None:
+            return _row(field.key, target, source, False, _CEILING_UNREAD)
+        if ceiling.stopped:
+            return _row(field.key, target, source, False, _STOPPED)
     if locked and field.key in ("act.reversible", "act.irreversible"):
         return _row(field.key, target, source, False, _ACT_LOCKED)
     if source == "declared":
@@ -118,38 +134,34 @@ def _intent_row(field: Any, config: DaemonConfig, locked: bool) -> dict[str, Any
 
 
 def _model_rows() -> list[dict[str, Any]]:
-    """Model and effort per component, from its own assignment, else chat_default's."""
+    """Model and effort per component: its own assignment, else chat_default's,
+    else the default provider's model. One read; a failed read drops the rows."""
     try:
         from core.llm.providers.registry import get_registry
+        from core.llm.router.router import get_default_provider_spec
 
-        registry = get_registry()
-        assignments = registry.get_all_assignments()
+        assignments = get_registry().get_all_assignments()
+        spec = None
+        needs_default = not all(c in assignments for c in _COMPONENTS)
+        if needs_default and "chat_default" not in assignments:
+            spec = get_default_provider_spec()
     except Exception as exc:  # noqa: BLE001
         logger.warning("model assignments not read: %s", exc)
         return []
     rows = []
     for component in _COMPONENTS:
-        resolved = registry.resolve_model_for_component(component)
-        saved = component in assignments or "chat_default" in assignments
-        source = "db" if saved else "default"
-        rows.append(
-            _row(
-                f"model.{component}",
-                resolved[1] if resolved else None,
-                source,
-                True,
-                _MODEL,
-            )
-        )
-        rows.append(
-            _row(
-                f"effort.{component}",
-                registry.effort_for_component(component),
-                source,
-                True,
-                _MODEL,
-            )
-        )
+        row = assignments.get(component) or assignments.get("chat_default")
+        if row is not None:
+            model, model_source = row.model_id, "db"
+        else:
+            model, model_source = (spec.default_model if spec else None), "default"
+        effort = (row.settings or {}).get("effort") if row is not None else None
+        # Only a level the agent layer accepts reaches the model.
+        if effort not in _EFFORTS:
+            effort = None
+        effort_source = "db" if effort else "default"
+        rows.append(_row(f"model.{component}", model, model_source, True, _MODEL))
+        rows.append(_row(f"effort.{component}", effort, effort_source, True, _MODEL))
     return rows
 
 
