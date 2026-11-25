@@ -483,6 +483,11 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     + (f" {p['proposal_id']}" if p.get("proposal_id") else "")
     + (f" for {p['technique']}" if p.get("technique") else ""),
     "detections.rule_saved": _saved,
+    "detections.rule_approved": lambda p: "Approved"
+    + (f" rule {p['rule_id']}" if p.get("rule_id") is not None else " a rule")
+    + (f" v{p['version']}" if p.get("version") is not None else "")
+    + " as coverage"
+    + (f" ({_word(p['was'])} by the import check)" if p.get("was") else ""),
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),

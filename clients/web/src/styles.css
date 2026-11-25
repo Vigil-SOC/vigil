@@ -5643,12 +5643,12 @@
       .data-table th:nth-child(1) { width: 24%; }
    }
    .data-table:not(.data-rules) { min-width: calc(360px + var(--col-main-min)); } /* Settings' 120px floor, Status, action */
-   .data-rules { min-width: calc(566px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
+   .data-rules { min-width: calc(596px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
 
    /* Settings (120px), and Format, Deploy target and Where (326px), step aside while Ask Vigil is docked */
    @container main (max-width: 1399px) {
       .main.chat-open .data-table:not(.data-rules) { min-width: calc(240px + var(--col-main-min)); }
-      .main.chat-open .data-rules { min-width: calc(240px + var(--col-main-min)); }
+      .main.chat-open .data-rules { min-width: calc(270px + var(--col-main-min)); }
    }
 
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
@@ -5656,7 +5656,7 @@
    .data-rules th:nth-child(2) { width: 120px; }
    .data-rules th:nth-child(3) { width: 110px; }
    .data-rules th:nth-child(5) { width: 90px; }
-   .data-rules th:nth-child(6) { width: 150px; }
+   .data-rules th:nth-child(6) { width: 180px; } /* Update library and Remove library */
 
    .data-act {
       text-align: right;

@@ -41,7 +41,7 @@ x-agent-env: &agent-env
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
     environment:
       POSTGRES_DB: deeptempo_soc
       POSTGRES_USER: deeptempo
@@ -60,7 +60,7 @@ services:
       - vigil
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     volumes:
       - redis_data:/data
     environment:
@@ -83,12 +83,15 @@ services:
 
   bifrost:
     # Pinned to match infra/docker/docker-compose.yml; see the note there before bumping.
-    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
+    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1@sha256:a8942692af7b4b89196cd8fc33653b7353488dfd58b24078fe793b8574a8084b}
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       # Same file as the server stack (prepare-standalone.js copies it).
       # Empty is rejected: an unset password would enable auth and lock /api/*.
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:?set by the desktop app}
+      # config.json names both; empty means getbifrost.ai's sheets, absent is fatal.
+      - BIFROST_PRICING_URL=
+      - BIFROST_PARAMS_URL=
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. The app runs `compose down` on quit, so without it every

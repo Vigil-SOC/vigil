@@ -24,8 +24,8 @@ spec:
         fsGroup: 999
       containers:
         - name: postgres
-          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
-          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy | default "IfNotPresent" }}
+          image: {{ include "vigil.image" (dict "context" . "component" "postgresql" "default" "library/postgres") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "postgresql") }}
           ports:
             - name: postgres
               containerPort: 5432

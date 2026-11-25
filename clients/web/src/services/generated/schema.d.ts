@@ -4388,7 +4388,11 @@ export interface paths {
          * Get Coverage
          * @description ATT&CK coverage by technique and SIEM: each technique an active rule
          *     declares or an alert shows, proven (an active SIEM copy passes Runs and
-         *     Sees), unproven or with no rule, split by SIEM. Read-only.
+         *     Sees), unproven or with no rule, split by SIEM. ``by_layer`` adds each
+         *     technique's state per detection layer and for the layers together, with
+         *     the measures, from the last 30 days' emulation runs: for ``scope`` (all,
+         *     emulated, intel) or the ``techniques`` given (repeated or comma-separated).
+         *     Read-only.
          */
         get: operations["get_api_detection-rules_coverage"];
         put?: never;
@@ -4482,6 +4486,69 @@ export interface paths {
          */
         post: operations["post_api_detection-rules_health-inbox_read"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Library Rules
+         * @description Import the picked files at the commit read; refused (409) when the repo
+         *     has moved since. All or nothing; audited.
+         */
+        post: operations["post_api_detection-rules_libraries_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Library
+         * @description The commit a repo is at and the rule files in it, grouped by folder, each
+         *     with its language, techniques and why it cannot be picked; for a library,
+         *     also Changed, Gone from the repo, and In the repo, not imported.
+         */
+        post: operations["post_api_detection-rules_libraries_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Library
+         * @description Remove a rule library and its files; the next sync marks its rules removed.
+         */
+        delete: operations["delete_api_detection-rules_libraries_source_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4687,6 +4754,29 @@ export interface paths {
         get: operations["get_api_detection-rules_rules_rule_id"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Rule
+         * @description Makes a repo or local rule's latest version count as coverage although the
+         *     import check holds it (a KQL rule, absent fields, no check can judge it). A
+         *     version failing lint, or one not held, is refused with 409; the next version
+         *     is held again.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_approve"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4971,7 +5061,8 @@ export interface paths {
         put?: never;
         /**
          * Update Source
-         * @description Update a single detection rule source (git pull or rescan).
+         * @description Update a single detection rule source: a rule library takes its repo whole
+         *     at the commit read now; a local source is rescanned.
          *
          *     Args:
          *         source_id: The source ID to update
@@ -5020,7 +5111,9 @@ export interface paths {
         put?: never;
         /**
          * Update All Sources
-         * @description Update all detection rule sources (git pull all repos).
+         * @description Update all detection rule sources: each rule library is taken whole at the
+         *     commit read now, one after another; local sources are rescanned. A library
+         *     that cannot be read is a ``success: false`` row saying why.
          *
          *     Returns:
          *         Results for each source update
@@ -13492,6 +13585,8 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            /** Coverage Comparison */
+            coverage_comparison?: components["schemas"]["LayersComparison"] | "not_in_compared_run" | null;
             /** Evidence */
             evidence?: {
                 [key: string]: unknown;
@@ -14726,6 +14821,25 @@ export interface components {
             /** Skipped */
             skipped: number;
         };
+        /**
+         * ImportRulesRequest
+         * @description Picked rule files at the commit read: a new library from ``repo``, or an
+         *     update to the library ``source_id``.
+         */
+        ImportRulesRequest: {
+            /** Commit */
+            commit: string;
+            /** Format */
+            format?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Picks */
+            picks?: string[];
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+        };
         /** InactiveKind */
         InactiveKind: {
             /** Id */
@@ -15359,6 +15473,41 @@ export interface components {
             statements?: {
                 [key: string]: string;
             } | null;
+        };
+        /** LayerCounts */
+        LayerCounts: {
+            /** Improved */
+            improved: number;
+            /** Not Compared */
+            not_compared: number;
+            /** Regressed */
+            regressed: number;
+            /** Unchanged */
+            unchanged: number;
+        };
+        /** LayerMove */
+        LayerMove: {
+            /** After */
+            after: string;
+            /** Before */
+            before: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "improved" | "regressed";
+            /** Layer */
+            layer: string;
+            /** Name */
+            name?: string | null;
+            /** Technique */
+            technique: string;
+        };
+        /** LayersComparison */
+        LayersComparison: {
+            counts: components["schemas"]["LayerCounts"];
+            /** Moves */
+            moves?: components["schemas"]["LayerMove"][];
         };
         /** LedgerCountOut */
         LedgerCountOut: {
@@ -16588,6 +16737,19 @@ export interface components {
             max: number;
             /** Min */
             min: number;
+        };
+        /**
+         * ReadLibraryRequest
+         * @description A repo to read (owner/repo, a GitHub link, an https URL, with @ref), or a
+         *     library to read with its update diff.
+         */
+        ReadLibraryRequest: {
+            /** Format */
+            format?: string | null;
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** ReadinessItem */
         ReadinessItem: {
@@ -18008,7 +18170,8 @@ export interface components {
         };
         /**
          * StageChangeRequest
-         * @description Why a person reverts a rule, switches it off, or releases it.
+         * @description Why a person reverts a rule, switches it off, releases its hold, or
+         *     approves it as coverage.
          */
         StageChangeRequest: {
             /** Reason */
@@ -27009,7 +27172,11 @@ export interface operations {
     };
     "get_api_detection-rules_coverage": {
         parameters: {
-            query?: never;
+            query?: {
+                by_layer?: boolean;
+                scope?: "all" | "emulated" | "intel";
+                techniques?: string[] | null;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -27149,6 +27316,109 @@ export interface operations {
                 "application/json": components["schemas"]["HealthReadRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_import": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRulesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_read": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadLibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_detection-rules_libraries_source_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -27448,6 +27718,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_approve": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

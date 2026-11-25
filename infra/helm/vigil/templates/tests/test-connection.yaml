@@ -10,9 +10,16 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   restartPolicy: Never
+  {{- include "vigil.imagePullSecrets" . | nindent 2 }}
+  # The backend image ships curl and runs as its non-root vigil user (1000).
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
   containers:
     - name: curl
-      image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+      image: {{ include "vigil.image" (dict "context" . "component" "backend") | quote }}
+      imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "backend") }}
+      securityContext:
+        {{- toYaml .Values.containerSecurityContext | nindent 8 }}
       command:
         - /bin/sh
         - -ec

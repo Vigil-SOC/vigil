@@ -30,8 +30,8 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: bifrost
-          image: "{{ .Values.bifrost.image.repository }}:{{ .Values.bifrost.image.tag }}"
-          imagePullPolicy: {{ .Values.bifrost.image.pullPolicy | default "IfNotPresent" }}
+          image: {{ include "vigil.image" (dict "context" . "component" "bifrost" "default" "maximhq/bifrost") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "bifrost") }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
@@ -47,6 +47,12 @@ spec:
                   key: OLLAMA_URL
                   optional: true
             {{- include "vigil.bifrost.auth.env" . | nindent 12 }}
+            # config.json names both: empty means getbifrost.ai's sheets, absent is fatal.
+            {{- $sheets := .Values.bifrost.localSheets }}
+            - name: BIFROST_PRICING_URL
+              value: {{ ternary "file:///etc/bifrost/sheets/pricing.json" "" $sheets | quote }}
+            - name: BIFROST_PARAMS_URL
+              value: {{ ternary "file:///etc/bifrost/sheets/params.json" "" $sheets | quote }}
             # Provider keys come from the app Secret (secrets.existingSecret and
             # externalSecret included); a key it lacks is just empty, as in Compose.
             {{- range $k := list "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GEMINI_API_KEY" }}
@@ -63,6 +69,15 @@ spec:
             - name: config
               mountPath: /app/data/config.json
               subPath: config.json
+              readOnly: true
+            # Outside /app/data, which is the volume.
+            - name: config
+              mountPath: /etc/bifrost/sheets/pricing.json
+              subPath: pricing.json
+              readOnly: true
+            - name: config
+              mountPath: /etc/bifrost/sheets/params.json
+              subPath: params.json
               readOnly: true
           # GET only: /health answers 405 on HEAD.
           readinessProbe:
