@@ -11,7 +11,9 @@ About once an interval the daemon's scheduler runs :func:`tick`:
    arguments of :func:`core.supervisory.store.propose`, without ``held_incident``,
    which the tick supplies. A check that raises, or makes a proposal the store
    refuses, is logged and named on the state row; the other checks still run.
-4. When it ran, and when the next is due, go on the one-row state table.
+4. Each applied change that is due is followed up: whether results got better
+   after it (:mod:`core.supervisory.followup`).
+5. When it ran, and when the next is due, go on the one-row state table.
 
 The scheduler asks every few minutes (:func:`poll_seconds`); the tick decides
 from the state table whether a check is due, so a restart or a slow pass of the
@@ -40,7 +42,7 @@ from core.config import Settings, get_settings
 from core.storage.connection import get_db_manager
 from core.storage.models.supervisory import SupervisoryWorkerState
 from core.storage.unit_of_work import unit_of_work
-from core.supervisory import medic_hold, store
+from core.supervisory import followup, medic_hold, store
 
 logger = logging.getLogger(__name__)
 
@@ -129,11 +131,18 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
         except Exception:  # noqa: BLE001 - one check failing must not stop the rest
             logger.exception("supervisory check %s failed", name)
             failed.append(name)
+    try:
+        judged = followup.follow_up()
+    except Exception:  # noqa: BLE001 - the next tick tries again
+        logger.exception("supervisory follow-up failed")
+        judged = None
+        failed.append("follow_up")
     _write_state(now, now + timedelta(seconds=interval), failed)
     return {
         "medic_read": incidents is not None,
         "swept": swept,
         "proposed": proposed,
+        "followed_up": judged,
         "failed": failed,
     }
 
