@@ -32,7 +32,10 @@ SCHEME = "pbkdf2-sha256"
 # OWASP Password Storage Cheat Sheet: 600,000 for PBKDF2-HMAC-SHA256.
 ITERATIONS = 600_000
 # Any Unicode, counted in code points (len(str)), never cut short.
-MAX_PASSWORD_LENGTH = 128
+# The session policy's minimum length stays inside these two, and the
+# breached-list import keeps entries down to the shortest.
+MIN_PASSWORD_LENGTH = 3
+MAX_PASSWORD_LENGTH = 255
 _SALT_BYTES = 16
 _KEY_BYTES = 32
 PEPPER = "pepper"

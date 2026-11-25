@@ -42,6 +42,7 @@ _READ_FAILED = "not checked: could not read the capped re-check."
 _AWAITING = "Run the Day 1 Report."
 _TEXT_NEEDS = "Those fields need automation.read."
 _REMOVED = "removed with its import"
+_ERASED = "evidence erased with its import"
 _GROUPS = ("top", "control")
 _CLOSURE_NOT_REAL = frozenset({"benign", "false_positive"})
 # One could-not row. An unfinished terminal stays in the group's count.
@@ -546,8 +547,31 @@ def _ticket(
         recorded_at,
     )
     if note or not isinstance(row, HistoryTicket):
-        return None, note or _REMOVED, False
+        return None, _gone_sentence(session, stored, note or _REMOVED), False
     return row, None, bool(row.closed_approximate)
+
+
+def _gone_sentence(session: Session, stored: dict, note: str) -> str:
+    """The import-gone sentence, read from the stored ticket. Not a rewrite.
+
+    Erased only when the import is gone, the ticket was a run (a ``run_id``
+    and an empty reason), and that ``workflow_runs`` row is gone. A refused
+    claim keeps a reason and never had a row. A run a Case was opened from
+    keeps its row. Both stay ``removed with its import``.
+    """
+    if note != _REMOVED:
+        return note
+    run_id = stored.get("run_id")
+    if stored.get("reason") or not isinstance(run_id, str) or not run_id:
+        return note
+    import_id = stored.get("import_id")
+    if not isinstance(import_id, str) or not import_id:
+        return note
+    if session.get(HistoryImport, import_id) is not None:
+        return note
+    if session.get(WorkflowRun, run_id) is not None:
+        return note
+    return _ERASED
 
 
 def _shown_ticket(
