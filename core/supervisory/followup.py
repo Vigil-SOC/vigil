@@ -8,7 +8,9 @@ had the same time to be judged. Each side needs ``FLOOR`` labelled examples;
 with fewer, ``improved`` stays null and the note says there was not enough to
 tell. That is final: both windows are closed and their labels counted by then. A
 change that was undone is left alone: no verdict, no note. Another change to
-the same function inside the after window is not told apart from this one.
+the same function inside the after window is not told apart from this one, and
+nor is a run that started before the apply and ended after it, on the old
+setting.
 
 What is counted, per function, by the time each item happened:
 
