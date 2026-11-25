@@ -7,6 +7,9 @@ retried after a stop can count more than once:
 - the budget refused another iteration: the call limit, the cost cap or the
   runtime cap, which the agent layer tells apart only in the run's ``reason``;
 - the AI gateway refused the call because its spending limit is used up;
+- any other budget stop, whose reason does not name the limit: a hunt that
+  parked at a limit and that an operator then concluded, or a trace the pool cut
+  off;
 - a model call failed, by the cause the agent layer named;
 - it was abandoned: picked up again and again without advancing, or parked on a
   question nobody answered;
@@ -72,6 +75,7 @@ LABELS = {
     "cost": "Hit the cost cap",
     "wall": "Hit the runtime cap",
     "gateway": "AI gateway spending limit used up",
+    "budget": "Hit a budget limit",
     "rate_limited": "Model provider rate limited it",
     "provider_auth_refused": "Model provider refused the key",
     "model_unavailable": "Model did not answer",
@@ -192,7 +196,7 @@ def _run_reason():
         (and_(budget, reason.contains("calls_exhausted", autoescape=True)), "calls"),
         (and_(budget, reason.contains("cost_exhausted", autoescape=True)), "cost"),
         (and_(budget, reason.contains("wall_exhausted", autoescape=True)), "wall"),
-        (cause == "gateway_budget_refused", "gateway"),
+        (and_(or_(budget, failed), cause == "gateway_budget_refused"), "gateway"),
         (and_(failed, cause.in_(_MODEL_CAUSES)), cause),
         (and_(failed, cause.isnot(None)), "model_error"),
         (
@@ -203,7 +207,8 @@ def _run_reason():
         ),
         (outcome == "abandoned", "unanswered"),
         (outcome == "data_starved", "no_data"),
-        (or_(failed, budget), "other"),
+        (budget, "budget"),
+        (failed, "other"),
         (and_(outcome == "completed", WorkflowRun.capped.is_(True)), "turns"),
         else_=None,
     )
