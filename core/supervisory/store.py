@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
+from core.intent import FIELDS_BY_KEY, label
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
 
@@ -146,6 +147,16 @@ def _lock(session: Session, key: str) -> None:
         text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
         {"k": f"supervisory:{key}"},
     )
+
+
+def lock_orchestrator_row(session: Session) -> None:
+    """Serialise one-click writes to the orchestrator settings row for this transaction.
+
+    Applying any investigate.* key rewrites the whole row from the values read
+    just before, so two applies on different keys must not overlap. Taken after
+    the setting's own lock, by every caller, so the order never inverts.
+    """
+    _lock(session, "orchestrator.settings")
 
 
 def _still_dismissed(
@@ -423,12 +434,35 @@ def _apply_state(
     change = setting.get("change") or {}
     if not change.get("possible"):
         return {"possible": False, "reason": change.get("reason") or _NOT_APPLICABLE}
+    # A row that can only be tightened (stopped, or managed by INTENT.md) refuses
+    # a loosening, so the card says so instead of failing on click.
+    if change.get("reason") and _loosens(s.setting_key, s.from_value, s.to_value):
+        return {"possible": False, "reason": change["reason"]}
     if not same_value(setting["value"], s.from_value):
         return {
             "possible": False,
             "reason": f"The setting is {setting['value']} now, not {s.from_value}",
         }
     return {"possible": True}
+
+
+def _loosens(key: str, from_value: str, to_value: str) -> bool:
+    """Whether going from ``from_value`` to ``to_value`` loosens ``key``, by its
+    INTENT.md tightening rule. False for a key without one."""
+    field = FIELDS_BY_KEY.get(key)
+    if field is None:
+        return False
+
+    def typed(value: str) -> Any:
+        if value in ("on", "off"):
+            return value == "on"
+        return float(value)
+
+    try:
+        # label(rule, new, old) reads as what moving from old to new does.
+        return label(field.rule, typed(to_value), typed(from_value)) == "loosen"
+    except (TypeError, ValueError):
+        return False
 
 
 def _held(s: SupervisorySuggestion) -> dict[str, Any]:

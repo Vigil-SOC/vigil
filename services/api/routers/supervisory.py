@@ -6,6 +6,7 @@ the permission for the direction, the environment lock, a stop, INTENT.md
 managed keys, and the bounds.
 """
 
+import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,8 @@ from services.api.routers.config import (
     OrchestratorSettingsConfig,
     set_orchestrator_config,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 router.dependencies.append(permission_gate("ai_autonomy.read"))
@@ -138,10 +141,20 @@ def apply_suggestion(
 ) -> HistoryEntryResponse:
     """Change the setting to the suggested value, when it still has the value the
     suggestion started from. Returns the history entry."""
-    with unit_of_work() as locked:
-        row = _refusing(store.locked_live, locked, suggestion_id)
-        _change(row.setting_key, row.from_value, row.to_value, session, current_user)
-        entry = _record(locked, row, "applied", current_user)
+    written = None
+    try:
+        with unit_of_work() as locked:
+            row = _refusing(store.locked_live, locked, suggestion_id)
+            if row.setting_key.startswith("investigate."):
+                store.lock_orchestrator_row(locked)
+            _change(
+                row.setting_key, row.from_value, row.to_value, session, current_user
+            )
+            written = (row.setting_key, row.to_value)
+            entry = _record(locked, row, "applied", current_user)
+    except Exception:
+        _unrecorded(written, "apply", suggestion_id)
+        raise
     # Shaped after the commit, so nothing here can roll back a recorded change.
     return HistoryEntryResponse.model_validate(entry)
 
@@ -160,11 +173,33 @@ def undo_apply(
 ) -> HistoryEntryResponse:
     """Put the setting back to its value before an apply, when nothing has
     changed it since. Returns the new history entry."""
-    with unit_of_work() as locked:
-        _entry, row = _refusing(store.locked_applied, locked, history_id)
-        _change(row.setting_key, row.to_value, row.from_value, session, current_user)
-        entry = _record(locked, row, "undone", current_user)
+    written = None
+    try:
+        with unit_of_work() as locked:
+            _entry, row = _refusing(store.locked_applied, locked, history_id)
+            if row.setting_key.startswith("investigate."):
+                store.lock_orchestrator_row(locked)
+            _change(
+                row.setting_key, row.to_value, row.from_value, session, current_user
+            )
+            written = (row.setting_key, row.from_value)
+            entry = _record(locked, row, "undone", current_user)
+    except Exception:
+        _unrecorded(written, "undo", history_id)
+        raise
     return HistoryEntryResponse.model_validate(entry)
+
+
+def _unrecorded(written: tuple[str, str] | None, what: str, ref: str) -> None:
+    """The setting write and its record are two transactions. When the record
+    fails after the write, say so loudly: the change happened, unrecorded."""
+    if written is not None:
+        logger.error(
+            "supervisory %s %s changed %s to %s but its history was not recorded",
+            what,
+            ref,
+            *written,
+        )
 
 
 def _refusing(fn, *args):
