@@ -75,7 +75,7 @@ _REFUSED = "the budget refused another iteration"
 _STATED_CEILING = re.compile(r" of \$(\d+(?:\.\d+)?)")
 _PARKED = "paused"
 MISSED_MARGIN = 2
-RUN_LOOKBACK = timedelta(days=14)
+RUN_LOOKBACK = timedelta(days=30)
 TABLE_ROWS = 8
 _SHADOW_KIND = "adjudicate"
 
@@ -235,9 +235,10 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
         # the stop is not the last word.
         .where(
             *counted,
-            # A run that finished in the window started at most a run's length
-            # before it: the runtime cap is a day at most, so two weeks is ample
-            # and keeps the scan on the indexed start time.
+            # Keeps the scan on the indexed start time. A run's start is set once:
+            # an investigation's runtime cap is a day at most, but a hunt can park
+            # (up to a week), be extended and park again, so it stays in flight
+            # longer. A run started before the lookback is not read.
             WorkflowRun.started_at >= start - RUN_LOOKBACK,
             WorkflowRun.started_at < end,
         ).subquery()
@@ -274,11 +275,11 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
                     WorkflowRun.finished_at >= start,
                     WorkflowRun.finished_at < end,
                 ),
-                # Parked, so not finished: started in the window.
+                # Parked, so not finished. A park ends within its week to live,
+                # so a hunt still parked parked recently.
                 and_(
                     ranked.c.kind == HUNT_RUN_KIND,
                     ranked.c.status == _PARKED,
-                    WorkflowRun.started_at >= start,
                 ),
             ),
             Investigation.case_id.isnot(None),
