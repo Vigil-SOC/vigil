@@ -274,6 +274,9 @@ ESTATE = ReportModule("estate", "integrations.read")
 # Report Sections: figures and lists, no checks. Stored under evidence.
 HISTORY_BEFORE = ReportModule("history.before", "findings.read")
 HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
+# Figures only. The body is evidence["history.capped_recheck"]. Same id as
+# capped_recheck.MODULE_ID, which the driver already treats as its switch.
+HISTORY_CAPPED = ReportModule("history.capped_recheck", "findings.read")
 HISTORY_TUNING = ReportModule("history.tuning", "findings.read")
 HISTORY = (HISTORY_BEFORE, HISTORY_RECHECK, HISTORY_TUNING)
 # The Production Start Report. Day 1's build does not call these. Confidence
@@ -810,6 +813,7 @@ MODULES = {
     ESTATE.id: ESTATE,
     HISTORY_BEFORE.id: HISTORY_BEFORE,
     HISTORY_RECHECK.id: HISTORY_RECHECK,
+    HISTORY_CAPPED.id: HISTORY_CAPPED,
     HISTORY_TUNING.id: HISTORY_TUNING,
     FORECAST.id: FORECAST,
     RUNNING.id: RUNNING,

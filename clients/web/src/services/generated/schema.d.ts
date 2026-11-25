@@ -11392,10 +11392,117 @@ export interface components {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
+        /** CappedBatch */
+        CappedBatch: {
+            /** Batch Id */
+            batch_id: string;
+            cost: components["schemas"]["CappedCost"];
+            /** Groups */
+            groups?: components["schemas"]["CappedGroup"][];
+            /** Status */
+            status: string;
+        };
+        /** CappedCost */
+        CappedCost: {
+            /** Calls */
+            calls?: number | null;
+            /** Dollars */
+            dollars?: number | null;
+            /**
+             * Local Model
+             * @default false
+             */
+            local_model: boolean;
+            /**
+             * Priced At Zero
+             * @default false
+             */
+            priced_at_zero: boolean;
+            /**
+             * Runs
+             * @default 0
+             */
+            runs: number;
+            /**
+             * Unpriced
+             * @default false
+             */
+            unpriced: boolean;
+            /**
+             * Unread
+             * @default false
+             */
+            unread: boolean;
+            /** Wall Ms */
+            wall_ms?: number | null;
+        };
+        /** CappedDirection */
+        CappedDirection: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** High */
+            high?: number | null;
+            /** K */
+            k: number;
+            /** Low */
+            low?: number | null;
+        };
+        /** CappedGroup */
+        CappedGroup: {
+            /**
+             * After Close
+             * @default 0
+             */
+            after_close: number;
+            /**
+             * Approximate
+             * @default 0
+             */
+            approximate: number;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** N */
+            n: number;
+            /** Rows */
+            rows?: components["schemas"]["CappedDirection"][];
+            /** Tickets */
+            tickets?: components["schemas"]["CappedTicket"][];
+        };
         /** CappedRecheckCeiling */
         CappedRecheckCeiling: {
             /** Runs */
             runs: number;
+        };
+        /** CappedTicket */
+        CappedTicket: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** Entities */
+            entities?: string[];
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** Reason */
+            reason?: string | null;
+            /** Source */
+            source: string;
+            /** Text Note */
+            text_note?: string | null;
+            /** Ticket */
+            ticket: string;
+            /** Title */
+            title?: string | null;
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -13494,6 +13601,7 @@ export interface components {
              */
             hidden_worse: boolean;
             history_before?: components["schemas"]["HistoryBefore"] | null;
+            history_capped_recheck?: components["schemas"]["HistoryCappedRecheck"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
             history_tuning?: components["schemas"]["HistoryTuning"] | null;
             /** Id */
@@ -14252,6 +14360,30 @@ export interface components {
             window_end: string;
             /** Window Start */
             window_start: string;
+        };
+        /** HistoryCappedRecheck */
+        HistoryCappedRecheck: {
+            /**
+             * Awaiting List
+             * @default false
+             */
+            awaiting_list: boolean;
+            finished?: components["schemas"]["CappedBatch"] | null;
+            /** How */
+            how?: string | null;
+            /**
+             * None Run
+             * @default false
+             */
+            none_run: boolean;
+            /** Not Checked */
+            not_checked?: string | null;
+            /**
+             * Open Only
+             * @default false
+             */
+            open_only: boolean;
+            stopped?: components["schemas"]["CappedBatch"] | null;
         };
         /** HistoryFigure */
         HistoryFigure: {

@@ -39,12 +39,15 @@ from core.integrations.readiness import (
 from core.llm import residency, statements
 from core.platform import notices
 from core.platform.process_health import ProcessHealth
+from core.reporting.capped_recheck_report import present as present_capped
+from core.reporting.capped_recheck_report import produce as produce_capped
 from core.reporting.checks import (
     CHANGES,
     COVERAGE,
     ESTATE,
     FORECAST,
     HISTORY,
+    HISTORY_CAPPED,
     LEGACY_CITATIONS,
     MODULES,
     SETTINGS,
@@ -303,6 +306,7 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
     _append_history(modules, evidence, disabled)
+    _append_capped(modules, evidence, disabled)
     if FORECAST.id not in disabled:
         modules.append(FORECAST.id)
         evidence[FORECAST.id] = _forecast(state)
@@ -357,6 +361,24 @@ def _append_history(
     for module_id in pending:
         modules.append(module_id)
         evidence[module_id] = produced[module_id]
+
+
+def _append_capped(
+    modules: list[str], evidence: dict[str, Any], disabled: set[str]
+) -> None:
+    """The capped re-check. A failed read is not-checked here, and the report completes."""
+    if HISTORY_CAPPED.id in disabled:
+        return
+    modules.append(HISTORY_CAPPED.id)
+    try:
+        evidence[HISTORY_CAPPED.id] = produce_capped()
+    except Exception as exc:  # noqa: BLE001 - this module only
+        logger.error(
+            "Day 1 Report could not read the capped re-check: %s", type(exc).__name__
+        )
+        evidence[HISTORY_CAPPED.id] = {
+            "not_checked": "not checked: could not read the capped re-check."
+        }
 
 
 def _forecast(state: dict) -> dict[str, Any]:
@@ -605,6 +627,14 @@ def _present(
         "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
+        "history_capped_recheck": present_capped(
+            session,
+            evidence,
+            list(record.modules or []),
+            hidden,
+            record.recorded_at,
+            user_id,
+        ),
         "coverage_comparison": coverage_comparison,
         **present_history(
             session,
