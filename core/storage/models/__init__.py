@@ -103,6 +103,7 @@ from core.storage.models.medic import (
 from core.storage.models.recheck_review import RecheckReview
 from core.storage.models.report import ReportRecord, ReportRun
 from core.storage.models.skill import SkillInstall, SkillRead, SkillScan
+from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.models.team import Team, TeamMembership
 from core.storage.models.workflow import (
     FINISHED_INVESTIGATION_STATUSES,
@@ -130,6 +131,8 @@ __all__ = [
     "CappedRecheckBatch",
     "CappedRecheckTicket",
     "RecheckReview",
+    "SupervisoryHistory",
+    "SupervisorySuggestion",
     "Case",
     "CaseAttachment",
     "CaseAuditLog",
