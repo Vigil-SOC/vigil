@@ -3989,6 +3989,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Batch
+         * @description The latest capped batch.
+         */
+        get: operations["get_api_day1-report_capped-recheck"];
+        put?: never;
+        /**
+         * Start
+         * @description Draw the next capped batch and start runs up to the two in flight.
+         */
+        post: operations["post_api_day1-report_capped-recheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/ceiling": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Ceiling
+         * @description The run ceiling. No row is 0, and 0 refuses a start.
+         */
+        get: operations["get_api_day1-report_capped-recheck_ceiling"];
+        /**
+         * Write Ceiling
+         * @description Set how many re-decision runs one batch may start.
+         */
+        put: operations["put_api_day1-report_capped-recheck_ceiling"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume
+         * @description Continue the open batch. The sweep does not do this.
+         */
+        post: operations["post_api_day1-report_capped-recheck_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/modules": {
         parameters: {
             query?: never;
@@ -12543,20 +12611,10 @@ export interface components {
             /** Sentence */
             sentence: string;
         };
-        /**
-         * CeilingBody
-         * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
-         *
-         *     ``stopped`` is not a field here. Stop is ``POST /api/orchestrator/kill``
-         *     and resume is ``POST /api/autonomy/resume``.
-         */
-        CeilingBody: {
-            /** Act Irreversible */
-            act_irreversible?: boolean | null;
-            /** Act Reversible */
-            act_reversible?: boolean | null;
-            /** Four Eyes */
-            four_eyes?: boolean | null;
+        /** CeilingBody */
+        "CeilingBody-Output": {
+            /** Runs */
+            runs: number;
         };
         /** CeilingResponse */
         CeilingResponse: {
@@ -13942,6 +14000,13 @@ export interface components {
             description: string;
             /** Feedback */
             feedback?: string | null;
+        };
+        /** GroupCounts */
+        GroupCounts: {
+            /** Control */
+            control: number;
+            /** Top */
+            top: number;
         };
         /** GroupRole */
         GroupRole: {
@@ -16197,6 +16262,28 @@ export interface components {
             /** Max Cost Usd */
             max_cost_usd: number;
         };
+        /** Projection */
+        Projection: {
+            /** Batch Id */
+            batch_id: string;
+            ceiling_reaches: components["schemas"]["GroupCounts"];
+            /** Control Count */
+            control_count: number;
+            /** Control Short */
+            control_short: boolean;
+            /** Could Not Recheck */
+            could_not_recheck: number;
+            /** Post Install Closures */
+            post_install_closures: number;
+            reserve?: components["schemas"]["Reserve"] | null;
+            /** Run Count */
+            run_count: number;
+            /** Status */
+            status: string;
+            /** Tickets Chosen */
+            tickets_chosen: number;
+            worst_case: components["schemas"]["WorstCase"];
+        };
         /**
          * ProofCardRequest
          * @description What to export: these rules, or (none) every live rule with coverage.
@@ -16377,6 +16464,13 @@ export interface components {
              * @enum {string}
              */
             channel: "email" | "copy";
+        };
+        /** Reserve */
+        Reserve: {
+            /** Note */
+            note: string;
+            /** Remainder */
+            remainder?: number | null;
         };
         /** ResetLinkEntry */
         ResetLinkEntry: {
@@ -18614,6 +18708,15 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** WorstCase */
+        WorstCase: {
+            /** Calls */
+            calls: number;
+            /** Dollars */
+            dollars: number;
+            /** Wall Ms */
+            wall_ms: number;
+        };
         /** _SecretsMigrateRequest */
         _SecretsMigrateRequest: {
             /** Keys */
@@ -18623,6 +18726,26 @@ export interface components {
              * @default true
              */
             remove_from_dotenv: boolean;
+        };
+        /**
+         * CeilingBody
+         * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
+         *
+         *     ``stopped`` is not a field here. Stop is ``POST /api/orchestrator/kill``
+         *     and resume is ``POST /api/autonomy/resume``.
+         */
+        core__api__v1__autonomy_router__CeilingBody: {
+            /** Act Irreversible */
+            act_irreversible?: boolean | null;
+            /** Act Reversible */
+            act_reversible?: boolean | null;
+            /** Four Eyes */
+            four_eyes?: boolean | null;
+        };
+        /** CeilingBody */
+        core__reporting__capped_recheck_router__CeilingBody: {
+            /** Runs */
+            runs: number;
         };
     };
     responses: never;
@@ -21442,7 +21565,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CeilingBody"];
+                "application/json": components["schemas"]["core__api__v1__autonomy_router__CeilingBody"];
             };
         };
         responses: {
@@ -25778,6 +25901,165 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Day1Report"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingBody-Output"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["core__reporting__capped_recheck_router__CeilingBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CeilingBody-Output"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck_resume": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
                 };
             };
             /** @description Validation Error */
@@ -34665,7 +34947,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CeilingBody"];
+                "application/json": components["schemas"]["core__api__v1__autonomy_router__CeilingBody"];
             };
         };
         responses: {
