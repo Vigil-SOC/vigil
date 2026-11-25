@@ -10,7 +10,7 @@ from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.supervisory import store
+from core.supervisory import medic_hold, store
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
 
@@ -64,7 +64,7 @@ def get_supervisory():
                 "next_check_at": None,
                 "history_days": read["history_days"],
                 "functions_watched": len(read["functions"]),
-                "medic_open_related": 0,
+                "medic_open_related": medic_hold.open_related(),
             },
             "functions": read["functions"],
             "suggestions": stored["suggestions"],
