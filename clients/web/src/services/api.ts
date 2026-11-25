@@ -1142,6 +1142,88 @@ export interface CoverageCell {
   siems: Partial<Record<CoverageSiemName, CoverageSiem>>
 }
 
+export type LayerState = 'validated' | 'partial' | 'present' | 'no_detection' | 'not_checked'
+export type LayerMark = 'tested_missed' | 'shadow' | 'not_observable'
+
+/** A compose emulation run in a cell's evidence; run_id is null when it ran on a Case the reader can't read. */
+export interface LayerRun {
+  run_id: string | null
+  restricted?: boolean
+  finished_at: string
+  hosts: string[]
+  steps_caught: number
+  steps_run: number
+}
+
+/** A SIEM rule declaring the technique, with its checks. */
+export interface LayerRule {
+  rule_id: number
+  name: string
+  runs: string | null
+  sees: string | null
+  caught: string | null
+  caught_at: string | null
+  shadow?: boolean
+}
+
+/** One layer's answer for one technique. */
+export interface LayerCell {
+  state: LayerState
+  marks?: LayerMark[]
+  reason?: string
+  evidence?: {
+    rules?: LayerRule[]
+    blind_spot?: string[]
+    labelled?: number
+    loglm_flags?: number
+    newest_run?: LayerRun
+    older_runs?: LayerRun[]
+  }
+}
+
+/** A row of the by-layer map: a SIEM, an alert source, LogLM, or every layer together (last). */
+export interface CoverageLayer {
+  layer: string
+  kind: 'siem' | 'alerts' | 'loglm' | 'combined'
+  reads: string
+  rules?: number
+  observable?: string
+  state?: 'not_checked'
+  reason?: string
+}
+
+export interface LayerTechnique {
+  technique: string
+  name: string
+  tactic: string
+  layers: Record<string, LayerCell>
+}
+
+export type CoverageScope = 'all' | 'emulated' | 'intel'
+
+/** by_layer on GET /detection-rules/coverage (#5135): each technique's state per detection layer. With no
+ * threat intelligence connected, an intel scope carries intel.connected false and a note, and no map. */
+export interface CoverageByLayer {
+  scope: CoverageScope | 'techniques'
+  intel?: { connected: boolean; named_by?: Record<string, unknown> }
+  note?: string
+  window_days?: number
+  layers?: CoverageLayer[]
+  unlabelled?: string[]
+  emulation?: { runs: number; error?: string; note?: string }
+  techniques?: LayerTechnique[]
+  tactics?: string[]
+  measures?: {
+    techniques: number
+    validated: Record<string, number>
+    validated_by_one_layer: number
+    present_never_validated: number
+    not_observable: number
+    loglm_lift?: number
+  }
+  source: string
+}
+
 /** GET /detection-rules/coverage: ATT&CK coverage by technique and SIEM (#4103). */
 export interface DetectionCoverage {
   techniques: CoverageCell[]
@@ -1156,6 +1238,8 @@ export interface DetectionCoverage {
   rule_total: number
   mapped: number
   source: string
+  /** Only when asked for with by_layer, a scope or techniques. */
+  by_layer?: CoverageByLayer
 }
 
 /** GET /detection-rules/metrics: the rollout's success metrics from stored data. */
@@ -1501,6 +1585,12 @@ export const detectionRulesApi = {
 
   /** ATT&CK coverage by technique and SIEM: the heat map. */
   coverage: () => api.get<DetectionCoverage>('/detection-rules/coverage'),
+  /** The same, with by_layer for a scope or these technique ids; a bad id is a 422. */
+  coverageByLayer: (scope: CoverageScope, techniques?: string[]) =>
+    api.get<DetectionCoverage>('/detection-rules/coverage', {
+      params: { by_layer: true, ...(techniques?.length ? { techniques } : { scope }) },
+      paramsSerializer: { indexes: null },
+    }),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>

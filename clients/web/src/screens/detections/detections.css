@@ -426,3 +426,39 @@
   .de-cov-tacmenu { display: block; }
   .de-cov-tactics { display: none; }
 }
+/* By layer: layers down, techniques across under their tactics; state by colour and glyph, marks as glyphs. */
+.de-lay { display: grid; gap: 10px; min-width: 0; }
+.de-lay-scope { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.de-lay-paste { display: flex; gap: 6px; align-items: center; flex: 1 1 260px; max-width: 440px; }
+.de-lay-paste .de-x-in { height: 28px; }
+.de-lay-paste button { flex: none; }
+.de-lay-msg { margin: 0; padding: 8px 12px; border: 1px solid var(--ln1); border-radius: 8px; background: var(--bg2); font-size: 12.5px; color: var(--tx1); }
+.de-lay-err { margin: 0; color: var(--poor); font-size: 12.5px; }
+.de-lay-measures { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--tx1); }
+.de-lay-measures b { color: var(--tx0); font-variant-numeric: tabular-nums; }
+.de-lay-wrap { max-height: max(320px, calc(100vh - 420px)); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--ln0); border-radius: 8px; }
+.de-lay-grid { border-collapse: separate; border-spacing: 3px; font-size: 11px; }
+.de-lay-grid th { font-weight: 600; color: var(--tx2); text-align: left; white-space: nowrap; background: var(--bg1); }
+.de-lay-grid thead th { position: sticky; z-index: 1; }
+.de-lay-grid thead tr:first-child th { top: 0; }
+.de-lay-grid thead tr:nth-child(2) th { top: 20px; }
+.de-lay-tac { padding: 2px 4px; color: var(--tx1); border-left: 1px solid var(--ln1); }
+.de-lay-tech { font-family: var(--font-mono); font-size: 10px; padding: 0 2px 2px; min-width: 58px; }
+.de-lay-grid .first { border-left: 1px solid var(--ln1); padding-left: 4px; }
+.de-lay-corner, .de-lay-row { position: sticky; left: 0; z-index: 2; }
+.de-lay-corner { z-index: 3; vertical-align: bottom; padding: 0 6px 2px 0; }
+.de-lay-rowb { width: 100%; min-width: 96px; padding: 4px 8px; text-align: left; border-radius: 6px; border: 1px solid var(--ln1); background: var(--bg2); color: var(--tx0); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.de-lay-rowb.on, .de-lay-rowb:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+.de-lay-grid tr.combined .de-lay-rowb { border-color: var(--ac-ln); }
+.de-lay-grid tr.combined td { padding-top: 4px; }
+.de-lay-cell { place-items: center; width: 100%; min-width: 52px; height: 26px; padding: 0 4px; font-size: 12px; font-weight: 700; color: var(--tx0); }
+.de-lay-cell.validated, .de-lay-g.validated { border-color: var(--good-ln); background: var(--good-bg); color: var(--good); }
+.de-lay-cell.partial, .de-lay-g.partial { border-color: var(--fair-ln); background: var(--fair-bg); color: var(--fair); }
+.de-lay-cell.present, .de-lay-g.present { border-color: var(--ac-ln); background: var(--ac-bg); color: var(--ac); }
+.de-lay-cell.no_detection, .de-lay-g.no_detection { border-color: var(--poor-ln); background: var(--poor-bg); color: var(--poor); }
+.de-lay-cell.not_checked, .de-lay-g.not_checked { border-style: dashed; color: var(--tx2); }
+.de-lay-g { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--ln1); font-size: 10.5px; font-weight: 700; }
+.de-lay-mk { display: inline-block; margin-left: 3px; color: var(--tx0); font-weight: 700; }
+.de-cov-legend .de-lay-mk { margin: 0; width: 12px; text-align: center; }
+.de-lay-mark { color: var(--tx1); font-weight: 600; }
+.de-lay-runs { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 2px; }
