@@ -1113,6 +1113,7 @@ def _fires(session: Any) -> Dict[str, Dict[Any, List[Dict[str, Any]]]]:
                     "data_source": r.data_source,
                     "entity_context": r.entity_context,
                     "timestamp": r.timestamp,
+                    "title": r.title,  # a Defender alert's rule is its title's
                 }
                 for r in rows
             },
@@ -2307,16 +2308,21 @@ SIEM_NAMES = {
     "wazuh": "Wazuh",
     "splunk": "Splunk",
     "azure_sentinel": "Sentinel",
+    "microsoft_defender": "Defender",
 }
+DEFENDER = "microsoft_defender"
+# A {{Column}} placeholder in a Defender alert title, filled per alert.
+_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
 # A finding's data_source -> (inventory source, key reader), in order: a Kibana
 # rule wins over a Wazuh one. Splunk reads its search name in _splunk_ref.
 KEY_READERS = {
     "elastic": (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id)),
     "azure_sentinel": (("azure_sentinel", _sentinel_rule_id),),
 }
-# Read-only provider inventories: attributed by the provider's rule id only,
-# never by a rule name or an alert title, and no check runs on them.
-PROVIDER_SOURCES = ("azure_sentinel",)
+# Read-only provider inventories, never traced by a rule name and never checked.
+# Sentinel attributes by the analytic rule id; Defender by an alertTemplate.title
+# exactly one microsoft_defender rule publishes, within that source only.
+PROVIDER_SOURCES = ("azure_sentinel", DEFENDER)
 
 
 def _name_answers(source: Optional[str]) -> bool:
@@ -2344,9 +2350,11 @@ def _rule_ref(finding: Mapping[str, Any]) -> Any:
     """(inventory source, native keys to try, alert time, Splunk search name) the
     finding names, or why it is unknown. No keys: match the search name alone."""
     source = finding.get("data_source")
+    if source == DEFENDER:
+        return _defender_ref(finding)
     if source != "splunk" and source not in KEY_READERS:
         return _unknown(
-            "only Kibana, Wazuh, Splunk and Sentinel rules resolve; "
+            "only Kibana, Wazuh, Splunk, Sentinel and Defender rules resolve; "
             f"this finding is from {source}"
         )
     context = finding.get("entity_context")
@@ -2378,6 +2386,84 @@ def _rule_ref(finding: Mapping[str, Any]) -> Any:
     if fired is None:
         return _unknown("the finding has no alert time to pick a version by")
     return siem, keys, fired, name
+
+
+def _title(value: Any) -> str:
+    return re.sub(r"\s+", " ", value).strip() if isinstance(value, str) else ""
+
+
+def _defender_ref(finding: Mapping[str, Any]) -> Any:
+    """(DEFENDER, no keys, alert time, alert title) for a custom-detection
+    finding, or why it is unknown: built-in detections are not in the inventory."""
+    context = finding.get("entity_context")
+    detected = context.get("detectionSource") if isinstance(context, dict) else None
+    if not isinstance(detected, str) or detected.casefold() != "customdetection":
+        return _unknown(
+            "only Defender custom detections are listed by "
+            "/security/rules/detectionRules; this finding's detectionSource is "
+            f"{detected or 'absent'}"
+        )
+    title = _title(finding.get("title"))
+    if not title:
+        return _unknown("the Defender custom-detection finding has no title")
+    fired = _when(finding.get("timestamp"))
+    if fired is None:
+        return _unknown("the finding has no alert time to pick a version by")
+    return DEFENDER, (), fired, title
+
+
+def _defender_titles(
+    session: Any,
+) -> Tuple[Dict[str, Dict[int, DetectionRule]], List[Tuple[DetectionRule, str]]]:
+    """Every alert title any stored version of a Defender rule published (its
+    name when the template has none): exact titles to their rules, and the
+    {{placeholder}} templates apart. Removed and disabled rules count."""
+    template = DetectionRuleVersion.content["detectionAction"]["alertTemplate"]
+    exact: Dict[str, Dict[int, DetectionRule]] = {}
+    templates: Dict[Tuple[int, str], DetectionRule] = {}
+    for rule, raw in session.execute(
+        select(DetectionRule, template["title"].astext)
+        .join(DetectionRuleVersion, DetectionRuleVersion.rule_id == DetectionRule.id)
+        .where(DetectionRule.source == DEFENDER)
+    ):
+        title = _title(raw) or _title(rule.name)
+        if _PLACEHOLDER.search(title):
+            templates[(rule.id, title)] = rule
+        elif title:
+            exact.setdefault(title, {})[rule.id] = rule
+    return exact, [(r, t) for (_, t), r in templates.items()]
+
+
+def _defender_match(
+    title: str,
+    exact: Dict[str, Dict[int, DetectionRule]],
+    templates: List[Tuple[DetectionRule, str]],
+) -> Any:
+    """The one Defender rule publishing ``title``, or why there is none."""
+    found = sorted(exact.get(title, {}).values(), key=lambda r: r.native_key)
+    if len(found) == 1:
+        return found[0]
+    if found:
+        out = _unknown(
+            f"{len(found)} Defender custom detections share alertTemplate.title "
+            f"{title!r} (" + ", ".join(f"{r.native_key}: {r.name}" for r in found) + ")"
+        )
+        out["candidates"] = [
+            {"rule_id": r.id, "native_key": r.native_key, "name": r.name} for r in found
+        ]
+        return out
+    for rule, template in templates:
+        pattern = ".+".join(map(re.escape, _PLACEHOLDER.split(template)))
+        if re.fullmatch(pattern, title):
+            return _unknown(
+                "the Defender alert title matches a parameterized template rule "
+                f"({rule.native_key}: {rule.name}) and cannot be attributed "
+                "unambiguously on Graph v1.0"
+            )
+    return _unknown(
+        "no Defender custom detection in the inventory publishes "
+        f"alertTemplate.title {title!r}"
+    )
 
 
 def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2421,7 +2507,20 @@ def resolve_findings(
         (r[0], key) for r in refs.values() if isinstance(r, tuple) for key in r[1]
     }
     # Splunk notables with no readable sid: matched on the saved search's name.
-    names = {r[3] for r in refs.values() if isinstance(r, tuple) and not r[1]}
+    names = {
+        r[3]
+        for r in refs.values()
+        if isinstance(r, tuple) and not r[1] and r[0] != DEFENDER
+    }
+    # Defender custom detections: matched on the alert title, within Defender.
+    titles: Dict[Any, Any] = {}
+    if any(isinstance(r, tuple) and r[0] == DEFENDER for r in refs.values()):
+        exact, templates = _defender_titles(session)
+        titles = {
+            k: _defender_match(r[3], exact, templates)
+            for k, r in refs.items()
+            if isinstance(r, tuple) and r[0] == DEFENDER
+        }
     rules: Dict[tuple, DetectionRule] = {}
     by_name: Dict[str, List[DetectionRule]] = {}
     versions: Dict[int, List[DetectionRuleVersion]] = {}
@@ -2441,9 +2540,11 @@ def resolve_findings(
             )
         ):
             by_name.setdefault(r.name, []).append(r)
-    ids = {r.id for r in rules.values()} | {
-        r.id for found in by_name.values() for r in found
-    }
+    ids = (
+        {r.id for r in rules.values()}
+        | {r.id for found in by_name.values() for r in found}
+        | {r.id for r in titles.values() if isinstance(r, DetectionRule)}
+    )
     if ids:
         loads = [defer(DetectionRuleVersion.content)]
         if not full:
@@ -2472,6 +2573,14 @@ def resolve_findings(
             out[k] = ref
             continue
         siem, keys, fired, name = ref
+        if siem == DEFENDER:
+            rule = titles[k]
+            out[k] = (
+                _pick(rule, versions.get(rule.id, []), fired, full)
+                if isinstance(rule, DetectionRule)
+                else rule
+            )
+            continue
         if keys:
             rule = next((rules[(siem, n)] for n in keys if (siem, n) in rules), None)
             missing = f"{SIEM_NAMES[siem]} rule {keys[-1]} is not in the inventory"
@@ -2564,6 +2673,7 @@ def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
             "data_source": r.data_source,
             "entity_context": r.entity_context,
             "timestamp": r.timestamp,
+            "title": r.title,
         }
         for r in rows
     }
