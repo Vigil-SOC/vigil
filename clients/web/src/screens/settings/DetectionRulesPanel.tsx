@@ -3,17 +3,12 @@ import { Icon } from '../../shared/icons'
 import { EmptyState, Field, Popup, Select, SettingsCard, TextInput, Toggle, ToggleRow } from '../../shared/ui'
 import { useDetectionRules, type AddSourcePayload, type DetectionSource } from './useSettings'
 import type { SectionProps } from './types'
+import { RuleLibraryDialog } from '../detections/RuleLibraryDialogs'
+import { FORMAT_OPTIONS } from '../detections/ruleFormats'
+import { errorText } from '../../shared/errorText'
 
 // Show a repo as host/path, the way the board does; local sources keep their path.
 const whereOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\.git$/, '')
-
-const FORMAT_OPTIONS = [
-  { value: 'sigma', label: 'Sigma (YAML)' },
-  { value: 'splunk', label: 'Splunk ESCU (YAML)' },
-  { value: 'elastic', label: 'Elastic (TOML)' },
-  { value: 'kql', label: 'KQL (MD/YAML/KQL)' },
-  { value: 'auto', label: 'Auto-detect' },
-]
 
 // Formats arrive as free-form strings: the short name of a known one, else the raw id.
 const formatName = (format: string) =>
@@ -66,8 +61,12 @@ const notGithub = (url: string) => `${GITHUB_ONLY} ${hostOf(url)} is not GitHub.
 type PendingTarget = { name: string; url: string; format: string; source: DetectionSource }
 
 export default function DetectionRulesPanel({ notify }: SectionProps) {
-  const { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget } =
+  const { sources, stats, phase, error, reload, addSource, removeSource, removeLibrary, updateSource, updateAll, setDeployTarget } =
     useDetectionRules()
+  // A rule library (type git) row's Update library and Remove library.
+  const [updatingLib, setUpdatingLib] = useState<DetectionSource | null>(null)
+  const [confirmLib, setConfirmLib] = useState<DetectionSource | null>(null)
+  const [removingLib, setRemovingLib] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [form, setForm] = useState<AddSourcePayload>(EMPTY_SOURCE)
@@ -170,6 +169,20 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
     }
   }
 
+  const onRemoveLibrary = async () => {
+    if (!confirmLib) return
+    setRemovingLib(true)
+    try {
+      await removeLibrary(confirmLib.id)
+      notify('ok', `Removed library ${confirmLib.name}.`)
+      setConfirmLib(null)
+    } catch (e) {
+      notify('err', errorText(e, 'Failed to remove the library.'))
+    } finally {
+      setRemovingLib(false)
+    }
+  }
+
   // The source each format already deploys to (at most one per format; the server refuses a second).
   const targetOf = (format: string) => sources.find((s) => s.deploy_target && s.format === format)
   const confirmNeedsGhe = !!confirmTarget && !isGithubCom(confirmTarget.url)
@@ -260,8 +273,23 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         />
                       )}
                     </td>
-                    <td className="font-mono col-low" title={s.git_url || undefined}>{where || '—'}</td>
+                    <td className="font-mono col-low" title={s.git_url || undefined}>
+                      {where ? `${where}${s.subdirectory && s.type === 'git' ? `/${s.subdirectory}` : ''}` : '—'}
+                      {s.type === 'git' && (s.ref || s.commit) && (
+                        <div className="text-xs text-tx-2">
+                          {[s.ref && `@${s.ref}`, s.commit && s.commit.slice(0, 7)].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                    </td>
                     <td>{fmtNum(s.rule_count)}</td>
+                    {s.type === 'git' ? (
+                    <td className="data-act col-act">
+                      <button className="data-link" disabled={!!updating} onClick={() => setUpdatingLib(s)}>Update library</button>
+                      <button className="btn ghost icon" title="Remove library" aria-label={`Remove library ${s.name}`} onClick={() => setConfirmLib(s)}>
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </td>
+                    ) : (
                     <td className="data-act col-act">
                       <button className="data-link" disabled={!!updating} onClick={() => onUpdateSource(s.id)}>
                         {updating === s.id ? 'Working…' : s.status === 'not_cloned' ? 'Clone' : 'Update'}
@@ -270,6 +298,7 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
                         <Icon name="trash" size={15} />
                       </button>
                     </td>
+                    )}
                   </tr>
                 )
               })}
@@ -340,6 +369,31 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
         <div className="flex justify-end gap-2.5 mt-5">
           <button className="btn ghost" onClick={() => setConfirmTarget(null)}>Cancel</button>
           <button className="btn primary" onClick={onConfirmTarget} disabled={confirmNeedsGhe && !confirmGhe}>Make deploy target</button>
+        </div>
+      </Popup>
+
+      {updatingLib && (
+        <RuleLibraryDialog
+          id={updatingLib.id}
+          name={updatingLib.name}
+          onClose={() => setUpdatingLib(null)}
+          onUpdated={(n) => {
+            notify('ok', `Took ${n} ${n === 1 ? 'change' : 'changes'} into ${updatingLib.name} and restarted the MCP server.`)
+            setUpdatingLib(null)
+            reload()
+          }}
+        />
+      )}
+
+      {/* Remove library: the server deletes its files too */}
+      <Popup open={!!confirmLib} onClose={() => setConfirmLib(null)} title="Remove library" width={440}>
+        <p className="text-sm text-tx-2 leading-relaxed">
+          Remove <strong>{confirmLib?.name}</strong> and its {confirmLib ? fmtNum(confirmLib.rule_count) : ''} rules? Its files are deleted,
+          and the next sync marks its rules removed. Import it again from Detections to bring it back.
+        </p>
+        <div className="flex justify-end gap-2.5 mt-5">
+          <button className="btn ghost" onClick={() => setConfirmLib(null)} disabled={removingLib}>Cancel</button>
+          <button className="btn danger" onClick={onRemoveLibrary} disabled={removingLib}>{removingLib ? 'Removing…' : 'Remove library'}</button>
         </div>
       </Popup>
 

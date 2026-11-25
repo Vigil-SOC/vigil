@@ -19,6 +19,8 @@ import ProposedRules from './ProposedRules'
 import { useRolloutMetrics } from './useRolloutMetrics'
 import FindingPopup from '../dashboard/FindingPopup'
 import ProofCardExport from './ProofCardExport'
+import { RuleImportDialog } from './RuleLibraryDialogs'
+import { useToast } from '../../shell/toast'
 import { RulesLoading } from './DetectionsLoading'
 import './detections.css'
 
@@ -231,19 +233,32 @@ export default function DetectionsScreen({ goSettings, openChat }: ConsoleScreen
     if (id !== 'proposed') next.delete('proposal')
     return next
   })
+  const { notify } = useToast()
+  const [importing, setImporting] = useState(false)
+  // Reading and importing a repo need detections.write, as Settings does.
+  const canImport = useAuth().hasPermission('detections.write')
   return (
     <div className="x1 de">
       <div className="de-top de-top-tabs">
         <TabStrip label="Detections sections" tabs={SECTIONS} active={section} onChange={setSection} />
-        <button type="button" className="btn primary" onClick={() => goSettings('data')}>Import rules</button>
+        {canImport && <button type="button" className="btn primary" onClick={() => setImporting(true)}>Import rules</button>}
       </div>
-      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} /> : section === 'coverage' ? <CoverageMap goSettings={goSettings} /> : <ProposedRules />}
+      {importing && (
+        <RuleImportDialog
+          onClose={() => setImporting(false)}
+          onImported={(name, n) => {
+            setImporting(false)
+            notify('ok', `Imported ${n.toLocaleString()} ${n === 1 ? 'rule' : 'rules'} as ${name}. They join the inventory once the sync finishes.`)
+          }}
+        />
+      )}
+      {section === 'rules' ? <RulesTab goSettings={goSettings} openChat={openChat} onImport={canImport ? () => setImporting(true) : undefined} /> : section === 'coverage' ? <CoverageMap goSettings={goSettings} /> : <ProposedRules />}
     </div>
   )
 }
 
 /** Rule health across every SIEM: the KPI strip, health by SIEM, blind spots and the inventory. */
-function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings' | 'openChat'>) {
+function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, 'goSettings' | 'openChat'> & { onImport?: () => void }) {
   const [view, setView] = useState<View>('attention')
   const [siem, setSiem] = useState<Siem | 'all'>('all')
   const [typed, setTyped] = useState('')
@@ -373,7 +388,7 @@ function RulesTab({ goSettings, openChat }: Pick<ConsoleScreenProps, 'goSettings
   if (report.total === 0) {
     return (
       <Empty title="The inventory is empty">
-        Add a rule repository in <button type="button" className="x1-link" onClick={() => goSettings('data')}>Settings</button>, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
+        {onImport ? <button type="button" className="x1-link" onClick={onImport}>Import rules</button> : 'An admin can import rules'} from a repository, or enable the Elastic, Splunk or Wazuh integration. Vigil reads rules from those and tags them from what they declare.
       </Empty>
     )
   }
