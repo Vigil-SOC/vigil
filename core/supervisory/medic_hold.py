@@ -41,7 +41,7 @@ from sqlalchemy import func, select, text
 
 from core.config import Settings, get_settings
 from core.platform import medic_last_seen
-from core.platform.medic_incidents import _INCIDENT, _TS, _clip, _pages
+from core.platform.medic_incidents import _INCIDENT, _TS, _clip, _pages, _when
 from core.platform.medic_status import medic_enabled
 from core.storage.connection import get_db_manager
 from core.storage.models.supervisory import SupervisorySuggestion
@@ -89,7 +89,7 @@ def open_incidents(settings: Settings | None = None) -> list[dict[str, Any]] | N
     for item in (_incident(row) for row in raw):
         if item is not None:
             by_id.setdefault(item["id"], item)
-    return sorted(by_id.values(), key=lambda i: (i["firing_since"], i["id"]))
+    return sorted(by_id.values(), key=lambda i: (_when(i["firing_since"]), i["id"]))
 
 
 def _incident(raw: Any) -> dict[str, Any] | None:
@@ -114,7 +114,7 @@ def _incident(raw: Any) -> dict[str, Any] | None:
     since = raw.get("active_since")
     if not isinstance(since, str) or not _TS.fullmatch(since):
         since = raw.get("opened_at")
-    if not isinstance(since, str) or not _TS.fullmatch(since):
+    if not isinstance(since, str) or not _TS.fullmatch(since) or _when(since) is None:
         return None
     title = _clip(raw.get("title"), _TITLE_LIMIT, one_line=True)
     return {
