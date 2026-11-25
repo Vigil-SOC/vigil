@@ -399,8 +399,7 @@ def _reads(runs: List[_Run], since: datetime) -> Dict[str, Any]:
                 DetectionRuleVersion.checks["sees"]["data_source"].astext.label(
                     "blind"
                 ),
-            )
-            .join(DetectionRuleVersion, catalog._latest_join())
+            ).join(DetectionRuleVersion, catalog._latest_join())
             # A held or lint-failing rule is no coverage, here as everywhere.
             .where(catalog.ACTIVE, catalog.CREDITED)
         ).all()
