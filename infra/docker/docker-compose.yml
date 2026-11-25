@@ -999,11 +999,21 @@ services:
       # environment. An empty value does not open the API — Bifrost enables
       # auth and then answers 401. start.sh and dc() mint one before a boot.
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
+      # BIFROST_LOCAL_SHEETS=true (any non-empty value) reads the empty pricing
+      # and model-parameter sheets shipped beside config.json instead of
+      # fetching getbifrost.ai's, which is fatal at boot with no route out.
+      # Unset keeps the publisher's sheets. Both must stay set, if empty:
+      # config.json names them and an absent variable is fatal too.
+      - BIFROST_PRICING_URL=${BIFROST_LOCAL_SHEETS:+file:///etc/bifrost/sheets/pricing.json}
+      - BIFROST_PARAMS_URL=${BIFROST_LOCAL_SHEETS:+file:///etc/bifrost/sheets/params.json}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. Without it every UI change lasted until the next recreate.
       - bifrost_data:/app/data
       - ./bifrost/config.json:/app/data/config.json:ro
+      # Outside /app/data, which is the volume.
+      - ./bifrost/pricing.json:/etc/bifrost/sheets/pricing.json:ro
+      - ./bifrost/params.json:/etc/bifrost/sheets/params.json:ro
     depends_on:
       redis:
         condition: service_healthy
