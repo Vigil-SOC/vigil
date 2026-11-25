@@ -7871,6 +7871,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/supervisory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Supervisory
+         * @description What the supervisory model has to learn from, per function.
+         *
+         *     Nothing checks settings on a schedule yet, so the state is ``off`` and there
+         *     are no suggestions, held suggestions or history. Failure reasons and settings
+         *     are not measured yet: ``null``, which the page reads differently from an
+         *     empty list.
+         */
+        get: operations["get_api_supervisory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/timeline/range": {
         parameters: {
             query?: never;
@@ -33532,6 +33557,37 @@ export interface operations {
         };
     };
     get_api_storage_status: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_supervisory: {
         parameters: {
             query?: never;
             header?: {
