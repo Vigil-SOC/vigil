@@ -103,6 +103,7 @@ from core.detections.inventory import (
     quiet,
     readers,
     sees,
+    sentinel,
     splunk,
     splunk_sees,
     wazuh,
@@ -928,7 +929,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
+    """Read every configured repo, Wazuh, Kibana, Splunk and Sentinel, and sync each, checking
     Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate and
     Caught.
 
@@ -962,6 +963,8 @@ def sync_repos() -> List[Any]:
             # After Runs, and before Sees' searches can spend the budget.
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
+        # A read-only copy of the workspace's analytics rules: no search sweeps.
+        reports.append(_sync_azure_sentinel())
         reports.append(accurate.sweep())
         # Verdicts at most once a day; each sync, a shadow copy not yet passing is
         # searched once per matching emulated step, from its SIEM's budget.
@@ -1195,6 +1198,41 @@ def _sync_splunk() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
     return report, config
 
 
+def _sync_azure_sentinel() -> SourceReport:
+    """Sentinel's analytics rules, with the azure-sentinel integration's credentials.
+
+    The same config handling as _sync_elastic: removed only when the config was
+    read and azure-sentinel is not enabled; a missing SDK, an unreadable config
+    or a failed read is reported and never removes a rule.
+    """
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+
+    try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=sentinel.SOURCE, skipped="no integration config")
+        if AZURE_SENTINEL.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=sentinel.SOURCE,
+                removed=_remove_siem(sentinel.SOURCE, AZURE_SENTINEL.id),
+                skipped="not enabled",
+            )
+        config = resolve(AZURE_SENTINEL)
+        absent = missing(config, *(f.name for f in AZURE_SENTINEL.fields))
+        if absent:
+            return SourceReport(source=sentinel.SOURCE, skipped=f"no {absent[0]}")
+        report = sync_source(sentinel.SOURCE, sentinel.read_analytics_rules(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is reported, never removed
+        logger.warning("detection rules: syncing azure_sentinel failed: %s", exc)
+        return SourceReport(
+            source=sentinel.SOURCE, error=f"{type(exc).__name__}: {exc}"
+        )
+    logger.info("detection rules: %s", asdict(report))
+    return report
+
+
 def _link_same_id() -> tuple:
     """Link each Kibana rule to the one active repo Elastic rule with its rule_id."""
     return _link(
@@ -1369,7 +1407,12 @@ def _audit_link(session: Any, copy: DetectionRule, old: Dict[str, Any]) -> None:
 
 
 DRIFT_LINKS = ("same_id", "known_name", "agent")
-SIEM_NAMES = {kibana.SOURCE: "Kibana", splunk.SOURCE: "Splunk", wazuh.SOURCE: "Wazuh"}
+SIEM_NAMES = {
+    kibana.SOURCE: "Kibana",
+    splunk.SOURCE: "Splunk",
+    wazuh.SOURCE: "Wazuh",
+    sentinel.SOURCE: "Sentinel",
+}
 
 
 def _at(when: datetime) -> str:

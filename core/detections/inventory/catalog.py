@@ -514,7 +514,7 @@ def _siem_tools(session: Any) -> List[str]:
     return sorted(
         session.scalars(
             select(DetectionRule.source)
-            .where(~DetectionRule.source.startswith(REPO_PREFIX), LISTED)
+            .where(DetectionRule.source.in_(LISTING_SIEMS), LISTED)
             .distinct()
         )
     )
@@ -610,7 +610,7 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
                 count if lint_fails else 0
             )
             entry["held"] = entry.get("held", 0) + (count if held else 0)
-        else:
+        elif tool in LISTING_SIEMS:  # a provider inventory has no checks to tally
             for check, result in (
                 ("runs", runs),
                 ("sees", sees),
@@ -857,7 +857,11 @@ def siem_checks_by_technique() -> Dict[str, Dict[str, Any]]:
             .select_from(DetectionRule)
             .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE, ~DetectionRule.source.startswith(REPO_PREFIX))
+            .where(
+                ACTIVE,
+                ~DetectionRule.source.startswith(REPO_PREFIX),
+                DetectionRule.source.not_in(PROVIDER_SOURCES),
+            )
             .group_by(technique.c.t, RUNS, SEES)
         ).all()
     out: Dict[str, Dict[str, Any]] = {}
@@ -1135,6 +1139,8 @@ def _fires(session: Any) -> Dict[str, Dict[Any, List[Dict[str, Any]]]]:
         if found.get("resolved"):
             by_rule.setdefault(found["rule_id"], []).append(hit)
             continue
+        if not _name_answers(r.data_source):
+            continue  # attributed by its provider's rule id or not at all
         context = r.entity_context if isinstance(r.entity_context, dict) else {}
         name = context.get("rule_name") or r.title
         if name:
@@ -1150,6 +1156,8 @@ def _fired(
     copy carries (``shared``) can't tell them apart, so its name-only findings
     count on none of them."""
     traced = fires.get("by_rule", {}).get(rule.id, [])
+    if not _name_answers(rule.source):
+        return traced, 0
     named = fires.get("by_name", {}).get(rule.name, [])
     return (traced, len(named)) if shared else (traced + named, 0)
 
@@ -1503,13 +1511,14 @@ def _health_rows(
     # repo origin share one, and are one rule.
     names: Dict[str, set] = {}
     for rule in copies["rows"]:
-        names.setdefault(rule.name, set()).add(rule_of[rule.id])
+        if _name_answers(rule.source):
+            names.setdefault(rule.name, set()).add(rule_of[rule.id])
     mapped = set()
     for rule in copies["rows"]:
         checks = rule.checks or {}
         if rule.techniques:
             mapped.add(rule_of[rule.id])
-        hits, unsure = _fired(fires, rule, len(names[rule.name]) > 1)
+        hits, unsure = _fired(fires, rule, len(names.get(rule.name, ())) > 1)
         fired[rule.id] = hits[:FIRES_LISTED]
         days: Dict[str, int] = {}
         for hit in hits:
@@ -2270,10 +2279,49 @@ def _splunk_ref(records: List[Any]) -> Any:
     return name, (f"{app}/{name}@{owner}", f"{app}/{name}")
 
 
+_ALERT_RULES = re.compile(r"/alertRules/", re.IGNORECASE)
+
+
+def _sentinel_rule_ids(record: Any) -> List[str]:
+    """The analytic rule names an incident's related_analytic_rule_ids end in,
+    deduplicated: ARM ids cut at the last /alertRules/, a bare name kept."""
+    ids = record.get("related_analytic_rule_ids") if isinstance(record, dict) else None
+    out: Dict[str, None] = {}
+    for value in ids if isinstance(ids, list) else []:
+        if isinstance(value, str) and value.strip():
+            name = _ALERT_RULES.split(value.strip())[-1].strip("/")
+            if name:
+                out[name] = None
+    return list(out)
+
+
+def _sentinel_rule_id(record: Any) -> Optional[str]:
+    """The one analytic rule that raised the incident, or None: of several, none."""
+    ids = _sentinel_rule_ids(record)
+    return ids[0] if len(ids) == 1 else None
+
+
 # Inventory source -> the SIEM a reason names.
-SIEM_NAMES = {"elastic": "Kibana", "wazuh": "Wazuh", "splunk": "Splunk"}
-# The key readers, in order: a Kibana rule wins over a Wazuh one.
-KEY_READERS = (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id))
+SIEM_NAMES = {
+    "elastic": "Kibana",
+    "wazuh": "Wazuh",
+    "splunk": "Splunk",
+    "azure_sentinel": "Sentinel",
+}
+# A finding's data_source -> (inventory source, key reader), in order: a Kibana
+# rule wins over a Wazuh one. Splunk reads its search name in _splunk_ref.
+KEY_READERS = {
+    "elastic": (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id)),
+    "azure_sentinel": (("azure_sentinel", _sentinel_rule_id),),
+}
+# Read-only provider inventories: attributed by the provider's rule id only,
+# never by a rule name or an alert title, and no check runs on them.
+PROVIDER_SOURCES = ("azure_sentinel",)
+
+
+def _name_answers(source: Optional[str]) -> bool:
+    """Whether a rule of ``source`` (or a finding from it) can be traced by name."""
+    return source not in PROVIDER_SOURCES
 
 
 def _named(finding: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
@@ -2296,9 +2344,10 @@ def _rule_ref(finding: Mapping[str, Any]) -> Any:
     """(inventory source, native keys to try, alert time, Splunk search name) the
     finding names, or why it is unknown. No keys: match the search name alone."""
     source = finding.get("data_source")
-    if source not in ("elastic", "splunk"):
+    if source != "splunk" and source not in KEY_READERS:
         return _unknown(
-            f"only Kibana, Wazuh and Splunk rules resolve; this finding is from {source}"
+            "only Kibana, Wazuh, Splunk and Sentinel rules resolve; "
+            f"this finding is from {source}"
         )
     context = finding.get("entity_context")
     evidence = context.get("source_evidence") if isinstance(context, dict) else None
@@ -2311,13 +2360,20 @@ def _rule_ref(finding: Mapping[str, Any]) -> Any:
             return ref
         siem, (name, keys) = "splunk", ref
     else:
-        for siem, read in KEY_READERS:
+        for siem, read in KEY_READERS[source]:
             key = next(filter(None, map(read, records)), None)
             if key is not None:
                 keys = (key,)
                 break
         else:
-            return _unknown("the alert names no Kibana or Wazuh detection rule")
+            if source == "elastic":
+                return _unknown("the alert names no Kibana or Wazuh detection rule")
+            named = max((len(_sentinel_rule_ids(r)) for r in records), default=0)
+            return _unknown(
+                f"the incident names {named} analytic rules, so no one rule raised it"
+                if named > 1
+                else "the incident names no analytic rule id"
+            )
     fired = _when(finding.get("timestamp"))
     if fired is None:
         return _unknown("the finding has no alert time to pick a version by")
@@ -2335,7 +2391,8 @@ def rule_for_finding(finding: Mapping[str, Any]) -> Dict[str, Any]:
     Splunk notable resolves by its search_name, with app and owner read from its
     orig_sid (its top-level fields, else its _raw stash record); with no
     readable sid, by search_name alone only when exactly one Splunk saved search
-    has that name.
+    has that name. A Sentinel incident resolves by the one analytic rule its
+    related_analytic_rule_ids names.
     """
     if _named(finding) is None:
         ref = _rule_ref(finding)
@@ -2515,6 +2572,7 @@ def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
         r.finding_id: _alert_name(r)
         for r in rows
         if not (resolved.get(r.finding_id) or {}).get("resolved")
+        and _name_answers(r.data_source)
     }
     carriers, versions = _name_carriers(session, {n for n in names.values() if n})
     cards: Dict[Tuple[int, int], Dict[str, Any]] = {}
@@ -2522,7 +2580,8 @@ def case_rules(session: Any, findings: Iterable[Any]) -> Dict[str, Any]:
     for r in rows:
         found = resolved.get(r.finding_id) or _unknown("no rule could be read")
         by_name = False
-        if not found.get("resolved"):
+        # A provider-attributed alert keeps _rule_ref's reason: no name fallback.
+        if not found.get("resolved") and _name_answers(r.data_source):
             alt = _by_name(names[r.finding_id], r.timestamp, carriers, versions)
             if alt.get("resolved"):
                 found, by_name = alt, True
@@ -2621,7 +2680,11 @@ def _name_carriers(
         return {}, {}
     copies = list(
         session.scalars(
-            select(DetectionRule).where(LISTED, DetectionRule.name.in_(names))
+            select(DetectionRule).where(
+                LISTED,
+                DetectionRule.name.in_(names),
+                DetectionRule.source.not_in(PROVIDER_SOURCES),
+            )
         )
     )
     origin_ids = {
