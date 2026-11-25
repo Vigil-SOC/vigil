@@ -21,7 +21,7 @@ from core.response.config import applied_intent
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
-from core.supervisory import store
+from core.supervisory import medic_hold, store
 from core.supervisory.failures import failures
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
@@ -90,7 +90,7 @@ def get_supervisory():
                 "next_check_at": None,
                 "history_days": read["history_days"],
                 "functions_watched": len(read["functions"]),
-                "medic_open_related": 0,
+                "medic_open_related": medic_hold.open_related(),
             },
             "functions": read["functions"],
             "suggestions": stored["suggestions"],
