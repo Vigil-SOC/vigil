@@ -14599,11 +14599,8 @@ export interface components {
             outcome: "applied" | "dismissed" | "undone";
             /** To */
             to: string;
-            /**
-             * Undoable
-             * @default false
-             */
-            undoable: boolean;
+            /** Undoable */
+            undoable?: boolean | null;
         };
         /** HistoryFigure */
         HistoryFigure: {

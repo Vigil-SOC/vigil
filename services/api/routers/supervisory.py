@@ -40,7 +40,7 @@ class HistoryEntryResponse(BaseModel):
     outcome: Literal["applied", "dismissed", "undone"]
     note: str
     improved: bool | None = None
-    undoable: bool = False
+    undoable: bool | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
