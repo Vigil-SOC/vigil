@@ -20,6 +20,11 @@ only with at least two fewer. With missed even, a line is suggested only when
 it cuts false alarms clearly: by at least three and by a fifth. Nothing is
 suggested below the floor of 20 judged findings.
 
+Two things make the check lean toward not lowering the line. A real attack
+below the line is judged only when someone found it another way, so missed
+attacks are undercounted. And a dismissal that a threat-intel feed overrode is
+left out, since whether the feed was on then is not recorded.
+
 The value is set in the environment or INTENT.md, so the card cannot be applied
 in one click; the settings list says where it comes from.
 """
@@ -31,9 +36,10 @@ from typing import Any
 
 from sqlalchemy import or_, select
 
-from core.daemon_config import DaemonConfig
+from core.config import get_settings
 from core.detections.inventory.accurate import _closes, verdict_of
 from core.response.config import ResponseConfig
+from core.storage.intake_queue import intake_severity_band
 from core.storage.models import Finding
 from core.storage.unit_of_work import unit_of_work
 from core.supervisory.feedback import (
@@ -73,9 +79,7 @@ def check() -> list[dict[str, Any]]:
 def _judged(start: datetime, end: datetime) -> list[tuple[str, float, bool]]:
     """(finding id, confidence, real) for each finding only the line decided,
     first triaged in the window, whose winning determination is a person's."""
-    severities = {
-        s.lower() for s in DaemonConfig.from_env().processing.investigate_severities
-    }
+    severities = {s.lower() for s in get_settings().daemon_investigate_severities}
     where = (
         Finding.first_verdict_at >= start,
         Finding.first_verdict_at < end,
@@ -89,13 +93,21 @@ def _judged(start: datetime, end: datetime) -> list[tuple[str, float, bool]]:
             select(
                 Finding.finding_id,
                 Finding.severity,
-                Finding.ai_enrichment,
+                # Only the keys the offer rule reads, not the whole triage record.
+                Finding.ai_enrichment["recommended_action"].astext,
+                Finding.ai_enrichment["triage_confidence"],
+                Finding.ai_enrichment["enrichment"]["threat_indicators"],
                 Finding.noise_marked_at,
                 Finding.noise_marked_by_kind,
             ).where(*where)
         )
-        for fid, severity, enrichment, marked, kind in rows:
-            confidence = _line_decided(severity, enrichment or {}, severities)
+        for fid, severity, action, confidence, indicators, marked, kind in rows:
+            enrichment = {
+                "recommended_action": action,
+                "triage_confidence": confidence,
+                "enrichment": {"threat_indicators": indicators},
+            }
+            confidence = _line_decided(severity, enrichment, severities)
             if confidence is None:
                 continue
             won = verdict_of(closes.get(fid, []), marked, kind)
@@ -113,8 +125,12 @@ def _line_decided(
     action = str(enrichment.get("recommended_action") or "").lower()
     if action == "dismiss" or action in _ACTING:
         return None
-    band = str(severity or "").strip().lower()
-    if band in _SEVERE or band in investigated:
+    # As the processor reads it: the raw severity for the high and critical
+    # route, the intake band (anything unknown is "unknown") for the severities
+    # the install investigates.
+    if str(severity or "").lower() in _SEVERE:
+        return None
+    if intake_severity_band("detection", finding_severity=severity) in investigated:
         return None
     if (enrichment.get("enrichment") or {}).get("threat_indicators"):
         return None
@@ -184,12 +200,8 @@ def _proposal(
         )
         plain = (
             f"Raising the line to {line:.2f} would have kept {noise0 - noise1} false "
-            f"alarms out of investigation in the last {WINDOW_DAYS} days"
-            + (
-                f", and missed {missed1 - missed0} more real attacks."
-                if missed1 > missed0
-                else ", without missing a real attack."
-            )
+            f"alarms out of investigation in the last {WINDOW_DAYS} days, without "
+            "missing another real attack."
         )
         verb = "Raise"
     replay = _replay_line(missed0 - missed1, noise1 - noise0)
