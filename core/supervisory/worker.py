@@ -116,17 +116,20 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
     try:
         incidents = medic_hold.open_incidents(settings)
         swept = medic_hold.sweep(settings, incidents) if incidents is not None else None
-    except Exception:  # noqa: BLE001 - read as Medic unreadable; the checks still run
+    except Exception:
         logger.exception("supervisory hold sweep failed")
         incidents, swept = None, None
         failed.append("medic_hold")
+    # Importing the package registers the built-in checks.
+    import core.supervisory.checks  # noqa: F401
+
     for name, check in list(_CHECKS.items()):
         try:
             for proposal in check():
                 held = medic_hold.incident_for(proposal["fn"], incidents or [])
                 if store.propose(**proposal, held_incident=held) is not None:
                     proposed += 1
-        except Exception:  # noqa: BLE001 - one check failing must not stop the rest
+        except Exception:
             logger.exception("supervisory check %s failed", name)
             failed.append(name)
     _write_state(now, now + timedelta(seconds=interval), failed)
@@ -180,7 +183,7 @@ def status(
         return {"state": "off", "last_check_at": None, "next_check_at": None}
     try:
         state = _read_state()
-    except Exception:  # noqa: BLE001 - the page says unknown rather than failing
+    except Exception:
         logger.exception("could not read the supervisory worker state")
         return {"state": "unknown", "last_check_at": None, "next_check_at": None}
     if state is None:
