@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
@@ -29,8 +29,21 @@ RESUGGEST_AFTER = timedelta(days=30)
 LIVE = ("open", "held")
 HISTORY_LIMIT = 100
 
-# Apply and undo are not built yet, so no card offers them.
-_NO_APPLY = {"possible": False, "reason": "One-click apply is not available yet"}
+# Settings one click can change: the autonomy ceiling and the orchestrator settings.
+APPLICABLE = frozenset(
+    {
+        "act.reversible",
+        "act.irreversible",
+        "act.four_eyes",
+        "investigate.enabled",
+        "investigate.max_cost_per_investigation",
+        "investigate.max_total_hourly_cost",
+        "investigate.max_runtime_per_investigation",
+        "investigate.max_iterations_per_agent",
+        "investigate.max_concurrent_agents",
+    }
+)
+_NOT_APPLICABLE = "Vigil can't change this setting in one click"
 
 _CARD_FIELDS = (
     "why",
@@ -210,8 +223,16 @@ def _check_incident(incident: dict[str, Any] | None) -> None:
         raise TypeError("held_incident needs id, title and firing_since")
 
 
-def read() -> dict[str, list[dict[str, Any]]]:
-    """Open suggestions, held ones, and the latest history, as the page reads them."""
+def read(
+    current: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Open suggestions, held ones, and the latest history, as the page reads them.
+
+    ``current`` is the settings list keyed by setting (value and change): it
+    decides whether a card can be applied and whether an apply can be undone.
+    Without it, nothing can.
+    """
+    current = current or {}
     with unit_of_work() as session:
         live = (
             session.execute(
@@ -231,11 +252,134 @@ def read() -> dict[str, list[dict[str, Any]]]:
             .scalars()
             .all()
         )
+        applied_ids = {h.suggestion_id for h in history if h.outcome == "applied"}
+        states = (
+            dict(
+                session.execute(
+                    select(
+                        SupervisorySuggestion.suggestion_id, SupervisorySuggestion.state
+                    ).where(SupervisorySuggestion.suggestion_id.in_(applied_ids))
+                ).all()
+            )
+            if applied_ids
+            else {}
+        )
+        latest = _latest_per_suggestion(session, applied_ids)
         return {
-            "suggestions": [_suggestion(s) for s in live if s.state == "open"],
+            "suggestions": [
+                _suggestion(s, current.get(s.setting_key))
+                for s in live
+                if s.state == "open"
+            ],
             "held": [_held(s) for s in live if s.state == "held"],
-            "history": [_entry(h) for h in history],
+            "history": [
+                _entry(h, _undoable(h, states, latest, current)) for h in history
+            ],
         }
+
+
+def locked_live(session: Session, suggestion_id: str) -> SupervisorySuggestion:
+    """The open suggestion, locked with its setting for this transaction."""
+    row = _locked(session, suggestion_id)
+    if row.state != "open":
+        raise StoreRefusal(409, f"Suggestion {suggestion_id} is {row.state}")
+    return row
+
+
+def locked_applied(
+    session: Session, history_id: str
+) -> tuple[SupervisoryHistory, SupervisorySuggestion]:
+    """The apply to undo and its suggestion, locked with its setting.
+
+    Only the latest record of a suggestion that is still applied can be undone.
+    """
+    try:
+        entry_id = int(history_id)
+    except ValueError:
+        raise StoreRefusal(404, f"No history entry {history_id}") from None
+    entry = session.get(SupervisoryHistory, entry_id)
+    if entry is None:
+        raise StoreRefusal(404, f"No history entry {history_id}")
+    if entry.outcome != "applied":
+        raise StoreRefusal(409, f"History entry {history_id} is not an apply")
+    row = _locked(session, entry.suggestion_id)
+    if row.state != "applied":
+        raise StoreRefusal(409, f"That change is {row.state}, not applied")
+    newest = _latest_per_suggestion(session, {row.suggestion_id}).get(row.suggestion_id)
+    if newest != entry.id:
+        raise StoreRefusal(409, "A later record replaced that apply")
+    return entry, row
+
+
+def record(
+    session: Session,
+    row: SupervisorySuggestion,
+    outcome: str,
+    actor: str,
+    principal_id: str | None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Write one history row and move the suggestion to the matching state."""
+    row.state = outcome
+    entry = SupervisoryHistory(
+        suggestion_id=row.suggestion_id,
+        at=datetime.now(UTC),
+        setting_key=row.setting_key,
+        from_value=row.from_value,
+        to_value=row.to_value,
+        outcome=outcome,
+        note=note,
+        actor=actor,
+        actor_principal_id=principal_id,
+    )
+    session.add(entry)
+    session.flush()
+    return _entry(entry, outcome == "applied")
+
+
+def _locked(session: Session, suggestion_id: str) -> SupervisorySuggestion:
+    """The suggestion, its setting's lock taken first, then its row, as propose does."""
+    key = session.execute(
+        select(SupervisorySuggestion.setting_key).where(
+            SupervisorySuggestion.suggestion_id == suggestion_id
+        )
+    ).scalar_one_or_none()
+    if key is None:
+        raise StoreRefusal(404, f"No suggestion {suggestion_id}")
+    _lock(session, key)
+    return session.execute(
+        select(SupervisorySuggestion)
+        .where(SupervisorySuggestion.suggestion_id == suggestion_id)
+        .with_for_update()
+    ).scalar_one()
+
+
+def _latest_per_suggestion(session: Session, ids: set[str]) -> dict[str, int]:
+    if not ids:
+        return {}
+    return dict(
+        session.execute(
+            select(SupervisoryHistory.suggestion_id, func.max(SupervisoryHistory.id))
+            .where(SupervisoryHistory.suggestion_id.in_(ids))
+            .group_by(SupervisoryHistory.suggestion_id)
+        ).all()
+    )
+
+
+def _undoable(
+    h: SupervisoryHistory,
+    states: dict[str, str],
+    latest: dict[str, int],
+    current: dict[str, dict[str, Any]],
+) -> bool:
+    """An apply can be put back while it is the suggestion's last record, still
+    applied, and the setting still has the applied value."""
+    if h.outcome != "applied" or states.get(h.suggestion_id) != "applied":
+        return False
+    if latest.get(h.suggestion_id) != h.id:
+        return False
+    now = current.get(h.setting_key)
+    return now is not None and same_value(now["value"], h.to_value)
 
 
 def dismiss(
@@ -245,41 +389,15 @@ def dismiss(
     if reason not in DISMISS_REASONS:
         raise StoreRefusal(422, f"reason must be one of: {', '.join(DISMISS_REASONS)}")
     with unit_of_work() as session:
-        # The setting's lock first, then the row, in the order propose takes them.
-        key = session.execute(
-            select(SupervisorySuggestion.setting_key).where(
-                SupervisorySuggestion.suggestion_id == suggestion_id
-            )
-        ).scalar_one_or_none()
-        if key is not None:
-            _lock(session, key)
-        row = session.execute(
-            select(SupervisorySuggestion)
-            .where(SupervisorySuggestion.suggestion_id == suggestion_id)
-            .with_for_update()
-        ).scalar_one_or_none()
-        if row is None:
-            raise StoreRefusal(404, f"No suggestion {suggestion_id}")
+        row = _locked(session, suggestion_id)
         if row.state not in LIVE:
             raise StoreRefusal(409, f"Suggestion {suggestion_id} is {row.state}")
-        row.state = "dismissed"
-        entry = SupervisoryHistory(
-            suggestion_id=row.suggestion_id,
-            at=datetime.now(UTC),
-            setting_key=row.setting_key,
-            from_value=row.from_value,
-            to_value=row.to_value,
-            outcome="dismissed",
-            note=reason,
-            actor=actor,
-            actor_principal_id=principal_id,
-        )
-        session.add(entry)
-        session.flush()
-        return _entry(entry)
+        return record(session, row, "dismissed", actor, principal_id, reason)
 
 
-def _suggestion(s: SupervisorySuggestion) -> dict[str, Any]:
+def _suggestion(
+    s: SupervisorySuggestion, setting: dict[str, Any] | None
+) -> dict[str, Any]:
     card = s.card or {}
     return {
         "id": s.suggestion_id,
@@ -293,8 +411,24 @@ def _suggestion(s: SupervisorySuggestion) -> dict[str, Any]:
         **{k: card.get(k) for k in _CARD_FIELDS},
         # The 30-case check is for investigation suggestions only.
         "check": card.get("check") if s.fn == "investigation" else None,
-        "apply": dict(_NO_APPLY),
+        "apply": _apply_state(s, setting),
     }
+
+
+def _apply_state(
+    s: SupervisorySuggestion, setting: dict[str, Any] | None
+) -> dict[str, Any]:
+    if s.setting_key not in APPLICABLE or setting is None:
+        return {"possible": False, "reason": _NOT_APPLICABLE}
+    change = setting.get("change") or {}
+    if not change.get("possible"):
+        return {"possible": False, "reason": change.get("reason") or _NOT_APPLICABLE}
+    if not same_value(setting["value"], s.from_value):
+        return {
+            "possible": False,
+            "reason": f"The setting is {setting['value']} now, not {s.from_value}",
+        }
+    return {"possible": True}
 
 
 def _held(s: SupervisorySuggestion) -> dict[str, Any]:
@@ -309,7 +443,7 @@ def _held(s: SupervisorySuggestion) -> dict[str, Any]:
     }
 
 
-def _entry(h: SupervisoryHistory) -> dict[str, Any]:
+def _entry(h: SupervisoryHistory, undoable: bool = False) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": str(h.id),
         "at": _iso(h.at),
@@ -321,7 +455,7 @@ def _entry(h: SupervisoryHistory) -> dict[str, Any]:
     }
     if h.outcome == "applied":
         entry["improved"] = h.improved
-        entry["undoable"] = False
+        entry["undoable"] = undoable
     return entry
 
 
