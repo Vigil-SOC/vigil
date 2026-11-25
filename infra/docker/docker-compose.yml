@@ -75,6 +75,16 @@ x-intent-env: &intent-env
   # Empty = static scans. A Bifrost model id adds model-backed scanning and
   # changes the hold's rule, so all three processes must agree on it too.
   VIGIL_SKILL_SCANNER_MODEL: ${VIGIL_SKILL_SCANNER_MODEL:-}
+  # Hold new repo rule versions from coverage until the import check passes them
+  # or a person approves them. The backend (sync) and soc-daemon (the sweep)
+  # must agree; false in .env turns the hold off.
+  VIGIL_RULE_IMPORT_CHECK: ${VIGIL_RULE_IMPORT_CHECK:-true}
+  # Operator skills root, for every process that loads skills. Pass-through:
+  # unset stays unset (the State Directory's skills/ folder), set empty in .env
+  # turns operator skills off. A path under VIGIL_INTENT_DIR's mount makes the
+  # skills managed by that checkout: Vigil refuses every write into it (#5070).
+  # llm-worker repeats this line below.
+  VIGIL_SKILLS_PATH:
 
 # One build for the API and the backup services. A second image tag would
 # compile this Dockerfile twice on the first `up`. Only backup-pre-upgrade, which
@@ -92,7 +102,7 @@ services:
     # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
     # The upgrade one-shot creates the extensions, the role and the tables.
     # First boot must not apply infra/database/init.
-    image: postgres:16-alpine
+    image: ${VIGIL_POSTGRES_IMAGE:-postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d}
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
@@ -126,7 +136,7 @@ services:
   # Re-runs on every `up`. A restart of the same revision exits 0 at once.
   upgrade:
     # Built by backup-pre-upgrade (see x-backend-build). Same image as backup.
-    image: vigil-backend:local
+    image: ${VIGIL_BACKEND_IMAGE:-vigil-backend:local}
     pull_policy: never
     container_name: deeptempo-upgrade
     environment:
@@ -164,7 +174,7 @@ services:
 
   # Redis - Job queue backend for ARQ (LLM request queuing + session store)
   redis:
-    image: redis:7-alpine
+    image: ${VIGIL_REDIS_IMAGE:-redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe}
     container_name: deeptempo-redis
     ports:
       # Loopback-only, for the same reason as postgres above. It also requires
@@ -196,7 +206,7 @@ services:
   backend:
     # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
     # no such image on a registry, and the pull's error would be noise.
-    image: vigil-backend:local
+    image: ${VIGIL_BACKEND_IMAGE:-vigil-backend:local}
     pull_policy: never
     container_name: deeptempo-backend
     environment:
@@ -231,6 +241,10 @@ services:
       # Whole days, shorter than 12 months (365). Empty keeps 12 months.
       KEY_ROTATION_DAYS: ${KEY_ROTATION_DAYS:-}
       DEV_MODE: ${DEV_MODE:-false}
+      # Investigate and compose runs whose start names no wall, in seconds.
+      # 60–86400; outside that the API keeps 30 minutes and logs it. Not the
+      # autonomous runtime, which stays on the intent anchor above.
+      WORKFLOW_DEFAULT_WALL_SECONDS: ${WORKFLOW_DEFAULT_WALL_SECONDS:-1800}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
@@ -267,6 +281,9 @@ services:
       SSL_CERT_FILE:
       REQUESTS_CA_BUNDLE:
       NODE_EXTRA_CA_CERTS:
+      # Declared intent directory, read here for the skills API's managed state
+      # and revision only; soc-daemon is still the only applier (see there).
+      VIGIL_INTENT_DIR: ${VIGIL_INTENT_DIR:-}
     ports:
       - "6987:6987"
     volumes:
@@ -290,6 +307,10 @@ services:
       # Read-write: POST /api/audit/erasure appends to erased-principals.txt.
       - ${VIGIL_UPGRADE_HOST_DIR:-upgrade_state}:/var/lib/vigil-upgrade
       - agent_shell_socket:/run/vigil/shell
+      # Declared intent, read-only, as in soc-daemon (see there): the skills
+      # API reports its REVISION, and skills under it (VIGIL_SKILLS_PATH=
+      # /etc/vigil/intent/skills) are managed there, never written by Vigil.
+      #   - ${VIGIL_INTENT_SOURCE}:/etc/vigil/intent:ro
     depends_on:
       metrics-token:
         condition: service_completed_successfully
@@ -324,7 +345,7 @@ services:
   backup: &backup
     # Built by backup-pre-upgrade (see x-backend-build). Never pulled: there is
     # no such image on a registry, and the pull's error would be noise.
-    image: vigil-backend:local
+    image: ${VIGIL_BACKEND_IMAGE:-vigil-backend:local}
     pull_policy: never
     environment:
       HOME: /home/vigil
@@ -416,6 +437,7 @@ services:
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
     profiles: [daemon]
+    image: ${VIGIL_DAEMON_IMAGE:-vigil-daemon:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.daemon
@@ -432,6 +454,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is empty - run ./start.sh once, which sets it in .env}
       # On, a published database password is accepted, as in backend.
       DEV_MODE: ${DEV_MODE:-false}
+      # Auth imports at start and fail closed without it, as in backend.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # AI
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -482,6 +506,10 @@ services:
       SSL_CERT_FILE:
       REQUESTS_CA_BUNDLE:
       NODE_EXTRA_CA_CERTS:
+      # Declared intent directory (INTENT.md + REVISION). Empty is observe mode.
+      # This daemon is the only applier (see volumes below); the backend reads
+      # the same directory only to report skills under it as managed.
+      VIGIL_INTENT_DIR: ${VIGIL_INTENT_DIR:-}
       # Integrations (loaded from core/config)
       SPLUNK_URL: ${SPLUNK_URL}
       SPLUNK_USERNAME: ${SPLUNK_USERNAME}
@@ -515,6 +543,14 @@ services:
       - vigil_investigations:/app/data/investigations
       - detection_rules:/home/vigil/security-detections
       - mcp_runner_token:/run/vigil/mcp-runner:ro
+      # Declared intent: bind-mount a plain checkout of the repo holding
+      # INTENT.md and REVISION, and set VIGIL_INTENT_DIR=/etc/vigil/intent.
+      # Compose has no optional-volume syntax, so this stays commented.
+      # The first line of REVISION names the revision; a plain checkout writes
+      # it in a post-merge hook: git rev-parse HEAD > REVISION
+      # Skills kept in the checkout load when VIGIL_SKILLS_PATH points under the
+      # mount (/etc/vigil/intent/skills); backend and llm-worker mount it too.
+      #   - ${VIGIL_INTENT_SOURCE}:/etc/vigil/intent:ro
     depends_on:
       mcp-runner:
         condition: service_started
@@ -541,11 +577,9 @@ services:
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
     profiles: [daemon]
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.backend
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    # Built by backup-pre-upgrade (see x-backend-build), which it waits on.
+    image: ${VIGIL_BACKEND_IMAGE:-vigil-backend:local}
+    pull_policy: never
     container_name: deeptempo-llm-worker
     command: ["python", "-m", "services.worker"]
     healthcheck:
@@ -579,6 +613,7 @@ services:
       # Same value as the backend and daemon (see x-intent-env).
       - VIGIL_SKILL_SCANNER=${VIGIL_SKILL_SCANNER-/opt/skillspector/bin/skillspector}
       - VIGIL_SKILL_SCANNER_MODEL=${VIGIL_SKILL_SCANNER_MODEL:-}
+      - VIGIL_SKILLS_PATH
       # No HTTP port here: worker metrics reach Prometheus through the OTLP
       # push to the collector, scraped at otel-collector:8889.
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -591,6 +626,9 @@ services:
       # Same State Directory and detection rules as backend (see there).
       - vigil_home:/home/vigil/.vigil
       - detection_rules:/home/vigil/security-detections
+      # Declared intent, read-only, when VIGIL_SKILLS_PATH points under it
+      # (see soc-daemon).
+      #   - ${VIGIL_INTENT_SOURCE}:/etc/vigil/intent:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -619,9 +657,9 @@ services:
   # infra/helm/vigil/templates/agent-worker-deployment.yaml for what has to
   # stop using arq:llm before that one can go away.
   agent-worker:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.agent
+    # Built by agent-shell. Never pulled, as backend.
+    image: ${VIGIL_AGENT_IMAGE:-vigil-agent:local}
+    pull_policy: never
     container_name: deeptempo-agent-worker
     # The image's default CMD. Named anyway, so the two services read as the
     # pair they are rather than one command and one absence.
@@ -654,9 +692,9 @@ services:
   # check, so what keeps this off the host is the private bridge plus the bearer
   # token, exactly as the chart relies on ClusterIP plus a NetworkPolicy.
   agent-serve:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.agent
+    # Built by agent-shell. Never pulled, as backend.
+    image: ${VIGIL_AGENT_IMAGE:-vigil-agent:local}
+    pull_policy: never
     container_name: deeptempo-agent-serve
     command: ["node", "dist/serve.js"]
     environment: *agent-env
@@ -689,6 +727,10 @@ services:
   # backend posts one case's view and one command over a unix socket on a volume
   # only the two of them mount. No network, no credentials, read-only root.
   agent-shell:
+    # The one service that builds the agent image; agent-worker and agent-serve
+    # only use it (see x-backend-build for why one builder). This one because
+    # the backend depends on it, so `up backend` alone still builds it.
+    image: ${VIGIL_AGENT_IMAGE:-vigil-agent:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.agent
@@ -751,7 +793,7 @@ services:
   # (K1 §6 C6). Each runs as its own uid, read-only, with no capabilities.
   medic:
     profiles: [medic]
-    image: vigil-medic:local
+    image: ${VIGIL_MEDIC_IMAGE:-vigil-medic:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.medic
@@ -817,7 +859,7 @@ services:
   # which resolves to the address on their own network.
   medic-gateway:
     profiles: [medic]
-    image: vigil-medic-gateway:local
+    image: ${VIGIL_MEDIC_GATEWAY_IMAGE:-vigil-medic-gateway:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.medic-gateway
@@ -873,7 +915,7 @@ services:
   # (enable-compose.sh prints the value for this host).
   medic-dockerproxy:
     profiles: [medic]
-    image: vigil-medic-dockerproxy:local
+    image: ${VIGIL_MEDIC_DOCKERPROXY_IMAGE:-vigil-medic-dockerproxy:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.medic-dockerproxy
@@ -941,7 +983,7 @@ services:
   #   everything in _ALLOWED_PATHS in services/api/routers/bifrost_config.py,
   #     including models/(base|details|parameters)
   bifrost:
-    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
+    image: ${VIGIL_BIFROST_IMAGE:-maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1@sha256:a8942692af7b4b89196cd8fc33653b7353488dfd58b24078fe793b8574a8084b}}
     container_name: deeptempo-bifrost
     ports:
       # Loopback-only, for the same reason as postgres and redis above.
@@ -962,11 +1004,21 @@ services:
       # environment. An empty value does not open the API — Bifrost enables
       # auth and then answers 401. start.sh and dc() mint one before a boot.
       - BIFROST_ADMIN_PASSWORD=${BIFROST_ADMIN_PASSWORD:-}
+      # BIFROST_LOCAL_SHEETS=true (any non-empty value) reads the empty pricing
+      # and model-parameter sheets shipped beside config.json instead of
+      # fetching getbifrost.ai's, which is fatal at boot with no route out.
+      # Unset keeps the publisher's sheets. Both must stay set, if empty:
+      # config.json names them and an absent variable is fatal too.
+      - BIFROST_PRICING_URL=${BIFROST_LOCAL_SHEETS:+file:///etc/bifrost/sheets/pricing.json}
+      - BIFROST_PARAMS_URL=${BIFROST_LOCAL_SHEETS:+file:///etc/bifrost/sheets/params.json}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was
       # told at runtime. Without it every UI change lasted until the next recreate.
       - bifrost_data:/app/data
       - ./bifrost/config.json:/app/data/config.json:ro
+      # Outside /app/data, which is the volume.
+      - ./bifrost/pricing.json:/etc/bifrost/sheets/pricing.json:ro
+      - ./bifrost/params.json:/etc/bifrost/sheets/params.json:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -990,7 +1042,7 @@ services:
   # The one service that builds vigil-mcp-runner:local; mcp-runner waits on it
   # and only uses the image (see x-backend-build for why one builder).
   mcp-runner-token:
-    image: vigil-mcp-runner:local
+    image: ${VIGIL_MCP_RUNNER_IMAGE:-vigil-mcp-runner:local}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.mcp-runner
@@ -1020,7 +1072,7 @@ services:
   # mcp-runner mode 0440 root:1000 is not readable by both. 0444 is. The volume
   # is mounted only on the backend and on prometheus.
   metrics-token:
-    image: vigil-mcp-runner:local
+    image: ${VIGIL_MCP_RUNNER_IMAGE:-vigil-mcp-runner:local}
     pull_policy: never
     entrypoint:
       - /bin/sh
@@ -1053,7 +1105,7 @@ services:
   # only, so it cannot resolve postgres or redis.
   mcp-runner:
     # Built by mcp-runner-token; never pulled (see backend).
-    image: vigil-mcp-runner:local
+    image: ${VIGIL_MCP_RUNNER_IMAGE:-vigil-mcp-runner:local}
     pull_policy: never
     container_name: deeptempo-mcp-runner
     environment:
@@ -1236,10 +1288,10 @@ services:
       - SPLUNK_PASSWORD=${SPLUNK_PASSWORD:-changeme123}
       - SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
     ports:
-      - "8000:8000"   # Web UI (host 6990 is taken by the agent worker health port)
-      - "8088:8088"   # HEC (HTTP Event Collector)
-      - "8089:8089"   # Management port
-      - "9997:9997"   # Forwarder port
+      - "127.0.0.1:8000:8000"   # Web UI (host 6990 is taken by the agent worker health port)
+      - "127.0.0.1:8088:8088"   # HEC (HTTP Event Collector)
+      - "127.0.0.1:8089:8089"   # Management port
+      - "127.0.0.1:9997:9997"   # Forwarder port
     volumes:
       - splunk_data:/opt/splunk/var
       - splunk_etc:/opt/splunk/etc

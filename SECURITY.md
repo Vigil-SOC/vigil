@@ -23,23 +23,42 @@ we do not backport to earlier minors.
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
 Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`, `vigil-agent`,
-`vigil-mcp-runner`) and the Helm chart at `infra/helm/vigil/` follow the same window.
+`vigil-mcp-runner`, `vigil-medic`, `vigil-medic-gateway`, `vigil-medic-dockerproxy`)
+and the Helm chart at `infra/helm/vigil/` follow the same window.
 Chart `version` and `appVersion` move in lockstep, so the chart version
 identifies the app release it deploys.
 
-Release images are signed keyless by `.github/workflows/release.yml` (GitHub
-OIDC → Fulcio, Rekor). Confirm an image came from that workflow — the identity
-is pinned to this file and issuer, not any Actions run in the repo. Image tags
-drop the leading `v`; the certificate identity uses the git tag:
+Each release publishes, all signed keyless by `.github/workflows/release.yml`
+(GitHub OIDC → Fulcio, Rekor):
+
+- the seven images above, each multi-arch index and every platform manifest in it;
+- the chart, packaged with its dependencies, at `oci://ghcr.io/vigil-soc/charts/vigil`;
+- `ghcr.io/vigil-soc/vigil-release`: `list.json`, every image an install runs
+  (Vigil's and third-party) by index and per-platform digest, and the source tree
+  of the commit the release was built from.
+
+Confirm an artifact came from that workflow — the identity is pinned to this
+file and issuer, not any Actions run in the repo. Tags drop the leading `v`;
+the certificate identity uses the git tag:
 
 ```bash
-cosign verify \
-  --certificate-identity https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version> \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/vigil-soc/vigil-backend:<version>
+ID=https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version>
+ISSUER=https://token.actions.githubusercontent.com
+# An image (any of the seven)
+cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/vigil-backend:<version>
+# One platform manifest, by its own digest
+AMD64=$(docker buildx imagetools inspect --raw ghcr.io/vigil-soc/vigil-backend:<version> \
+  | jq -r '.manifests[] | select(.platform.architecture == "amd64") | .digest')
+cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" "ghcr.io/vigil-soc/vigil-backend@$AMD64"
+# The chart and the list
+cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/charts/vigil:<version>
+cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/vigil-release:<version>
 ```
 
-The same invocation works for `vigil-daemon`, `vigil-agent` and `vigil-mcp-runner`.
+Betas (`X.Y.0-beta.DATE.RUN`) publish the same artifacts, signed by
+`.github/workflows/beta.yml`; the release identity above rejects them. Verify
+one with
+`ID=https://github.com/Vigil-SOC/vigil/.github/workflows/beta.yml@refs/heads/main`.
 
 ---
 

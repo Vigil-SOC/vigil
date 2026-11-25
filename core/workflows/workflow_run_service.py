@@ -8,11 +8,13 @@ from typing import Any, Dict, List, Mapping, Optional
 from sqlalchemy import exists, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.storage.config_service import write_config_audit
 from core.storage.connection import get_db_manager
 from core.storage.models import Case, WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
 from core.telemetry import get_meter
 from core.time import utcnow
+from core.workflows.redecision_hold import MARK
 from core.workflows.run_rating import RATED_STATUS
 
 logger = logging.getLogger(__name__)
@@ -321,6 +323,11 @@ class WorkflowRunService:
                 # Deleted rows are hidden here rather than dropped from the table:
                 # the ledger behind a run is the only account of what an agent did.
                 stmt = select(WorkflowRun).where(WorkflowRun.deleted_at.is_(None))
+                # Re-decision runs stay out of every listing. A fetch by run id
+                # still returns the ledger.
+                stmt = stmt.where(
+                    WorkflowRun.trigger_context[MARK].astext.is_distinct_from("true")
+                )
                 if workflow_id:
                     stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
                 if workflow_source:
@@ -425,19 +432,34 @@ class WorkflowRunService:
             logger.warning("Error rating workflow runs: %s", e)
             return {}
 
-    def delete_run(self, run_id: str) -> bool:
-        """Hide ``run_id`` from the listings. False when there is no such live run."""
-        try:
-            db = get_db_manager()
-            with db.session_scope() as session:
-                row = session.get(WorkflowRun, run_id)
-                if row is None or row.deleted_at is not None:
-                    return False
-                row.deleted_at = utcnow()
-                return True
-        except SQLAlchemyError as e:
-            logger.warning("Error deleting workflow run %s: %s", run_id, e)
-            return False
+    def delete_run(self, run_id: str, changed_by: Optional[str] = None) -> bool:
+        """Hide ``run_id`` from the listings. False when there is no such live run.
+
+        With ``changed_by``, the trail records who hid it, in the same transaction.
+        A database or trail error raises, so a refused entry is never a "not found".
+        """
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(WorkflowRun, run_id)
+            if row is None or row.deleted_at is not None:
+                return False
+            row.deleted_at = utcnow()
+            if changed_by:
+                write_config_audit(
+                    session,
+                    config_type="workflow_run",
+                    config_key=run_id,
+                    action="delete",
+                    old_value={
+                        "workflow_id": row.workflow_id,
+                        "workflow_version": row.workflow_version,
+                        "status": row.status,
+                        "case_id": (row.trigger_context or {}).get("case_id"),
+                    },
+                    new_value={"deleted_at": row.deleted_at.isoformat()},
+                    changed_by=changed_by,
+                )
+            return True
 
     def set_result_summary(self, run_id: str, summary: str) -> bool:
         """Re-render the stored account of a run that has already finished.

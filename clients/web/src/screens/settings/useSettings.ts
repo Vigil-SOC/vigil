@@ -18,6 +18,7 @@ import api, {
   type AIConfigResponse,
   type AIModelInfo,
   type BudgetQuotaResponse,
+  type Emulation,
   type BudgetSettings,
   type Ceiling,
   type ComponentAssignment,
@@ -99,7 +100,9 @@ interface PlatformDbForm {
   proxy_password: string
   ssh_private_key_path: string
   ssh_key_passphrase: string
+  ssh_host_key: string
   verify_proxy_tls: boolean
+  database_password: string
 }
 
 const EMPTY_PLATFORM_DB: PlatformDbForm = {
@@ -110,7 +113,9 @@ const EMPTY_PLATFORM_DB: PlatformDbForm = {
   proxy_password: '',
   ssh_private_key_path: '',
   ssh_key_passphrase: '',
+  ssh_host_key: '',
   verify_proxy_tls: true,
+  database_password: '',
 }
 
 export function usePlatformDatabase() {
@@ -142,7 +147,9 @@ export function usePlatformDatabase() {
           proxy_password: '',
           ssh_private_key_path: d.ssh_private_key_path || '',
           ssh_key_passphrase: '',
+          ssh_host_key: d.ssh_host_key || '',
           verify_proxy_tls: d.verify_proxy_tls ?? true,
+          database_password: '',
         })
         setHasPassword(Boolean(d.has_proxy_password))
         setHasPassphrase(Boolean(d.has_ssh_key_passphrase))
@@ -169,13 +176,20 @@ export function usePlatformDatabase() {
           proxy_password: f.proxy_password,
           ssh_private_key_path: f.ssh_private_key_path,
           ssh_key_passphrase: f.ssh_key_passphrase,
+          ssh_host_key: f.ssh_host_key,
           verify_proxy_tls: f.verify_proxy_tls,
+          database_password: f.database_password,
         })
         .then(() => {
           // clear secret inputs so a later save doesn't overwrite with stale UI state
           if (f.proxy_password) setHasPassword(true)
           if (f.ssh_key_passphrase) setHasPassphrase(true)
-          setForm((prev) => ({ ...prev, proxy_password: '', ssh_key_passphrase: '' }))
+          setForm((prev) => ({
+            ...prev,
+            proxy_password: '',
+            ssh_key_passphrase: '',
+            database_password: '',
+          }))
         }),
     [],
   )
@@ -752,7 +766,10 @@ export function useInvestigateWorkflows() {
     ])
       .then(([res, agreement]) => {
         if (cancelled) return
-        const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter((w) => w.run_kind === 'investigate')
+        // re-decision is an investigate workflow the live intake list does not offer.
+        const listed = ((res.data?.workflows ?? []) as ApiWorkflow[]).filter(
+          (w) => w.run_kind === 'investigate' && w.id !== 're-decision',
+        )
         setWorkflows(
           listed.map((w) => ({
             id: w.id,
@@ -1544,6 +1561,9 @@ export interface DetectionSource {
   vendor_repo?: boolean
   /** The person said this non-github.com host is GitHub Enterprise */
   github_enterprise?: boolean
+  /** A rule library's branch or tag, and the commit its files were taken at */
+  ref?: string
+  commit?: string | null
 }
 
 interface DetectionStats {
@@ -1611,6 +1631,11 @@ export function useDetectionRules() {
       detectionRulesApi.setDeployTarget(id, on, githubEnterprise).then(() => reload()),
     [reload],
   )
+  // A rule library's reads and imports are detectionRulesApi.readLibrary/importLibrary (the dialogs).
+  const removeLibrary = useCallback(
+    (id: string) => detectionRulesApi.removeLibrary(id).then(() => reload()),
+    [reload],
+  )
   const updateAll = useCallback(
     () =>
       detectionRulesApi.updateAll().then((res) => {
@@ -1620,7 +1645,7 @@ export function useDetectionRules() {
     [reload],
   )
 
-  return { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget }
+  return { sources, stats, phase, error, reload, addSource, removeSource, removeLibrary, updateSource, updateAll, setDeployTarget }
 }
 
 const JOB_POLL_MS = 1000
@@ -1680,4 +1705,37 @@ export function useIngestionJob(dataType: 'finding' | 'history' = 'finding') {
   )
 
   return { job, attaching, upload, start }
+}
+
+/** The stored emulators and host list (GET/PUT /api/autonomy/emulation), shared with the tool rows' mark. */
+export function useEmulation() {
+  const [data, setData] = useState<Emulation | null>(null)
+  const [failed, setFailed] = useState(false)
+  const load = useCallback(
+    () =>
+      autonomyApi
+        .emulation()
+        .then((r) => {
+          setData(r.data)
+          setFailed(false)
+        })
+        .catch(() => setFailed(true)),
+    [],
+  )
+  useEffect(() => {
+    void load()
+  }, [load])
+  // refetch after a failure too: a 409 may mean someone stopped or edited meanwhile
+  const save = useCallback(
+    async (body: { tools?: string[]; hosts?: string[] }) => {
+      try {
+        setData((await autonomyApi.updateEmulation(body)).data)
+      } catch (err) {
+        await load()
+        throw err
+      }
+    },
+    [load],
+  )
+  return { data, failed, save }
 }

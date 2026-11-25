@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
+from core.storage.config_service import write_config_audit
 from core.storage.connection import get_db_manager
 from core.storage.models import CustomWorkflow
 from core.storage.schemas import CustomWorkflowSchema
@@ -59,6 +60,29 @@ def _definition_value(key: str, value: Any) -> Any:
     return value or ("" if key in ("name", "description", "use_case") else [])
 
 
+def _recorded(wf: CustomWorkflow) -> Dict[str, Any]:
+    """What the trail keeps of a workflow: its definition, version and state."""
+    return {
+        **{key: getattr(wf, key) for key in _DEFINITION_FIELDS},
+        "is_active": wf.is_active,
+        "version": wf.version,
+    }
+
+
+# One entry per change, on the caller's session so it commits with it.
+def _audit(session, workflow_id: str, action: str, before, after, changed_by) -> None:
+    if changed_by and before != after:
+        write_config_audit(
+            session,
+            config_type="custom_workflow",
+            config_key=workflow_id,
+            action=action,
+            old_value=before,
+            new_value=after,
+            changed_by=changed_by,
+        )
+
+
 def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
     """Ensure every phase's agent_id resolves against the unified pool.
 
@@ -97,7 +121,12 @@ def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
 class CustomWorkflowService:
     """Persistence service for database-backed custom workflows."""
 
-    def create(self, payload: Dict[str, Any], created_by: str) -> Dict[str, Any]:
+    def create(
+        self,
+        payload: Dict[str, Any],
+        created_by: str,
+        changed_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Create a new custom workflow.
 
@@ -106,6 +135,7 @@ class CustomWorkflowService:
                 name, description, phases. Optional: use_case, trigger_examples,
                 workflow_id.
             created_by: Username of the session user creating the workflow.
+            changed_by: User id the audit entry names; none writes no entry.
 
         Returns:
             The created workflow as a dict.
@@ -136,6 +166,7 @@ class CustomWorkflowService:
             )
             session.add(wf)
             session.flush()
+            _audit(session, workflow_id, "create", None, _recorded(wf), changed_by)
             result = CustomWorkflowSchema.dump(wf)
         logger.info(f"Created custom workflow: {workflow_id}")
         return result
@@ -159,7 +190,10 @@ class CustomWorkflowService:
             return CustomWorkflowSchema.dump_many(rows)
 
     def update(
-        self, workflow_id: str, updates: Dict[str, Any]
+        self,
+        workflow_id: str,
+        updates: Dict[str, Any],
+        changed_by: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Update a workflow. Increments version once, only when a definition field
@@ -168,6 +202,7 @@ class CustomWorkflowService:
         Args:
             workflow_id: The workflow to update.
             updates: Partial dict of fields to change.
+            changed_by: User id the audit entry names; none writes no entry.
 
         Returns:
             Updated dict, or None if not found.
@@ -189,6 +224,7 @@ class CustomWorkflowService:
             if not wf:
                 return None
 
+            before = _recorded(wf)
             changed = False
             for key, value in updates.items():
                 if key in allowed and value is not None:
@@ -201,20 +237,23 @@ class CustomWorkflowService:
                 wf.version = (wf.version or 1) + 1
             wf.updated_at = utcnow()
             session.flush()
+            _audit(session, workflow_id, "update", before, _recorded(wf), changed_by)
             result = CustomWorkflowSchema.dump(wf)
         logger.info(
             f"Updated custom workflow: {workflow_id} (version={result['version']})"
         )
         return result
 
-    def delete(self, workflow_id: str) -> bool:
+    def delete(self, workflow_id: str, changed_by: Optional[str] = None) -> bool:
         """Soft-delete by setting is_active=False. Returns True if found."""
         db = get_db_manager()
         with db.session_scope() as session:
             wf = session.get(CustomWorkflow, workflow_id)
             if not wf:
                 return False
+            before = _recorded(wf)
             wf.is_active = False
             wf.updated_at = utcnow()
+            _audit(session, workflow_id, "delete", before, _recorded(wf), changed_by)
         logger.info(f"Soft-deleted custom workflow: {workflow_id}")
         return True

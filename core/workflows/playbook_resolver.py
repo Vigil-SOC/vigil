@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
+from core.config import get_settings
 from core.llm.defaults import DEFAULT_MODEL
 from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, gated_tools, tool_classes
 
@@ -20,20 +22,63 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Named for what the agent layer already defaults to, so a resolved config that
+# states nothing unusual states the same numbers a packaged one would. Replay
+# reads this constant. Investigate and compose runs overlay max_wall_ms from
+# WORKFLOW_DEFAULT_WALL_SECONDS at resolve time; this dict stays 30 minutes.
+DEFAULT_SPEND = {"max_cost_usd": 5.0, "max_wall_ms": 1_800_000}
+# Seconds. Below a minute is not a wall an operator would set on purpose, and a
+# day is the override ceiling. Outside this, the setting is ignored.
+WALL_SECONDS_MIN = 60
+WALL_SECONDS_MAX = 86_400
+WALL_SETTING = "WORKFLOW_DEFAULT_WALL_SECONDS"
+DEFAULT_RUNTIME = {"max_turns": 8, "result_cap": 20_000, "recall_limit": 3}
+
+
+def deployment_wall_ms() -> int:
+    """Wall for an investigate or compose run whose start names none.
+
+    Read when the run starts. A number outside 60–86400 seconds is ignored and
+    the 30-minute constant stands; a non-numeric value never reaches here.
+    """
+    seconds = get_settings().workflow_default_wall_seconds
+    if WALL_SECONDS_MIN <= seconds <= WALL_SECONDS_MAX:
+        return seconds * 1000
+    return DEFAULT_SPEND["max_wall_ms"]
+
+
+def wall_setting_warning() -> Optional[str]:
+    """Why the deployment wall was ignored, or None when the setting is in range."""
+    seconds = get_settings().workflow_default_wall_seconds
+    if WALL_SECONDS_MIN <= seconds <= WALL_SECONDS_MAX:
+        return None
+    return (
+        f"{WALL_SETTING} is {seconds}, outside {WALL_SECONDS_MIN}-{WALL_SECONDS_MAX} "
+        "seconds; using 1800 seconds"
+    )
+
+
+def warn_default_wall() -> None:
+    """Log once, at API start, when the deployment wall is a number out of range."""
+    message = wall_setting_warning()
+    if message:
+        logger.warning("%s", message)
+
+
+def _with_deployment_wall(budgets: Dict[str, Any]) -> Dict[str, Any]:
+    return {**budgets, "max_wall_ms": deployment_wall_ms()}
+
+
 class UnknownPlaybook(Exception):
     pass
 
-
-# Named for what the agent layer already defaults to, so a resolved config that
-# states nothing unusual states the same numbers a packaged one would.
-DEFAULT_SPEND = {"max_cost_usd": 5.0, "max_wall_ms": 1_800_000}
-DEFAULT_RUNTIME = {"max_turns": 8, "result_cap": 20_000, "recall_limit": 3}
 
 # Two attempts at the answer follow a phase's tool loop, so a phase costs at most
 # this many model calls.
 EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
+EMULATION = "emulation"
 
 # What the investigate arch's lead asks for. Only telemetry_search needs an
 # integration; the rest are native tools. Naming them as capabilities is what lets
@@ -160,7 +205,22 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("azure-ad", ("aad_get_user",)),
         Candidate("okta", ("get_okta_user", "list_okta_users")),
     ),
+    # Every outside tool the stored emulation record marks, read when resolve
+    # runs (_candidates): no tool is named here, so a person's mark is the binding.
+    EMULATION: (),
 }
+
+# A need a stored manifest may still name, and the capability it now means.
+NEED_ALIASES: Dict[str, str] = {"atomic_red_team_execute": EMULATION}
+
+
+def candidates_for(capability: str) -> Tuple[Candidate, ...]:
+    """What answers a capability; a need that is none names one catalogue tool."""
+    if capability == EMULATION:
+        from core.response.emulation import read_emulation
+
+        return tuple(Candidate(None, (tool,)) for tool in read_emulation().tools)
+    return CAPABILITIES.get(capability) or (Candidate(None, (capability,)),)
 
 
 # What one call of a capability may take and return, decided by the capability rather
@@ -202,6 +262,9 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     },
     # One account from an external API; the row cap allows a short user search.
     "identity_lookup": {"timeout_ms": 30_000, "max_rows": 20},
+    # An emulator runs one technique on one host; a runner's own limit is 180s.
+    # Its answer is a step or a few; the row cap is the bounds model's shape.
+    EMULATION: {"timeout_ms": 240_000, "max_rows": 200},
 }
 
 
@@ -214,8 +277,9 @@ def _bound_capabilities(
     needs: List[str], catalogue: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     bound: List[Dict[str, Any]] = []
-    for capability in needs:
-        candidates = CAPABILITIES.get(capability) or (Candidate(None, (capability,)),)
+    for need in needs:
+        capability = NEED_ALIASES.get(need, need)
+        candidates = candidates_for(capability)
         found = False
         for candidate in candidates:
             name = next((n for n in candidate.names() if n in catalogue), None)
@@ -255,7 +319,11 @@ def unknown_needs(
     needs: List[str], registry: Optional["MCPRegistry"] = None
 ) -> List[str]:
     catalogue = _tool_catalogue(registry)
-    return [n for n in needs if n not in CAPABILITIES and n not in catalogue]
+    return [
+        n
+        for n in needs
+        if n not in CAPABILITIES and n not in NEED_ALIASES and n not in catalogue
+    ]
 
 
 # What an investigate run's lead holds: an operator manifest's needs, else the
@@ -431,7 +499,9 @@ def _tools_of(
 # flat ceiling would starve a long playbook part-way through. Cost and wall bind.
 def _budgets(phases: List[Dict[str, Any]]) -> Dict[str, Any]:
     per_phase = int(DEFAULT_RUNTIME["max_turns"]) + EMIT_ATTEMPTS
-    return {"max_calls": max(len(phases), 1) * per_phase, **DEFAULT_SPEND}
+    return _with_deployment_wall(
+        {"max_calls": max(len(phases), 1) * per_phase, **DEFAULT_SPEND}
+    )
 
 
 # Every outside tool whose stored class is reversible, irreversible, or none.
@@ -472,9 +542,53 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if effect in (REVERSIBLE, IRREVERSIBLE)
     }
     writes = own | outside
+    # A tool the emulation record marks is an emulator wherever it was bound: the
+    # agent layer journals each call to it, and it gets the emulation bounds.
+    from core.response.emulation import read_emulation
+
+    emulation = read_emulation()
     return [
-        {**tool, "writes": True} if tool["id"] in writes else tool for tool in tools
+        {
+            **tool,
+            **({"writes": True} if tool["id"] in writes else {}),
+            **(
+                {
+                    **CAPABILITY_BOUNDS[EMULATION],
+                    "emulator": True,
+                    **_name_hosts(tool, emulation.hosts),
+                }
+                if emulation.marked(tool["id"])
+                else {}
+            ),
+        }
+        for tool in tools
     ]
+
+
+# An emulator's hostname is narrowed to the listed hosts, and its description
+# names them, so the model asks only for a host it can run on. tools_router
+# still refuses an unlisted host: the list may change mid-run. The schema is
+# copied first; the catalogue entry is shared between runs.
+def _name_hosts(tool: Dict[str, Any], hosts: Tuple[str, ...]) -> Dict[str, Any]:
+    from core.response.emulation import LIMITS_POINTER
+
+    parameters = copy.deepcopy(tool.get("parameters") or {})
+    hostname = (parameters.get("properties") or {}).get("hostname")
+    if not isinstance(hostname, dict):
+        return {}
+    if hosts:
+        hostname["enum"] = list(hosts)
+        note = f"Runs only on the hosts listed for emulation: {', '.join(hosts)}."
+    else:
+        note = (
+            "No host is listed for emulation, so every call is refused until "
+            f"an operator lists one under {LIMITS_POINTER}."
+        )
+    description = (tool.get("description") or "").rstrip()
+    return {
+        "parameters": parameters,
+        "description": f"{description}\n\n{note}" if description else note,
+    }
 
 
 def resolve(
@@ -535,7 +649,7 @@ def resolve(
         **({"effort": effort} if effort else {}),
         **_instructions(),
         "budgets": (
-            dict(INVESTIGATE_BUDGETS)
+            _with_deployment_wall(dict(INVESTIGATE_BUDGETS))
             if definition.run_kind == "investigate"
             else _budgets(phases)
         ),

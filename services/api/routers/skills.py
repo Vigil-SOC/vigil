@@ -9,12 +9,13 @@ bundled library is never modified.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from core.auth import trail_events
+from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate, require_permission
 from core.llm.cost.budget import BudgetExceeded
 from core.llm.oneshot import NoProviderConfigured
@@ -26,7 +27,13 @@ from core.routing import Auth, RouterMeta
 from core.skills import skill_sources
 from core.skills.skill_ai_generator import SkillDraft, generate_skill_draft
 from core.skills.skill_eval import has_cases, load_cases, run_cases
-from core.skills.skill_hold import ApprovalRefused, ScanState, approve, scan_states
+from core.skills.skill_hold import (
+    ApprovalRefused,
+    ScanState,
+    approve,
+    digest_of,
+    scan_states,
+)
 from core.skills.skill_library import (
     UPLOAD_MAX,
     Skill,
@@ -37,6 +44,7 @@ from core.skills.skill_library import (
     install_uploaded_skills,
     is_bundled,
     load_skills,
+    managed_skills,
     operator_skills_root,
     read_skill_file,
     skill_body,
@@ -48,6 +56,7 @@ from core.skills.skill_library import (
 )
 from core.skills.skill_scan import scan_mode
 from core.skills.skill_usage import skill_usage
+from core.storage.config_service import audited_change, write_config_audit
 from core.storage.unit_of_work import unit_of_work
 from services.api import skill_sweep
 from services.api.routers.claude import NO_PROVIDER_DETAIL
@@ -110,6 +119,13 @@ class SkillSource(BaseModel):
     skills: int
 
 
+class SkillsManaged(BaseModel):
+    """The operator root is under the declared directory: Vigil writes none of it."""
+
+    directory: str
+    revision: str
+
+
 class SkillResponse(BaseModel):
     name: str
     description: str
@@ -124,6 +140,8 @@ class SkillResponse(BaseModel):
     scan: SkillScanSummary
     # Set for a skill installed from a git repo.
     source: Optional[SkillSource] = None
+    # Set on every row while VIGIL_SKILLS_PATH is under VIGIL_INTENT_DIR (#5070).
+    managed: Optional[SkillsManaged] = None
 
 
 class SkillApproveRequest(BaseModel):
@@ -349,6 +367,7 @@ def _response(
     state: ScanState,
     usage: Optional[Dict[str, Tuple[int, int]]] = None,
     sources: Optional[Dict[str, dict]] = None,
+    managed: Any = ...,  # read here unless the caller read it once for many rows
 ) -> SkillResponse:
     reads, agents = (usage or {}).get(skill.name, (0, 0))
     source = (sources or {}).get(skill.name)
@@ -362,7 +381,13 @@ def _response(
         agents_7d=agents,
         scan=SkillScanSummary(**_scan_summary(state)),
         source=SkillSource(**source) if source else None,
+        managed=_managed() if managed is ... else managed,
     )
+
+
+def _managed() -> Optional[SkillsManaged]:
+    managed = managed_skills()
+    return SkillsManaged(**vars(managed)) if managed else None
 
 
 def _state_of(skill: Skill) -> ScanState:
@@ -374,6 +399,73 @@ def _loaded(name: str) -> Skill:
     if skill is None:
         raise SkillNotFound(f"No skill named {name!r}")
     return skill
+
+
+def _skill_record(skill: Skill) -> Dict[str, str]:
+    """What the trail keeps of a skill on disk: its name, description and content
+    digest. The digest's first 16 characters: the trail redacts a longer hex run."""
+    return {
+        "name": skill.name,
+        "description": skill.description,
+        "digest": digest_of(skill.path)[:16],
+    }
+
+
+def _current(names: List[str]) -> Dict[str, Dict[str, str]]:
+    """``_skill_record`` of each of ``names`` loaded now; a missing one is left out."""
+    loaded = {item.name: item for item in load_skills(skill_roots())}
+    return {n: _skill_record(loaded[n]) for n in names if n in loaded}
+
+
+def _audit_skills(
+    session, user, key: str, action: str, old, new: Optional[Dict]
+) -> None:
+    write_config_audit(
+        session,
+        config_type="skill",
+        config_key=key,
+        action=action,
+        old_value=old or None,
+        new_value=new,
+        changed_by=str(user.user_id),
+    )
+
+
+def _library_record(name: str) -> Dict:
+    """Where the library of ``name`` came from; the commit shortened, as the
+    trail redacts a full one."""
+    got = dict(skill_sources.sources([name]).get(name, {}))
+    if got.get("commit"):
+        got["commit"] = got["commit"][:12]
+    return {"name": name, **got}
+
+
+def _install_audited(user, key: str, install) -> List[Skill]:
+    """Run ``install`` (which writes skills nothing had), then record what it
+    wrote. Recorded after, not before, since the names are known only then
+    and a clone must not hold the trail's lock; a refused entry takes the
+    written skills out again."""
+    installed: List[Skill] = []
+    try:
+        with unit_of_work() as session:
+            installed = install()
+            _audit_skills(
+                session,
+                user,
+                key,
+                "create",
+                None,
+                {"skills": [_skill_record(s) for s in installed]},
+            )
+    except BaseException:
+        for skill in installed:
+            try:
+                delete_operator_skill(skill.name)
+                skill_sources.forget(skill.name)
+            except Exception:  # noqa: BLE001
+                logger.exception("could not take out unrecorded skill %s", skill.name)
+        raise
+    return installed
 
 
 def _http(exc: SkillError) -> HTTPException:
@@ -393,7 +485,8 @@ async def list_skills():
     skills = load_skills(skill_roots())
     states = await asyncio.to_thread(scan_states, skills)
     sources = await asyncio.to_thread(_sources, [skill.name for skill in skills])
-    return [_response(s, states[s.name], usage, sources) for s in skills]
+    managed = _managed()
+    return [_response(s, states[s.name], usage, sources, managed) for s in skills]
 
 
 @router.get("/{name}", response_model=SkillDetail)
@@ -410,7 +503,7 @@ async def get_skill(name: str):
         raise HTTPException(status_code=400, detail="Could not read the skill") from exc
     state = await asyncio.to_thread(_state_of, skill)
     sources = await asyncio.to_thread(_sources, [skill.name])
-    listed = _response(skill, state, _usage_by_skill(), sources)
+    listed = _response(skill, state, _usage_by_skill(), sources, _managed())
     return SkillDetail(
         **listed.model_dump(exclude={"scan"}),
         scan=_scan_detail(state),
@@ -445,20 +538,40 @@ async def get_skill_file(name: str, path: str):
     include_in_schema=False,
     dependencies=_SKILLS_WRITE,
 )
-async def save_skill(req: SkillWriteRequest):
+async def save_skill(req: SkillWriteRequest, user=Depends(get_current_user)):
     """Write ``<root>/[<category>/...]<name>/SKILL.md``, bumping its version.
 
     An existing operator skill is overwritten when ``version`` is the one on disk
     (409 otherwise); ``source`` copies that skill's folder.
     """
+
+    def write() -> Skill:
+        old = _current([req.name]).get(req.name)
+        new = {
+            "name": req.name,
+            "description": req.description,
+            "body": req.body,
+            "source": req.source,
+        }
+        # Recorded first: a refused entry writes nothing, a refused write records nothing.
+        with audited_change(
+            str(user.user_id),
+            config_type="skill",
+            config_key=req.name,
+            action="update" if old else "create",
+            old_value=old,
+            new_value=new,
+        ):
+            return write_operator_skill(
+                req.name,
+                req.description,
+                req.body,
+                source=req.source,
+                expected_version=req.version,
+            )
+
     try:
-        skill = write_operator_skill(
-            req.name,
-            req.description,
-            req.body,
-            source=req.source,
-            expected_version=req.version,
-        )
+        skill = await asyncio.to_thread(write)
     except SkillError as exc:
         raise _http(exc) from exc
     skill_sweep.request()
@@ -466,7 +579,7 @@ async def save_skill(req: SkillWriteRequest):
 
 
 @router.post("/upload", response_model=SkillUploadResponse, dependencies=_SKILLS_WRITE)
-async def upload_skill(file: UploadFile = File(...)):
+async def upload_skill(file: UploadFile = File(...), user=Depends(get_current_user)):
     """Install a ``SKILL.md`` or a ``.zip`` of one or more skills under the operator root.
 
     All or nothing: a skill refused refuses the upload, and a name already
@@ -476,7 +589,16 @@ async def upload_skill(file: UploadFile = File(...)):
     """
     data = await file.read(UPLOAD_MAX + 1)  # one byte over is enough to refuse it
     try:
-        installed, skipped = install_uploaded_skills(file.filename or "", data)
+        skipped = 0
+
+        def install() -> List[Skill]:
+            nonlocal skipped
+            got, skipped = install_uploaded_skills(file.filename or "", data)
+            return got
+
+        installed = await asyncio.to_thread(
+            _install_audited, user, f"upload:{file.filename or ''}", install
+        )
     except SkillError as exc:
         raise _http(exc) from exc
     skill_sweep.request()
@@ -526,11 +648,12 @@ async def install_repo(
     """
     try:
         installed = await asyncio.to_thread(
-            skill_sources.install_from_repo,
-            req.source,
-            req.commit,
-            req.names,
-            user.principal_id,
+            _install_audited,
+            user,
+            f"repo:{req.source}@{req.commit}",
+            lambda: skill_sources.install_from_repo(
+                req.source, req.commit, req.names, user.principal_id
+            ),
         )
     except SkillError as exc:
         raise _http(exc) from exc
@@ -629,10 +752,22 @@ async def approve_skill(
 
 
 @router.delete("/{name}", dependencies=_SKILLS_WRITE)
-async def remove_skill(name: str):
+async def remove_skill(name: str, user=Depends(get_current_user)):
     """Delete an operator skill directory. A bundled skill is refused."""
+
+    def delete() -> None:
+        with audited_change(
+            str(user.user_id),
+            config_type="skill",
+            config_key=name,
+            action="delete",
+            old_value=_current([name]).get(name) or {"name": name},
+            new_value=None,
+        ):
+            delete_operator_skill(name)
+
     try:
-        delete_operator_skill(name)
+        await asyncio.to_thread(delete)
     except SkillError as exc:
         raise _http(exc) from exc
     try:
@@ -688,15 +823,37 @@ async def library_update(
     409 when the repo has moved since, a pick is no longer offered, or a pick
     was edited here and not listed in ``edited``.
     """
-    try:
-        skills, removed = await asyncio.to_thread(
-            skill_sources.update_library,
-            name,
-            req.commit,
-            req.take,
-            user.principal_id,
-            req.edited,
+
+    def update() -> Tuple[List[Skill], List[str]]:
+        before = _current(req.take)
+        skills, removed = skill_sources.update_library(
+            name, req.commit, req.take, user.principal_id, req.edited
         )
+        # After, since the clone must not hold the trail's lock. Written already;
+        # a refused entry cannot undo it, so it is logged loudly.
+        try:
+            with unit_of_work() as session:
+                _audit_skills(
+                    session,
+                    user,
+                    f"library:{name}@{req.commit}",
+                    "update",
+                    {"skills": list(before.values())},
+                    {
+                        "skills": [_skill_record(s) for s in skills],
+                        "removed": removed,
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "skill library %s updated by %s but not recorded on the audit trail",
+                name,
+                user.user_id,
+            )
+        return skills, removed
+
+    try:
+        skills, removed = await asyncio.to_thread(update)
     except SkillError as exc:
         raise _http(exc) from exc
     skill_sweep.request()
@@ -707,10 +864,22 @@ async def library_update(
 
 
 @router.delete("/{name}/library", dependencies=_SKILLS_WRITE)
-async def remove_library(name: str):
+async def remove_library(name: str, user=Depends(get_current_user)):
     """Delete every skill installed with ``name`` from its repo, and stop tracking it."""
+
+    def delete() -> List[str]:
+        with audited_change(
+            str(user.user_id),
+            config_type="skill",
+            config_key=f"library:{name}",
+            action="delete",
+            old_value=_library_record(name),
+            new_value=None,
+        ):
+            return skill_sources.delete_library(name)
+
     try:
-        deleted = await asyncio.to_thread(skill_sources.delete_library, name)
+        deleted = await asyncio.to_thread(delete)
     except SkillError as exc:
         raise _http(exc) from exc
     return {"deleted": deleted}

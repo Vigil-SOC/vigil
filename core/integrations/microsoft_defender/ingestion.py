@@ -8,7 +8,8 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import httpx
 
@@ -33,6 +34,20 @@ _FOLLOW_REDIRECTS = True
 
 # The /api/alerts maximum page size.
 _HISTORY_PAGE = 10000
+
+# Machines are counted a page at a time. The id is not kept.
+MACHINE_PAGE = 10000
+_MACHINES_URL = "https://api.securitycenter.microsoft.com/api/machines"
+_MACHINES_SCOPE = "https://api.securitycenter.microsoft.com/.default"
+
+
+class MachineReadError(Exception):
+    """A machines read stopped. ``kind`` is the cause; the body is not kept."""
+
+    def __init__(self, kind: str, status_code: Optional[int] = None):
+        super().__init__(kind)
+        self.kind = kind
+        self.status_code = status_code
 
 
 def _push(bucket: List[str], value: Any) -> None:
@@ -103,6 +118,85 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             logger.error(f"Error getting Microsoft Defender access token: {e}")
             # A failed token exchange is an outage, not missing configuration.
             raise
+
+    def _machines_token(self, timeout: float) -> str:
+        """The same client-credentials exchange alert collection uses.
+
+        Logs nothing from the body. Raises ``MachineReadError``.
+        """
+        if self.access_token:
+            return self.access_token
+        tenant_id = self.config.get("tenant_id")
+        client_id = self.config.get("client_id")
+        client_secret = self.config.get("client_secret")
+        if not tenant_id or not client_id or not client_secret:
+            raise MachineReadError("no_credential")
+        try:
+            response = httpx.post(
+                f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "scope": _MACHINES_SCOPE,
+                    "grant_type": "client_credentials",
+                },
+                timeout=timeout,
+                follow_redirects=_FOLLOW_REDIRECTS,
+            )
+        except httpx.TimeoutException as exc:
+            raise MachineReadError("timeout") from exc
+        except httpx.HTTPError as exc:
+            raise MachineReadError("unreachable") from exc
+        if response.status_code >= 400:
+            raise MachineReadError("http", response.status_code)
+        try:
+            token = response.json().get("access_token")
+        except ValueError as exc:
+            raise MachineReadError("parse") from exc
+        if not token:
+            raise MachineReadError("parse")
+        self.access_token = token
+        return token
+
+    def count_machine_page(
+        self, odata_filter: str, skip: int, timeout: float
+    ) -> Tuple[int, int]:
+        """``(ids, rows)`` for one machines page. Ids are counted and dropped.
+
+        ``rows`` is the page length, which decides whether another page exists.
+        ``$top`` is 10,000 and ``$select`` is id.
+        """
+        token = self._machines_token(timeout)
+        try:
+            response = httpx.get(
+                _MACHINES_URL,
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "$filter": odata_filter,
+                    "$top": MACHINE_PAGE,
+                    "$skip": skip,
+                    "$select": "id",
+                },
+                timeout=timeout,
+                follow_redirects=_FOLLOW_REDIRECTS,
+            )
+        except httpx.TimeoutException as exc:
+            raise MachineReadError("timeout") from exc
+        except httpx.HTTPError as exc:
+            raise MachineReadError("unreachable") from exc
+        if response.status_code == 404:
+            raise MachineReadError("empty", response.status_code)
+        if response.status_code != 200:
+            raise MachineReadError("http", response.status_code)
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise MachineReadError("parse") from exc
+        rows = body.get("value") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            raise MachineReadError("parse")
+        ids = sum(1 for row in rows if isinstance(row, dict) and row.get("id"))
+        return ids, len(rows)
 
     async def fetch_alerts(
         self,
@@ -226,6 +320,28 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             skip += len(page)
         logger.info(f"Read {len(rows)} resolved alerts from Microsoft Defender")
         return rows
+
+    async def fetch_alert(self, alert_id: str) -> Optional[Dict[str, Any]]:
+        """One alert by its stored id, or None when Defender no longer holds it."""
+        token = await asyncio.to_thread(self._get_access_token)
+        if not token:
+            return None
+        response = await asyncio.to_thread(
+            httpx.get,
+            "https://api.securitycenter.microsoft.com/api/alerts/"
+            + quote(str(alert_id), safe=""),
+            headers={"Authorization": f"Bearer {token}"},
+            params={"$expand": "evidence"},
+            timeout=DEFAULT_TIMEOUT,
+            follow_redirects=_FOLLOW_REDIRECTS,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict) or not body.get("id"):
+            return None
+        return body
 
     def _history_row(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         finding = self.transform_alert_to_finding(alert) or {}

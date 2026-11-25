@@ -28,10 +28,11 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Tuple, Uni
 import httpx
 
 from core.federation.error_kind import kind_of
-from core.integrations._base.config import missing, resolve, resolve_fields
+from core.integrations._base.config import missing, resolve
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+from core.integrations.cloudforce_one.descriptor import CLOUDFORCE_ONE
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
@@ -233,7 +234,7 @@ async def _opencti() -> Outcome:
         timeout=_REQUEST_TIMEOUT,
     )
     try:
-        # about { version } with the token: a bad token and a wrong URL differ.
+        # me { name } with the token: a bad token and a wrong URL differ.
         return await service.test_connection()
     finally:
         await service.close()
@@ -488,18 +489,19 @@ async def _crowdstrike() -> Outcome:
     )
 
     def read() -> Outcome:
-        # The adapter's token exchange, then its detections ID query for one
-        # ID. last_error is a status or a connection error, never the secret.
+        # The adapter's token exchange, then its alerts ID query for one ID
+        # and no product filter. HTTP 200, including an empty list, passes.
+        # last_error is a status or a connection error, never the secret.
         if not service._ensure_authenticated():
             return failed(
                 f"CrowdStrike {service.last_error or 'authentication failed'}",
                 status=service.last_status,
             )
-        if service._query_detection_ids(None, 1) is None:
+        if service._query_alert_ids(None, 1) is None:
             return failed(
                 f"CrowdStrike {service.last_error}", status=service.last_status
             )
-        return True, "Read CrowdStrike detections"
+        return True, "Read CrowdStrike alerts"
 
     try:
         return await asyncio.to_thread(read)
@@ -508,11 +510,8 @@ async def _crowdstrike() -> Outcome:
 
 
 async def _cloudforce_one() -> Outcome:
-    # No descriptor and no MCP server: the poller reads the same fields. The
-    # token is a secret, so it is not in the stored config dict.
-    config = resolve_fields(
-        "cloudforce_one", ("api_token", "taxii_server_url", "collection_ids")
-    )
+    # Same descriptor the poller resolves, so Test and the poll see one config.
+    config = resolve(CLOUDFORCE_ONE)
     collection_ids = [
         part.strip()
         for part in str(config.get("collection_ids") or "").split(",")
@@ -586,7 +585,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     AMAZON_SECURITY_LAKE.id: _security_lake,
     MICROSOFT_DEFENDER.id: _defender,
     CROWDSTRIKE.id: _crowdstrike,
-    "cloudforce_one": _cloudforce_one,
+    CLOUDFORCE_ONE.id: _cloudforce_one,
 }
 
 

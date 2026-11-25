@@ -30,6 +30,12 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 from sqlalchemy import event, select, text
 
 from core.config import Settings, get_settings
+from core.response.config import (
+    applied_intent,
+    applied_values,
+    managed_widening,
+    settle_pending,
+)
 from core.storage import config_service as config_store
 from core.storage.connection import get_db_session
 from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
@@ -110,11 +116,14 @@ def environment_locks_act(settings: Optional[Settings] = None) -> bool:
     """Force-approval, or auto-response turned off, beats a stored act flag.
 
     Neither variable can turn an act flag on. ``DAEMON_AUTO_RESPONSE`` defaults
-    to true, which is not a grant.
+    to true, which is not a grant. An applied INTENT.md ``respond.auto_response:
+    false`` locks too; a declared true never clears the env lock.
     """
     settings = get_settings() if settings is None else settings
-    return bool(settings.daemon_force_approval) or not bool(
-        settings.daemon_auto_response
+    return (
+        bool(settings.daemon_force_approval)
+        or not bool(settings.daemon_auto_response)
+        or applied_values().get("respond.auto_response") is False
     )
 
 
@@ -354,11 +363,26 @@ def update_ceiling(
     """
     if locked is None:
         locked = environment_locks_act()
+    applied = applied_intent(fresh=True)
+    asked = {
+        key: value
+        for key, value in (
+            ("act.reversible", act_reversible),
+            ("act.irreversible", act_irreversible),
+            ("act.four_eyes", four_eyes),
+        )
+        if value is not None
+    }
 
     def change(current: Ceiling) -> tuple[Ceiling, str]:
         wants_act_on = act_reversible is True or act_irreversible is True
         if locked and wants_act_on:
             raise CeilingRefusal(409, "The environment wins; Act was not saved.")
+        # A declared directory's act.* keys may be narrowed here, never widened.
+        for key, value in asked.items():
+            refused = managed_widening(key, value, applied)
+            if refused:
+                raise CeilingRefusal(409, refused)
         if caller_is_service:
             if four_eyes is not None and four_eyes != current.four_eyes:
                 raise CeilingRefusal(403, "A service account cannot switch four-eyes")
@@ -383,7 +407,9 @@ def update_ceiling(
         }
         return replace(current, **edit), "Autonomy ceiling updated"
 
-    return _locked_update(change, user_id)
+    stored = _locked_update(change, user_id)
+    settle_pending(asked, user_id)
+    return stored
 
 
 def stop_ceiling(user_id: str) -> Ceiling:

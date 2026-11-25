@@ -45,6 +45,7 @@ def insert_case(
     finding_ids: Optional[Sequence[str]] = None,
     readers: Optional[Sequence[str]] = None,
     reader_teams: Optional[Sequence[str]] = None,
+    recheck_mark: Optional[dict] = None,
 ) -> Case:
     """Insert one case on the caller's session. Does not commit.
 
@@ -76,6 +77,10 @@ def insert_case(
         reader_principal_ids=list(readers) if readers else None,
         reader_team_ids=list(reader_teams) if reader_teams else None,
     )
+    # None must stay SQL NULL. Assigning it writes a JSON null, and agreement
+    # then treats every ordinary Case as a re-check.
+    if recheck_mark:
+        case.recheck_mark = recheck_mark
     case.team = team
     session.add(case)
     session.flush()

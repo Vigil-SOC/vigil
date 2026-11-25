@@ -1,6 +1,6 @@
 import type { Level } from '../../shared/LevelBadge'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
-import type { IntegrationHealthSource, IntegrationHealthState } from '../../services/api'
+import type { IntegrationHealthSource, IntegrationHealthState, SourceFacts } from '../../services/api'
 import { getIntegrationForServer } from './integrationsData'
 
 /** `last_test` of GET /config/integrations: the result POST .../test stored. The wizard still shows it. */
@@ -20,6 +20,10 @@ export interface ServerRow {
   /** extension master switch: configured on both gates / on only one */
   isExtension: boolean
   extConfigured: boolean
+  /** a built-in alert source: its switch also governs collection (the integration's own gate) */
+  collects: boolean
+  /** collects: settings are saved, so switching on can also switch collection on */
+  saved: boolean
   masterOn: boolean
   masterMixed: boolean
   /** On in Connected; everything else is offered under Add integration */
@@ -58,6 +62,9 @@ const FEDERATION_INTEGRATION: Record<string, string> = {
   aws_security_hub: 'aws-security-hub',
   microsoft_defender: 'microsoft-defender',
 }
+
+/** Integrations the daemon and Alert collection pull from. Same set as LEGACY_POLLED in core/storage/source_health.py. */
+const PULLED_SOURCES = new Set(['splunk', 'crowdstrike', 'opensearch', ...Object.values(FEDERATION_INTEGRATION)])
 
 export function healthId(federationSourceId: string): string {
   return FEDERATION_INTEGRATION[federationSourceId] ?? federationSourceId
@@ -132,7 +139,10 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
     // saving an extension does not switch it on, so a saved one counts as connected (shown Off)
     const extConfigured = Boolean(isExtension && integration && i.integrations[integration.id]?.['connectorUrl'])
-    const masterOn = configured && isEnabled
+    const collects = Boolean(integration && PULLED_SOURCES.has(integration.id))
+    const saved = Boolean(integration && i.integrations[integration.id])
+    // an alert source reads On while either gate is, so Off never hides live collection
+    const masterOn = collects ? isEnabled || configured : configured && isEnabled
     const missing = i.missingCredentials[name] ?? []
     // "Missing X" already says what a "missing credentials: X" error does
     const repeatsMissing = (t: string) => missing.length > 0 && /missing credentials/i.test(t)
@@ -145,7 +155,7 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const waiting = setup ? 'Not set up' : i.statuses[name] === 'on_demand' ? 'Starts on first use' : ''
     const stopped = isEnabled && !waiting && !isRunning
     const mcpWord = waiting || (stopped ? 'Not running' : '')
-    const unconfigured = integration && !configured && !extConfigured ? 'Not set up' : ''
+    const unconfigured = integration && !configured && !extConfigured && !(collects && saved) ? 'Not set up' : ''
     const runtime = mcpWord || unconfigured
     const judgement = !failed && integration ? byId.get(integration.id) ?? null : null
     // no integration, or no record, is neutral — never Good
@@ -168,9 +178,9 @@ export function buildRows(i: HealthInput): ServerRow[] {
       ...faults,
       collecting ? 'Agent tools off · alert collection still on' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx)
-    // a server nobody connected has no health to report
-    const connected = isEnabled || configured || extConfigured
-    const word = cellTaken ? '' : runtime || (isEnabled ? '' : 'Off')
+    // a server nobody connected has no health to report; a switched-off source keeps its row
+    const connected = isEnabled || configured || extConfigured || (collects && saved)
+    const word = cellTaken ? '' : runtime || (isEnabled || (collects && configured) ? '' : 'Off')
     return {
       name,
       integration,
@@ -179,8 +189,10 @@ export function buildRows(i: HealthInput): ServerRow[] {
       configured,
       isExtension,
       extConfigured,
+      collects,
+      saved,
       masterOn,
-      masterMixed: isExtension && configured !== isEnabled,
+      masterMixed: (isExtension || (collects && saved)) && configured !== isEnabled,
       connected,
       level,
       word,
@@ -226,4 +238,28 @@ export function relativeTime(iso: string, now = Date.now()): string {
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
   return `${Math.floor(s / 86400)} d ago`
+}
+
+/** The facts a collector read from the source (OpenCTI), as one line; empty when there are none. */
+export function factsPhrase(facts: SourceFacts | null | undefined, now = Date.now()): string {
+  if (!facts?.collected_at) return ''
+  const missing = new Set((facts.missing ?? []).map((m) => m.fact))
+  const parts: string[] = []
+  const age = now - Date.parse(facts.collected_at)
+  if (age > 2 * (facts.interval_seconds || 300) * 1000) parts.push(`Unknown since ${relativeTime(facts.collected_at, now)}`)
+  if (!missing.has('newest_intel')) {
+    parts.push(facts.newest_intel_at ? `Newest intelligence: ${relativeTime(facts.newest_intel_at, now)}` : 'No intelligence yet')
+  }
+  if (facts.connectors && facts.queue_messages_total != null) {
+    const held = facts.connectors
+      .filter((c) => c.queue_messages > 0)
+      .sort((a, b) => b.queue_messages - a.queue_messages)
+      .map((c) => `${c.name} ${c.queue_messages.toLocaleString()}${c.active ? '' : ' (inactive)'}`)
+    const total = facts.queue_messages_total.toLocaleString()
+    parts.push(held.length ? `Backlog: ${total} messages (${held.join(', ')})` : 'Backlog: none')
+  }
+  // each reason names the fact: "backlog: the token's role lacks …"
+  for (const m of facts.missing ?? []) parts.push(m.reason.charAt(0).toUpperCase() + m.reason.slice(1))
+  if (facts.version) parts.push(`OpenCTI ${facts.version}`)
+  return parts.join(' · ')
 }

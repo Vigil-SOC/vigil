@@ -82,6 +82,32 @@ a triage confidence and every approval action in a window (default 7 days,
 `--since 7d`) under this file and under the effective config, and prints the
 rows whose outcome would differ. It does not write.
 
+## Enforced: a declared directory
+
+Set `VIGIL_INTENT_DIR` on the daemon to a directory holding an `INTENT.md` like
+this one and a `REVISION` file whose first line names the revision (a plain
+checkout writes it in a post-merge hook: `git rev-parse HEAD > REVISION`). The
+daemon re-reads both every 30 seconds and applies a revision when they change:
+keys whose declared value changed and that tighten autonomy are written to the
+store each already has (the autonomy ceiling, the orchestrator settings, or
+the `intent.applied` row for triage, enrich and respond), and every process
+reads them within seconds. A loosening is not written; it is recorded as
+pending for a person to accept. A file that does not parse, an unknown key or
+a wrong-typed value rejects the whole revision. A poll that brings nothing new
+writes nothing, so a setting narrowed from the console stays narrowed until a
+commit changes that key. This file at the repo root is never enforced.
+
+Settings → Limits & autonomy → Declared intent, `GET /api/config/intent` and the /mcp
+tool `get_intent_report` show each managed key with its file, line and
+revision, whether it has drifted (narrowed locally or by an env lock), whether
+a loosening is pending, and an env value the declaration overrides. A local
+change that narrows a managed key is stored; one that widens it is refused
+with 409 naming the file and revision. Setting the declared value back is the
+reset. A person with `ai_autonomy.write`, never a service account or API
+token, accepts pending loosenings with `POST /api/config/intent/accept`
+(`{"revision": ...}`); each store write is audited under their name with the
+revision.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the

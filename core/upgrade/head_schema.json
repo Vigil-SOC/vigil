@@ -3076,6 +3076,11 @@
   "nullable": false,
   "type": "character varying(50)"
  },
+ "column findings.first_verdict_at": {
+  "default": null,
+  "nullable": true,
+  "type": "timestamp without time zone"
+ },
  "column findings.ip_addresses": {
   "default": "finding_ips(entity_context)",
   "nullable": true,
@@ -3215,6 +3220,11 @@
   "default": "0",
   "nullable": false,
   "type": "integer"
+ },
+ "column history_tickets.alert_ids": {
+  "default": "'{}'::text[]",
+  "nullable": false,
+  "type": "text[]"
  },
  "column history_tickets.bulk_closed": {
   "default": null,
@@ -4785,6 +4795,11 @@
   "default": null,
   "nullable": true,
   "type": "timestamp without time zone"
+ },
+ "column source_health.facts": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
  },
  "column source_health.filtered_total": {
   "default": "0",

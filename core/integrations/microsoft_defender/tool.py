@@ -11,6 +11,7 @@ if _REPO_ROOT not in sys.path:
 import asyncio
 import json
 import logging
+from urllib.parse import quote
 
 import httpx
 import mcp.server.stdio
@@ -28,6 +29,59 @@ logger = logging.getLogger(__name__)
 
 def result(data):
     return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
+
+
+def odata_string(value: str) -> str:
+    """An OData string literal: a quote inside it is escaped by doubling it."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def refusal(resp: httpx.Response) -> dict:
+    """Defender's own status and message for a call it refused."""
+    try:
+        err = resp.json().get("error") or {}
+        message = err.get("message") if isinstance(err, dict) else str(err)
+    except (ValueError, AttributeError):
+        message = None
+    return {
+        "error": message or resp.reason_phrase or "request refused",
+        "status": resp.status_code,
+    }
+
+
+def action_summary(action: dict) -> dict:
+    """A machine action's ID, type and status: Pending/InProgress is requested, not done."""
+    return {
+        "action_id": action.get("id"),
+        "machine_id": action.get("machineId"),
+        "type": action.get("type"),
+        "status": action.get("status"),
+        "created": action.get("creationDateTimeUtc"),
+        "updated": action.get("lastUpdateDateTimeUtc"),
+    }
+
+
+def isolation_state(actions: list[dict]) -> dict:
+    """Isolation state from a machine's actions; /machines carries no such field.
+
+    The latest Isolate/Unisolate that succeeded sets the state; a newer one
+    still Pending/InProgress is reported beside it as ``pending``.
+    """
+    acts = sorted(
+        (a for a in actions if a.get("type") in ("Isolate", "Unisolate")),
+        key=lambda a: a.get("creationDateTimeUtc") or "",
+        reverse=True,
+    )
+    done = next((a for a in acts if a.get("status") == "Succeeded"), None)
+    latest = acts[0] if acts else None
+    pending = (
+        latest if latest and latest.get("status") in ("Pending", "InProgress") else None
+    )
+    return {
+        "state": "isolated" if done and done["type"] == "Isolate" else "not_isolated",
+        "pending": action_summary(pending) if pending else None,
+        "latest_action": action_summary(latest) if latest else None,
+    }
 
 
 def get_token():
@@ -71,8 +125,45 @@ async def handle_list_tools():
             },
         ),
         types.Tool(
+            name="mde_find_machine",
+            description="Find machines by host name or IP: each match's machine "
+            "ID, name and isolation state",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hostname": {"type": "string"},
+                    "ip": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="mde_get_machine_action",
+            description="Read a machine action (e.g. an isolate or release): its "
+            "type and status (Pending, InProgress, Succeeded, Failed...)",
+            inputSchema={
+                "type": "object",
+                "properties": {"action_id": {"type": "string"}},
+                "required": ["action_id"],
+            },
+        ),
+        types.Tool(
+            name="mde_release",
+            description="Release a machine from isolation; answers the machine "
+            "action Defender created",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "machine_id": {"type": "string"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["machine_id", "comment"],
+            },
+        ),
+        types.Tool(
             name="mde_isolate",
-            description="Isolate machine",
+            description="Isolate machine; answers the machine action Defender "
+            "created, whose status says whether the isolation is done",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -125,19 +216,88 @@ async def handle_call_tool(name: str, arguments: dict | None):
             resp.raise_for_status()
             return result({"machine": resp.json()})
 
-        elif name == "mde_isolate":
+        elif name == "mde_find_machine":
+            clauses = []
+            if host := (args.get("hostname") or "").lower():
+                # Defender keeps the lowercase FQDN; an alert often has the short name.
+                clauses.append(f"computerDnsName eq {odata_string(host)}")
+                clauses.append(
+                    f"startswith(computerDnsName,{odata_string(host + '.')})"
+                )
+            if ip := args.get("ip"):
+                clauses.append(f"lastIpAddress eq {odata_string(ip)}")
+                clauses.append(f"lastExternalIpAddress eq {odata_string(ip)}")
+            if not clauses:
+                return result({"error": "hostname or ip required"})
+            resp = httpx.get(
+                f"{base}/machines",
+                headers=headers,
+                params={"$filter": " or ".join(clauses)},
+                timeout=30,
+            )
+            if resp.is_error:
+                return result(refusal(resp))
+            machines = []
+            for m in resp.json().get("value", []):
+                acts = httpx.get(
+                    f"{base}/machineactions",
+                    headers=headers,
+                    params={
+                        "$filter": f"machineId eq {odata_string(m.get('id') or '')}"
+                    },
+                    timeout=30,
+                )
+                if acts.is_error:
+                    return result(refusal(acts))
+                machines.append(
+                    {
+                        "machine_id": m.get("id"),
+                        "name": m.get("computerDnsName"),
+                        "last_ip": m.get("lastIpAddress"),
+                        "external_ip": m.get("lastExternalIpAddress"),
+                        "health": m.get("healthStatus"),
+                        "isolation": isolation_state(acts.json().get("value", [])),
+                    }
+                )
+            return result({"count": len(machines), "machines": machines})
+
+        elif name == "mde_get_machine_action":
+            aid = args.get("action_id")
+            if not aid:
+                return result({"error": "action_id required"})
+            resp = httpx.get(
+                f"{base}/machineactions/{quote(aid, safe='')}",
+                headers=headers,
+                timeout=30,
+            )
+            if resp.status_code == 404:
+                return result({"error": "machine action not found", "status": 404})
+            if resp.is_error:
+                return result(refusal(resp))
+            return result(action_summary(resp.json()))
+
+        elif name in ("mde_isolate", "mde_release"):
             mid = args.get("machine_id")
             comment = args.get("comment")
             if not mid or not comment:
                 return result({"error": "machine_id and comment required"})
+            isolate = name == "mde_isolate"
+            body = {"Comment": comment}
+            if isolate:
+                body["IsolationType"] = "Full"
             resp = httpx.post(
-                f"{base}/machines/{mid}/isolate",
+                f"{base}/machines/{quote(mid, safe='')}/"
+                f"{'isolate' if isolate else 'unisolate'}",
                 headers=headers,
-                json={"Comment": comment, "IsolationType": "Full"},
+                json=body,
                 timeout=30,
             )
-            resp.raise_for_status()
-            return result({"success": True, "machine_id": mid, "action": "isolated"})
+            if resp.status_code == 404:
+                return result({"error": "machine not found", "status": 404})
+            if resp.is_error:
+                return result(refusal(resp))
+            # Defender accepted a request; the action's status says when it is done.
+            return result(action_summary(resp.json()))
 
         return result({"error": f"Unknown tool: {name}"})
     except Exception as e:

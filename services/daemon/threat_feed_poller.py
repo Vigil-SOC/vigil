@@ -17,6 +17,8 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set
 from sqlalchemy import and_, or_
 
 from core.config import get_integration_config, get_settings, is_integration_enabled
+from core.integrations._base.config import resolve
+from core.integrations.cloudforce_one.descriptor import CLOUDFORCE_ONE
 from core.memory.hunt_coverage import build_proposal
 from core.storage.connection import get_db_manager
 from core.storage.intake_queue import insert_intake_trigger
@@ -69,12 +71,24 @@ class ThreatFeedPoller:
 
     @staticmethod
     def poll_interval_seconds() -> int:
-        """Effective poll interval. Honors integration config and env override."""
+        """Saved interval, then ``THREAT_FEED_POLL_INTERVAL``, then 900.
+
+        Minimum 60. The saved value is coerced through the descriptor. An empty
+        one is not read from ``CLOUDFORCE_ONE_POLL_INTERVAL_SECONDS``: that name
+        is not a fallback, and the resolver would take it ahead of
+        ``THREAT_FEED_POLL_INTERVAL``.
+        """
 
         try:
-            raw = get_integration_config("cloudforce_one").get("poll_interval_seconds")
-            if raw is None:
+            stored = get_integration_config("cloudforce_one").get(
+                "poll_interval_seconds"
+            )
+            if stored is None or stored == "":
                 raw = get_settings().threat_feed_poll_interval
+            else:
+                raw = resolve(CLOUDFORCE_ONE).get("poll_interval_seconds")
+                if raw is None:
+                    raw = stored
             return max(60, int(raw))
         except Exception as e:  # noqa: BLE001
             logger.warning("Threat feed poll interval unreadable, using 900s: %s", e)
@@ -87,7 +101,7 @@ class ThreatFeedPoller:
             logger.debug("Cloudforce One integration disabled; skipping poll")
             return {"skipped": "integration_disabled"}
 
-        cfg = get_integration_config("cloudforce_one")
+        cfg = resolve(CLOUDFORCE_ONE)
         api_token = cfg.get("api_token")
         server_url = cfg.get("taxii_server_url")
         collection_ids_raw = cfg.get("collection_ids") or ""

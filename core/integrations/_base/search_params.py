@@ -36,3 +36,15 @@ def validate_time_range(time_range: str) -> str:
             f"Invalid time_range: {time_range!r}; use a number and a unit, e.g. '24h', '7d'"
         )
     return time_range
+
+
+def timestamp_filter(time_range: str, gte: object = None, lte: object = None) -> dict:
+    """``now-{range}``, or ``[gte, lte]`` when a caller already anchored both.
+
+    A re-decision passes the window that ends at the close. A live call passes
+    neither bound and keeps the relative range.
+    """
+    span = validate_time_range(time_range)
+    if isinstance(gte, str) and gte.strip() and isinstance(lte, str) and lte.strip():
+        return {"range": {"@timestamp": {"gte": gte, "lte": lte}}}
+    return {"range": {"@timestamp": {"gte": f"now-{span}"}}}

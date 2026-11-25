@@ -386,6 +386,21 @@ V["sensor-health-stopped-by-framework"] = health(
     {"reads": 0, "failures": 0, "dropped": 112, "redactor_failures": 0},
     "2026-10-07T10:00:00Z",
 )
+# endpoint · OpenCTI's facts, one read absent (D1 integration_health, #5072)
+o = base(
+    "sample",
+    "integration_health",
+    "integration_health",
+    "backend",
+    "2026-10-07T10:01:00Z",
+    instance="deeptempo-backend",
+)
+o["values"] = [
+    val("opencti.newest_intel_at", "timestamp", "2026-10-06T22:14:09.512Z"),
+    val("opencti.queue_messages_total", "gauge", None, state="absent"),
+    val("opencti.collected_at", "timestamp", "2026-10-07T09:58:00.120447Z"),
+]
+V["endpoint-json-integration-health"] = o
 
 for k, o in V.items():
     (OUT / "valid" / f"{k}.json").write_text(json.dumps(o, indent=2) + "\n")

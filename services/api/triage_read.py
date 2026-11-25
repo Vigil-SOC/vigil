@@ -31,6 +31,7 @@ from sqlalchemy.orm import aliased, noload
 
 from core.agents.projections import run_id_for
 from core.auth.permissions import case_read_clause
+from core.daemon_config import OrchestratorConfig
 from core.federation.lag import source_collection_lag
 from core.findings.alert_outcomes import _cases_for, alert_group
 from core.findings.arrival_counts import arrivals_today_by_source, utc_day_bounds
@@ -46,7 +47,6 @@ from core.storage.models import (
 )
 from core.storage.shared_ioc_repository import CaseMatch
 from core.time import utcnow
-from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import _link_note, intake_rank_inputs, rank_intake_row
 
 ROW_CAP = 200

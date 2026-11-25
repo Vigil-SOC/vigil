@@ -738,6 +738,31 @@
 
 .home-screen .home-report-line .btn { white-space: normal; }
 
+.home-screen .home-production-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.home-screen .home-production-form .field-input {
+  flex: 1 1 16rem;
+  width: 16rem;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.home-screen .home-readiness p[role='alert'] {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--tx1);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 /* reflow tier (.main under 700px): section heads wrap their actions under the title; the setup steps stack */
 @container main (max-width: 699px) {
   .home-screen { padding: 24px 16px; }

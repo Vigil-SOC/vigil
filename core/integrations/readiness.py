@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import get_settings
 from core.integrations import health
 from core.llm.bifrost import path_health
 from core.platform.process_health import ProcessHealth
 from core.storage.connection import get_db_manager
-from core.storage.models import AIModelConfig
+from core.storage.models import AIModelConfig, LLMProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,6 @@ SETUP_AREAS = frozenset({"alert_source", "source"})
 
 _ALERT_KINDS = frozenset({"pulled", "kafka", "receiver"})
 _MODEL_HREF = "/settings?section=ai-config&tab=assignment"
-# Assignment rows store the mirror id (bifrost-<name>). Routability is keyed
-# by the Bifrost provider name.
-_MIRROR_PREFIX = "bifrost-"
 _INTEGRATIONS_HREF = "/settings?section=integrations"
 _FEDERATION_HREF = "/settings?section=federation"
 
@@ -100,11 +97,13 @@ def _unknown(line: str) -> Dict[str, Any]:
     return {"state": UNKNOWN, "line": line, "items": [], "notes": []}
 
 
-def _assigned_provider() -> Optional[str]:
+def _assigned_provider() -> Optional[Tuple[Optional[str]]]:
     """``reporting``, else ``chat_default``, from the assignment rows only.
 
-    None when neither row exists. A store error raises. The default active
-    provider is not a third step.
+    None when neither row exists. Otherwise a 1-tuple of the assigned
+    provider row's ``provider_type``, or of None when that row is missing or
+    inactive. A store error raises. The default active provider is not a
+    third step.
     """
     with get_db_manager().session_scope() as session:
         rows = dict(
@@ -112,11 +111,18 @@ def _assigned_provider() -> Optional[str]:
             .filter(AIModelConfig.component.in_(("reporting", "chat_default")))
             .all()
         )
-    if "reporting" in rows:
-        return rows["reporting"]
-    if "chat_default" in rows:
-        return rows["chat_default"]
-    return None
+        component = next((c for c in ("reporting", "chat_default") if c in rows), None)
+        if component is None:
+            return None
+        row = (
+            session.query(LLMProviderConfig.provider_type)
+            .filter(
+                LLMProviderConfig.provider_id == rows[component],
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .first()
+        )
+    return (row[0] if row else None,)
 
 
 async def _providers() -> Dict[str, bool]:
@@ -127,15 +133,6 @@ async def _providers() -> Dict[str, bool]:
         return {}
     providers = body.get("providers") or {}
     return {str(name): bool(flag) for name, flag in providers.items() if name}
-
-
-def _provider_routable(provider_id: str, providers: Dict[str, bool]) -> bool:
-    """Whether this assignment's provider is true in the routability map."""
-    if providers.get(provider_id):
-        return True
-    if provider_id.startswith(_MIRROR_PREFIX):
-        return bool(providers.get(provider_id[len(_MIRROR_PREFIX) :]))
-    return False
 
 
 def _item(
@@ -179,7 +176,7 @@ def _source_text(source_id: str, state: str, reason: Optional[str]) -> str:
 def _from(
     daemon: str,
     sources: List[Dict[str, Any]],
-    provider: Optional[str],
+    provider: Optional[Tuple[Optional[str]]],
     providers: Dict[str, bool],
 ) -> Dict[str, Any]:
     items: List[Dict[str, Any]] = []
@@ -212,7 +209,9 @@ def _from(
                 _MODEL_HREF,
             )
         )
-    elif not _provider_routable(provider, providers):
+    # Routability is keyed by Bifrost provider name, which is the row's
+    # provider_type for console-created and mirrored rows alike.
+    elif not (provider[0] and providers.get(provider[0])):
         items.append(
             _item(
                 "model",

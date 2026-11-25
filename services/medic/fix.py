@@ -50,7 +50,7 @@ HUNG_RULE = "pipeline.daemon-component-hung-compose"
 HUNG_SIBLING = "pipeline.daemon-component-hung"
 _COVERED_RULES = frozenset({RULE_ID, SIBLING_RULE, HUNG_RULE, HUNG_SIBLING})
 _HANG_RULES = frozenset({HUNG_RULE, HUNG_SIBLING})
-# services/daemon/metrics.py _PASS_COMPONENTS. kafka and executor have no counter.
+# services/daemon/metrics.py _PASS_COMPONENTS. kafka has no counter.
 _PASS_NAMES = ("poller", "processor", "scheduler", "orchestrator")
 # services/daemon/scheduler.py counts a pass, then sleeps 60s. 90s covers that
 # sleep and the work before the next pass, so a healthy loop has moved.

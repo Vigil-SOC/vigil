@@ -15,10 +15,11 @@ other existing callers) keep working.
 """
 
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from opentelemetry.metrics import Observation
 from sqlalchemy import func, or_, select, text, update
@@ -49,13 +50,41 @@ logger = logging.getLogger(__name__)
 
 _pending_gauge: Any = None
 
-# Action types something executes once approved (AutonomousResponseService). A
-# pending row of any other type, outside a run or checkpoint, is a recommendation.
-EXECUTABLE_ACTION_TYPES = frozenset({"waf_block", "gateway_block", "access_revoke"})
-# What a stop holds: the rows execute_approved_actions would run.
-HELD_ACTION_TYPES = EXECUTABLE_ACTION_TYPES | frozenset({"isolate_host"})
-# Rollout acts on these once approved (rollout_approval), not the executor above.
+# Rollout acts on these once approved (rollout_approval).
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
+# Kinds the backend carries out on approval through a vendor's tool (#5059).
+CONTAINMENT_TYPES = frozenset({"isolate_host", "disable_user"})
+# execution_result.state while the call is out: claimed, so it runs once.
+RUNNING = "running"
+# A claim this old outlived its process: the row may be approved again.
+_STALE_RUN = timedelta(minutes=15)
+
+
+def _stale_run(row: ApprovalActionRow) -> bool:
+    result = row.execution_result if isinstance(row.execution_result, dict) else {}
+    if result.get("state") != RUNNING:
+        return False
+    try:
+        started = datetime.fromisoformat(result.get("started_at") or "")
+    except ValueError:
+        return True
+    return utcnow() - started >= _STALE_RUN
+
+
+def runs_here(params: Any) -> bool:
+    """A row the backend runs once approved: it carries a tool and is no run's
+    checkpoint, which its own run calls when it resumes."""
+    params = params if isinstance(params, dict) else {}
+    tool = params.get("tool")
+    return isinstance(tool, str) and bool(tool) and not params.get("checkpoint_id")
+
+
+# runs_here, as a query filter: what a stop holds (#5059).
+def _runs_here_clause():
+    params = ApprovalActionRow.parameters
+    return (func.coalesce(params["tool"].astext, "") != "") & (
+        func.coalesce(params["checkpoint_id"].astext, "") == ""
+    )
 
 
 class AlreadyDecided(Exception):
@@ -85,6 +114,29 @@ class NotHeld(Exception):
     def __init__(self, action_id: str):
         super().__init__(f"Action {action_id} is not held")
         self.action_id = action_id
+
+
+class NotUndoable(Exception):
+    """The row is not an executed containment in its done state, or a lift of
+    it is still open (#5060)."""
+
+
+def _open_lift(session, action_id: str) -> Optional[str]:
+    """Why ``action_id`` can't be lifted again: a row undoing it is still open."""
+    rows = session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.parameters["undoes"].astext == action_id)
+        .where(
+            or_(
+                ApprovalActionRow.status == ActionStatus.APPROVED.value,
+                (ApprovalActionRow.status == ActionStatus.EXECUTED.value)
+                & (ApprovalActionRow.execution_result["state"].astext == "requested"),
+            )
+        )
+    ).scalars()
+    # A claim that outlived its process does not hold the way back shut.
+    open_id = next((r.action_id for r in rows if not _stale_run(r)), None)
+    return f"{open_id} is already undoing {action_id}" if open_id else None
 
 
 class FourEyesRefused(Exception):
@@ -317,6 +369,21 @@ def _isolations_of(names: Sequence[str]):
     )
 
 
+def _same_ask(action_type: str, target: str):
+    """Run proposals of ``action_type`` on ``target``, any status; for an isolation,
+    any isolation of that host."""
+    if action_type == ActionType.ISOLATE_HOST.value:
+        return _isolations_of(_host_names(target))
+    return (
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+        .where(ApprovalActionRow.action_type == action_type)
+        .where(
+            func.lower(func.trim(ApprovalActionRow.target)) == target.strip().lower()
+        )
+    )
+
+
 def _hold_hosts(session, names: Sequence[str]) -> None:
     """Hold these host names until the transaction ends, so two alerts about one
     host, one carrying its IP and one not, cannot each find no isolation and file
@@ -342,7 +409,12 @@ class ApprovalService:
             config: the confidence band; read from Settings when omitted so
                 the no-arg form callers use still honours env (#916).
         """
-        self.config = config or ResponseConfig.from_settings()
+        # None reads the band live (env plus an applied INTENT.md revision).
+        self._config = config
+
+    @property
+    def config(self) -> ResponseConfig:
+        return self._config or ResponseConfig.from_settings()
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -592,13 +664,16 @@ class ApprovalService:
         action_id: str,
         approved_by: str = "analyst",
         approved_by_principal_id: Optional[str] = None,
+        call: Optional[tuple[str, str]] = None,
     ) -> Optional[PendingAction]:
         """Approve a pending action. Raises ``AlreadyDecided`` if it is not pending.
 
+        A failed containment may be approved again. ``call`` is the tool and
+        JSON arguments the approval runs, set on the row as it is approved.
         With the ceiling's ``four_eyes`` on, raises ``FourEyesRefused`` when the
         approver created the action or is the person its run acted for. Checked
         here, at approve time, so rows already pending are covered. An approval
-        while stopped holds an outside action the executor runs.
+        while stopped holds a row the backend would run.
         """
         try:
             db = get_db_manager()
@@ -613,7 +688,11 @@ class ApprovalService:
                     logger.warning("Action %s not found", action_id)
                     return None
                 _refuse_unreadable(row)
-                if row.status != ActionStatus.PENDING.value:
+                retry = row.action_type in CONTAINMENT_TYPES and (
+                    row.status == ActionStatus.FAILED.value
+                    or (row.status == ActionStatus.APPROVED.value and _stale_run(row))
+                )
+                if row.status != ActionStatus.PENDING.value and not retry:
                     decided = row.status
                 elif (
                     four_eyes
@@ -631,7 +710,14 @@ class ApprovalService:
                         if approved_by_principal_id is not None
                         else ("system" if approved_by == "system" else None)
                     )
-                    if stopped and row.action_type in HELD_ACTION_TYPES:
+                    if call is not None:
+                        # A new dict: an in-place change to a JSON column is not flushed.
+                        row.parameters = {
+                            **(row.parameters or {}),
+                            "tool": call[0],
+                            "args": call[1],
+                        }
+                    if stopped and runs_here(row.parameters):
                         row.held = True
                     session.flush()
                     case_trail.append_approval(
@@ -730,7 +816,7 @@ class ApprovalService:
     ) -> Optional[PendingAction]:
         """Clear the stop's hold. The row stays approved. Raises ``NotHeld``.
 
-        The next executor pass runs it, unless autonomy is still stopped.
+        The caller runs it (core/response/containment.py).
         """
         db = get_db_manager()
         not_held = False
@@ -776,7 +862,7 @@ class ApprovalService:
                     select(ApprovalActionRow)
                     .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
                     .where(ApprovalActionRow.held.is_(True))
-                    .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                    .where(_runs_here_clause())
                     .order_by(ApprovalActionRow.created_at.asc())
                     .with_for_update()
                 )
@@ -830,8 +916,9 @@ class ApprovalService:
         self,
         action_id: str,
         error: str,
+        result: Optional[Dict] = None,
     ) -> Optional[PendingAction]:
-        """Mark an action as failed."""
+        """Mark an action as failed. ``result`` is recorded beside the error."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -840,13 +927,170 @@ class ApprovalService:
                     return None
                 row.status = ActionStatus.FAILED.value
                 row.executed_at = utcnow()
-                row.execution_result = {"error": error}
+                row.execution_result = {**(result or {}), "error": error}
                 session.flush()
                 logger.error("Action %s failed: %s", action_id, error)
                 return _row_to_pending(row)
         except SQLAlchemyError as e:
             logger.error("DB error marking action %s failed: %s", action_id, e)
             return None
+
+    def update_row(
+        self,
+        action_id: str,
+        status: str,
+        parameters: Optional[Dict] = None,
+        execution_result: Optional[Dict] = None,
+        held: Optional[bool] = None,
+    ) -> Optional[PendingAction]:
+        """Merge into a row's parameters or execution result, or set its hold,
+        if it is still in ``status``. None when it is not (#5059)."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None or row.status != status:
+                return None
+            if parameters:
+                row.parameters = {**(row.parameters or {}), **parameters}
+            if execution_result:
+                row.execution_result = {
+                    **(row.execution_result or {}),
+                    **execution_result,
+                }
+            if held is not None:
+                row.held = held
+            session.flush()
+            return _row_to_pending(row)
+
+    def create_undo(
+        self,
+        action_id: str,
+        build: Callable[[PendingAction], Union[str, tuple[str, Dict[str, Any]]]],
+        approved_by: str,
+        approved_by_principal_id: Optional[str],
+    ) -> PendingAction:
+        """Insert the row that undoes an executed containment, approved by the
+        caller (#5060). ``build`` turns the original into the row's title and
+        parameters, or says why it can't. No proposal is involved, so four-eyes
+        does not apply.
+
+        Raises ``NotUndoable`` unless the original is executed and in its done
+        state with no lift of it still open; ``ActionNotFound`` as approving does.
+        """
+        from core.response.proposal_targets import DONE_STATE
+
+        found = self.get_action(action_id)
+        if found is None:
+            raise ActionNotFound(action_id)
+        case_ids = case_ids_for(found)
+        refusal: Optional[str] = None
+        pending: Optional[PendingAction] = None
+        db = get_db_manager()
+        # A refusal is raised after the transaction: session_scope logs any
+        # exception inside it as a database failure.
+        with db.session_scope() as session:
+            stopped, _four_eyes = locked_flags(session)
+            # The original's lock serialises lifts: a double click inserts one.
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None:
+                raise ActionNotFound(action_id)
+            _refuse_unreadable(row)
+            original = _row_to_pending(row)
+            state = (original.execution_result or {}).get("state")
+            done = DONE_STATE.get(original.action_type)
+            built = None
+            if done is None or (original.parameters or {}).get("undoes"):
+                refusal = f"{action_id} is not an isolation or account disable"
+            elif original.status != ActionStatus.EXECUTED.value or state != done:
+                refusal = (
+                    f"{action_id} is {state or original.status}, not {done}: "
+                    "there is nothing to undo"
+                )
+            else:
+                refusal = _open_lift(session, action_id)
+            if refusal is None:
+                built = build(original)
+                if isinstance(built, str):
+                    refusal = built
+            if refusal is None and isinstance(built, tuple):
+                title, parameters = built
+                now = utcnow()
+                undo = ApprovalActionRow(
+                    action_id=f"action-{now.strftime('%Y%m%d-%H%M%S-%f')}",
+                    action_type=original.action_type,
+                    title=title,
+                    description=f"Undoes {action_id}: {original.title}",
+                    target=original.target,
+                    confidence=1.0,
+                    reason=f"{approved_by} undid {action_id}",
+                    evidence=list(original.evidence or []),
+                    created_at=now,
+                    created_by=approved_by,
+                    created_by_principal_id=approved_by_principal_id,
+                    requires_approval=True,
+                    status=ActionStatus.APPROVED.value,
+                    approved_at=now,
+                    approved_by=approved_by,
+                    approved_by_principal_id=approved_by_principal_id,
+                    # The original's cases, named outright: readers and the trail follow them.
+                    parameters={
+                        **parameters,
+                        "undoes": action_id,
+                        "case_ids": case_ids,
+                    },
+                    reversibility=row.reversibility,
+                    # A stop holds it, as it holds any approval that carries a call.
+                    held=stopped,
+                )
+                session.add(undo)
+                session.flush()
+                case_trail.append_approval(
+                    session,
+                    action=case_trail.APPROVE,
+                    principal_id=approved_by_principal_id,
+                    action_id=undo.action_id,
+                    username=approved_by,
+                )
+                pending = _row_to_pending(undo)
+        if refusal is not None or pending is None:
+            raise NotUndoable(refusal or f"{action_id} could not be undone")
+        logger.info(
+            "Action %s undoes %s, by %s", pending.action_id, action_id, approved_by
+        )
+        return pending
+
+    def claim_run(self, action_id: str, by: str) -> Optional[PendingAction]:
+        """Mark an approved, unheld row running, once. None when it is not one,
+        or another call already holds it."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if (
+                row is None
+                or row.status != ActionStatus.APPROVED.value
+                or row.held
+                or (row.execution_result or {}).get("state") == RUNNING
+            ):
+                return None
+            row.execution_result = {
+                "state": RUNNING,
+                "by": by,
+                "started_at": utcnow().isoformat(),
+            }
+            session.flush()
+            return _row_to_pending(row)
+
+    def unclaim_run(self, action_id: str, held: bool) -> Optional[PendingAction]:
+        """Drop a running claim on a row still approved, holding it if ``held``."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            row = session.get(ApprovalActionRow, action_id, with_for_update=True)
+            if row is None or row.status != ActionStatus.APPROVED.value:
+                return None
+            row.execution_result = None
+            row.held = held
+            session.flush()
+            return _row_to_pending(row)
 
     def get_stats(self) -> Dict:
         """Get statistics about actions."""
@@ -895,20 +1139,10 @@ class ApprovalService:
             own = _nonfailed_by_key(session, key)
             if own is not None:
                 return _row_to_pending(own)
-            if action_type == ActionType.ISOLATE_HOST.value:
-                query = _isolations_of(_host_names(target))
-            else:
-                query = (
-                    select(ApprovalActionRow)
-                    .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
-                    .where(ApprovalActionRow.action_type == action_type)
-                    .where(
-                        func.lower(func.trim(ApprovalActionRow.target))
-                        == target.strip().lower()
-                    )
-                )
             row = session.execute(
-                query.order_by(ApprovalActionRow.created_at.desc()).limit(1)
+                _same_ask(action_type, target)
+                .order_by(ApprovalActionRow.created_at.desc())
+                .limit(1)
             ).scalar_one_or_none()
             return _row_to_pending(row) if row else None
 
@@ -947,11 +1181,11 @@ def _release_actor(principal_id: Optional[str], username: str) -> Optional[str]:
 
 
 def stamp_held_approvals(session) -> None:
-    """Mark approved executor rows held, in the caller's transaction."""
+    """Mark approved rows the backend runs held, in the caller's transaction."""
     session.execute(
         update(ApprovalActionRow)
         .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
-        .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+        .where(_runs_here_clause())
         .values(held=True)
     )
 
@@ -965,7 +1199,7 @@ def held_for_ceiling() -> List[dict]:
                 select(ApprovalActionRow)
                 .where(ApprovalActionRow.status == ActionStatus.APPROVED.value)
                 .where(ApprovalActionRow.held.is_(True))
-                .where(ApprovalActionRow.action_type.in_(tuple(HELD_ACTION_TYPES)))
+                .where(_runs_here_clause())
                 .order_by(
                     ApprovalActionRow.approved_at.asc().nulls_last(),
                     ApprovalActionRow.created_at.asc(),
@@ -1104,18 +1338,26 @@ def case_ids_for(action: PendingAction) -> List[str]:
     return _case_ids_for_action(action, *lookups[:3])
 
 
+def on_case(actions: List[PendingAction], case_id: str) -> List[PendingAction]:
+    """Of ``actions``, those on ``case_id``, resolved as ``needs_you`` resolves them."""
+    lookups = _case_lookups(actions)
+    return [a for a in actions if case_id in _case_ids_for_action(a, *lookups[:3])]
+
+
 def _evidence_ids(action: PendingAction) -> List[str]:
     return [one for one in map(_text_id, action.evidence or []) if one]
 
 
 def _case_lookups(
     actions: List[PendingAction],
+    session: Any = None,
 ) -> tuple[
     Dict[str, Any], Dict[str, Optional[str]], Dict[str, str], set[str], Dict[str, str]
 ]:
     """What those actions can name: run trigger contexts, investigation case ids,
     the newest case of each stored alert in their evidence, those alerts, and the
-    status of every case any of them names."""
+    status of every case any of them names. Reads in ``session`` when given, so
+    a caller's own uncommitted writes are seen."""
     run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
     investigation_ids: set[str] = set()
     case_ids: set[str] = set()
@@ -1133,8 +1375,12 @@ def _case_lookups(
     statuses: Dict[str, str] = {}
     if not run_ids and not investigation_ids and not evidence_ids and not case_ids:
         return runs, investigations, evidence_cases, stored, statuses
-    db = get_db_manager()
-    with db.session_scope() as session:
+    scope = (
+        nullcontext(session)
+        if session is not None
+        else get_db_manager().session_scope()
+    )
+    with scope as session:
         if run_ids:
             rows = session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(run_ids))
             for row in rows:
@@ -1334,9 +1580,16 @@ def _kind_for_action(action: PendingAction) -> str:
         checkpoint = checkpoint.strip()
     if checkpoint:
         return "checkpoint"
+    # Approving it runs a tool: it carries one, or a containment resolved to one.
+    containment = params.get("containment")
+    runs = runs_here(params) or (
+        isinstance(containment, dict) and bool(containment.get("candidates"))
+    )
     # Nothing executes it once approved, so it is advice, not a decision.
-    if not action.workflow_run_id and action.action_type not in (
-        EXECUTABLE_ACTION_TYPES | ROLLOUT_ACTION_TYPES
+    if (
+        not action.workflow_run_id
+        and not runs
+        and action.action_type not in ROLLOUT_ACTION_TYPES
     ):
         return "recommendation"
     return "approval"
@@ -1352,10 +1605,15 @@ def _checkpoint_fields(action: PendingAction) -> Dict[str, Any]:
     """
     params = action.parameters if isinstance(action.parameters, dict) else {}
     checkpoint = params.get("checkpoint_id")
+    tool, args = params.get("tool"), params.get("args")
     fields: Dict[str, Any] = {
         "checkpoint_id": checkpoint if isinstance(checkpoint, str) else None,
         "checkpoint_class": params.get("checkpoint_class") or None,
         "hypotheses": [],
+        # A gated call's tool and the exact arguments approving it releases: the
+        # invoke door runs only these, so the card must show them.
+        "tool": tool if isinstance(tool, str) and tool else None,
+        "args": args if isinstance(args, str) else None,
     }
     listed = params.get("hypotheses")
     if isinstance(listed, list):
@@ -1445,6 +1703,8 @@ def _restricted_item(action: PendingAction, kind: str) -> Dict[str, Any]:
         "checkpoint_id": None,
         "checkpoint_class": None,
         "hypotheses": [],
+        "tool": None,
+        "args": None,
         "restricted": True,
     }
 
@@ -1517,6 +1777,7 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 ),
                 "run_id": action.workflow_run_id,
                 "waiting": action.waiting,
+                "containment": (action.parameters or {}).get("containment"),
                 **_checkpoint_fields(action),
             }
         )
@@ -1538,3 +1799,212 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
 def needs_you_case_ids() -> set[str]:
     """Case ids that need a person, from one ``needs_you()`` read."""
     return {one for item in needs_you()["items"] for one in item["case_ids"]}
+
+
+# ---- A close settles its unanswered asks (#5107) ---------------------------
+# Written in the close's own transaction, so every reader agrees with Home.
+
+SETTLED_BY = "system"
+SETTLED_PREFIX = "settled:"
+_LIVE = (
+    ActionStatus.PENDING.value,
+    ActionStatus.APPROVED.value,
+    ActionStatus.EXECUTED.value,
+)
+
+
+def _not_the_cases_ask(row: ApprovalActionRow) -> bool:
+    """A run's question (its run resumes on the answer) or a rollout: no close
+    answers these."""
+    params = row.parameters if isinstance(row.parameters, dict) else {}
+    checkpoint = params.get("checkpoint_id")
+    return (
+        bool(row.workflow_run_id)
+        or (isinstance(checkpoint, str) and bool(checkpoint.strip()))
+        or row.action_type in ROLLOUT_ACTION_TYPES
+    )
+
+
+def _lock_row(session, action_id: str) -> Optional[ApprovalActionRow]:
+    """The row as committed, locked; None when a decision holds it. Skipped, not
+    waited on: the caller already holds the trail lock, which a decision takes
+    after its row, so waiting would deadlock. Two closers are already in turn on
+    that trail lock."""
+    return session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.action_id == action_id)
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
+def _locked(session, action_ids: Iterable[str]) -> List[ApprovalActionRow]:
+    """Lock rows one by one in ascending id order, so closers never cross."""
+    rows = (_lock_row(session, one) for one in sorted(set(action_ids)))
+    return [row for row in rows if row is not None]
+
+
+def settle_for_close(session, case_id: str) -> int:
+    """Reject, as the system, each pending ask naming ``case_id`` whose every
+    named case is now closed. In the caller's transaction; returns how many."""
+    candidates = [
+        _row_to_pending(row)
+        for row in session.execute(
+            select(ApprovalActionRow)
+            .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+            .where(ApprovalActionRow.requires_approval.is_(True))
+            .where(ApprovalActionRow.workflow_run_id.is_(None))
+            .where(ApprovalActionRow.action_type.notin_(ROLLOUT_ACTION_TYPES))
+        ).scalars()
+    ]
+    # Which cases a row names does not change with a close: resolve before locking.
+    lookups = _case_lookups(candidates, session)[:3]
+    ids = [
+        a.action_id for a in candidates if case_id in _case_ids_for_action(a, *lookups)
+    ]
+    resolved: Dict[str, List[str]] = {}
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.PENDING.value or _not_the_cases_ask(row):
+            continue
+        # Re-read from the locked row: a join may have listed another case.
+        cases = _case_ids_for_action(_row_to_pending(row), *lookups)
+        if case_id in cases:
+            resolved[row.action_id] = cases
+    if not resolved:
+        return 0
+    # Statuses after the locks: a peer that closed while this waited reads closed.
+    named = {one for cases in resolved.values() for one in cases}
+    statuses = dict(
+        session.query(Case.case_id, Case.status).filter(Case.case_id.in_(named))
+    )
+    settled = 0
+    for action_id, cases in resolved.items():
+        if not all(statuses.get(one) == CLOSED for one in cases):
+            continue
+        row = session.get(ApprovalActionRow, action_id)
+        kind = _kind_for_action(_row_to_pending(row))
+        reason = (
+            f"{SETTLED_PREFIX} {cases[0]} closed with this unanswered"
+            if len(cases) == 1
+            else f"{SETTLED_PREFIX} every case it named closed"
+        )
+        row.status = ActionStatus.REJECTED.value
+        row.rejection_reason = reason
+        row.approved_by = SETTLED_BY
+        row.approved_by_principal_id = SETTLED_BY
+        row.approved_at = utcnow()
+        # A new dict: an in-place change to a JSON column is not flushed.
+        row.parameters = {**(row.parameters or {}), "settled_cases": cases}
+        session.flush()
+        for one in cases:
+            case_trail.append_approval(
+                session,
+                action=case_trail.SETTLE,
+                principal_id=SETTLED_BY,
+                action_id=action_id,
+                username=SETTLED_BY,
+                operator_text=reason,
+                case_id=one,
+                action_type=row.action_type,
+                kind=kind,
+            )
+        settled += 1
+    if settled:
+        logger.info("Closing %s settled %d unanswered asks", case_id, settled)
+    return settled
+
+
+def _join_case(session, row: ApprovalActionRow, case_id: str) -> None:
+    """List ``case_id`` on a pending row, as ``add_proposal_case`` does."""
+    params = dict(row.parameters or {})
+    named = proposal_case_ids(params)
+    pending = _row_to_pending(row)
+    listed = named or _case_ids_for_action(
+        pending, *_case_lookups([pending], session)[:3]
+    )
+    if case_id in listed and named:
+        return
+    params.pop("case_id", None)
+    params["case_ids"] = list(dict.fromkeys([*listed, case_id]))
+    row.parameters = params
+
+
+def reopen_settled(session, case_id: str) -> int:
+    """Return to pending what closing ``case_id`` settled, unless a live ask for
+    the same action and target covers it or it is past the expiry window. In the
+    caller's transaction; returns how many."""
+    from core.config import get_settings
+
+    ids = session.execute(
+        select(ApprovalActionRow.action_id)
+        .where(ApprovalActionRow.status == ActionStatus.REJECTED.value)
+        .where(ApprovalActionRow.approved_by == SETTLED_BY)
+        .where(ApprovalActionRow.rejection_reason.like(f"{SETTLED_PREFIX}%"))
+        .where(ApprovalActionRow.parameters.contains({"settled_cases": [case_id]}))
+    ).scalars()
+    cutoff = utcnow() - timedelta(days=get_settings().daemon_approval_expiry_days)
+    restored = 0
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.REJECTED.value:
+            continue
+        # The sweep would expire it on its next tick.
+        if row.created_at < cutoff:
+            continue
+        live = session.execute(
+            _same_ask(row.action_type, row.target)
+            .where(ApprovalActionRow.created_at > row.created_at)
+            .where(ApprovalActionRow.status.in_(_LIVE))
+            .order_by(ApprovalActionRow.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if live is not None:
+            # A decided row takes no case; a pending one keeps this case asked.
+            if live.status == ActionStatus.PENDING.value:
+                live = _lock_row(session, live.action_id)
+                if live is not None and live.status == ActionStatus.PENDING.value:
+                    _join_case(session, live, case_id)
+            continue
+        params = dict(row.parameters or {})
+        params.pop("settled_cases", None)
+        row.parameters = params
+        row.status = ActionStatus.PENDING.value
+        row.rejection_reason = None
+        row.approved_by = None
+        row.approved_by_principal_id = None
+        row.approved_at = None
+        restored += 1
+    session.flush()
+    if restored:
+        logger.info("Reopening %s asked %d settled asks again", case_id, restored)
+    return restored
+
+
+def reparent_for_merge(session, source_case_id: str, target_case_id: str) -> int:
+    """Move pending asks naming the merged-away case onto the case that survives.
+    In the caller's transaction; returns how many."""
+    params = ApprovalActionRow.parameters
+    ids = session.execute(
+        select(ApprovalActionRow.action_id)
+        .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+        .where(
+            or_(
+                params.contains({"case_ids": [source_case_id]}),
+                params.contains({"case_id": source_case_id}),
+            )
+        )
+    ).scalars()
+    moved = 0
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.PENDING.value or _not_the_cases_ask(row):
+            continue
+        listed = proposal_case_ids(row.parameters)
+        if source_case_id not in listed:
+            continue
+        cases = [target_case_id if one == source_case_id else one for one in listed]
+        new = dict(row.parameters or {})
+        new.pop("case_id", None)
+        new["case_ids"] = list(dict.fromkeys(cases))
+        row.parameters = new
+        moved += 1
+    session.flush()
+    return moved

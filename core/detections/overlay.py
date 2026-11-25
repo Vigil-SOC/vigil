@@ -246,11 +246,14 @@ def _parse(language: str, text: str) -> RuleRecord:
     """The copy as the overlay's own reader will see it; Refused unless it reads as ``language``."""
     _, suffix = LAYOUT[language]
     try:
-        record = readers.parse_file(
+        records = readers.parse_file(
             "auto", Path(f"draft{suffix}"), f"draft{suffix}", text
         )
     except Exception as exc:  # noqa: BLE001 -- whatever the reader rejects
         raise Refused(f"{language} copy does not parse: {exc}") from exc
+    if len(records) > 1:
+        raise Refused(f"{language} copy reads as {len(records)} rules, not one")
+    record = records[0] if records else None
     if record is None or record.language != language:
         found = record.language if record else "no rule"
         raise Refused(f"{language} copy reads as {found}")

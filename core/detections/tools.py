@@ -6,12 +6,13 @@ manager run, as core/detections/inventory syncs them into Postgres.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core.agents.projections import read_projection
 from core.detections.exceptions import edit_exception
 from core.detections.gaps import (
+    FINDINGS_LIMIT,
     gap_report,
     missed_runs_report,
     read_alert_labels,
@@ -19,12 +20,13 @@ from core.detections.gaps import (
     read_window_findings,
     technique_check,
 )
-from core.detections.inventory import catalog, metrics
+from core.detections.inventory import catalog, coverage, metrics
 from core.detections.inventory.accurate import FALSE_PAGE, judged_false_page
 from core.detections.inventory.links import link_rule
 from core.detections.lint import lint_sigma
 from core.detections.overlay import save_rule
 from core.detections.reconstruction import (
+    EmulatedSteps,
     coverage_report,
     reconstruct,
     span_for_steps,
@@ -33,6 +35,57 @@ from core.detections.reconstruction import (
 from core.detections.replay import replay_sigma
 from core.storage.database_data_service import DatabaseDataService
 from core.workflows.workflow_run_service import run_unreadable
+
+
+def _name_rules(report: Dict[str, Any]) -> None:
+    """Each step's rule-origin citations named by the version that fired them
+    (``catalog.resolve_findings``), as ``rules`` on the step; LogLM and probe
+    citations are never a rule."""
+    from core.detections.inventory.caught import _SKIPPED, resolve_cited
+    from core.storage.connection import get_db_manager
+
+    steps = [s for t in report.get("techniques") or [] for s in t.get("steps") or []]
+    cites = [
+        c
+        for s in steps
+        for c in s.get("citations") or []
+        if c.get("finding_id") and c.get("data_source") not in _SKIPPED
+    ]
+    if not cites:
+        return
+    with get_db_manager().session_scope() as session:
+        resolved = resolve_cited(session, {c["finding_id"] for c in cites})
+    for c in cites:
+        r = resolved.get(c["finding_id"]) or {}
+        if r.get("resolved"):
+            c["rule"] = {
+                k: r[k] for k in ("rule_id", "version", "name", "source", "native_key")
+            }
+        else:
+            c["rule_unresolved"] = r.get("reason") or "the finding is not stored"
+    for s in steps:
+        named = {
+            (c["rule"]["rule_id"], c["rule"]["version"]): c["rule"]
+            for c in s.get("citations") or []
+            if "rule" in c
+        }
+        s["rules"] = list(named.values())
+
+
+async def _readable_emulations(
+    since_days: int, since: Optional[datetime]
+) -> List[Dict[str, Any]]:
+    """Scored compose runs over the gaps window, less those on a Case the caller
+    can't read."""
+    from core.memory.learning_episodes import emulation_episodes
+
+    end = datetime.now(timezone.utc)
+    start = since or end - timedelta(days=since_days)
+    episodes = await emulation_episodes(start, end)
+    hidden = await asyncio.gather(
+        *(asyncio.to_thread(run_unreadable, e["investigation_id"]) for e in episodes)
+    )
+    return [e for e, h in zip(episodes, hidden) if not h]
 
 
 class SecurityDetectionsTools:
@@ -74,6 +127,7 @@ class SecurityDetectionsTools:
         }
 
     async def _run_coverage(self, run_id: Optional[str], steps: Any) -> Dict:
+        read: Optional[EmulatedSteps] = None
         if isinstance(steps, list) and steps:
             trace: List = steps
         elif run_id:
@@ -86,11 +140,16 @@ class SecurityDetectionsTools:
                     "techniques": [],
                     "error": "no readable run",
                 }
-            trace = steps_from_dispatch_results(projection.get("results"))
+            read = steps_from_dispatch_results(projection)
+            trace = read.steps
         else:
             trace = steps if isinstance(steps, list) else []
         reconstructed = await self.reconstruct_run(steps=trace)
         report = coverage_report(trace, reconstructed)
+        if read is not None:
+            # What the run's emulators reported that is not scored, beside the techniques.
+            report.update(read.notes())
+        await asyncio.to_thread(_name_rules, report)
         if run_id:
             report["run_id"] = run_id
         return report
@@ -110,6 +169,7 @@ class SecurityDetectionsTools:
         caught: Optional[str] = None,
         rule_id: Any = None,
         offset: int = 0,
+        held: Optional[bool] = None,
     ) -> Any:
         """
         Search across all detection rules using keywords.
@@ -128,14 +188,17 @@ class SecurityDetectionsTools:
             accurate: Optional filter by Accurate result ("pass", "fail", "unknown"):
                 whether a Kibana, Wazuh or Splunk rule's judged alerts are mostly real
             caught: Optional filter: "pass" for versions that alerted on a real
-                attack step, "untested" for the rest
+                attack step, "fail" for those a later emulation showed missing it,
+                "untested" for those with no result
             rule_id: When set, return that one rule plus a page of its judged-false
                 determinations. Without it the call stays a list and builds no page.
             offset: Where that page starts. Ignored without rule_id.
+            held: Optional filter: repo rules the import check holds from
+                coverage (True: checks.import pending, flagged or failed) or not
 
         Returns:
             List of matching detection rules, each with its status, checks and
-            whether it is flagged; an overlay rule also with its stage and stage
+            whether it is flagged and held; an overlay rule also with its stage and stage
             rows; a single hit also carries its recent check changes. With
             rule_id, that one rule plus ``judged_false``.
         """
@@ -165,6 +228,7 @@ class SecurityDetectionsTools:
             quiet,
             accurate,
             caught,
+            held=held,
         )
 
     async def link_detection_rule(
@@ -209,7 +273,8 @@ class SecurityDetectionsTools:
         **_kwargs: object,
     ) -> Dict:
         """Techniques seen on stored alerts that no active rule declares, with what it cannot say,
-        and the proven hunts and closed Cases no rule alerted on (``runs_rules_missed``),
+        and the proven hunts, closed Cases and emulated steps no rule alerted on
+        (``runs_rules_missed``),
         and the SIEM rules that broke (``rule_health``: a Runs, Sees, Quiet, Noisy,
         Silent or drift check that went pass -> fail).
 
@@ -272,6 +337,7 @@ class SecurityDetectionsTools:
             rules_by_technique,
             since_days,
             since,
+            await _readable_emulations(since_days, since),
         )
         report["rule_health"] = catalog.rule_health()
         return report
@@ -303,6 +369,21 @@ class SecurityDetectionsTools:
     async def detection_metrics(self, **_kwargs: object) -> Dict:
         """The rollout's success metrics from stored data, each with its source."""
         return await asyncio.to_thread(metrics.report)
+
+    async def emulate_next(self, **_kwargs: object) -> Dict:
+        """The coverage map's techniques in the order to emulate next (no rule,
+        unproven, proven with nothing caught, then the rest), as coverage()
+        orders them. Says nothing about which tests an emulation runner holds."""
+        report = await asyncio.to_thread(coverage.coverage)
+        rows = {row["technique"]: row for row in report["techniques"]}
+        keys = ("technique", "name", "tactic", "state", "rules", "caught")
+        return {
+            "techniques": [
+                {k: rows[t][k] for k in keys} for t in report["emulate_next"]
+            ],
+            "summary": {**report["summary"], "caught": report["caught_techniques"]},
+            "source": report["source"],
+        }
 
     async def lint_detections(
         self,
@@ -431,11 +512,18 @@ class SecurityDetectionsTools:
         """
         span = span_for_steps(steps)
         findings = DatabaseDataService().get_findings(
-            limit=10000,
+            limit=FINDINGS_LIMIT,
             timestamp_start=span[0] if span else None,
             timestamp_end=span[1] if span else None,
         )
-        return reconstruct(steps, findings)
+        out = reconstruct(steps, findings)
+        if len(findings) >= FINDINGS_LIMIT:
+            # coverage_report reads a step no rule cited as unknown, not missed.
+            out["cut_off"] = (
+                f"the steps' window holds {FINDINGS_LIMIT}+ Findings and the read "
+                "was cut off, so whether a rule alerted is unknown"
+            )
+        return out
 
 
 # How long Vigil's replay of a gap proposal may hold up the save's answer.

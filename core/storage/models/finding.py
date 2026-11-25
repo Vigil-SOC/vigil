@@ -63,6 +63,10 @@ class Finding(Base):
 
     # Metadata
     timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Set once, when triage first records a verdict. A later triage leaves it.
+    first_verdict_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
     data_source: Mapped[str] = mapped_column(String(50), nullable=False)
     # Source-native ID. Combined with data_source it forms the dedup key
     # for federated ingest (see uniq_findings_source_extid).

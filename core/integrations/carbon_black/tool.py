@@ -29,6 +29,24 @@ def result(data):
     return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
 
 
+def lucene_phrase(value: str) -> str:
+    """A quoted Lucene phrase, so a value from an alert cannot widen the query."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def refusal(resp: httpx.Response) -> dict:
+    """Carbon Black's own status and message for a call it refused."""
+    try:
+        body = resp.json()
+        message = body.get("message") or body.get("error_code")
+    except (ValueError, AttributeError):
+        message = None
+    return {
+        "error": message or resp.reason_phrase or "request refused",
+        "status": resp.status_code,
+    }
+
+
 async def handle_list_tools():
     return [
         types.Tool(
@@ -42,7 +60,8 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="cb_search_device",
-            description="Search device by IP/hostname",
+            description="Search devices by IP/hostname: each device's ID, name, "
+            "IPs and quarantine state",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -55,6 +74,18 @@ async def handle_list_tools():
         types.Tool(
             name="cb_quarantine",
             description="Quarantine device",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["device_id", "reason"],
+            },
+        ),
+        types.Tool(
+            name="cb_lift_quarantine",
+            description="Lift a device's quarantine",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -105,39 +136,63 @@ async def handle_call_tool(name: str, arguments: dict | None):
         elif name == "cb_search_device":
             query = []
             if args.get("ip"):
-                query.append(f"device_external_ip:{args['ip']}")
+                ip = lucene_phrase(args["ip"])
+                query.append(f"last_external_ip_address:{ip}")
+                query.append(f"last_internal_ip_address:{ip}")
             if args.get("hostname"):
-                query.append(f"device_name:{args['hostname']}")
+                query.append(f"name:{lucene_phrase(args['hostname'])}")
             if not query:
                 return result({"error": "ip or hostname required"})
 
             resp = httpx.post(
                 f"{url}/appservices/v6/orgs/{org_key}/devices/_search",
                 headers=headers,
-                json={"query": " OR ".join(query)},
+                json={"query": " OR ".join(query), "rows": 20},
                 timeout=30,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            return result(
+            if resp.is_error:
+                return result(refusal(resp))
+            devices = [
                 {
-                    "count": len(data.get("results", [])),
-                    "devices": data.get("results", [])[:5],
+                    "device_id": d.get("id"),
+                    "name": d.get("name"),
+                    "internal_ip": d.get("last_internal_ip_address"),
+                    "external_ip": d.get("last_external_ip_address"),
+                    "quarantined": d.get("quarantined"),
+                    "status": d.get("status"),
                 }
-            )
+                for d in resp.json().get("results", [])
+            ]
+            return result({"count": len(devices), "devices": devices})
 
-        elif name == "cb_quarantine":
+        elif name in ("cb_quarantine", "cb_lift_quarantine"):
             did = args.get("device_id")
             if not did:
                 return result({"error": "device_id required"})
+            on = name == "cb_quarantine"
+            # CBC requires options.toggle for QUARANTINE; ON quarantines, OFF lifts.
             resp = httpx.post(
                 f"{url}/appservices/v6/orgs/{org_key}/device_actions",
                 headers=headers,
-                json={"action_type": "QUARANTINE", "device_id": [did]},
+                json={
+                    "action_type": "QUARANTINE",
+                    "device_id": [did],
+                    "options": {"toggle": "ON" if on else "OFF"},
+                },
                 timeout=30,
             )
-            resp.raise_for_status()
-            return result({"success": True, "device_id": did, "action": "quarantined"})
+            if resp.status_code == 404:
+                return result({"error": "device not found", "status": 404})
+            if resp.is_error:
+                return result(refusal(resp))
+            # 204: CBC accepted the request; cb_search_device's quarantined says when it holds.
+            return result(
+                {
+                    "device_id": did,
+                    "requested": "quarantine" if on else "lift_quarantine",
+                    "status": resp.status_code,
+                }
+            )
 
         return result({"error": f"Unknown tool: {name}"})
     except Exception as e:

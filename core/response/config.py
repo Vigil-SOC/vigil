@@ -6,14 +6,122 @@ threshold in env moves every branch rather than one. Defaults are the literals
 the code carried before, so a default install behaves as it did.
 
 Lives in ``core/`` because ``core`` must not import ``services``;
-``services.daemon.config`` re-exports it as part of ``DaemonConfig``.
+``core.daemon_config`` re-exports it as part of ``DaemonConfig``.
 """
 
+import json
+import logging
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
+from core.intent import FIELDS_BY_KEY, label
+
+logger = logging.getLogger(__name__)
+
+# The row the daemon writes when it applies a declared INTENT.md revision
+# (VIGIL_INTENT_DIR). ``values`` holds the applied triage/enrich/respond keys,
+# which have no other store; act.* and investigate.* live in their own rows.
+INTENT_APPLIED_KEY = "intent.applied"
+# Every process re-reads the row at most this often, so an applied revision
+# reaches the daemon and each backend replica without a restart.
+_APPLIED_TTL_SECONDS = 10.0
+_applied_cache: tuple[float, Dict[str, Any]] = (float("-inf"), {})
+
+
+def applied_intent(*, fresh: bool = False) -> Dict[str, Any]:
+    """The ``intent.applied`` row through a short cache; ``{}`` when absent.
+
+    A failed read keeps the last value read, so a database blip does not
+    flip a declared tightening back to env.
+    """
+    global _applied_cache
+    now = time.monotonic()
+    at, value = _applied_cache
+    if not fresh and now - at < _APPLIED_TTL_SECONDS:
+        return value
+    # The read is outside the lock: a slow database stalls only its caller.
+    try:
+        from core.storage.config_service import get_config_service
+
+        row = get_config_service().read_system_config(INTENT_APPLIED_KEY)
+        value = row if isinstance(row, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("intent.applied not read; keeping last: %s", exc)
+    _applied_cache = (now, value)
+    return value
+
+
+def managed_widening(
+    key: str, requested: Any, applied: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
+    """Why a local write of ``requested`` to a managed key is refused, or None.
+
+    Refused when it is looser than the declared value. Compared with the
+    declared value, not the current one, so setting it back is the reset.
+    """
+    applied = applied_intent(fresh=True) if applied is None else applied
+    meta = (applied.get("keys") or {}).get(key) if applied.get("directory") else None
+    if not meta or requested is None:
+        return None
+    declared = meta.get("declared")
+    if label(FIELDS_BY_KEY[key].rule, requested, declared) != "loosen":
+        return None
+    return (
+        f"{key} is managed by {meta.get('file')}:{meta.get('line')} at revision "
+        f"{meta.get('revision') or 'unknown'} (declared {json.dumps(declared)}); a local "
+        f"change may only narrow it. Change it in the declared directory "
+        f"{applied['directory']}."
+    )
+
+
+def settle_pending(values: Dict[str, Any], user_id: str) -> None:
+    """Drop from the row's pending list each key a person just set to its declared value.
+
+    That write is the accept for that key; left listed, a later narrowing of
+    it would read as pending rather than drift. Best-effort.
+    """
+    try:
+        from core.storage.config_service import get_config_service
+
+        service = get_config_service(user_id)
+        row = service.read_system_config(INTENT_APPLIED_KEY)
+        if not isinstance(row, dict) or not row.get("pending"):
+            return
+        keys = row.get("keys") or {}
+        settled = [
+            k
+            for k in row["pending"]
+            if k in values
+            and k in keys
+            and label(FIELDS_BY_KEY[k].rule, values[k], keys[k].get("declared"))
+            == "same"
+        ]
+        if not settled:
+            return
+        note = (
+            f"INTENT.md revision {row.get('revision')}: "
+            f"{', '.join(settled)} set to the declared value"
+        )
+        pending = [k for k in row["pending"] if k not in settled]
+        service.set_system_config(
+            key=INTENT_APPLIED_KEY,
+            value={**row, "pending": pending, "reason": note},
+            description="Declared INTENT.md revision applied by the daemon",
+            config_type="intent",
+            change_reason=note,
+        )
+        applied_intent(fresh=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("intent.applied pending not settled: %s", exc)
+
+
+def applied_values() -> Dict[str, Any]:
+    """Applied triage/enrich/respond values keyed by manifest key."""
+    values = applied_intent().get("values")
+    return values if isinstance(values, dict) else {}
 
 
 def decision_rule(field: str, value: Any, observed: Optional[float] = None) -> str:
@@ -73,12 +181,22 @@ class ResponseConfig:
 
     @classmethod
     def from_settings(cls, settings: Optional[Settings] = None) -> "ResponseConfig":
+        """Env, with an applied INTENT.md revision's respond.* keys over it."""
         s = settings or get_settings()
+        applied = applied_values()
         return cls(
-            auto_response_enabled=s.daemon_auto_response,
-            confidence_threshold=s.daemon_confidence_threshold,
-            review_threshold=s.daemon_review_threshold,
-            monitor_threshold=s.daemon_monitor_threshold,
+            auto_response_enabled=applied.get(
+                "respond.auto_response", s.daemon_auto_response
+            ),
+            confidence_threshold=applied.get(
+                "respond.confidence_threshold", s.daemon_confidence_threshold
+            ),
+            review_threshold=applied.get(
+                "respond.review_threshold", s.daemon_review_threshold
+            ),
+            monitor_threshold=applied.get(
+                "respond.monitor_threshold", s.daemon_monitor_threshold
+            ),
             force_manual_approval=s.daemon_force_approval,
             dry_run=s.daemon_dry_run,
         )

@@ -10,6 +10,7 @@ import { poolConfig } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
 import { failed, initTracing, shutdownTracing, traced } from "./core/tracing.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
+import { spendOf } from "./contracts/budget.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
 import type { Memory, State } from "./core/seams.js";
@@ -40,6 +41,8 @@ const CHAT = "/chat/stream";
 const CHECK = "/plugins/check";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
 const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
+// GET /runs/<id>/spend -- priced and unpriced model calls, and token totals, on that run.
+const SPEND = /^\/runs\/([0-9a-fA-F-]{36})\/spend$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;
 const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
@@ -390,6 +393,18 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   res.end(JSON.stringify(report));
 }
 
+async function readSpend(state: State, runId: string, res: ServerResponse): Promise<void> {
+  let account: ReturnType<typeof spendOf>;
+  try {
+    account = spendOf(await state.read(runId));
+  } catch (error) {
+    return fail(res, 502, "spend", runId, error);
+  }
+  if (account === null) return refuse(res, 404, `no spend on ${runId}`);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(account));
+}
+
 async function readEvents(state: State, runId: string, snapshots: boolean, res: ServerResponse): Promise<void> {
   const events = await state.read(runId, snapshots ? { snapshots: true } : {});
   res.writeHead(200, { "content-type": "application/json" });
@@ -499,6 +514,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
         const limit = Number(parsed.searchParams.get("evidence_limit"));
         return readFold(state, run[1] as string, "projection", res, Number.isInteger(limit) && limit > 0 ? { evidence_limit: limit } : undefined);
       }
+
+      const spent = req.method === "GET" ? SPEND.exec(parsed.pathname) : null;
+      if (spent !== null) return readSpend(state, spent[1] as string, res);
 
       // One recorded investigate run on a candidate model. Not GET /runs/<id>/replay.
       if (req.method === "POST" && parsed.pathname === "/investigation-replay") {

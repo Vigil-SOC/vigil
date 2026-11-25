@@ -8,8 +8,8 @@ export type PricingSource = 'exact' | 'zero' | 'unknown'
 
 const NOT_PRICED = 'not priced'
 const NOT_BILLED = 'not billed'
-const NOT_PRICED_HINT = 'No rate is known for this model, so its spend cannot be measured. Set one in the gateway’s pricing overrides, or mark its provider self-hosted (config.self_hosted) if it costs nothing.'
-const NOT_BILLED_HINT = 'This model is not billed. A rate for a self-hosted model is set in the gateway’s pricing overrides; a provider is marked self-hosted with config.self_hosted.'
+const NOT_PRICED_HINT = 'No rate is known for this model, so its spend cannot be measured. Set one in the gateway’s pricing overrides; a hosted model that costs nothing gets its zero price there too. A provider whose model runs on hardware you control is stated self-hosted (config.self_hosted), which also prices it at zero.'
+const NOT_BILLED_HINT = 'This model is not billed: its provider is stated self-hosted (config.self_hosted), meaning the model runs on hardware you control, or the gateway’s pricing overrides set its rate to zero.'
 
 /** Provenance vocabulary, identical everywhere it appears. */
 export const PROVENANCE_LABEL: Record<PricingSource, string> = {

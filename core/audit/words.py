@@ -259,6 +259,20 @@ def _role(verb: str) -> Callable[[Mapping[str, Any]], str]:
     )
 
 
+def _emulation(p: Mapping[str, Any]) -> str:
+    parts = [
+        f"{verb} {', '.join(p[key])}"
+        for key, verb in (
+            ("tools_added", "marked emulator"),
+            ("tools_removed", "unmarked emulator"),
+            ("hosts_added", "listed host"),
+            ("hosts_removed", "removed host"),
+        )
+        if p.get(key)
+    ]
+    return "Emulators: " + "; ".join(parts) if parts else "Changed the emulators"
+
+
 def _proof_export(p: Mapping[str, Any]) -> str:
     n = p.get("rule_count")
     if not p.get("kind"):
@@ -307,6 +321,32 @@ def _saved(p: Mapping[str, Any]) -> str:
     return f"Saved {rule}{version}{language}"
 
 
+def _signed_in(p: Mapping[str, Any]) -> str:
+    method = p.get("method")
+    if method == "sso":
+        return "Signed in through single sign-on"
+    how = {
+        "password": " with a password",
+        "mfa": " with two-step sign-in",
+        "mfa_step_down": " with an authenticator code while keys were unavailable",
+        "recovery_step_down": " with a recovery code while keys were unavailable",
+        "break_glass": " as a break-glass account",
+    }.get(method, "")
+    return "Signed in" + how
+
+
+def _confirmed(p: Mapping[str, Any]) -> str:
+    if p.get("strong"):
+        return "Confirmed it's them with a password and a second step"
+    how = {
+        "password": " with their password",
+        "code": " with a code",
+        "key": " with a security key",
+        "provider": " at their SSO provider",
+    }.get(p.get("factor"), "")
+    return "Confirmed it's them" + how
+
+
 def _ingested(p: Mapping[str, Any]) -> str:
     collapsed = p.get("collapsed")
     total = collapsed.get("count") if isinstance(collapsed, Mapping) else None
@@ -321,12 +361,10 @@ _COUNTED = frozenset({"findings.ingested"})
 
 _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Sign-in, account and credential (core/auth/trail_events.py and its callers)
-    "auth.sign_in": lambda p: "Signed in"
-    + (" through single sign-on" if p.get("method") == "sso" else ""),
+    "auth.sign_in": _signed_in,
     "auth.sign_out": "Signed out",
     "auth.sign_in_ended": _sign_in_ended,
-    "auth.confirmed": lambda p: "Confirmed it's them"
-    + (" with a password and a second step" if p.get("strong") else ""),
+    "auth.confirmed": _confirmed,
     "auth.confirmation_failed": "Failed to confirm it's them",
     "auth.everyone_signed_out": "Signed everyone out",
     "auth.sign_in_failed": lambda p: "Failed to sign in"
@@ -461,11 +499,19 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "tools.classified": "Classed outside tools on upgrade",
+    "autonomy.emulation_changed": _emulation,
+    "emulation.unlisted_host": lambda p: f"{p.get('tool') or 'An emulator'} reported steps "
+    f"on hosts not listed for emulation: {', '.join(p.get('hosts') or []) or 'unknown'}",
     "detections.rule_staged": _staged,
     "detections.proposal_rejected": lambda p: "Dismissed detection proposal"
     + (f" {p['proposal_id']}" if p.get("proposal_id") else "")
     + (f" for {p['technique']}" if p.get("technique") else ""),
     "detections.rule_saved": _saved,
+    "detections.rule_approved": lambda p: "Approved"
+    + (f" rule {p['rule_id']}" if p.get("rule_id") is not None else " a rule")
+    + (f" v{p['version']}" if p.get("version") is not None else "")
+    + " as coverage"
+    + (f" ({_word(p['was'])} by the import check)" if p.get("was") else ""),
     "findings.ingested": _ingested,
     "findings.technique_confidence_cleared": lambda p: "Cleared technique confidence"
     + (f" on {p['rows_cleared']} findings" if p.get("rows_cleared") else ""),
@@ -579,6 +625,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "approval.approve": _approve,
     "approval.reject": "Rejected an action",
     "approval.release": "Released an action the stop was holding",
+    "approval.settle": lambda p: "Settled an unanswered "
+    + (p.get("kind") if p.get("kind") in ("recommendation", "approval") else "action")
+    + " when the case closed",
     "approval.request": lambda p: "Asked for approval"
     + (f" of {_word(p['action_type'])}" if p.get("action_type") else ""),
     trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
@@ -589,6 +638,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Imported history (core/memory/imported_history.py)
     "memory.import.written": _import("Imported"),
     "memory.import.deleted": _import("Deleted"),
+    "memory.ledgers.erased": lambda p: "Erased re-decision ledgers"
+    + (f" of {p['import_id']}" if p.get("import_id") else ""),
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,

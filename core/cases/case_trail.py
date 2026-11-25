@@ -50,6 +50,8 @@ SLA_RESUME = "case.sla.resume"
 APPROVE = "approval.approve"
 REJECT = "approval.reject"
 RELEASE = "approval.release"
+# A close answered an ask nobody had (#5107).
+SETTLE = "approval.settle"
 # The case row and its journal (#3403)
 CREATE = "case.create"
 STATUS = "case.status"
@@ -334,8 +336,11 @@ def append_approval(
     action_id: str,
     username: Optional[str],
     operator_text: Optional[str] = None,
+    case_id: Optional[str] = None,
+    action_type: Optional[str] = None,
+    kind: Optional[str] = None,
 ) -> None:
-    """Append an approve, reject, or release in the caller's transaction.
+    """Append an approve, reject, release, or settle in the caller's transaction.
 
     ``principal_id`` is the one the caller already resolved; ``approved_by``
     and ``approved_by_principal_id`` are not changed. No legacy row:
@@ -345,7 +350,14 @@ def append_approval(
         return
     trail.append(
         session,
-        _payload(action, principal_id, action_id=action_id),
+        _payload(
+            action,
+            principal_id,
+            case_id=case_id,
+            action_id=action_id,
+            action_type=action_type,
+            kind=kind,
+        ),
         **_beside(username or None, operator_text),
     )
 

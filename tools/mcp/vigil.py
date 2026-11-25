@@ -1515,20 +1515,17 @@ def create_approval_action(
     """
     from core.response.proposal_targets import (
         REASON_SENTENCES,
-        TARGET_RULES,
         check_confidence,
         check_target,
     )
 
-    # A containment kind's target must fit it and its confidence be above zero.
-    if action_type in TARGET_RULES:
-        checked, code = check_target(action_type, target)
-        code = code or check_confidence({"confidence": confidence})
-        if code:
-            return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
-        target = checked
-    elif not 0.0 <= confidence <= 1.0:
-        return jdump({"error": "confidence must be between 0 and 1"})
+    # Only the six kinds a run may propose; the target must fit the kind and the
+    # confidence be above zero.
+    checked, code = check_target(action_type, target)
+    code = code or check_confidence({"confidence": confidence})
+    if code:
+        return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
+    target = checked
     try:
         svc = ApprovalService()
         action = svc.create_action(
@@ -1599,9 +1596,12 @@ def list_approval_actions(
 
 @tool("Get approval action", reads=True)
 @requires("ai_decisions.read")
-def get_approval_action(action_id: str) -> str:
-    """Get action details."""
-    return _call(tool_registry.get_approval_action, action_id=action_id)
+async def get_approval_action(action_id: str) -> str:
+    """Get action details. An isolation or account disable carries the vendor
+    IDs its target resolved to, or what it is waiting on, in
+    ``parameters.containment``, and once run, the vendor's state in
+    ``execution_result.state``."""
+    return await _acall(tool_registry.get_approval_action, action_id=action_id)
 
 
 @tool("Approve action (confirmed in Approvals)", reads=True)
@@ -1698,6 +1698,23 @@ def get_autonomy_ceiling() -> str:
     except Exception as e:
         logger.error("get_autonomy_ceiling failed: %s", e)
         return jdump({"error": "Could not read the autonomy ceiling"})
+
+
+@tool("Declared intent report", reads=True)
+@requires("ai_autonomy.read")
+def get_intent_report() -> str:
+    """Read the declared intent report, as GET /api/config/intent does: each
+    INTENT.md key's declared and effective value, and with a declared directory
+    applied, per key whether it is managed, its file, line and revision, drift,
+    pending loosenings and an ignored env value; plus the applied revision, the
+    revision on disk, in_sync and state. Read only; accepting is not exposed."""
+    from core.intent_report import intent_body
+
+    try:
+        return jdump(intent_body())
+    except Exception as e:
+        logger.error("get_intent_report failed: %s", e)
+        return jdump({"error": "Could not read the intent report"})
 
 
 @tool("Entity facts held", reads=True)
@@ -1866,13 +1883,33 @@ def get_detection_rule(rule_id: int) -> str:
 
 @tool("Detection coverage", reads=True)
 @requires("detections.read")
-def get_detection_coverage() -> str:
+async def get_detection_coverage(
+    by_layer: bool = False,
+    scope: Literal["all", "emulated", "intel"] = "all",
+    techniques: Optional[list[str]] = None,
+) -> str:
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
-    Sees), unproven or with no rule."""
+    Sees), unproven or with no rule. A rule failing lint, or a repo rule the
+    import check holds (``held`` on each row counts those), is no coverage.
+
+    ``by_layer`` adds ``by_layer``: which detection layer catches each technique,
+    shown by attack. Rows are layers (each SIEM with rules, each alert source
+    that labels techniques, LogLM when present) and a combined row; each cell is
+    validated, partial, present (not validated), no_detection or not_checked,
+    with marks tested_missed, not_observable and shadow, and its evidence
+    (declaring rules and their checks, the newest emulation run: hosts and steps
+    caught of steps run, older runs, LogLM flags, blind spots). Measures are
+    counts: validated per layer and combined, loglm_lift, validated by one
+    layer, present never validated, not observable. Evidence is the last 30
+    days' compose emulation runs. ``scope``: all (the map's techniques),
+    emulated (those emulated in the window) or intel (those the connected
+    threat intelligence names; says so when none is connected). ``techniques``
+    (e.g. ["T1059", "T1003.001"]) answers for exactly those and implies
+    by_layer."""
     from core.detections.inventory import coverage
 
-    return jdump(coverage.coverage())
+    return jdump(await coverage.read(by_layer, scope, techniques))
 
 
 @tool("List detection proposals", reads=True)
@@ -1939,6 +1976,123 @@ def switch_off_detection_rule(
         )
     except (LookupError, ValueError) as exc:
         return jdump({"error": str(exc)})
+
+
+@tool("Approve a held detection rule")
+@requires("detections.write")
+def approve_detection_rule(
+    rule_id: int, reason: Annotated[str, Field(min_length=1, max_length=2000)]
+) -> str:
+    """Makes a repo or local rule's latest version count as coverage although the
+    import check holds it (checks.import pending, flagged or failed): for
+    example a KQL rule whose Sentinel tables you know are there. Refused when
+    its lint fails or it is not held; its next version is held again."""
+    from core.detections.inventory import import_check
+
+    if not reason.strip():
+        return jdump({"error": "reason must not be blank"})
+    username = actor()
+    try:
+        return jdump(
+            import_check.approve(
+                rule_id, (username, acting_principal() or username), reason.strip()
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
+# --- Rule libraries: rules imported from a git repo (#5116) -------------------
+
+
+def _library_call(fn) -> str:
+    """Run a rule-library call on a fresh service; a refusal is an error."""
+    from core.detections.detection_rules_service import DetectionRulesService
+
+    try:
+        return jdump(fn(DetectionRulesService()))
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
+def _who() -> tuple:
+    username = actor()
+    return acting_principal() or username, username
+
+
+@tool("Read a rule repo", reads=True)
+@requires("detections.write")
+def read_rule_repo(
+    repo: Annotated[Optional[str], Field(max_length=500)] = None,
+    source_id: Optional[str] = None,
+    format: Optional[
+        Literal["auto", "sigma", "splunk", "elastic", "kql", "wazuh"]
+    ] = None,
+) -> str:
+    """Reads a git repo of detection rules (``repo``: owner/repo, a GitHub link
+    or an https URL, with ``@ref``) or an imported library (``source_id``),
+    installing nothing. Returns the ``commit`` read and the rule files grouped
+    by folder, each with language, techniques and ``problem`` (why it cannot be
+    picked: it does not read, or its key is already another source's active
+    rule). For a library, ``library`` lists changed, gone and new files. Pass
+    the commit to import_rules."""
+    from core.detections import rule_libraries
+
+    return _library_call(
+        lambda service: rule_libraries.read(
+            service, repo=repo, source_id=source_id, fmt=format
+        )
+    )
+
+
+@tool("Import detection rules")
+@requires("detections.write")
+def import_rules(
+    commit: Annotated[str, Field(min_length=7, max_length=64)],
+    picks: Annotated[list[str], Field(max_length=20000)],
+    repo: Annotated[Optional[str], Field(max_length=500)] = None,
+    source_id: Optional[str] = None,
+    name: Annotated[Optional[str], Field(max_length=200)] = None,
+    format: Optional[
+        Literal["auto", "sigma", "splunk", "elastic", "kql", "wazuh"]
+    ] = None,
+) -> str:
+    """Imports the rule files ``picks`` (paths as read_rule_repo listed them) at
+    ``commit``: a new library from ``repo`` (no picks makes an empty one), or
+    changed, new and gone files of the library ``source_id``. Refused when the
+    repo has moved since it was read: read it again. All or nothing."""
+    from core.detections import rule_libraries
+
+    def run(service):
+        source = rule_libraries.import_rules(
+            service,
+            commit,
+            picks,
+            _who(),
+            repo=repo,
+            source_id=source_id,
+            name=name,
+            fmt=format,
+        )
+        rule_libraries.sync_soon()
+        return {"success": True, "source": source}
+
+    return _library_call(run)
+
+
+@tool("Remove a rule library", destructive=True)
+@requires("detections.write")
+def remove_rule_library(source_id: str) -> str:
+    """Removes an imported rule library and its files. Its rules are marked
+    removed on the next sync; proposals made from them stay."""
+    from core.detections import rule_libraries
+
+    def run(service):
+        removed = rule_libraries.remove(service, source_id, _who())
+        rule_libraries.sync_soon()
+        return {"success": True, **removed}
+
+    return _library_call(run)
 
 
 # --- Run lifecycle, for a caller outside Vigil (#4248) ------------------------
@@ -2284,3 +2438,132 @@ async def start_gaps_run() -> str:
         return outcome.as_dict()
 
     return await _acall(start)
+
+
+# --- The assessment, for a caller outside Vigil (#5046) ------------------------
+
+
+def _counted(missed: dict) -> dict:
+    """``runs_rules_missed`` with each hunt and case reduced to a count."""
+    return {
+        **missed,
+        "groups": [
+            {
+                **group,
+                "runs": len(group["runs"]),
+                "confirmed_runs": len(group["confirmed_runs"]),
+                "ruled_out": len(group["ruled_out"]),
+            }
+            for group in missed.get("groups", [])
+        ],
+        "unknown": len(missed.get("unknown", [])),
+    }
+
+
+@tool("Detection gaps report", reads=True)
+@requires("detections.read")
+async def get_gaps_report() -> str:
+    """What Vigil cannot see, as its own agents read it: techniques on stored
+    alerts no active rule declares, blind spots, proven runs no rule alerted on
+    over 30 days (``runs_rules_missed``) and rules that broke (``rule_health``).
+    The hunts and cases behind a missed run are named only to a caller who may
+    read cases; others get counts. A case the caller can't read is left out."""
+    from core.detections.tools import get_security_detection_tools
+
+    async def read() -> dict:
+        report = await get_security_detection_tools().identify_gaps()
+        if permission_refusal("cases.read") is not None:
+            report["runs_rules_missed"] = _counted(report["runs_rules_missed"])
+        return report
+
+    return await _acall(read)
+
+
+@tool("Emulate next", reads=True)
+@requires("detections.read")
+async def get_emulate_next() -> str:
+    """The coverage map's techniques in the order to emulate next: no rule,
+    unproven, proven with nothing caught, then the rest. Each row has
+    technique, name, tactic, state, rules and caught. Says nothing about which
+    tests an emulation runner holds."""
+    from core.detections.tools import get_security_detection_tools
+
+    return await _acall(get_security_detection_tools().emulate_next)
+
+
+@tool("Day 1 Report", reads=True)
+@requires("platform.read")
+def get_day1_report(record_id: Optional[str] = None) -> str:
+    """The Day 1 Report as the console shows it to you: the latest record, or
+    ``record_id``, with each section you may not read withheld. ``status`` says
+    whether a run is being written (``running_since``), did not complete, and
+    which record is the latest (``latest_id``)."""
+    from core.reporting.day1 import status
+    from core.reporting.day1_router import NO_REPORT, presented
+
+    principal, _ = _person()
+    if principal is None:
+        return jdump({"error": "no person is bound to this call"})
+
+    def read() -> dict:
+        report = presented(principal, record_id)
+        if report is None:
+            return {"error": NO_REPORT, "status": status()}
+        return {"status": status(), "report": report}
+
+    return _call(read)
+
+
+# Building the report reads the API's process health, which tools/ cannot reach.
+# The API that serves /mcp hands it in at startup.
+_process_health: Any = None
+_day1_runs: set = set()
+
+
+def serve_day1_runs(processes: Any) -> None:
+    global _process_health
+    _process_health = processes
+
+
+@tool("Start a Day 1 Report run")
+@requires("platform.write")
+async def start_day1_report() -> str:
+    """Run the Day 1 Report now, as you; you are notified when it is ready.
+    Returns at once with ``run_id``: poll ``get_day1_report`` until
+    ``status.latest_id`` changes, and its ``report.run_id`` is this ``run_id``."""
+    import asyncio
+
+    from core.auth import tool_principal
+    from core.reporting.day1 import run_on_demand
+
+    if tool_principal.current_claims() is not None:
+        return jdump(_OUTSIDE_ONLY)
+    if _process_health is None:
+        return jdump({"error": "a report run cannot be started from this process"})
+    principal, _ = _person()
+    if principal is None:
+        return jdump({"error": "no person is bound to this call"})
+
+    begun = asyncio.get_running_loop().create_future()
+    run = asyncio.create_task(run_on_demand(principal, _process_health, begun))
+    # Held until done, so the task is not collected mid-run.
+    _day1_runs.add(run)
+
+    def done(task: asyncio.Task) -> None:
+        _day1_runs.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "on-demand day 1 report did not complete: %s", task.exception()
+            )
+
+    run.add_done_callback(done)
+    await asyncio.wait({begun, run}, return_when=asyncio.FIRST_COMPLETED)
+    if not begun.done():
+        return jdump({"error": "the report run could not be started"})
+    return jdump(
+        {
+            "run_id": begun.result(),
+            "status": "running",
+            "message": "Poll get_day1_report for status.latest_id.",
+        }
+    )

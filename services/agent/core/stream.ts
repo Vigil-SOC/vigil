@@ -5,7 +5,7 @@ import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import { GatewayExhausted } from "./limiter.js";
 import { ModelSilent, OutputCapReached } from "./wire.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
-import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
+import type { CheckpointPayload, DispatchPayload, FramePayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
 import { factsPayloadOf, type FactsPayload } from "../contracts/facts.js";
 import { hasRecall, isRecalled, recalledNotesOf, recalledNotes, type RecallPayload } from "../contracts/memory.js";
 import { ToolBoundsViolation, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
@@ -166,6 +166,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
     const reserved = submit ? this.cfg.answer_within_cap === true : schema === null && this.cfg.max_turns > 0;
     this.searches = reserved ? Math.max(0, this.cfg.max_turns - 1) : this.cfg.max_turns;
+    const resumed = yield* this.resumeApproved();
+    if (resumed !== null) return yield* announce(resumed);
     const ended = yield* this.toolLoop(submit);
     if (ended !== null) return yield* announce(ended);
     // Prose was already streamed as it arrived, so asking for it again would bill
@@ -264,6 +266,28 @@ class Run<T, Kinds extends Record<string, unknown>> {
       if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
       return { keys, as_of: asOf, unavailable: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  // The call a person approved runs before the model is asked anything (#5077): its
+  // checkpoint holds the tool and arguments, and the executed record keeps it to once.
+  // The model then reads it in its transcript, as if the parking turn had gone through.
+  private async *resumeApproved(): AsyncGenerator<StreamEvent<T>, Outcome<T> | null> {
+    if (this.cfg.resume_approved !== true) return null;
+    const fold = await this.folder.advance();
+    if (this.settled(fold) !== null) return null;
+    // Only the role's latest park: an older approval the model moved on from stays unrun.
+    const parked = fold.parked.findLast((one) => one.role === null || one.role === this.cfg.role);
+    if (parked === undefined || fold.answered.get(parked.checkpoint_id) !== "approve" || fold.executed.has(parked.checkpoint_id)) return null;
+    const tool = this.tools.find((granted) => granted.id === parked.tool);
+    if (tool === undefined) return null;
+    const call: ToolCall = { id: `call_${parked.checkpoint_id}`, tool: tool.id, args: parked.args };
+    this.transcript.push({ role: "assistant", content: "", tool_calls: [call] });
+    const measured = await this.invoke(tool, call.args, call.id, parked.checkpoint_id);
+    yield* this.record(call, measured.result, parked.checkpoint_id, measured.duration_ms, measured.redacted);
+    if (this.cfg.park_on_denial === true && !measured.result.ok && measured.result.failure.kind === "denied") {
+      return this.done("waiting_approval", null, measured.result.failure.detail);
+    }
+    return null;
   }
 
   // Returns an outcome only when the run ends here; otherwise the loop stops
@@ -485,14 +509,17 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.calls.push(attempt);
     this.transcript.push({ role: "tool", call_id: call.id, content: guarded?.shown ?? wrapped.text });
     this.results += 1;
-    if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
-    else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
+    // An emulator's answer is journaled gated or not, stamped, so its steps are read
+    // only from calls the deployment marked (#5062).
+    const emulator = this.cfg.emulators?.has(call.tool) === true && tool !== undefined;
+    if (gated !== undefined) await this.journalExecuted(gated, call.tool, result, emulator);
+    else if (emulator || call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result, emulator);
     yield { type: "tool_result", call, attempt, ...(ref === undefined ? {} : { ref }) };
   }
 
   // The dispatch event's own id is the checkpoint's, so the next pass finds it by
   // the same derivation that raised the approval.
-  private async journalExecuted(checkpointId: string, tool: string, result: ToolResult): Promise<void> {
+  private async journalExecuted(checkpointId: string, tool: string, result: ToolResult, emulator = false): Promise<void> {
     const payload: DispatchPayload = {
       dispatch_id: checkpointId,
       agent_id: this.cfg.role,
@@ -500,6 +527,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       question_id: null,
       failure_reason: result.ok ? null : result.failure.kind,
       result,
+      ...(emulator ? { tool, emulator: true as const } : {}),
     };
     await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "dispatch", payload });
   }
@@ -786,6 +814,13 @@ type Gate =
   | { kind: "park"; checkpoint_id: string }
   | { kind: "served"; checkpoint_id: string; result: ToolResult };
 
+interface Parked {
+  checkpoint_id: string;
+  tool: string;
+  args: string;
+  role: string | null;
+}
+
 interface Fold {
   answered: ReadonlyMap<string, ResolutionPayload["answer"]>;
   // Gated calls this run has already made, by the checkpoint that approved them.
@@ -793,6 +828,8 @@ interface Fold {
   // A checkpoint with no approving or rejecting resolution, which is what keeps
   // a run parked whether or not this harness is the one that raised it.
   open: string | null;
+  // Each tool approval's call, and the role whose model call raised it (null on a ledger without frames).
+  parked: readonly Parked[];
   terminal: TerminalPayload | null;
 }
 
@@ -802,6 +839,9 @@ class Folder<Kinds extends Record<string, unknown>> {
   private readonly answered = new Map<string, ResolutionPayload["answer"]>();
   private readonly executed = new Map<string, ToolResult>();
   private readonly raised: string[] = [];
+  private readonly parked: Parked[] = [];
+  // A checkpoint follows the frame of the model call that asked for it.
+  private framed: string | null = null;
   private terminal: TerminalPayload | null = null;
   private next = 0;
 
@@ -814,7 +854,15 @@ class Folder<Kinds extends Record<string, unknown>> {
         const payload = event.payload as ResolutionPayload;
         this.answered.set(payload.checkpoint_id, payload.answer);
       }
-      if (event.kind === "checkpoint") this.raised.push((event.payload as CheckpointPayload).checkpoint_id);
+      if (event.kind === "frame") this.framed = (event.payload as FramePayload).role;
+      if (event.kind === "checkpoint") {
+        const payload = event.payload as CheckpointPayload;
+        this.raised.push(payload.checkpoint_id);
+        const { tool, args } = payload.context ?? {};
+        if (payload.checkpoint_class === TOOL_APPROVAL && typeof tool === "string" && typeof args === "string") {
+          this.parked.push({ checkpoint_id: payload.checkpoint_id, tool, args, role: this.framed });
+        }
+      }
       if (event.kind === "dispatch") {
         const payload = event.payload as DispatchPayload;
         if (payload.result !== undefined) this.executed.set(payload.dispatch_id, payload.result as ToolResult);
@@ -826,6 +874,7 @@ class Folder<Kinds extends Record<string, unknown>> {
       answered: this.answered,
       executed: this.executed,
       open: this.raised.find((id) => !this.answered.has(id)) ?? null,
+      parked: this.parked,
       terminal: this.terminal,
     };
   }

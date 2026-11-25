@@ -17,6 +17,7 @@ from core.cases.agent_closure import (
     activity_actor,
     actor_identity,
     close_channel,
+    closing_person,
     current_credential_id,
     record_close,
 )
@@ -24,6 +25,7 @@ from core.cases.case_collaboration_service import remove_watchers_who_cannot_rea
 from core.cases.case_handoff import (
     move_reopened_archived_team,
     note_owner,
+    owner_on_team,
     require_merge_source,
 )
 from core.cases.closure import (
@@ -409,6 +411,7 @@ class CaseWorkflowService:
         false_positive_cause: object = _CAUSE_OMITTED,
         on_trail: bool = True,
         by_model: bool = False,
+        take_ownership: bool = True,
     ):
         """Mark a case closed and record its closure metadata.
 
@@ -459,6 +462,11 @@ class CaseWorkflowService:
         close that states the field, including null, stores that. One that
         omits the field leaves a standing cause. A value outside the set raises
         ``ValueError`` before anything is written.
+
+        **A person's determining close takes the case** (#4983), unless the
+        same save named an owner (``take_ownership=False``). A closer who does
+        not resolve, cannot read the case, or is off its team leaves the owner
+        alone and the close still lands.
         """
         if false_positive_cause is _CAUSE_OMITTED:
             stated_cause: object = _CAUSE_OMITTED
@@ -567,7 +575,51 @@ class CaseWorkflowService:
                 sampled=closure.sampled_at is not None,
                 evidence_opened=closure.evidence_opened,
             )
+            if determining and take_ownership:
+                self._take_on_close(session, case)
+        from core.response.approval_service import settle_for_close
+
+        # Its unanswered asks end with it, in this transaction (#5107).
+        settle_for_close(session, case_id)
         return closure
+
+    @staticmethod
+    def _take_on_close(session: Session, case: Case) -> None:
+        """Give the case to the person who closed it, appended after the close.
+
+        Every skip is silent: the close stands. A trail failure is not a skip.
+        """
+        from core.cases.assignee import (
+            AssigneeRefused,
+            owner_reads_case,
+            resolve_assignee,
+        )
+
+        closer = closing_person()
+        if not closer:
+            return
+        try:
+            new = resolve_assignee(session, closer, current=case.assignee)
+        except AssigneeRefused:
+            logger.info(
+                "Case %s closed by %r, who resolves to no account; owner left",
+                case.case_id,
+                closer,
+            )
+            return
+        previous = (case.assignee or "").strip() or None
+        new = (new or "").strip() or None
+        if new is None or new == previous:
+            return
+        if not owner_reads_case(session, case, new):
+            return
+        if case.team_id and not owner_on_team(session, new, case.team_id):
+            return
+        case.assignee = new
+        case.updated_at = utcnow()
+        case_trail.append_update(
+            session, case.case_id, {"assignee": previous}, {"assignee": new}
+        )
 
     def reopen_case(self, session: Session, case_id: str) -> None:
         """Retract what closing the Case determined, keeping what it wrote.
@@ -594,6 +646,10 @@ class CaseWorkflowService:
             closure.sampled_at = None
             closure.false_positive_cause = None
         move_reopened_archived_team(session, case_id)
+        from core.response.approval_service import reopen_settled
+
+        # What the close settled is asked again (#5107).
+        reopen_settled(session, case_id)
 
     def merge_cases(
         self,
@@ -722,6 +778,13 @@ class CaseWorkflowService:
             # analyst's `false_positive` -- and being the category that writes
             # no Verdict, it would withdraw the one already written. A merge
             # relates two records; it does not overturn what one of them found.
+            from core.response.approval_service import (
+                reparent_for_merge,
+                settle_for_close,
+            )
+
+            # The source's asks follow its evidence rather than settle (#5107).
+            reparent_for_merge(session, source_case_id, target_case_id)
             standing = session.get(CaseClosureInfo, source_case_id)
             stated = (standing.closure_category or "").strip() if standing else ""
             if stated not in ("", ClosureCategory.UNSPECIFIED.value):
@@ -742,6 +805,8 @@ class CaseWorkflowService:
                     on_trail=False,
                 )
 
+            # A closed target answers what it now holds.
+            settle_for_close(session, target_case_id)
             # Both Cases changed what they hold, whether or not the close ran.
             reconcile_case_safely(session, source_case_id)
             reconcile_case_safely(session, target_case_id)

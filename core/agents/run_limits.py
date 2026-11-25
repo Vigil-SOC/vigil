@@ -31,9 +31,31 @@ OVERRIDE_CEILINGS: Mapping[str, Mapping[str, float]] = {
     },
 }
 
+# The wall ceiling above, in whole minutes: what a caller may ask on execute.
+MAX_WALL_MINUTES = int(OVERRIDE_CEILINGS["budgets"]["max_wall_ms"] // 60_000)
+
 
 class OverrideRefused(ValueError):
     """The caller asked for a limit the deployment does not grant."""
+
+
+def check_wall_minutes(minutes: Any) -> int:
+    """Whole minutes from 1 to the wall ceiling.
+
+    A float that is a whole number counts. Anything else, including 0, is refused.
+    """
+    if isinstance(minutes, float) and math.isfinite(minutes) and minutes.is_integer():
+        minutes = int(minutes)
+    if (
+        isinstance(minutes, bool)
+        or not isinstance(minutes, int)
+        or not 1 <= minutes <= MAX_WALL_MINUTES
+    ):
+        raise OverrideRefused(
+            "max_wall_minutes must be a whole number of minutes from 1 to "
+            f"{MAX_WALL_MINUTES}"
+        )
+    return minutes
 
 
 def check_overrides(overrides: Optional[Mapping[str, Any]]) -> None:

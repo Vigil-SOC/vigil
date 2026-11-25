@@ -1,0 +1,36 @@
+# I-7 · intelligence feed: OpenCTI holds nothing newer than the site's transfer
+# cadence, so investigations enrich against old intelligence. Read from the facts
+# the backend collects onto OpenCTI's Integration Health record (#5071); Medic
+# never calls OpenCTI. Only while those facts are fresh (collected under 900 s
+# ago, about two of the collector's 300 s intervals): an unreachable OpenCTI
+# stops the collection, and that isn't stale intelligence. Absent facts (not
+# configured, never read, or the token can't read them) never fire.
+apiVersion: medic.rules/v1
+kind: Rule
+id: ingest.intel-stale
+title: OpenCTI has received no new intelligence
+revision: 1
+fault: {class: ingest, mode: I-7, causes: [I-7.a]}
+lane: 2
+detection: absence
+signals:
+  collected: {sample: {signal: integration_health, key: opencti.collected_at}}
+  newest:    {sample: {signal: integration_health, key: opencti.newest_intel_at}}
+when:
+  all:
+    - {fn: age, signal: collected, op: "<", value: 900}
+    - {fn: age, signal: newest, op: ">", value: {param: stale_after}}
+for: 10m
+keep_firing_for: 10m
+params:
+  # Seconds since OpenCTI's newest object was created: 7 days, 1 h to 90 days.
+  stale_after: {type: number, default: 604800, min: 3600, max: 7776000}
+advice:
+  summary: OpenCTI's newest intelligence is older than this rule's stale_after limit, so investigations enrich against old intelligence.
+  fix: >-
+    Check that intelligence still reaches OpenCTI: its connectors in Data,
+    Ingestion, and, in an air gap, that the latest transfer bundle was
+    imported. The evidence shows when OpenCTI's newest object was created. If
+    intelligence arrives on a slower cadence by design, set this rule's
+    stale_after param to that transfer cadence, in seconds. The incident
+    clears once a newer object arrives or the param is above its age.

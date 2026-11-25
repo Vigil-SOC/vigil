@@ -35,7 +35,12 @@ export default function SystemSection({ notify }: SectionProps) {
       await save(form)
       notify('ok', 'Platform DB proxy saved. Restart the backend for changes to take effect.')
     } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Failed to save platform DB proxy.')
+      const err = e as { message?: string; response?: { data?: { detail?: unknown } } }
+      const detail = err?.response?.data?.detail
+      notify(
+        'err',
+        (typeof detail === 'string' && detail) || err?.message || 'Failed to save platform DB proxy.',
+      )
     } finally {
       setSaving(false)
     }
@@ -101,6 +106,16 @@ export default function SystemSection({ notify }: SectionProps) {
 
             {isSsh && (
               <>
+                <Field
+                  label="SSH Host Key"
+                  hint="Required. The bastion's public host key, e.g. from ssh-keyscan or /etc/ssh/ssh_host_ed25519_key.pub on the bastion. The tunnel refuses any other server."
+                >
+                  <TextInput
+                    value={form.ssh_host_key}
+                    placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…"
+                    onChange={(e) => setForm({ ...form, ssh_host_key: e.target.value })}
+                  />
+                </Field>
                 <Field label="SSH Private Key Path" hint="Absolute path on the backend host.">
                   <TextInput
                     value={form.ssh_private_key_path}
@@ -124,11 +139,28 @@ export default function SystemSection({ notify }: SectionProps) {
               </>
             )}
 
-            <ToggleRow
-              label="Verify proxy TLS"
-              checked={form.verify_proxy_tls}
-              onChange={(v) => setForm({ ...form, verify_proxy_tls: v })}
-            />
+            {!isSsh && (
+              <ToggleRow
+                label="Verify proxy TLS"
+                hint={
+                  form.verify_proxy_tls
+                    ? 'Requires a certificate valid for the proxy host, trusted by PGSSLROOTCERT or the system store; the connection fails otherwise.'
+                    : 'Off: TLS follows POSTGRES_SSL_MODE (default prefer), which checks no certificate and may fall back to plaintext.'
+                }
+                checked={form.verify_proxy_tls}
+                onChange={(v) => setForm({ ...form, verify_proxy_tls: v })}
+              />
+            )}
+
+            <Field
+              label="Database Password"
+              hint="Required when the proxy type, host, port or SSH host key changes, or TLS verification is turned off: Vigil's database login is sent through the proxy. Checked, not stored."
+            >
+              <PasswordInput
+                value={form.database_password}
+                onChange={(e) => setForm({ ...form, database_password: e.target.value })}
+              />
+            </Field>
           </>
         )}
       </div>

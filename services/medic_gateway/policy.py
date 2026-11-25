@@ -60,6 +60,7 @@ OUTBOUND = [
     Route("GET", "/api/health/ready", auth=False),
     Route("GET", "/api/federation/sources"),
     Route("GET", "/api/federation/health"),
+    Route("GET", "/api/integration-health"),  # OpenCTI facts (#5072)
     Route("GET", "/api/triage"),
     Route("GET", "/api/orchestrator/status"),
     Route(

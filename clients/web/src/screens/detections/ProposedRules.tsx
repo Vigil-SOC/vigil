@@ -16,9 +16,13 @@ import { Empty, Failure } from '../shared/x1'
 import { unprovenNote, who, type Stage, type StageFields } from './ruleStage'
 import { caseLabel } from '../../shared/caseLabel'
 import HuntRef from './HuntRef'
+import Emulate from './Emulate'
 
 /** The origin the daily gaps run puts on the drafts it raises. */
 const GAPS_RUN = 'gaps run'
+/** The origin from_rule puts on a proposal to prove an inventory rule (Propose on the Rules tab). */
+const INVENTORY = 'inventory'
+const fromInventory = (p: ProposalRow) => p.origin?.source === INVENTORY
 const LANG: Record<string, string> = { splunk: 'Splunk', elastic: 'Elastic', wazuh: 'Wazuh', sigma: 'Sigma' }
 const STAGE_WORD: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 const KIND: Record<ProposalGap['kind'], { word: string; tone: string }> = {
@@ -114,9 +118,10 @@ export default function ProposedRules() {
     detectionEngineeringApi.proposals()
       .then((res) => {
         if (!live) return
-        // Vigil's own drafts after a gap; one a person or Vigil rejected is off the list, unless
-        // a rule is attached to it: a reject does not stop that rule's rollout.
-        const gaps = res.data.proposals.filter((p) => p.origin?.source === GAPS_RUN)
+        // Vigil's own drafts after a gap, and inventory rules a person proposed to prove; one
+        // a person or Vigil rejected is off the list, unless a rule is attached to it: a reject
+        // does not stop that rule's rollout.
+        const gaps = res.data.proposals.filter((p) => p.origin?.source === GAPS_RUN || fromInventory(p))
         const mine = gaps.filter((p) => p.state !== 'rejected' || p.rule_ids.length > 0)
         setProposedAny(gaps.length > 0)
         setRows(mine)
@@ -175,7 +180,7 @@ export default function ProposedRules() {
         <div className="de-card-head de-prop-list-head">
           <div>
             <h2>Proposed rules <span>· {rows.length.toLocaleString()}</span></h2>
-            <p>Vigil’s drafts after a proven miss</p>
+            <p>Vigil’s drafts after a proven miss, and inventory rules proposed to prove</p>
           </div>
         </div>
         {rulesError && (
@@ -205,7 +210,7 @@ export default function ProposedRules() {
                   {p.technique && <span className="mono de-prop-tech">{p.technique}</span>}
                 </div>
                 <div className="cr-meta de-prop-sub">
-                  {p.run_id ? `Gaps run · run ${short(p.run_id)}` : 'Gaps run'} · {utcDayClock(p.created_at)}
+                  {fromInventory(p) ? `From the inventory · ${who(p.created_by)}` : p.run_id ? `Gaps run · run ${short(p.run_id)}` : 'Gaps run'} · {utcDayClock(p.created_at)}
                 </div>
               </li>
             )
@@ -318,12 +323,23 @@ function ProposalDetail({ id, row, onChanged, onDismissed }: { id: string; row: 
               {[
                 proposal.technique,
                 langs || null,
-                attach ? `drafted by ${who(attach.actor)}, ${utcDayClock(attach.at)}` : `raised by the gaps run, ${utcDayClock(proposal.created_at)}`,
+                attach
+                  ? `drafted by ${who(attach.actor)}, ${utcDayClock(attach.at)}`
+                  : fromInventory(proposal)
+                    ? `proposed from the inventory by ${who(proposal.created_by)}, ${utcDayClock(proposal.created_at)}`
+                    : `raised by the gaps run, ${utcDayClock(proposal.created_at)}`,
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
-          {decision && !asking && (
-            <button type="button" className="btn" onClick={() => setAsking(true)}>{ASK[decision].button}</button>
+          {((decision && !asking) || proposal.technique) && (
+            <div className="de-prop-acts">
+              {proposal.technique && (
+                <Emulate key={proposal.proposal_id} className="btn ghost" goal={`Test the gap of proposal ${proposal.proposal_id} on ${proposal.technique}${main ? `, answered by rule ${main.rule_id} "${main.title}" version ${main.version}` : ', which has no rule yet'}: emulate ${proposal.technique} on a listed host and read whether ${main ? 'that version' : 'any rule'} caught it.`} />
+              )}
+              {decision && !asking && (
+                <button type="button" className="btn" onClick={() => setAsking(true)}>{ASK[decision].button}</button>
+              )}
+            </div>
           )}
         </div>
         {(proposal.rule_ids.length > 0 || ended) && <p className="de-card-sub">{decisionLine(main, row, canWrite, ended)}</p>}
@@ -342,8 +358,8 @@ function ProposalDetail({ id, row, onChanged, onDismissed }: { id: string; row: 
       <section className="x1-card de-card">
         <div className="de-card-head">
           <div>
-            <h2>Why Vigil proposed it</h2>
-            <p>From the gap to the rule</p>
+            <h2>{fromInventory(proposal) ? 'Why it was proposed' : 'Why Vigil proposed it'}</h2>
+            <p>{fromInventory(proposal) ? 'A person proposed an inventory rule to prove it' : 'From the gap to the rule'}</p>
           </div>
         </div>
         <WhyChain proposal={proposal} gap={gap} main={main} stage={moves.length ? moves[moves.length - 1].stage : null} langs={langs} bare={bare} attachAt={attach?.at ?? null} attachBy={attach?.actor ?? null} />
@@ -401,8 +417,14 @@ function WhyChain({ proposal, gap, main, stage, langs, bare, attachAt, attachBy 
     <ul className="de-rollout-cells">
       <li>
         <span className="de-rollout-name">1 · Gap</span>
-        <b className={kind?.tone}>{kind?.word ?? '—'}</b>
-        <span className="de-rollout-line">{gap ? `${gap.technique}: ${gapLine(gap)}` : proposal.title}</span>
+        <b className={kind?.tone}>{kind?.word ?? (fromInventory(proposal) ? 'Inventory' : '—')}</b>
+        <span className="de-rollout-line">
+          {gap
+            ? `${gap.technique}: ${gapLine(gap)}`
+            : fromInventory(proposal)
+              ? `Rule ${String(proposal.origin.rule_id)}${proposal.origin.rule_version != null ? ` version ${String(proposal.origin.rule_version)}` : ''}, proposed to prove it`
+              : proposal.title}
+        </span>
       </li>
       <li>
         <span className="de-rollout-name">2 · Evidence</span>

@@ -40,8 +40,5 @@ services:
     ports: !override ["127.0.0.1::8081"]
     restart: "no"
     environment:
-      # docker-compose.yml gives the daemon no JWT_SECRET_KEY, and it exits at
-      # start without one (auth_service imports it) with DEV_MODE off.
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # The bearer the intake steps present on /ingest.
       DAEMON_WEBHOOK_TOKEN: ${SCALE_WEBHOOK_TOKEN:?}

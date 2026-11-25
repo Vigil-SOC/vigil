@@ -42,6 +42,7 @@ from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.workflows.enablement import disabled_message, is_enabled
+from core.workflows.redecision_hold import NOT_STARTED_HERE, WORKFLOW_ID
 from core.workflows.workflow_run_service import WorkflowRunService, run_hidden
 
 router = APIRouter()
@@ -187,6 +188,9 @@ async def start_run(
         raise HTTPException(
             status_code=422, detail="playbook must be a workflow:<id> reference"
         )
+    # Re-decision is enqueued by its starter, not this surface.
+    if named == WORKFLOW_ID:
+        raise HTTPException(status_code=422, detail=NOT_STARTED_HERE)
     if request.arch or request.config:
         raise HTTPException(
             status_code=422,

@@ -72,6 +72,7 @@ from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion, elastic_alert_status
 from core.memory.entity_keys import finding_entity_keys
+from core.reporting.recheck_review import case_recheck
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository, first_finding_id
@@ -423,6 +424,9 @@ class ClosureInfo(BaseModel):
     # close stores null even when the field is sent.
     evidence_opened: Optional[bool] = None
     expected: Optional[CaseExpected] = None
+    # False when the same save already named an owner: the close then leaves
+    # it. Can only narrow (#4983).
+    take_ownership: bool = True
 
 
 class MergeRequest(BaseModel):
@@ -758,6 +762,11 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
     case["opened_from"] = (
         first_finding_id(session, case_id) if session is not None else None
     )
+    if session is not None:
+        case.update(case_recheck(session, case_id))
+    else:
+        case["recheck"] = None
+        case["reviewers_differ"] = False
     return case
 
 
@@ -1039,6 +1048,7 @@ def update_case(
             case_id,
             change,
             closed_by=current_user.username,
+            take_ownership="assignee" not in updates,
         )
 
     # Fire upstream SIEM status sync when status changes
@@ -1381,6 +1391,7 @@ def close_case(
         false_positive_reason=data.false_positive_reason,
         closure_notes=data.closure_notes,
         evidence_opened=data.evidence_opened,
+        take_ownership=data.take_ownership,
         **(
             {
                 "false_positive_cause": (

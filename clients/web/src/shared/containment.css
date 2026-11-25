@@ -1,0 +1,32 @@
+/* What a pending isolation or disable acts on, and the recorded state (#5060). */
+.contain-targets { display: flex; flex-direction: column; gap: 8px; }
+.contain-targets ul {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--ln0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.contain-targets li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg2);
+}
+.contain-targets label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.contain-targets input[type='radio'] { margin: 3px 0 0; accent-color: var(--ac); }
+.contain-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; font-size: 13px; }
+.contain-name { color: var(--tx0); font-weight: 600; overflow-wrap: anywhere; }
+.contain-meta { color: var(--tx2); font-size: 12px; overflow-wrap: anywhere; }
+.contain-meta code { font-family: var(--font-mono); font-size: 12px; }
+.contain-ask,
+.contain-missing,
+.contain-own { margin: 0; font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.contain-ask { color: var(--tx1); }
+.contain-missing { color: var(--tx2); }
+.contain-own { color: var(--fair); font-weight: 600; }

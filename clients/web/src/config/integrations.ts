@@ -174,7 +174,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'password',
         required: true,
         placeholder: 'Your OpenCTI API token',
-        helpText: 'From your OpenCTI profile. A user with read access (Knowledge and Observables) is enough; Vigil never writes.',
+        helpText: 'From your OpenCTI profile. The user\'s role needs Access knowledge (KNOWLEDGE) and Allow token usage (APIACCESS_USETOKEN); add Access connectors (MODULES) to show the ingest backlog. Vigil never writes.',
       },
       {
         name: 'verify_ssl',
@@ -834,8 +834,8 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         label: 'Username',
         type: 'text',
         required: true,
-        placeholder: 'wazuh-wui',
-        helpText: 'A Wazuh API user with read access to rules, agents and logtest.',
+        placeholder: 'vigil-reader',
+        helpText: 'A dedicated Wazuh server API user for Vigil, with a custom role holding only agent:read on agent:id:*, rules:read on rule:file:*, and logtest:run on *:*:*. Do not use wazuh or wazuh-wui. Wazuh\'s built-in readonly role has no logtest permission. Steps: docs/wazuh-api-user.md.',
       },
       {
         name: 'password',
@@ -1362,7 +1362,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'atomic-red-team',
     name: 'Atomic Red Team',
     category: 'Forensics & Analysis',
-    description: 'Invoke one Atomic Red Team technique against a named range or staging replica. Operator installs the runner; Vigil does not vendor the atomics repo.',
+    description: 'Invoke one Atomic Red Team technique on a host listed under Settings → Limits & autonomy; any other host is refused. Operator installs the runner; Vigil does not vendor the atomics repo.',
     functionality_type: 'Adversary Emulation',
     fields: [
       {
@@ -1371,7 +1371,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'text',
         required: true,
         placeholder: '/usr/local/bin/art-runner',
-        helpText: 'Operator-installed executable. Invoked as `<runner> --technique <id>` with optional `--atomics-path`.',
+        helpText: 'Operator-installed executable. Invoked as `<runner> --technique <id> --hostname <host>` with optional `--atomics-path`.',
       },
       {
         name: 'atomics_path',

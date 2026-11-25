@@ -59,6 +59,8 @@ class ProxyConfig:
     proxy_password: str = ""
     ssh_private_key_path: str = ""
     ssh_key_passphrase: str = ""
+    # The bastion's public host key (OpenSSH public-key or known_hosts line).
+    ssh_host_key: str = ""
     verify_proxy_tls: bool = True
 
     @classmethod
@@ -104,6 +106,7 @@ class ProxyConfig:
             proxy_password=str(password),
             ssh_private_key_path=str(config.get("ssh_private_key_path") or ""),
             ssh_key_passphrase=str(passphrase),
+            ssh_host_key=str(config.get("ssh_host_key") or "").strip(),
             verify_proxy_tls=bool(config.get("verify_proxy_tls", True)),
         )
 
@@ -175,11 +178,9 @@ def apply(
     if proxy_type == "pgbouncer":
         if not proxy.proxy_host or not proxy.proxy_port:
             raise ValueError("pgbouncer proxy requires proxy_host and proxy_port")
-        return AppliedProxy(
-            host=proxy.proxy_host,
-            port=proxy.proxy_port,
-            ssl_disabled=not proxy.verify_proxy_tls,
-        )
+        # TLS to the pooler is enforced by the platform engine's connect args
+        # (core.storage.connection._engine_connect_args).
+        return AppliedProxy(host=proxy.proxy_host, port=proxy.proxy_port)
 
     if proxy_type in ("http", "socks5"):
         if not proxy.proxy_host or not proxy.proxy_port:
@@ -221,6 +222,38 @@ def http_proxy_url(proxy: ProxyConfig) -> str:
     return f"{scheme}://{proxy.proxy_host}:{proxy.proxy_port}"
 
 
+def parse_ssh_host_key(text: str) -> Any:
+    """Parse an OpenSSH public key or ``known_hosts`` line into a paramiko key.
+
+    Accepts ``<type> <base64> [comment]`` or ``<hosts> <type> <base64>``.
+    Raises ``ValueError`` when no single, well-formed key is found.
+    """
+    import base64
+    import binascii
+
+    import paramiko
+
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) != 1:
+        raise ValueError("SSH host key must be exactly one key line")
+    parts = lines[0].split()
+    if parts[0].startswith("@"):
+        raise ValueError(
+            "known_hosts markers (@cert-authority, @revoked) are not supported"
+        )
+    # "<type> <base64> [comment]", or a known_hosts line led by its host field.
+    for key_type, blob in zip(parts[:2], parts[1:3]):
+        try:
+            data = base64.b64decode(blob, validate=True)
+            key = paramiko.PKey.from_type_string(key_type, data)
+        except (binascii.Error, ValueError, paramiko.SSHException):
+            continue
+        # The blob names its own type; refuse a line whose label disagrees.
+        if key.get_name() == key_type:
+            return key
+    raise ValueError("Unreadable SSH host key: expected '<type> <base64>'")
+
+
 def _open_ssh_tunnel(
     proxy: ProxyConfig, target_host: str, target_port: int
 ) -> Tuple[Any, str, int]:
@@ -237,8 +270,23 @@ def _open_ssh_tunnel(
             "Install it with: pip install sshtunnel"
         ) from exc
 
+    # Fail closed: without the bastion's host key, any server answering at
+    # its address would receive the SSH login and the database session.
+    if not proxy.ssh_host_key:
+        raise ValueError(
+            "ssh_tunnel requires the bastion's SSH host key; set it in "
+            "Settings > System > Platform Database Proxy"
+        )
+    host_key = parse_ssh_host_key(proxy.ssh_host_key)
+
     kwargs: Dict[str, Any] = {
         "ssh_address_or_host": (proxy.proxy_host, proxy.proxy_port),
+        "ssh_host_key": host_key,
+        # Offer only the configured login: no agent keys, no ~/.ssh keys,
+        # no ~/.ssh/config (IdentityFile, ProxyCommand).
+        "allow_agent": False,
+        "host_pkey_directories": [],
+        "ssh_config_file": None,
         "remote_bind_address": (target_host, target_port),
         "local_bind_address": ("127.0.0.1", 0),  # let OS pick a free port
     }
@@ -274,4 +322,5 @@ __all__ = [
     "ProxyConfig",
     "apply",
     "http_proxy_url",
+    "parse_ssh_host_key",
 ]

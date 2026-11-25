@@ -80,6 +80,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "identify_gaps": "detections.read",
     "get_coverage_stats": "detections.read",
     "detection_metrics": "detections.read",
+    "emulate_next": "detections.read",
     "get_detection_count": "detections.read",
     "lint_detections": "detections.read",
     "check_detection_candidate": "detections.read",
@@ -620,6 +621,8 @@ def create_case(
     closing = status == CLOSED
     if closing and (refusal := held_close()):
         return refusal
+    # A stated owner, including a clear, stands over the closer (#4983).
+    named_owner = assignee is not None
     if assignee is not None:
         # Before the case is opened, so a refusal leaves no case behind.
         assignee, refusal = _resolve_assignee(assignee)
@@ -657,6 +660,7 @@ def create_case(
                     StatusChange.CLOSE,
                     closed_by=actor(),
                     by_model=True,
+                    take_ownership=not named_owner,
                 )
         except Exception:  # noqa: BLE001 — no open case left behind for a retry
             logger.exception("could not close new case %s", case["case_id"])
@@ -768,6 +772,7 @@ def update_case(
                 change,
                 closed_by=actor(),
                 by_model=change is StatusChange.CLOSE,
+                take_ownership=assignee is None,
             )
     return {"success": True, "case_id": case_id}
 
@@ -1147,6 +1152,7 @@ _SECURITY_TOOLS = frozenset(
         "identify_gaps",
         "get_coverage_stats",
         "detection_metrics",
+        "emulate_next",
         "get_detection_count",
         "lint_detections",
         "check_detection_candidate",
@@ -1289,10 +1295,14 @@ def list_pending_approvals(**args: Any) -> Any:
     return [asdict(action) for action in screen_actions(actions)]
 
 
-def get_approval_action(*, action_id: str) -> Args:
+# A containment is resolved, or its requested state read again, as it is read (#5059).
+async def get_approval_action(*, action_id: str) -> Args:
+    from core.response import containment
     from core.response.approval_service import screen_action
 
-    return _decided(screen_action(_approvals().get_action(action_id)), "read")
+    action = await asyncio.to_thread(_approvals().get_action, action_id)
+    action = await containment.on_read(action, await containment.live_registry())
+    return _decided(screen_action(action), "read")
 
 
 # Chat and MCP do not approve. The row stays as it is; a person confirms it

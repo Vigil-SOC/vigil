@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import httpx
@@ -322,13 +322,19 @@ def _ensure_provider(provider_name: str, client: httpx.Client) -> bool:
         return False
 
 
-def push_provider_key(provider_name: str, key_value: str) -> bool:
+def push_provider_key(
+    provider_name: str, key_value: str, base_url: Optional[str] = None
+) -> bool:
     """Set ``provider_name``'s Bifrost credential to ``key_value``.
 
     Creates the provider if Bifrost lacks it and the key if the provider has
     none, otherwise replaces the existing key in place. An empty ``key_value``
     clears the credential by deleting the key. The existing model allow-list is
     carried forward; a new key allows every model until a sync narrows it.
+
+    ``base_url`` is the host the key was entered for, the stock cloud when
+    empty. For ``openai``, whose host Vigil rows set, the gateway is pointed
+    there before the key is written, so a key never lands on another row's host.
 
     Returns True on success. Any failure is logged and returns False so the
     caller's CRUD flow never breaks on a Bifrost hiccup — callers that surface
@@ -343,6 +349,10 @@ def push_provider_key(provider_name: str, key_value: str) -> bool:
         if not key_value:
             return _delete_provider_keys(provider_name, client)
         if not _ensure_provider(provider_name, client):
+            return False
+        if provider_name == "openai" and not _point_openai_host(
+            client, base_url, key_follows=True
+        ):
             return False
         ok = _upsert_provider_key(provider_name, client, key_value=key_value)
         if ok:
@@ -414,7 +424,7 @@ def _sync_env_provider_keys_once() -> Dict[str, str]:
 
 
 def sync_all_provider_keys() -> Dict[str, bool]:
-    """Push every DB-configured provider's current secret value to Bifrost.
+    """Push each provider type's key, from the row ``credential_row`` picks.
 
     Run on backend startup so Bifrost picks up whatever is in the secrets
     store regardless of how it was started or whether its container was
@@ -422,7 +432,6 @@ def sync_all_provider_keys() -> Dict[str, bool]:
     """
     # Deferred imports to keep this module import-cheap for code that only
     # needs ``push_provider_key`` (e.g. llm_providers.py).
-    from core.secrets_manager import get_secret
     from core.storage.connection import get_db_manager
     from core.storage.models import LLMProviderConfig
 
@@ -430,27 +439,25 @@ def sync_all_provider_keys() -> Dict[str, bool]:
     db_manager = get_db_manager()
     if db_manager._engine is None:
         db_manager.initialize()
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
     with db_manager.session_scope() as session:
-        rows = (
+        for row in (
             session.query(LLMProviderConfig)
             .filter(
                 LLMProviderConfig.is_active.is_(True),
+                LLMProviderConfig.api_key_ref.isnot(None),
             )
-            .all()
+            .order_by(LLMProviderConfig.created_at)
+        ):
+            by_type.setdefault(row.provider_type, []).append(row_credential_view(row))
+    # One key per type, and the host it was entered for (see ``credential_row``).
+    for provider_type, rows in by_type.items():
+        chosen, value = credential_row(rows)
+        if chosen is None:
+            continue
+        results[chosen["provider_id"]] = push_provider_key(
+            provider_type, value or "", chosen.get("base_url")
         )
-        for row in rows:
-            if not row.api_key_ref:
-                continue
-            value = get_secret(row.api_key_ref)
-            if not value:
-                logger.debug(
-                    "Bifrost sync: no value in secrets store for %s (ref=%s)",
-                    row.provider_id,
-                    row.api_key_ref,
-                )
-                results[row.provider_id] = False
-                continue
-            results[row.provider_id] = push_provider_key(row.provider_type, value)
     if results:
         ok = sum(1 for v in results.values() if v)
         logger.info("Bifrost sync: pushed %d/%d provider keys", ok, len(results))
@@ -580,69 +587,76 @@ def _get_provider_document(name: str, client: httpx.Client) -> Optional[Dict[str
         return None
 
 
-def sync_provider_base_url(provider_type: str, base_url: Optional[str]) -> bool:
-    """Write a custom OpenAI-compatible ``base_url`` to Bifrost.
+def _point_openai_host(
+    client: httpx.Client, base_url: Optional[str], *, key_follows: bool
+) -> bool:
+    """Point Bifrost's ``openai`` host at ``base_url``, the stock cloud when empty.
 
-    Only ``openai`` rows with a non-stock host are pushed. Anthropic ignores
-    ``network_config.base_url`` (see ``core.llm.providers.clients``); Ollama's
-    stored URL is host-side and would resolve to the Bifrost container itself.
+    Bifrost holds one host and one key per type, and sends that key to that
+    host. So a host change first drops whatever key the gateway holds: it was
+    not entered for the new host. ``key_follows`` is the caller about to write
+    the key that was; without one, a host change on a gateway that holds a key
+    is refused rather than made. Anthropic ignores ``base_url`` here (see
+    ``core.llm.providers.clients``); Ollama's URL lives on its key.
 
-    GET/PUT ``/api/providers/{name}`` (the provider document, not ``/keys``).
+    GET/PUT ``/api/providers/openai`` (the provider document, not ``/keys``).
     Other ``network_config`` fields are preserved; only writable provider
-    fields are sent, never ``keys``. An explicitly stock host clears a
-    previously pushed custom host so inference does not keep using it; an
-    empty value says nothing and leaves whatever host Bifrost holds, since the
-    Settings panel sets one there that no Vigil row knows about.
-
-    Returns True on success or when there is nothing to write. Failures are
-    logged and return False so the catalog sync still proceeds.
+    fields are sent, never ``keys``. Failures are logged and return False.
     """
-    if not provider_type or provider_type != "openai":
-        return True
-    if not base_url or not str(base_url).strip():
-        return True
     target = _custom_openai_base_url(base_url)
-
-    with httpx.Client(auth=management_auth()) as client:
-        doc = _get_provider_document(provider_type, client)
-        if doc is None:
-            # Stock/empty has nothing to write; a custom host cannot land if
-            # the provider document is missing.
-            return target is None
-        network = dict(doc.get("network_config") or {})
-        current = (network.get("base_url") or "").rstrip("/")
-        if target is None:
-            # Leave Bifrost's default host. If we previously pushed a custom
-            # URL, drop it so inference does not keep hitting the old gateway.
-            if not current or _custom_openai_base_url(current) is None:
-                return True
-            network.pop("base_url", None)
-        elif current == target:
-            return True
-        else:
-            network["base_url"] = target
-        body = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
-        body["network_config"] = network
-        url = _provider_url(provider_type)
-        try:
-            r = client.put(url, json=body, timeout=_DEFAULT_TIMEOUT)
-            if r.status_code >= 400:
-                logger.warning(
-                    "Bifrost: PUT %s returned %s: %s",
-                    url,
-                    r.status_code,
-                    r.text[:200],
-                )
-                return False
-            logger.info(
-                "Bifrost: set network_config.base_url for provider %s to %s",
-                provider_type,
+    doc = _get_provider_document("openai", client)
+    if doc is None:
+        # Stock has nothing to write; a custom host cannot land if the provider
+        # document is missing.
+        return target is None
+    network = dict(doc.get("network_config") or {})
+    if _custom_openai_base_url(network.get("base_url")) == target:
+        return True
+    keys = _get_provider_keys("openai", client)
+    if keys is None:
+        return False
+    if keys:
+        if not key_follows:
+            logger.warning(
+                "Bifrost: not moving the openai host to %s — the gateway holds a "
+                "key that was not entered for it",
                 target or "default",
             )
-            return True
-        except Exception as e:
-            logger.warning("Bifrost: PUT %s failed: %s", url, e)
             return False
+        if not _delete_provider_keys("openai", client):
+            return False
+    if target is None:
+        network.pop("base_url", None)
+    else:
+        network["base_url"] = target
+    body = {k: v for k, v in doc.items() if k in _PROVIDER_WRITE_FIELDS}
+    body["network_config"] = network
+    url = _provider_url("openai")
+    try:
+        r = client.put(url, json=body, timeout=_DEFAULT_TIMEOUT)
+        if r.status_code >= 400:
+            logger.warning(
+                "Bifrost: PUT %s returned %s: %s", url, r.status_code, r.text[:200]
+            )
+            return False
+        logger.info(
+            "Bifrost: set network_config.base_url for provider openai to %s",
+            target or "default",
+        )
+        return True
+    except Exception as e:
+        logger.warning("Bifrost: PUT %s failed: %s", url, e)
+        return False
+
+
+def sync_provider_base_url(
+    provider_type: str, base_url: Optional[str], *, key_follows: bool
+) -> bool:
+    """``_point_openai_host`` for the catalog sync; other types are left alone."""
+    if provider_type != "openai":
+        return True
+    with httpx.Client(auth=management_auth()) as client:
+        return _point_openai_host(client, base_url, key_follows=key_follows)
 
 
 async def sync_all_provider_models() -> Dict[str, Any]:
@@ -733,6 +747,8 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             .filter(
                 LLMProviderConfig.is_active.is_(True),
             )
+            # ``credential_row`` breaks ties in this order.
+            .order_by(LLMProviderConfig.created_at)
             .all()
         )
         for row in rows:
@@ -769,25 +785,30 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
         type_union: List[str] = []
         type_seen: set = set()
-        # Bifrost holds one key per provider *type* while Vigil can hold
-        # several rows of that type, so the allow-list push below rides on a
-        # single row's secret. Prefer the default row, matching the survivor
-        # ``llm_providers._reconcile_bifrost_key_for_type`` would pick.
+        # Bifrost holds one key and one host per provider *type* while Vigil
+        # can hold several rows of that type, so both come from one row.
+        # Only a row Vigil owns may set them: a mirror row's secret and host
+        # are Bifrost's own.
+        owned = [r for r in provider_rows if not _is_mirror_row(r)]
+        key_row, type_key = credential_row(owned)
         provider_rows.sort(key=lambda r: not r["is_default"])
-        type_key: Optional[str] = None
 
         # Host before listing and allow-list: namespaced models are meaningless
         # if the gateway still talks to the stock OpenAI cloud, and a mirror row
-        # lists through whatever host this leaves. One document per type.
-        # Only a row Vigil owns may set it: a mirror row carries no base_url,
-        # and pushing its blank erased a host configured in Bifrost itself.
-        owned = [r for r in provider_rows if not _is_mirror_row(r)]
-        if provider_type == "openai" and owned:
-            # The first row that states a host, not simply the first row.
-            hosted = next((r for r in owned if r.get("base_url")), owned[0])
+        # lists through whatever host this leaves.
+        if provider_type == "openai" and key_row is not None:
             base_url_results[provider_type] = sync_provider_base_url(
-                provider_type, hosted.get("base_url")
+                provider_type, key_row.get("base_url"), key_follows=True
             )
+        elif provider_type == "openai" and owned:
+            # No row has a key to push, e.g. a keyless self-hosted server. Its
+            # host is taken only while the gateway holds no key to send there;
+            # an empty one says nothing and leaves the host set in Bifrost.
+            hosted = next((r for r in owned if r.get("base_url")), None)
+            if hosted is not None:
+                base_url_results[provider_type] = sync_provider_base_url(
+                    provider_type, hosted["base_url"], key_follows=False
+                )
 
         gateway_host = None
         if provider_type == "openai" and len(owned) < len(provider_rows):
@@ -798,11 +819,6 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             row_seen: set = set()
             upstream_ok = False
             row_key = _resolve_row_key(row_dict)
-            # Bifrost owns a mirror row's secret. What the env fallback resolves
-            # is some other credential, and pushing it would put that key in the
-            # rotation for whatever host the gateway points at.
-            if type_key is None and not _is_mirror_row(row_dict):
-                type_key = row_key
 
             # A server behind a host set in Bifrost alone. OpenAI's names are not
             # models it can run, so nothing may stand in for its catalogue.
@@ -890,7 +906,12 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
         if not type_union:
             # Preserve bootstrap: don't overwrite Bifrost's allow-list
             # with an empty list if every row failed and there are no
-            # extras or fallback.
+            # extras or fallback. A host move above dropped the key, though,
+            # so put it back with its host.
+            if provider_type == "openai" and key_row is not None:
+                push_provider_key(
+                    provider_type, type_key or "", key_row.get("base_url")
+                )
             bifrost_results[provider_type] = False
             continue
 
@@ -917,7 +938,44 @@ def _is_mirror_row(row_dict: Dict[str, Any]) -> bool:
     return (row_dict.get("config") or {}).get("managed_by") == "bifrost"
 
 
-def _resolve_row_key(row_dict: Dict[str, Any]) -> Optional[str]:
+def row_credential_view(row: Any) -> Dict[str, Any]:
+    """The fields ``credential_row`` reads, off an ORM provider row."""
+    return {
+        "provider_id": row.provider_id,
+        "provider_type": row.provider_type,
+        "base_url": row.base_url,
+        "api_key_ref": row.api_key_ref,
+        "is_default": bool(row.is_default),
+        "config": dict(row.config or {}),
+    }
+
+
+def credential_row(
+    rows: List[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """The row whose key Bifrost holds for a type, and that key.
+
+    ``rows`` are the type's active rows. Mirror rows never count: Bifrost owns
+    their secret. The default comes first, then the rest in order. A row that
+    names a custom OpenAI host counts only with its own stored key: an
+    env-held key was entered for the stock cloud, not for that host. Callers
+    send the key with this row's host and no other.
+    """
+    for row in sorted(
+        (r for r in rows if not _is_mirror_row(r)), key=lambda r: not r["is_default"]
+    ):
+        own_only = row["provider_type"] == "openai" and bool(
+            _custom_openai_base_url(row.get("base_url"))
+        )
+        key = _resolve_row_key(row, own_only=own_only)
+        if key:
+            return row, key
+    return None, None
+
+
+def _resolve_row_key(
+    row_dict: Dict[str, Any], *, own_only: bool = False
+) -> Optional[str]:
     """Resolve one provider row's plaintext secret, or None.
 
     The row's own ``api_key_ref`` wins; the env-held names are a fallback for
@@ -936,7 +994,10 @@ def _resolve_row_key(row_dict: Dict[str, Any]) -> Optional[str]:
             if val:
                 return val
         except Exception as exc:  # noqa: BLE001
-            logger.debug("secret lookup for %s failed: %s", api_key_ref, exc)
+            # The error's type only: its text can carry what the store returned.
+            logger.debug("A provider secret lookup failed (%s)", type(exc).__name__)
+    if own_only:
+        return None
     if provider_type == "anthropic":
         return get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
     if provider_type == "openai":
@@ -1044,7 +1105,9 @@ _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
 }
 
 
-def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
+def _is_chat_catalogue_entry(
+    entry: Dict[str, Any], provider_type: Optional[str] = None
+) -> bool:
     """True when a datasheet entry is a chat model rather than another modality.
 
     Vertex serves imagen, veo, chirp, OCR and embeddings out of the same
@@ -1052,10 +1115,17 @@ def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
     ``max_output_tokens`` is the discriminator; embedding ids carry an input
     limit only and are also caught by name, since their families are the one
     set ``discovery.py`` already knows how to spot.
+
+    Host-owned catalogues (Ollama) list local/self-hosted models without
+    datasheet pricing or output token caps. Any non-embedding entry is treated
+    as chat-capable.
     """
     name = entry.get("name") or ""
     if not name or is_embedding_model_id(name):
         return False
+    ptype = provider_type or entry.get("provider") or ""
+    if ptype in _HOST_OWNED_CATALOGUE:
+        return True
     return bool(entry.get("max_output_tokens"))
 
 
@@ -1114,7 +1184,7 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
             cache_write_cost_per_token=_rate(e, "cache_creation_input_token_cost"),
         )
         for e in entries
-        if _is_chat_catalogue_entry(e)
+        if _is_chat_catalogue_entry(e, provider_type=provider_type)
     ]
     if not meta:
         logger.warning(

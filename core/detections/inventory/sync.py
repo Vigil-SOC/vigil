@@ -75,6 +75,11 @@ whole. One with nothing to lint (a machine learning rule, a KQL query) records
 result 'none' and why, once a version too. It never blocks, stages or disables the rule; the catalog stops counting
 a failing one as coverage.
 
+A new rule or new version of a repo or local source (not the overlay) is held
+from coverage: checks['import'] result 'pending' until ``import_check`` judges
+it, or 'unchecked' (counts) with VIGIL_RULE_IMPORT_CHECK off. A version stored
+before the hold carries no key and counts.
+
 Nothing is ever written to a SIEM.
 """
 
@@ -98,6 +103,7 @@ from core.detections.inventory import (
     quiet,
     readers,
     sees,
+    sentinel,
     splunk,
     splunk_sees,
     wazuh,
@@ -412,6 +418,39 @@ def _lint_off(lint: Dict[str, Any]) -> tuple:
     return f"fails lint: keyed to {literals}", {"lint": lint}
 
 
+def _import_state(now: str) -> Dict[str, Any]:
+    """checks['import'] of a new repo rule or version: held until judged."""
+    from core.config import get_settings
+
+    if get_settings().vigil_rule_import_check:
+        return {"result": "pending", "at": now}
+    return {
+        "result": "unchecked",
+        "reason": "the import check is switched off",
+        "at": now,
+    }
+
+
+def _keep_import(session: Any, checked: List[tuple]) -> List[tuple]:
+    """``checked`` with each stored version's current checks['import'], read under
+    a row lock: sync only sets it on a version it inserts, so a person's approval
+    or the sweep's verdict since this sync read the version is never undone."""
+    v = DetectionRuleVersion
+    current = {
+        (rid, ver): held
+        for rid, ver, held in session.execute(
+            select(v.rule_id, v.version, v.checks["import"])
+            .where(tuple_(v.rule_id, v.version).in_([(r, n) for r, n, _ in checked]))
+            .with_for_update()
+        ).all()
+        if held is not None
+    }
+    return [
+        (r, n, {**c, "import": current[(r, n)]}) if (r, n) in current else (r, n, c)
+        for r, n, c in checked
+    ]
+
+
 def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     return {
         "name": record.name,
@@ -627,6 +666,8 @@ def sync_source(
             for rule, fp, checks in session.execute(latest).all()
         }
         overlay = source == readers.OVERLAY_SOURCE
+        # A new rule or version of any other repo source is held (import_check).
+        held = not siem and not overlay
         last = _last_results(session, source) if siem or overlay else {}
         current = _current_stages(session) if overlay else {}
         changes: List[dict] = []
@@ -729,6 +770,8 @@ def sync_source(
             checks = _checks(stored, record, now)
             if lint:
                 checks = {**checks, "lint": lint}
+            if held and fp != latest_fp:
+                checks = {**checks, "import": _import_state(now)}
             if siem and record.status == "disabled":
                 dropped, checks = _dropped(
                     rule.id,
@@ -813,6 +856,8 @@ def sync_source(
                 checks = _checks({}, r, now)
                 if lint:
                     checks = {**checks, "lint": lint}
+                if held:
+                    checks = {**checks, "import": _import_state(now)}
                 if checks:
                     checked.append((rule_id, 1, checks))
                 if siem:
@@ -824,6 +869,8 @@ def sync_source(
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
+        if held and checked:
+            checked = _keep_import(session, checked)
         _write_checks(session, checked)
         report.checked = len(checked)
         _record_changes(session, changes, now)
@@ -882,7 +929,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana and Splunk, and sync each, checking
+    """Read every configured repo, Wazuh, Kibana, Splunk and Sentinel, and sync each, checking
     Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate and
     Caught.
 
@@ -916,8 +963,12 @@ def sync_repos() -> List[Any]:
             # After Runs, and before Sees' searches can spend the budget.
             reports.append(quiet.sweep_splunk(splunk_config))
             reports.append(splunk_sees.sweep(splunk_config))
+        # A read-only copy of the workspace's analytics rules: no search sweeps.
+        reports.append(_sync_azure_sentinel())
         reports.append(accurate.sweep())
-        reports.append(caught.sweep())  # at most once a day; local reads only
+        # Verdicts at most once a day; each sync, a shadow copy not yet passing is
+        # searched once per matching emulated step, from its SIEM's budget.
+        reports.append(caught.sweep())
     if removed:
         logger.info(
             "detection rules: %d rules of unconfigured sources removed", removed
@@ -1147,6 +1198,41 @@ def _sync_splunk() -> tuple[SourceReport, Optional[Dict[str, Any]]]:
     return report, config
 
 
+def _sync_azure_sentinel() -> SourceReport:
+    """Sentinel's analytics rules, with the azure-sentinel integration's credentials.
+
+    The same config handling as _sync_elastic: removed only when the config was
+    read and azure-sentinel is not enabled; a missing SDK, an unreadable config
+    or a failed read is reported and never removes a rule.
+    """
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
+
+    try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=sentinel.SOURCE, skipped="no integration config")
+        if AZURE_SENTINEL.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=sentinel.SOURCE,
+                removed=_remove_siem(sentinel.SOURCE, AZURE_SENTINEL.id),
+                skipped="not enabled",
+            )
+        config = resolve(AZURE_SENTINEL)
+        absent = missing(config, *(f.name for f in AZURE_SENTINEL.fields))
+        if absent:
+            return SourceReport(source=sentinel.SOURCE, skipped=f"no {absent[0]}")
+        report = sync_source(sentinel.SOURCE, sentinel.read_analytics_rules(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is reported, never removed
+        logger.warning("detection rules: syncing azure_sentinel failed: %s", exc)
+        return SourceReport(
+            source=sentinel.SOURCE, error=f"{type(exc).__name__}: {exc}"
+        )
+    logger.info("detection rules: %s", asdict(report))
+    return report
+
+
 def _link_same_id() -> tuple:
     """Link each Kibana rule to the one active repo Elastic rule with its rule_id."""
     return _link(
@@ -1321,7 +1407,12 @@ def _audit_link(session: Any, copy: DetectionRule, old: Dict[str, Any]) -> None:
 
 
 DRIFT_LINKS = ("same_id", "known_name", "agent")
-SIEM_NAMES = {kibana.SOURCE: "Kibana", splunk.SOURCE: "Splunk", wazuh.SOURCE: "Wazuh"}
+SIEM_NAMES = {
+    kibana.SOURCE: "Kibana",
+    splunk.SOURCE: "Splunk",
+    wazuh.SOURCE: "Wazuh",
+    sentinel.SOURCE: "Sentinel",
+}
 
 
 def _at(when: datetime) -> str:

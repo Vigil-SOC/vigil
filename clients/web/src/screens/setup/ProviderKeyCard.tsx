@@ -3,7 +3,7 @@ import { Icon } from '../../shared/icons'
 import { urlIsLoopback } from '../../shared/loopback'
 import { PasswordInput, SettingsCard, TextInput } from '../../shared/ui'
 import { isMasked, secretText, type BifrostKey } from '../../services/bifrostApi'
-import { CLOUD_PROVIDERS } from './providerResidency'
+import { CLOUD_PROVIDERS } from '../../shared/residency'
 import CheckMark from './CheckMark'
 import type { Outcome } from './providerOutcome'
 

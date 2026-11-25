@@ -18,6 +18,7 @@ from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunServic
 logger = logging.getLogger(__name__)
 
 READ_TIMEOUT_S = 10
+_TOKEN_TOTALS = ("input", "output", "cache_read", "cache_write")
 
 # None = no read yet, True = failing, False = ok. An outage logs one ERROR; the
 # first success after it, or a process's first read of all, logs one recovery line.
@@ -90,6 +91,55 @@ async def read_projection(
     """``evidence_limit`` asks a hunt for more than its usual newest rows."""
     params = {"evidence_limit": evidence_limit} if evidence_limit else None
     return await _read_fold(run_id, "projection", params)
+
+
+async def read_spend(run_id: str) -> Optional[Dict[str, Any]]:
+    """``{calls, unpriced_calls, cost_usd, input, output, cache_read, cache_write}``.
+
+    ``None`` is the agent layer's 404: the run has no spend events. That is
+    not a failed read. Anything else that is not the summary raises, so a
+    caller can count a missing run apart from a layer it could not reach.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/spend")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001 — unreachable is the caller's to count
+        _note_read(False, "could not read the spend for %s: %s", run_id, exc)
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+    if response.status_code == 404:
+        _note_read(True, "")
+        return None
+    if response.status_code != 200:
+        _note_read(False, "spend for %s answered %s", run_id, response.status_code)
+        raise RuntimeError(f"the agent layer answered {response.status_code}")
+    _note_read(True, "")
+    body = response.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("the agent layer returned no spend summary")
+    calls, unpriced, cost = (
+        body.get("calls"),
+        body.get("unpriced_calls"),
+        body.get("cost_usd"),
+    )
+    tokens = tuple(body.get(name) for name in _TOKEN_TOTALS)
+    numbers = (calls, unpriced, cost, *tokens)
+    if not all(
+        isinstance(part, (int, float)) and not isinstance(part, bool)
+        for part in numbers
+    ):
+        raise RuntimeError("the agent layer returned no spend summary")
+    summary = {
+        "calls": int(calls),
+        "unpriced_calls": int(unpriced),
+        "cost_usd": float(cost),
+    }
+    summary.update(
+        {name: int(round(float(value))) for name, value in zip(_TOKEN_TOTALS, tokens)}
+    )
+    return summary
 
 
 # What episodic memory reads once a run has ended, folded on the side that owns

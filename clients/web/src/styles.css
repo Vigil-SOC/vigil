@@ -3660,6 +3660,91 @@
       flex: 0 0 auto;
    }
 
+   /* Settings > System > Jurisdictions & kinds. Rows stack like the console's
+      row-stack: a hairline between bg2 rows, sentences wrap, nothing scrolls sideways. */
+   .sel-banners {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+   }
+
+   .sel-banners:empty { margin: 0; }
+
+   .sel-note {
+      margin: 0 0 10px;
+      max-width: var(--text-max);
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .sel-note.sel-foot { margin: 12px 0 0; }
+
+   .sel-kicker {
+      margin: 14px 0 6px;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--tx2);
+   }
+
+   .sel-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      background: var(--ln0);
+      border-radius: 10px;
+      overflow: hidden;
+   }
+
+   .sel-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0;
+      padding: 10px 12px;
+      background: var(--bg2);
+      cursor: pointer;
+   }
+
+   .sel-row.is-disabled { cursor: default; }
+
+   .sel-row input {
+      flex: none;
+      margin-top: 2px;
+   }
+
+   .sel-row-text {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+   }
+
+   .sel-row-label {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx0);
+      overflow-wrap: anywhere;
+   }
+
+   .sel-row-flag {
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--fair);
+      overflow-wrap: anywhere;
+   }
+
+   .sel-note-row {
+      margin: 0;
+      padding: 8px 12px;
+      background: var(--bg2);
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+      overflow-wrap: anywhere;
+   }
+
    /* ---------- Settings screen shell (left nav + content) ---------- */
    .settings-wrap {
       display: flex;
@@ -3871,6 +3956,9 @@
       font-size: 11px;
       color: var(--tx2);
    }
+
+   /* what a collector read from the source itself (OpenCTI's freshness, backlog, version) */
+   .int-facts { margin-top: 2px; color: var(--tx1); }
 
    /* vendor logo or category icon beside a name; logos sit on white
       in both themes, as the Overview board draws source logos */
@@ -5031,6 +5119,59 @@
       color: var(--tx0);
    }
 
+   /* Emulators: the mark beside a tool's class, and the host list under its row */
+   .lim-emu-mark {
+      display: inline-block;
+      margin-right: 4px;
+      padding: 0 7px;
+      border-radius: 999px;
+      border: 1px solid var(--fair);
+      font-size: 11px;
+      font-weight: 650;
+      color: var(--fair);
+   }
+
+   .lim-emu-add {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+   }
+
+   .lim-emu-add .field-input {
+      width: 180px;
+   }
+
+   .lim-emu-chips {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+   }
+
+   .lim-emu-chips .chip {
+      white-space: normal;
+   }
+
+   .lim-emu-x {
+      display: inline-flex;
+      padding: 2px;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--tx3);
+      cursor: pointer;
+   }
+
+   .lim-emu-x:hover {
+      color: var(--tx0);
+   }
+
+   .lim-emu-err {
+      grid-column: 1 / -1;
+      justify-self: end;
+      font-size: 12px;
+      color: var(--poor);
+   }
+
    @container main (max-width: 900px) {
       .lim-profiles,
       .lim-classes {
@@ -5065,6 +5206,27 @@
 
       .lim-row.lim-held .lim-held-ctl {
          justify-content: flex-start;
+      }
+
+      /* Emulator rows with an input: the input and its button go under the title */
+      .lim-row.lim-emu-wide {
+         grid-template-columns: minmax(0, 1fr);
+      }
+
+      .lim-row.lim-emu-wide .lim-row-ctl {
+         grid-column: 1;
+         grid-row: 3;
+         justify-self: stretch;
+      }
+
+      .lim-emu-add .field-input {
+         flex: 1;
+         width: auto;
+         min-width: 0;
+      }
+
+      .lim-emu-err {
+         justify-self: start;
       }
    }
 
@@ -5481,12 +5643,12 @@
       .data-table th:nth-child(1) { width: 24%; }
    }
    .data-table:not(.data-rules) { min-width: calc(360px + var(--col-main-min)); } /* Settings' 120px floor, Status, action */
-   .data-rules { min-width: calc(566px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
+   .data-rules { min-width: calc(596px + var(--col-main-min)); } /* Where's 96px floor and the fixed tracks */
 
    /* Settings (120px), and Format, Deploy target and Where (326px), step aside while Ask Vigil is docked */
    @container main (max-width: 1399px) {
       .main.chat-open .data-table:not(.data-rules) { min-width: calc(240px + var(--col-main-min)); }
-      .main.chat-open .data-rules { min-width: calc(240px + var(--col-main-min)); }
+      .main.chat-open .data-rules { min-width: calc(270px + var(--col-main-min)); }
    }
 
    .data-table:not(.data-rules) th:nth-child(3) { width: 150px; }
@@ -5494,7 +5656,7 @@
    .data-rules th:nth-child(2) { width: 120px; }
    .data-rules th:nth-child(3) { width: 110px; }
    .data-rules th:nth-child(5) { width: 90px; }
-   .data-rules th:nth-child(6) { width: 150px; }
+   .data-rules th:nth-child(6) { width: 180px; } /* Update library and Remove library */
 
    .data-act {
       text-align: right;

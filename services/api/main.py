@@ -107,10 +107,12 @@ async def lifespan(app: FastAPI):
 
     from services.daemon.gaps import start_gaps_run
     from tools.mcp.vigil import mcp as vigil_mcp
-    from tools.mcp.vigil import serve_gaps_runs
+    from tools.mcp.vigil import serve_day1_runs, serve_gaps_runs
 
     # start_gaps_run on /mcp queues through the daemon's intake, which tools/ can't import.
     serve_gaps_runs(start_gaps_run)
+    # start_day1_report builds the report from this process's health.
+    serve_day1_runs(app.state.process_health)
 
     # Stateless: no MCP session lives in a process's memory, so a client's
     # requests may land on any worker or replica. Nothing needs a session --
@@ -219,6 +221,12 @@ if _cors_origins_raw:
     _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 else:
     _cors_origins = _DEFAULT_CORS_ORIGINS
+
+# Caps every request body before the app reads it. Added before CORS so CORS
+# and the security headers wrap its 413; nothing outside it reads a body.
+from services.api.middleware.body_limit import BodyLimitMiddleware  # noqa: E402
+
+app.add_middleware(BodyLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -551,8 +559,10 @@ async def _startup(app: FastAPI):
     _announce_mcp_surface()
 
     from core.auth.auth_service import warn_retired_settings
+    from core.workflows.playbook_resolver import warn_default_wall
 
     warn_retired_settings()
+    warn_default_wall()
 
     _testing = get_settings().testing
 
@@ -721,6 +731,14 @@ async def _startup(app: FastAPI):
 
         app.state.readiness_task = asyncio.create_task(readiness_sweeper())
 
+        from services.api.capped_recheck import run as capped_recheck_driver
+
+        app.state.capped_recheck_task = asyncio.create_task(capped_recheck_driver())
+
+        from services.api.opencti_facts import run as opencti_facts
+
+        app.state.opencti_facts_task = asyncio.create_task(opencti_facts())
+
         from services.api.skill_sweep import run as skill_sweeper
 
         app.state.skill_sweep_task = asyncio.create_task(skill_sweeper())
@@ -771,6 +789,8 @@ async def _stop_setup_code(app) -> None:
         "setup_code_task",
         "dormancy_task",
         "readiness_task",
+        "capped_recheck_task",
+        "opencti_facts_task",
         "skill_sweep_task",
         "token_sweep_task",
     ):

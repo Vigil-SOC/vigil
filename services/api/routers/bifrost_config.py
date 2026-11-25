@@ -46,16 +46,22 @@ from pydantic import BaseModel
 
 from core.auth.permissions import deny_unless
 from core.config import get_settings
+from core.llm import statements
 from core.llm.bifrost import mirror, path_health
 from core.llm.bifrost.admin import _PROVIDER_WRITE_FIELDS
 from core.llm.bifrost.auth import management_auth
+from core.llm.bifrost.refs import ollama_ref as _ollama_ref
+from core.llm.bifrost.refs import scope_ref as _scope_ref
+from core.llm.bifrost.refs import secret_ref as _secret_ref
 from core.llm.providers.base_url import (
     normalize_openai_compat_base_url,
     validate_base_url_shape,
 )
 from core.llm.providers.registry import VALID_PROVIDER_TYPES
+from core.llm.residency import ProviderResidency
 from core.routing import Auth, RouterMeta
 from core.secrets import delete_secret, get_secret, set_secret
+from core.storage.config_service import get_config_service, redacted_config_copy
 from core.storage.models import User
 from services.api.middleware.auth import get_current_active_user
 
@@ -94,31 +100,6 @@ _KEYS_PATH = re.compile(r"^providers/(?P<provider>[^/]+)/keys(?:/(?P<key_id>[^/]
 _PROVIDER_PATH = re.compile(r"^providers/(?P<provider>[^/]+)$")
 
 
-def _secret_ref(key_id: str) -> str:
-    return f"llm_key_{key_id}"
-
-
-def _scope_ref(key_id: str) -> str:
-    """Where a Vertex key's project/region are kept.
-
-    Not secrets, but Bifrost masks them like one and offers no unmasked read —
-    ``?unmasked``/``?reveal`` all come back ``prod****oglm`` — so the real
-    values cannot be recovered from the gateway. Keeping our own copy is what
-    lets an edit that only changes the weight leave the scope intact.
-    """
-    return f"llm_key_{key_id}_vertex_scope"
-
-
-def _ollama_ref(key_id: str) -> str:
-    """Where an Ollama key's endpoint URL is kept.
-
-    Same reason as ``_scope_ref``: not a secret, but Bifrost masks it on read
-    and offers no way to get it back, so an edit that only changes the weight
-    would otherwise hand the gateway a mask in place of the endpoint.
-    """
-    return f"llm_key_{key_id}_ollama_url"
-
-
 def _stored_scope(key_id: Optional[str]) -> Dict[str, str]:
     if not key_id:
         return {}
@@ -143,6 +124,60 @@ def _is_masked(value: Any) -> bool:
     if isinstance(value, dict):
         return True
     return isinstance(value, str) and "*" in value
+
+
+# Body fields that carry a credential; never copied onto the audit trail.
+_SECRET_BODY_FIELDS = frozenset(
+    {
+        "value",
+        "auth_credentials",
+        "api_key",
+        "access_key",
+        "secret_key",
+        "session_token",
+        "password",
+        "token",
+    }
+)
+_AUDIT_ACTIONS = {"POST": "create", "PUT": "update", "DELETE": "delete"}
+
+
+def _without_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: _without_secrets(v)
+            for k, v in value.items()
+            if str(k).lower() not in _SECRET_BODY_FIELDS
+        }
+    if isinstance(value, list):
+        return [_without_secrets(v) for v in value]
+    return value
+
+
+def _audit_gateway_write(
+    user: User, method: str, path: str, body: Optional[Dict[str, Any]]
+) -> None:
+    """Record an accepted gateway write: who, what path, and what was sent.
+
+    The gateway's store is outside Vigil's transaction and has already taken
+    the write, so a refused entry cannot undo it; it is logged loudly instead.
+    """
+    sent = redacted_config_copy("bifrost", path, _without_secrets(body or {}))
+    try:
+        get_config_service(user_id=str(user.user_id)).record_audit(
+            config_type="bifrost",
+            config_key=path,
+            action=_AUDIT_ACTIONS[method],
+            old_value={"path": path} if method == "DELETE" else None,
+            new_value=None if method == "DELETE" else sent,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Bifrost proxy: %s %s by %s was not recorded on the audit trail",
+            method,
+            path,
+            user.user_id,
+        )
 
 
 def _require_settings_admin(current_user: User) -> None:
@@ -180,7 +215,7 @@ def _resolve_vertex_scope(vertex: Dict[str, Any], key_id: Optional[str]) -> None
         )
 
 
-def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
+def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> bool:
     """Fill in the endpoint an Ollama write left out, in place.
 
     ``env.OLLAMA_URL`` and friends pass straight through — a reference is not a
@@ -188,9 +223,13 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
     ``env_var`` unmasked. Anything else masked or absent falls back to our own
     copy, and a key first configured outside Vigil has none, so that case asks
     rather than pointing the gateway at nothing.
+
+    Returns True when the write points the key at a server other than the one
+    stored for it.
     """
     supplied = ollama.get("url")
     if supplied and not _is_masked(supplied):
+        stored = get_secret(_ollama_ref(key_id)) if key_id else None
         if isinstance(supplied, str) and not supplied.startswith("env."):
             # Rejected, never repaired: a URL the gateway can't dial fails
             # every request later with an error that doesn't point here.
@@ -200,7 +239,7 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-        return
+        return supplied != stored
     stored = get_secret(_ollama_ref(key_id)) if key_id else None
     if not stored:
         raise HTTPException(
@@ -212,9 +251,12 @@ def _resolve_ollama_url(ollama: Dict[str, Any], key_id: Optional[str]) -> None:
             ),
         )
     ollama["url"] = stored
+    return False
 
 
-def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None:
+def _resolve_optional_token(
+    body: Dict[str, Any], key_id: Optional[str], moved: bool
+) -> None:
     """Carry a bearer token through a write that didn't retype it, in place.
 
     Ollama's own server takes no credential, but the gateway does send
@@ -228,22 +270,32 @@ def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None
     "keep what is stored", so a weight edit does not silently strip the token
     off a key that needs one. An *empty* value is the operator choosing the
     unauthenticated mode, and has to survive — substituting the stored token
-    there would make the switch back impossible.
+    there would make the switch back impossible. ``moved`` is a write that
+    points the key at another server: a stored token is not carried there.
     """
+    supplied = body.get("value")
+    if supplied and not _is_masked(supplied):
+        return
+    if "value" in body and not supplied:
+        return
+    stored = get_secret(_secret_ref(key_id)) if key_id else None
+    if stored and moved:
+        # A stored token goes only to the server it was entered for.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This Ollama key's server URL changed, and its stored bearer token "
+                "would be sent to the new server. Enter the token again, or leave "
+                "it empty for no authentication."
+            ),
+        )
     if "value" not in body:
-        stored = get_secret(_secret_ref(key_id)) if key_id else None
         if stored:
             body["value"] = stored
-        return
-    supplied = body["value"]
-    if not supplied:
-        return
-    if not _is_masked(supplied):
         return
     # A mask is the console echoing what it was shown, which it does not do for
     # this field — but a third-party client might, and storing the mask as a
     # token would send the gateway off with a credential of asterisks.
-    stored = get_secret(_secret_ref(key_id)) if key_id else None
     if stored:
         body["value"] = stored
     else:
@@ -308,6 +360,10 @@ def _resolve_vertex_service_account(
     body.pop("value", None)
 
 
+# Key blocks that carry the key's own endpoint (Azure) or account (Bedrock).
+_KEY_DESTINATION_BLOCKS = ("azure_key_config", "bedrock_key_config")
+
+
 def _resolve_key_value(
     body: Dict[str, Any], key_id: Optional[str], provider: Optional[str] = None
 ) -> None:
@@ -340,8 +396,8 @@ def _resolve_key_value(
         if not isinstance(ollama, dict):
             ollama = {}
             body["ollama_key_config"] = ollama
-        _resolve_ollama_url(ollama, key_id)
-        _resolve_optional_token(body, key_id)
+        moved = _resolve_ollama_url(ollama, key_id)
+        _resolve_optional_token(body, key_id, moved)
         return
 
     vertex = body.get("vertex_key_config")
@@ -355,6 +411,13 @@ def _resolve_key_value(
 
     if not _is_masked(body.get("value")) and body.get("value"):
         return
+    if any(isinstance(body.get(b), dict) for b in _KEY_DESTINATION_BLOCKS):
+        # These blocks say where the key is sent; a stored key is not carried
+        # to a destination it was not entered for.
+        raise HTTPException(
+            status_code=400,
+            detail="This write sets where the key is sent — enter the key again.",
+        )
     stored = get_secret(_secret_ref(key_id)) if key_id else None
     if not stored:
         raise HTTPException(
@@ -476,28 +539,63 @@ def _check_custom_provider(method: str, body: Dict[str, Any]) -> None:
         )
 
 
+def _carries_secret(key: Any) -> bool:
+    """True when a read-back key holds a credential (a masked value or an env ref)."""
+    if not isinstance(key, dict):
+        return False
+    value = key.get("value")
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("ref") or value.get("env_var")
+    return bool(value) or any(
+        isinstance(key.get(block), dict)
+        for block in ("azure_key_config", "vertex_key_config", "bedrock_key_config")
+    )
+
+
 async def _with_base_url(
     method: str, provider: Optional[str], body: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """``body`` with its ``base_url`` validated and merged over the stored document."""
+    """``body`` with its ``base_url`` validated and merged over the stored document.
+
+    A stored key goes only to the host it was entered for, so a provider that
+    holds one cannot be moved to another custom host: its keys are removed
+    first and entered again for the new host. Back to the default host is
+    always allowed: that is the provider's own.
+    """
     doc: Dict[str, Any] = {}
+    keys: list = []
     if method == "PUT" and provider:
-        url = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
+        base = f"{get_settings().bifrost_url.rstrip('/')}/api/providers/{provider}"
         try:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, auth=management_auth()
             ) as client:
-                current = await client.get(url)
+                current = await client.get(base)
+                listed = await client.get(f"{base}/keys")
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
         if current.status_code == 404:
             raise HTTPException(status_code=404, detail=f"No provider {provider}")
-        if current.status_code >= 400:
+        if current.status_code >= 400 or listed.status_code >= 400:
             raise HTTPException(
                 status_code=502, detail=f"Bifrost refused to read {provider}"
             )
         doc = current.json()
-    return _merge_base_url(doc if isinstance(doc, dict) else {}, body)
+        keys = (listed.json() or {}).get("keys") or []
+    doc = doc if isinstance(doc, dict) else {}
+    merged = _merge_base_url(doc, body)
+    old_host = ((doc.get("network_config") or {}).get("base_url") or "").rstrip("/")
+    new_host = (merged["network_config"].get("base_url") or "").rstrip("/")
+    if new_host and new_host != old_host and any(map(_carries_secret, keys)):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{provider} has a stored key, and the gateway would send it to "
+                "the new host. Remove its keys, save the base URL, then add the "
+                "key for the new host."
+            ),
+        )
+    return merged
 
 
 # Declared before the catch-all below, which FastAPI would otherwise match
@@ -529,6 +627,9 @@ class Routability(BaseModel):
 
     providers: Dict[str, bool]
     keys: Dict[str, KeyVerdict]
+    # Where each provider's calls go (core.llm.residency). The class only,
+    # never the address.
+    residency: Dict[str, ProviderResidency] = {}
 
 
 @router.get("/routability", response_model=Routability)
@@ -609,6 +710,8 @@ async def proxy(
 
     keys_match = _KEYS_PATH.match(path)
     key_id = keys_match.group("key_id") if keys_match else None
+    # Read before the stored plaintext is filled in for an edit that didn't retype it.
+    typed_secret = _types_secret(body)
     if keys_match and isinstance(body, dict):
         _resolve_key_value(body, key_id, keys_match.group("provider"))
 
@@ -641,7 +744,9 @@ async def proxy(
     routability_changed = False
     if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
         provider = keys_match.group("provider")
-        _persist_key_secret(request.method, key_id, body, upstream, provider)
+        _persist_key_secret(
+            request.method, key_id, body, upstream, provider, typed_secret
+        )
         written = _written_key_id(key_id, upstream)
         if written:
             mirror.invalidate_express_probe(written)
@@ -663,6 +768,8 @@ async def proxy(
         routability_changed = True
     if routability_changed:
         path_health.reset()
+    if request.method in _WRITE_METHODS and upstream.status_code < 400:
+        _audit_gateway_write(current_user, request.method, path, body)
 
     return Response(
         content=upstream.content,
@@ -677,8 +784,12 @@ def _persist_key_secret(
     body: Optional[Dict[str, Any]],
     upstream: httpx.Response,
     provider: Optional[str] = None,
+    typed_secret: bool = False,
 ) -> None:
     """Mirror an accepted key write into the secrets store.
+
+    A write whose request carried a newly typed secret also moves the type's
+    credential generation on, so its Provider Statements need re-confirming.
 
     On create, the ref comes from the ``key_id`` Bifrost minted in its response.
     Best-effort: a secrets failure must not undo a write Bifrost has accepted,
@@ -707,6 +818,8 @@ def _persist_key_secret(
             token = (body or {}).get("value")
             if ref_id and token and not _is_masked(token):
                 set_secret(_secret_ref(ref_id), token)
+            if typed_secret:
+                statements.bump_type_now(provider)
             elif ref_id and "value" in (body or {}) and not token:
                 delete_secret(_secret_ref(ref_id))
             return
@@ -727,8 +840,24 @@ def _persist_key_secret(
             return
         set_secret(_secret_ref(ref_id), value)
         _persist_vertex_scope(ref_id, body)
+        if typed_secret and provider:
+            statements.bump_type_now(provider)
     except Exception as exc:  # noqa: BLE001 - never fail an accepted write
         logger.warning("Bifrost proxy: could not mirror key secret: %s", exc)
+
+
+def _types_secret(body: Optional[Dict[str, Any]]) -> bool:
+    """True when a key write's own body sets a credential (not a mask, not omitted)."""
+    if not isinstance(body, dict):
+        return False
+    vertex = body.get("vertex_key_config")
+    for value in (
+        body.get("value"),
+        vertex.get("auth_credentials") if isinstance(vertex, dict) else None,
+    ):
+        if value and not _is_masked(value):
+            return True
+    return False
 
 
 def _written_key_id(key_id: Optional[str], upstream: httpx.Response) -> Optional[str]:

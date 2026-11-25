@@ -22,6 +22,7 @@ import DataUploadsSection from './DataUploadsSection'
 import AuditSection, { AUDIT_DESC } from './AuditSection'
 import EntityFactsSection from './EntityFactsSection'
 import OperatorInstructionsSection, { OPERATOR_INSTRUCTIONS_DESC } from './OperatorInstructionsSection'
+import SelectionSection from './SelectionSection'
 import NavigationSection from './NavigationSection'
 import { useAuth } from '../../contexts/AuthContext'
 import type { SectionProps } from './types'
@@ -40,7 +41,7 @@ type NavKey =
   | 'entity-facts'
   | 'system'
 
-type SystemTabKey = 'services' | 'system' | 'general' | 'dev' | 'users' | 'sessions' | 'appearance'
+type SystemTabKey = 'services' | 'system' | 'general' | 'jurisdictions' | 'dev' | 'users' | 'sessions' | 'appearance'
 
 interface NavDef {
   key: NavKey
@@ -67,6 +68,7 @@ const SYSTEM_TAB_DEFS: SystemTabDef[] = [
   { key: 'services', label: 'Services', perm: 'platform.read', Component: ServicesSection },
   { key: 'system', label: 'System', perm: 'platform.read', Component: SystemSection },
   { key: 'general', label: 'General', perm: 'platform.read', Component: GeneralSection },
+  { key: 'jurisdictions', label: 'Jurisdictions & kinds', perm: 'platform.read', Component: SelectionSection },
   { key: 'dev', label: 'Developer', devOnly: true, perm: 'platform.read', Component: DeveloperSection },
   { key: 'users', label: 'Team & access', perm: 'platform.read', Component: UsersSection },
   { key: 'sessions', label: 'Sessions', perm: 'sessions.manage', Component: SessionsSection },

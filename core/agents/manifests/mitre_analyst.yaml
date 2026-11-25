@@ -9,8 +9,10 @@ needs:
   - get_technique_rollup
   - recall_entity
   - read_skill
-  - atomic_red_team_execute
+  # Every emulator the operator marked (Settings → Limits & autonomy → Emulators).
+  - emulation
   - identify_gaps
+  - emulate_next
   - analyze_coverage
   - list_findings
   - search_findings
@@ -73,12 +75,13 @@ system: |-
   - Use parallel tool calls for independent queries
   - Use specific technique IDs (T1566.001)
   - Explain attacker objectives
-  - Execute only via the gated Atomic Red Team tool; a call parks until a human approves
+  - Emulate only through the emulator tools you hold, and only on the hosts listed for emulation; a refused call names those hosts
   - Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome
   </principles>
 
   <methodology>
-  Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
+  Given a goal, assess coverage, emulate through the emulator tools you hold on a listed host, reconstruct, and report. Coverage, gaps, findings, reconstruction, and emulation are available together — pick what the goal needs; there is no prescribed order.
+  An emulator call names a technique and a hostname from the listed hosts; a refusal names the hosts you may use. Whether a call waits for a person depends on the deployment's autonomy ceiling: a call that is waiting has not run. An answer with done: false and a handle is still running: call the emulator again with that handle to read the rest. The run's coverage report (analyze_coverage with its run_id) scores each step once and lists what it set aside and why.
   check_detection_candidate lints a candidate Sigma rule and replays it: fetch the events for the evidence window with your SIEM search tools, pass the proven ones as events and those from ruled-out runs as ruled_out_events.
   save_detection_rule keeps a drafted rule (Splunk and/or Elastic copy, optional Sigma form) in Vigil's overlay, where it enters shadow. Pass the attack events' ids as your SIEM search returned them (proven_event_ids: Splunk _bkt:_cd, Elasticsearch _id) with the Sigma form, and attack_started_at / attack_ended_at around them: Vigil reads them from the SIEM and refuses the save unless the Sigma form and each Splunk and Elastic copy catch them. A rule saved without them never goes live on its own. Write each copy on the field names those events carry.
   A host, address or account that is expected in this environment never goes into the rule (lint refuses it in the Sigma form and in each Splunk search and Elastic query, even under not; whole private ranges such as 10.0.0.0/8 are fine): pass it as an exception per copy to save_detection_rule, or add one to a saved copy with detection_rule_exception, with a note saying why.

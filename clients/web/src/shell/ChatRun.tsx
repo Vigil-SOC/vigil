@@ -206,7 +206,7 @@ function PendingApprovals({ runId, caseId }: { runId: string; caseId: string }) 
   useEffect(() => {
     let live = true
     approvalsApi.list({ status: 'pending', workflow_run_id: runId })
-      .then((res) => { if (live) setActions((res.data as { actions?: [] }).actions ?? []) })
+      .then((res) => { if (live) setActions(res.data.actions ?? []) })
       .catch(() => { if (live) setActions(null) })
     return () => { live = false }
   }, [runId])

@@ -184,6 +184,11 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             if incident.additional_data
                             else 0
                         ),
+                        # The analytic rules that raised it, as full ARM ids;
+                        # the detection inventory resolves the rule from these.
+                        "related_analytic_rule_ids": list(
+                            getattr(incident, "related_analytic_rule_ids", None) or []
+                        ),
                     }
                 )
 
@@ -282,6 +287,89 @@ class AzureSentinelIngestion(SIEMIngestionService):
         rows = await asyncio.to_thread(read)
         logger.info(f"Read {len(rows)} closed incidents from Azure Sentinel")
         return rows
+
+    def fetch_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        """One incident by its stored name, with its alerts, or None when gone.
+
+        The dict carries the incident's content and ``alerts``, each alert a
+        dict of time, title, description and severity. Classification, status
+        and owner are not copied.
+        """
+        try:
+            setup = self._client()
+        except ImportError:
+            return None
+        if setup is None:
+            return None
+        client, resource_group, workspace_name = setup
+
+        def read() -> Optional[Dict[str, Any]]:
+            try:
+                incident = client.incidents.get(
+                    resource_group_name=resource_group,
+                    workspace_name=workspace_name,
+                    incident_id=incident_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — a missing incident is gone
+                status = getattr(exc, "status_code", None)
+                if status == 404 or exc.__class__.__name__ == "ResourceNotFoundError":
+                    return None
+                raise
+            if incident is None:
+                return None
+            try:
+                entities = client.incidents.list_entities(
+                    resource_group_name=resource_group,
+                    workspace_name=workspace_name,
+                    incident_id=incident_id,
+                )
+                listed = getattr(entities, "entities", None) or []
+            except Exception:  # noqa: BLE001 — the incident is still the alert
+                listed = []
+            rules = list(getattr(incident, "related_analytic_rule_ids", None) or [])
+            alerts: List[Dict[str, Any]] = []
+            list_alerts = getattr(client.incidents, "list_alerts", None)
+            if list_alerts is not None:
+                try:
+                    for alert in list_alerts(
+                        resource_group_name=resource_group,
+                        workspace_name=workspace_name,
+                        incident_id=incident_id,
+                    ):
+                        alerts.append(
+                            {
+                                "time": _iso(
+                                    getattr(alert, "time_generated_utc", None)
+                                    or getattr(alert, "start_time_utc", None)
+                                    or getattr(alert, "time_generated", None)
+                                ),
+                                "title": getattr(alert, "alert_display_name", None)
+                                or getattr(alert, "display_name", None)
+                                or "",
+                                "description": getattr(alert, "description", None)
+                                or "",
+                                "severity": getattr(
+                                    getattr(alert, "severity", None),
+                                    "value",
+                                    getattr(alert, "severity", None),
+                                ),
+                            }
+                        )
+                except Exception:  # noqa: BLE001 — the incident row still stands
+                    logger.warning(
+                        "Sentinel incident %s alerts could not be read", incident_id
+                    )
+            return {
+                "time": _iso(incident.created_time_utc),
+                "title": incident.title or "",
+                "description": incident.description or "",
+                "severity": getattr(incident.severity, "value", incident.severity),
+                "rule": rules[0] if len(rules) == 1 else None,
+                "entity_context": _entity_context(listed),
+                "alerts": alerts,
+            }
+
+        return read()
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]

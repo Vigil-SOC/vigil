@@ -17,7 +17,12 @@ import { STOP_CAUSES } from '../../shared/stopCause'
 import { StopAction } from '../../shared/StopLine'
 import { StatePill, statePill } from '../../shared/StatePill'
 import { TabStrip } from '../../shared/TabStrip'
+import { CallArgs } from '../../shared/CallArgs'
+import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
+import { ContainmentTargets } from '../../shared/containment'
+import { canApprove, chosenCandidate, containmentOf } from '../../shared/containmentRead'
+import { CaseContainments } from './CaseContainments'
 import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
 import { useFusedDecision } from '../../shell/useFusedDecision'
@@ -328,7 +333,7 @@ function CaseNeeds({
   error: string | null
   /** The run's explanations, to say which one an approval tests against when the queue does not. */
   board: HypothesisRow[]
-  onApprove: (item: NeedsYouItem) => void
+  onApprove: (item: NeedsYouItem, candidate?: string) => void
   onReject: (item: NeedsYouItem, reason: string) => void
 }) {
   const [showAll, setShowAll] = useState(false)
@@ -373,6 +378,7 @@ function CaseNeeds({
                   <span className="needs-row-title">{item.title}</span>
                 </div>
                 {item.reason && <p className="needs-row-reason">{item.reason}</p>}
+                {containmentOf(item.containment) && <ContainmentTargets containment={containmentOf(item.containment)!} picked={null} onPick={() => {}} group={item.source_id} />}
               </li>
             ))}
           </ul>
@@ -386,17 +392,23 @@ type NeedProps = {
   item: NeedsYouItem
   busy: boolean
   board?: HypothesisRow[]
-  onApprove: (item: NeedsYouItem) => void
+  /** An isolation or account disable sends the resolved candidate it acts on. */
+  onApprove: (item: NeedsYouItem, candidate?: string) => void
   onReject: (item: NeedsYouItem, reason: string) => void
 }
 
-function ApproveButton({ item, busy, onApprove, label }: NeedProps & { label?: string }) {
+/** Approve, sending the picked containment candidate; not shown when nothing resolved, waiting while several await a pick. */
+function ApproveButton({ item, busy, onApprove, label, picked = null }: NeedProps & { label?: string; picked?: string | null }) {
+  const containment = containmentOf(item.containment)
+  if (containment && containment.candidates.length === 0) return null
+  const blocked = busy || !canApprove(containment, picked)
+  const go = () => onApprove(item, chosenCandidate(containment, picked))
   return item.reversibility === 'reversible' ? (
-    <button type="button" className="btn primary" aria-label={label} disabled={busy} onClick={() => onApprove(item)}>
+    <button type="button" className="btn primary" aria-label={label} disabled={blocked} onClick={go}>
       Approve
     </button>
   ) : (
-    <HoldButton label="Hold to approve" name={label && `Hold to approve ${item.title}`} disabled={busy} onConfirm={() => onApprove(item)} />
+    <HoldButton label="Hold to approve" name={label && `Hold to approve ${item.title}`} disabled={blocked} onConfirm={go} />
   )
 }
 
@@ -432,8 +444,10 @@ function RejectForm({ item, busy, onReject }: NeedProps) {
 function CaseNeed(props: NeedProps) {
   const { item, busy, board = [] } = props
   const [rejecting, setRejecting] = useState(false)
+  const [picked, setPicked] = useState<string | null>(null)
   const waited = waiting(item.created_at)
   const approving = approvedRows(item, board)
+  const containment = containmentOf(item.containment)
 
   if (item.kind === 'parked') return <ParkedNeed item={item} waited={waited} />
   return (
@@ -442,7 +456,9 @@ function CaseNeed(props: NeedProps) {
         <span className="needs-dot" aria-hidden="true" />
         Needs your decision{waited && ` · waiting ${waited}`}
       </span>
-      <h3>{item.title}</h3>
+      <h3>{visibleText(item.title)}</h3>
+      <CallArgs tool={item.tool} args={item.args} />
+      {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
       {approving.length > 0 && (
         <ul className="needs-approving" aria-label="What you are approving">
           {approving.map((row, i) => (
@@ -464,7 +480,7 @@ function CaseNeed(props: NeedProps) {
         <dd>{item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone'}</dd>
       </dl>
       <div className="needs-actions">
-        <ApproveButton {...props} />
+        <ApproveButton {...props} picked={picked} />
         <button
           type="button"
           className="btn neutral"
@@ -525,16 +541,18 @@ function ParkedNeed({ item, waited }: { item: NeedsYouItem; waited: string }) {
 function CaseNeedRow(props: NeedProps) {
   const { item, busy } = props
   const [rejecting, setRejecting] = useState(false)
+  const [picked, setPicked] = useState<string | null>(null)
   const reversible = item.reversibility === 'reversible'
+  const containment = containmentOf(item.containment)
   return (
     <li>
       <div className="needs-row">
-        <span className="needs-row-title">{item.title}</span>
+        <span className="needs-row-title">{visibleText(item.title)}</span>
         <span className={reversible ? 'needs-row-rev' : 'needs-row-rev irreversible'}>
           {reversible ? 'Reversible' : 'Cannot be undone'}
         </span>
         <div className="needs-actions">
-          <ApproveButton {...props} label={`Approve ${item.title}`} />
+          <ApproveButton {...props} label={`Approve ${item.title}`} picked={picked} />
           <button
             type="button"
             className="btn neutral"
@@ -547,6 +565,8 @@ function CaseNeedRow(props: NeedProps) {
           </button>
         </div>
       </div>
+      <CallArgs tool={item.tool} args={item.args} />
+      {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
       {rejecting && <RejectForm {...props} />}
     </li>
   )
@@ -1041,6 +1061,8 @@ export function CasePage({
   closure,
   linkedFindings,
   openedFrom = null,
+  recheck = null,
+  reviewersDiffer = false,
   phase,
   error,
   pageKey,
@@ -1073,6 +1095,10 @@ export function CasePage({
   linkedFindings: CaseLinkedFinding[]
   /** The finding the case was opened from (the first linked). */
   openedFrom?: string | null
+  /** Set when the Case was opened from a re-check. */
+  recheck?: { source: string; closed_at: string; run_id: string } | null
+  /** A later review disagreed. Names nobody. */
+  reviewersDiffer?: boolean
   phase: Phase
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
@@ -1533,11 +1559,11 @@ export function CasePage({
     if (cp) setAnswers((held) => ({ ...held, [cp]: answer }))
   }
 
-  const approve = (item: NeedsYouItem) =>
+  const approve = (item: NeedsYouItem, candidate?: string) =>
     void throughQueue(item, (served) => {
       answered(served, 'approve')
-      if (served.reversibility === 'reversible') fused.approve(served)
-      else void decide(served.source_id, () => approvalsApi.approve(served.source_id))
+      if (served.reversibility === 'reversible') fused.approve(served, candidate)
+      else void decide(served.source_id, () => approvalsApi.approve(served.source_id, candidate))
     })
 
   const reject = (item: NeedsYouItem, reason: string) =>
@@ -1721,6 +1747,8 @@ export function CasePage({
       onReject={reject}
     />
   )
+  // What was approved on this case and where it stands: Release, Enable or Run again (#5060).
+  const containBlock = <CaseContainments key={`contain-${id}`} caseId={id} canDecide={hasPermission('ai_decisions.approve')} refreshKey={needsCount} />
 
   return (
     <div className="detail-pane case-page">
@@ -1772,6 +1800,13 @@ export function CasePage({
                 {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
               </div>
             </div>
+            {recheck && (
+              <p className="case-recheck">
+                Opened from a re-check of a ticket closed on {utcDay(recheck.closed_at) || recheck.closed_at} in {recheck.source}.{' '}
+                <Link to={`/workflows?run=${encodeURIComponent(recheck.run_id)}`}>Run</Link>
+                {reviewersDiffer && <span className="differ">Reviewers differ.</span>}
+              </p>
+            )}
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsShown > 0} />
@@ -1828,6 +1863,7 @@ export function CasePage({
             closed ? (
               <>
                 {needsBlock}
+                {containBlock}
                 <section className="case-closed" aria-label="Closed summary">
                   <span className="case-closed-line">
                     {closedLine(closure)}
@@ -1872,6 +1908,7 @@ export function CasePage({
             ) : (
               <>
                 {needsBlock}
+                {containBlock}
                 {verdict && <VerdictBlock verdict={verdict} card />}
                 {startedCard}
                 {running && <NowCard fold={fold} phase={foldPhase} watch={watch} />}

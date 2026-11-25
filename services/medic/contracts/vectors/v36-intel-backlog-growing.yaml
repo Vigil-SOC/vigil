@@ -1,0 +1,210 @@
+id: v36-intel-backlog-growing
+title: OpenCTI's backlog rising past the floor within the window opens intel-backlog-growing; it clears once the rise falls
+  back under
+covers:
+- §2 increase gauge
+- §4 keep_firing_for
+start: '2026-10-07T10:00:00Z'
+end: +165m
+rules:
+- ref: ingest-intel-backlog-growing.yaml
+  params:
+    window: 1h
+    floor: 100
+sensors:
+- id: http.integration-health
+  covers:
+  - integration_health
+  interval: 60s
+  service: backend
+  states:
+  - - +0s
+    - ok
+types:
+  integration_health:
+    opencti.collected_at: timestamp
+    opencti.queue_messages_total: gauge
+series:
+- signal: integration_health
+  key: opencti.collected_at
+  steps:
+  - - +0m
+    - '2026-10-07T10:00:00Z'
+  - - +5m
+    - '2026-10-07T10:05:00Z'
+  - - +10m
+    - '2026-10-07T10:10:00Z'
+  - - +15m
+    - '2026-10-07T10:15:00Z'
+  - - +20m
+    - '2026-10-07T10:20:00Z'
+  - - +25m
+    - '2026-10-07T10:25:00Z'
+  - - +30m
+    - '2026-10-07T10:30:00Z'
+  - - +35m
+    - '2026-10-07T10:35:00Z'
+  - - +40m
+    - '2026-10-07T10:40:00Z'
+  - - +45m
+    - '2026-10-07T10:45:00Z'
+  - - +50m
+    - '2026-10-07T10:50:00Z'
+  - - +55m
+    - '2026-10-07T10:55:00Z'
+  - - +60m
+    - '2026-10-07T11:00:00Z'
+  - - +65m
+    - '2026-10-07T11:05:00Z'
+  - - +70m
+    - '2026-10-07T11:10:00Z'
+  - - +75m
+    - '2026-10-07T11:15:00Z'
+  - - +80m
+    - '2026-10-07T11:20:00Z'
+  - - +85m
+    - '2026-10-07T11:25:00Z'
+  - - +90m
+    - '2026-10-07T11:30:00Z'
+  - - +95m
+    - '2026-10-07T11:35:00Z'
+  - - +100m
+    - '2026-10-07T11:40:00Z'
+  - - +105m
+    - '2026-10-07T11:45:00Z'
+  - - +110m
+    - '2026-10-07T11:50:00Z'
+  - - +115m
+    - '2026-10-07T11:55:00Z'
+  - - +120m
+    - '2026-10-07T12:00:00Z'
+  - - +125m
+    - '2026-10-07T12:05:00Z'
+  - - +130m
+    - '2026-10-07T12:10:00Z'
+  - - +135m
+    - '2026-10-07T12:15:00Z'
+  - - +140m
+    - '2026-10-07T12:20:00Z'
+  - - +145m
+    - '2026-10-07T12:25:00Z'
+  - - +150m
+    - '2026-10-07T12:30:00Z'
+  - - +155m
+    - '2026-10-07T12:35:00Z'
+  - - +160m
+    - '2026-10-07T12:40:00Z'
+  - - +165m
+    - '2026-10-07T12:45:00Z'
+- signal: integration_health
+  key: opencti.queue_messages_total
+  steps:
+  - - +0m
+    - 500
+  - - +5m
+    - 500
+  - - +10m
+    - 500
+  - - +15m
+    - 500
+  - - +20m
+    - 500
+  - - +25m
+    - 500
+  - - +30m
+    - 500
+  - - +35m
+    - 540
+  - - +40m
+    - 580
+  - - +45m
+    - 620
+  - - +50m
+    - 660
+  - - +55m
+    - 700
+  - - +60m
+    - 740
+  - - +65m
+    - 780
+  - - +70m
+    - 820
+  - - +75m
+    - 860
+  - - +80m
+    - 900
+  - - +85m
+    - 900
+  - - +90m
+    - 900
+  - - +95m
+    - 900
+  - - +100m
+    - 900
+  - - +105m
+    - 900
+  - - +110m
+    - 900
+  - - +115m
+    - 900
+  - - +120m
+    - 900
+  - - +125m
+    - 900
+  - - +130m
+    - 900
+  - - +135m
+    - 900
+  - - +140m
+    - 900
+  - - +145m
+    - 900
+  - - +150m
+    - 900
+  - - +155m
+    - 900
+  - - +160m
+    - 900
+  - - +165m
+    - 900
+expect:
+- at: +58m
+  rule: ingest.intel-backlog-growing
+  eval: unknown
+  state: inactive
+  note: window not yet covered
+- at: +60m
+  rule: ingest.intel-backlog-growing
+  eval: true
+  state: pending
+  note: 740 - 500 > 100
+- at: +75m
+  rule: ingest.intel-backlog-growing
+  eval: true
+  state: firing
+  incident: A
+- at: +129m
+  rule: ingest.intel-backlog-growing
+  eval: true
+  state: firing
+  incident: A
+  note: 900 - 780 > 100
+- at: +130m
+  rule: ingest.intel-backlog-growing
+  eval: false
+  state: resolving
+  incident: A
+  note: 900 - 820 <= 100
+- at: +160m
+  rule: ingest.intel-backlog-growing
+  eval: false
+  state: inactive
+incidents:
+  A:
+    rule: ingest.intel-backlog-growing
+    active_since: +60m
+    opened_at: +75m
+    resolving_since: +130m
+    resolved_at: +160m
+    reason: cleared
+    routed_at: +75m

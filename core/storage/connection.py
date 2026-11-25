@@ -86,6 +86,7 @@ _PLATFORM_DB_PROXY_KEYS = {
     "proxy_password": "PLATFORM_DB_PROXY_PASSWORD",
     "ssh_private_key_path": "PLATFORM_DB_SSH_PRIVATE_KEY_PATH",
     "ssh_key_passphrase": "PLATFORM_DB_SSH_KEY_PASSPHRASE",
+    "ssh_host_key": "PLATFORM_DB_SSH_HOST_KEY",
     "verify_proxy_tls": "PLATFORM_DB_VERIFY_PROXY_TLS",
 }
 
@@ -249,6 +250,27 @@ def _engine_connect_args(config: "DatabaseConfig", url: str) -> Dict[str, Any]:
     # Bounded so validating an unreachable host fails in seconds rather than
     # hanging a worker thread for the OS TCP timeout (~75s).
     args: Dict[str, Any] = {"connect_timeout": 5}
+    proxy = getattr(config, "proxy", None)
+    if proxy is not None and proxy.enabled and proxy.proxy_type == "pgbouncer":
+        if proxy.verify_proxy_tls:
+            # "Verify proxy TLS" means a verified certificate for the pooler's
+            # name, failing closed. The CA is PGSSLROOTCERT, else the system store.
+            args["sslmode"] = "verify-full"
+            if not os.environ.get("PGSSLROOTCERT"):  # noqa: ENV001 - libpq var
+                args["sslrootcert"] = "system"
+    if proxy is not None and proxy.enabled and proxy.proxy_type == "ssh_tunnel":
+        # Through a tunnel the URL host is loopback, so no certificate names
+        # the database; never send its password in cleartext (libpq >= 16).
+        # md5 and SCRAM servers still work.
+        try:
+            import psycopg2
+
+            if psycopg2.__libpq_version__ >= 160000 and not os.environ.get(
+                "PGREQUIREAUTH"  # noqa: ENV001 - libpq var
+            ):
+                args["require_auth"] = "!password"
+        except ImportError:
+            pass
     options = _session_timeout_options(config)
     if options:
         # An explicit ``options`` replaces libpq's PGOPTIONS fallback. Carry it

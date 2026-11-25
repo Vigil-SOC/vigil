@@ -4,15 +4,27 @@ Each step is joined on host / entity / time fields that are actually present
 on the Finding. Technique ids and other unknown keys on a step are ignored.
 Verdicts: rule | loglm | both | missed. LogLM-origin is ``data_source ==
 "loglm"``; any other correlated Finding is rule-origin.
+
+``coverage_report`` then applies the one step rule every reader of an emulation
+gets: a step a rule-origin Finding cites is caught whatever its exit; any other
+step is ``unknown`` (with a ``reason``), never missed, when its runner reported an
+error or a null or non-zero exit, or when it ended less than ``LAG`` ago.
+
+A run's steps are read by ``steps_from_dispatch_results`` from emulator answers
+only (docs/emulators.md), so they correlate on hostname and window alone.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
-Verdict = Literal["rule", "loglm", "both", "missed"]
+Verdict = Literal["rule", "loglm", "both", "missed", "unknown"]
+
+# How late an event may be indexed and still be seen (rollout.LAG reads this).
+LAG = timedelta(minutes=30)
 
 _LOG_LM = "loglm"
 
@@ -281,27 +293,132 @@ _EVIDENCE_KEYS = (
 )
 
 
-def steps_from_dispatch_results(results: Any) -> List[Dict[str, Any]]:
-    """Pull action-trace steps out of journaled gated-execute ToolResults."""
-    if isinstance(results, dict):
-        held = results.get("results")
-        if isinstance(held, list):
-            results = held
-        else:
-            return _steps_from_result(results)
-    if not isinstance(results, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for item in results:
-        out.extend(_steps_from_result(item))
+# What an emulator's step is read for (docs/emulators.md); the rest is evidence only.
+STEP_FIELDS = ("technique_id", "hostname", "started_at", "ended_at", "exit", "id")
+
+
+def answer_steps(answer: Any) -> List[Dict[str, Any]]:
+    """The steps an emulator's answer holds: each object's ``steps``, or a bare
+    step. The one reader of the shape: the host check and the report both use it."""
+    found: List[Dict[str, Any]] = []
+    for item in answer if isinstance(answer, list) else [answer]:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("steps"), list):
+            found += [s for s in item["steps"] if isinstance(s, dict)]
+        elif "technique_id" in item:
+            found.append(item)
+    return found
+
+
+@dataclass
+class EmulatedSteps:
+    """A run's emulated steps, each once, and what was read but never scored."""
+
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    set_aside: List[Dict[str, Any]] = field(default_factory=list)
+    outside_hosts: List[str] = field(default_factory=list)
+    # An answer the row limit cut; a handle whose latest answer said done: false.
+    capped: bool = False
+    unfinished: List[str] = field(default_factory=list)
+
+    def notes(self) -> Dict[str, Any]:
+        return {
+            "set_aside": self.set_aside,
+            "outside_hosts": self.outside_hosts,
+            "capped": self.capped,
+            "unfinished": self.unfinished,
+        }
+
+
+def _set_aside_reason(step: Dict[str, Any], listed: Any) -> Optional[str]:
+    from core.detections.gaps import TECHNIQUE_ID
+
+    tid = step.get("technique_id")
+    if not isinstance(tid, str) or not TECHNIQUE_ID.match(tid.strip()):
+        return f"technique {tid!r} is not an ATT&CK technique id"
+    host = step.get("hostname")
+    if not isinstance(host, str) or not host.strip():
+        return "it names no hostname"
+    if listed(host.strip()) is None:
+        return f"hostname {host.strip()!r} is not listed for emulation"
+    if _window(step) is None:
+        return "it names no time"
+    return None
+
+
+def steps_from_dispatch_results(projection: Any) -> EmulatedSteps:
+    """The steps of a run's emulator answers: only results the agent layer stamped
+    as an emulator's, only ``STEP_FIELDS`` of each. A step with no hostname, no
+    time, a technique that is not an ATT&CK id or a host not listed now is set
+    aside with its reason, never scored; a step reported twice counts once (by
+    ``id``, else technique, host and start), its latest report kept."""
+    from core.response.emulation import read_emulation
+
+    out = EmulatedSteps()
+    emulated = projection.get("emulated") if isinstance(projection, dict) else None
+    if not isinstance(emulated, list) or not emulated:
+        return out
+    emulation = read_emulation()
+    kept: Dict[Any, Dict[str, Any]] = {}
+    aside: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    outside: Dict[str, str] = {}
+    done: Dict[str, Any] = {}
+    for entry in emulated:
+        result = entry.get("result") if isinstance(entry, dict) else None
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        out.capped = out.capped or result.get("capped") is True
+        rows = result.get("rows")
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and row.get("handle") not in (None, ""):
+                done[str(row["handle"])] = row.get("done")
+        for raw in answer_steps(rows):
+            step = {k: raw[k] for k in STEP_FIELDS if k in raw}
+            reason = _set_aside_reason(step, emulation.listed)
+            if reason is not None:
+                host = step.get("hostname")
+                if reason.startswith("hostname"):
+                    outside.setdefault(host.strip().lower(), host.strip())
+                aside[(reason, repr(sorted(step.items(), key=str)))] = {
+                    **step,
+                    "tool": entry.get("tool"),
+                    "reason": reason,
+                }
+                continue
+            step["technique_id"] = step["technique_id"].strip().upper()
+            step_id = step.get("id")
+            key = (
+                ("id", str(step_id))
+                if step_id not in (None, "")
+                else (
+                    step["technique_id"],
+                    step["hostname"].strip().lower(),
+                    _window(step)[0],  # type: ignore[index]
+                )
+            )
+            kept[key] = step
+    out.steps = list(kept.values())
+    out.set_aside = list(aside.values())
+    out.outside_hosts = list(outside.values())
+    out.unfinished = [h for h, d in done.items() if d is False]
     return out
 
 
-def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]:
-    """Group reconstructed verdicts by technique_id; join on step id / index."""
+def coverage_report(
+    trace: Any,
+    reconstructed: Dict[str, Any],
+    now: Optional[datetime] = None,
+    lag: timedelta = LAG,
+) -> Dict[str, Any]:
+    """Group reconstructed verdicts by technique_id; join on step id / index.
+
+    Each step is judged by ``judge_step`` against ``now`` (naive or aware UTC).
+    """
     records = reconstructed.get("steps") if isinstance(reconstructed, dict) else None
     if not isinstance(records, list) or not isinstance(trace, list):
         return {"techniques": []}
+    now = _naive_utc(now) if now else datetime.now(timezone.utc).replace(tzinfo=None)
 
     by_id: Dict[Any, Deque[Dict[str, Any]]] = defaultdict(deque)
     by_index: Dict[Any, Dict[str, Any]] = {}
@@ -327,6 +444,7 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
         if tid not in grouped:
             grouped[tid] = {"technique_id": tid, "steps": [], "missed": []}
             order.append(tid)
+        record = judge_step(raw, record, now, lag, reconstructed.get("cut_off"))
         grouped[tid]["steps"].append(record)
         if record.get("verdict") == "missed":
             grouped[tid]["missed"].append(_missed_step(raw, record))
@@ -346,6 +464,54 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
             }
         )
     return {"techniques": techniques}
+
+
+def judge_step(
+    raw: Any,
+    record: Dict[str, Any],
+    now: datetime,
+    lag: timedelta = LAG,
+    cut_off: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The step rule: the record as scored, with the step's hostname and times.
+
+    Rule-origin citations make it caught whatever its exit. Otherwise a runner
+    error, a null or non-zero ``exit`` (only when the step carries ``exit``: a
+    hand-written trace has none), an end within ``lag`` of ``now``, a step with no
+    time or no host/IP/user to join on, or a cut-off Findings read is unknown.
+    """
+    out = dict(record)
+    if not isinstance(raw, dict):
+        return out
+    hosts = _entities_from_step(raw)["hostnames"]
+    if hosts:
+        out["hostname"] = hosts[0]
+    window = _window(raw)
+    if window is not None:
+        out["started_at"], out["ended_at"] = (t.isoformat() for t in window)
+    if out.get("verdict") in ("rule", "both"):
+        return out
+    reason = None
+    error = raw.get("error")
+    if error:
+        reason = f"the runner reported an error ({str(error)[:200]})"
+    elif "exit" in raw and raw["exit"] is None:
+        reason = "the runner reported no exit code"
+    elif "exit" in raw and raw["exit"] != 0:
+        reason = f"the runner exited {raw['exit']}, so the step may not have run"
+    elif window is None or not _has_entity(_entities_from_step(raw)):
+        reason = "it names no time or no host, IP or user, so no Finding can join it"
+    elif window[1] + lag > now:
+        reason = (
+            f"it ended under {int(lag.total_seconds() // 60)} minutes ago; "
+            "alerts may still be arriving"
+        )
+    elif cut_off:
+        reason = cut_off
+    if reason:
+        out["verdict"] = "unknown"
+        out["reason"] = reason
+    return out
 
 
 def _caught_in(steps: List[Dict[str, Any]]) -> List[str]:
@@ -388,6 +554,8 @@ def _joined_record(
 def _layer_verdict(verdicts: List[Any]) -> Verdict:
     has_rule = False
     has_loglm = False
+    if verdicts and all(v == "unknown" for v in verdicts):
+        return "unknown"
     for verdict in verdicts:
         rule, loglm = _step_layers(verdict)
         has_rule = has_rule or rule
@@ -428,45 +596,3 @@ def _missed_step(raw: Any, record: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, str) and value.strip():
             missed[key] = value
     return missed
-
-
-def _steps_from_result(item: Any) -> List[Dict[str, Any]]:
-    if isinstance(item, list):
-        return _steps_from_rows(item)
-    if not isinstance(item, dict):
-        return []
-    rows = item.get("rows")
-    if isinstance(rows, list) and ("ok" in item or "rowCount" in item):
-        return _steps_from_rows(rows)
-    if isinstance(item.get("steps"), list):
-        return [
-            row
-            for row in item["steps"]
-            if isinstance(row, dict) and _looks_like_step(row)
-        ]
-    if _looks_like_step(item):
-        return [item]
-    return []
-
-
-def _steps_from_rows(rows: List[Any]) -> List[Dict[str, Any]]:
-    steps: List[Dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        nested = row.get("steps")
-        if isinstance(nested, list):
-            steps.extend(
-                step
-                for step in nested
-                if isinstance(step, dict) and _looks_like_step(step)
-            )
-        elif _looks_like_step(row):
-            steps.append(row)
-    return steps
-
-
-def _looks_like_step(row: Dict[str, Any]) -> bool:
-    # Coverage groups by technique_id; other tool rows must not enter the trace.
-    tid = row.get("technique_id")
-    return isinstance(tid, str) and bool(tid.strip())

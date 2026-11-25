@@ -199,10 +199,13 @@ def put_policy(
     if_match: Optional[str] = Header(None),
     dry_run: bool = False,
 ):
-    """Replace the policy. An idle limit above its standard, or a stale version, is refused.
+    """Replace the policy. A stale version is refused.
 
-    ``dry_run`` checks the version like a save, then saves nothing and answers whether
-    the body would loosen the policy now in force.
+    Each idle limit is 0 (no idle limit) through 720 minutes (12 hours), set
+    independently of the other. A privileged idle of 0 leaves Confirm it's you
+    at 10 minutes. ``dry_run`` checks the version like a save, then saves nothing
+    and answers whether the body would loosen the policy now in force. 0 is the
+    loosest idle value, so a machine caller may not set it.
     """
     expected = _version_of(if_match)
 

@@ -361,7 +361,9 @@ def decide(
         row.sign_in_id = sign_in_id
         row.code_hash = _hash(code)
         row.expires_at = utcnow() + CODE_TTL
-        trail_events.record(session, "oauth.consent_granted", **fields)
+        trail_events.record(
+            session, "oauth.consent_granted", sign_in=sign_in_id, **fields
+        )
         return construct_redirect_uri(
             row.redirect_uri, code=code, state=row.state, iss=issuer
         )
@@ -474,6 +476,7 @@ def _exchange_code(code: VigilCode) -> OAuthToken:
             expires_at=now + min(tokens.lifetime(user, None, policy), GRANT_MAX),
         )
         issued = _issue(record, now)
+        approved_sign_in = row.sign_in_id
         session.add(record)
         session.delete(row)
         client.last_used_at = now
@@ -486,6 +489,7 @@ def _exchange_code(code: VigilCode) -> OAuthToken:
             credential_id=record.credential_id,
             client_id=client.client_id,
             expires_at=record.expires_at.isoformat(),
+            sign_in=approved_sign_in,
         )
         return issued
 

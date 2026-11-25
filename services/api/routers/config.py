@@ -1,7 +1,11 @@
 """Configuration API endpoints."""
 
+import hmac
 import json
 import logging
+import os
+import re
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +15,7 @@ from sqlalchemy import exists, select, text
 
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
+from core.auth.current_user import is_machine_request
 from core.auth.permissions import permission_gate
 from core.config import (
     _load_json_config,
@@ -41,11 +46,13 @@ from core.integrations.integration_secrets import (
     unstorable_secret_fields,
 )
 from core.integrations.readiness import evaluate, sources_settled
-from core.intent import intent_file
+from core.intent_report import intent_body
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.security import MAX_SYSTEM_PROMPT_BYTES
 from core.llm.system_prompt import OPERATOR_INSTRUCTIONS_KEY, validate_system_prompt
 from core.platform.process_health import ProcessHealth
+from core.response.ceiling import CeilingRefusal, CeilingWriteError, read_ceiling
+from core.response.config import applied_intent, managed_widening, settle_pending
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
     SECRET_WRITE_REFUSED_DETAIL,
@@ -61,7 +68,7 @@ from core.skills.skill_library import (
     operator_skills_root,
     skill_roots,
 )
-from core.storage.config_service import get_config_service
+from core.storage.config_service import get_config_service, write_config_audit
 from core.storage.models import (
     AIModelConfig,
     HistoryImport,
@@ -73,7 +80,7 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from services.api.errors import INTERNAL_ERROR_DETAIL
 from services.api.middleware.auth import get_current_active_user
-from services.daemon.intent import intent_report
+from services.daemon.intent_apply import StoreWriteFailed, accept_pending
 
 router = APIRouter()
 
@@ -97,6 +104,31 @@ logger = logging.getLogger(__name__)
 def _for_user(user: User):
     """Config service stamped with the signed-in user for the audit row."""
     return get_config_service(user_id=str(user.user_id))
+
+
+@contextmanager
+def _audited(
+    user: User,
+    config_type: str,
+    config_key: str,
+    old_value: Optional[Dict[str, Any]],
+    new_value: Optional[Dict[str, Any]],
+):
+    """Record a change whose state lives outside the settings service (the
+    secrets store, a State Directory file), then let the caller make it. The
+    entry is written first, so a refused one stops the change; an exception
+    in the block rolls the entry back."""
+    with unit_of_work() as session:
+        write_config_audit(
+            session,
+            config_type=config_type,
+            config_key=config_key,
+            action="update",
+            old_value=old_value,
+            new_value=new_value,
+            changed_by=str(user.user_id),
+        )
+        yield
 
 
 def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
@@ -180,7 +212,12 @@ class PlatformDatabaseProxyConfig(BaseModel):
     proxy_password: str = ""
     ssh_private_key_path: str = ""
     ssh_key_passphrase: str = ""
+    # Required for ssh_tunnel: the bastion's public host key.
+    ssh_host_key: str = ""
     verify_proxy_tls: bool = True
+    # Not stored: proves the saver already holds the database login that a
+    # moved proxy would receive (see set_platform_database_config).
+    database_password: str = ""
 
 
 @router.get("/demo-mode", dependencies=_PLATFORM_READ)
@@ -206,7 +243,10 @@ def get_demo_mode():
 
 
 @router.post("/demo-mode", dependencies=_PLATFORM_WRITE)
-def set_demo_mode(config: DemoModeConfig):
+def set_demo_mode(
+    config: DemoModeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set demo mode configuration.
 
@@ -228,11 +268,13 @@ def set_demo_mode(config: DemoModeConfig):
         with open(source_file, "r") as f:
             existing = json.load(f)
 
-    # Update demo_mode setting
+    old = {"demo_mode": existing.get("demo_mode")}
     existing["demo_mode"] = config.enabled
-
-    with open(config_file, "w") as f:
-        json.dump(existing, f, indent=2)
+    with _audited(
+        current_user, "general", "demo_mode", old, {"demo_mode": config.enabled}
+    ):
+        with open(config_file, "w") as f:
+            json.dump(existing, f, indent=2)
 
     # Takes effect at once; DEMO_MODE in the environment still wins, so report the
     # effective mode rather than the one asked for.
@@ -294,7 +336,10 @@ def get_claude_config():
 
 
 @router.post("/claude", dependencies=_PLATFORM_WRITE)
-def set_claude_config(config: ClaudeConfig):
+def set_claude_config(
+    config: ClaudeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set Claude API configuration.
 
@@ -304,13 +349,20 @@ def set_claude_config(config: ClaudeConfig):
     Returns:
         Success status
     """
-    # Use standard environment variable name
-    success = set_secret("CLAUDE_API_KEY", config.api_key)
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail=secret_write_failure_detail("Failed to save API key"),
-        )
+    # The key's value never reaches the entry, only that it changed.
+    with _audited(
+        current_user,
+        "llm_provider",
+        "CLAUDE_API_KEY",
+        {"configured": bool(get_secret("CLAUDE_API_KEY"))},
+        {"configured": True, "key_change": "set"},
+    ):
+        # Use standard environment variable name
+        if not set_secret("CLAUDE_API_KEY", config.api_key):
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail("Failed to save API key"),
+            )
 
     # GH #88: keep the new llm_provider_configs table in sync so the
     # Settings "AI Config" tab and the legacy endpoint agree on the
@@ -487,6 +539,7 @@ _PLATFORM_DB_PROXY_KEYS = {
     "proxy_password": "PLATFORM_DB_PROXY_PASSWORD",
     "ssh_private_key_path": "PLATFORM_DB_SSH_PRIVATE_KEY_PATH",
     "ssh_key_passphrase": "PLATFORM_DB_SSH_KEY_PASSPHRASE",
+    "ssh_host_key": "PLATFORM_DB_SSH_HOST_KEY",
     "verify_proxy_tls": "PLATFORM_DB_VERIFY_PROXY_TLS",
 }
 _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
@@ -529,8 +582,75 @@ def get_platform_database_config():
     return result
 
 
+def _require_proxy_credentials(
+    config: PlatformDatabaseProxyConfig, proxy_type: str
+) -> None:
+    """Refuse a save that sends stored credentials somewhere new, unless re-entered.
+
+    Through a proxy, Vigil logs in to its database with its own login (and, for
+    a password SSH tunnel, the stored SSH password). So a save that changes
+    where the proxy points, or turns its TLS verification off, must carry those
+    values again: a saved credential never goes to a destination its owner did
+    not choose, as on the integrations route.
+    """
+    if proxy_type == "none":
+        return
+    stored = {f: get_secret(k) or "" for f, k in _PLATFORM_DB_PROXY_KEYS.items()}
+    stored_type = (stored["proxy_type"] or "none").strip().lower()
+    stored_verify = stored["verify_proxy_tls"].lower() not in (
+        "false",
+        "0",
+        "no",
+        "off",
+    )
+    moved = (
+        proxy_type != stored_type
+        or (config.proxy_host or "") != stored["proxy_host"]
+        or (str(config.proxy_port) if config.proxy_port else "") != stored["proxy_port"]
+        or (proxy_type == "pgbouncer" and stored_verify and not config.verify_proxy_tls)
+        # The host key is part of the destination: a new key is a new server.
+        or (
+            proxy_type == "ssh_tunnel"
+            and (config.ssh_host_key or "").strip() != stored["ssh_host_key"]
+        )
+    )
+    if not moved:
+        return
+
+    from core.storage.connection import DatabaseConfig
+
+    # A login without a stored password comes from libpq's own sources
+    # (PGPASSWORD, .pgpass); an empty entry never matches, so such a move is refused.
+    expected = DatabaseConfig().password or os.environ.get(
+        "PGPASSWORD", ""
+    )  # noqa: ENV001 - libpq var
+    missing = []
+    if not config.database_password or not hmac.compare_digest(
+        config.database_password.encode(), expected.encode()
+    ):
+        missing.append("database password")
+    if (
+        proxy_type == "ssh_tunnel"
+        and not config.ssh_private_key_path
+        and stored["proxy_password"]
+        and not config.proxy_password
+    ):
+        missing.append("proxy password")
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The proxy now points somewhere new or no longer verifies TLS; "
+                f"enter its credential again ({', '.join(missing)})"
+            ),
+        )
+
+
 @router.post("/platform-database", dependencies=_PLATFORM_WRITE)
-def set_platform_database_config(config: PlatformDatabaseProxyConfig):
+def set_platform_database_config(
+    config: PlatformDatabaseProxyConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist the platform-DB proxy config to the encrypted secrets
     store. Takes effect on the next backend restart — the live engine
     can't be hot-swapped safely.
@@ -547,6 +667,21 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
             ),
         )
 
+    if proxy_type == "ssh_tunnel":
+        from core.storage.db_proxy import parse_ssh_host_key
+
+        if not (config.ssh_host_key or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="SSH tunnel needs the bastion's SSH host key",
+            )
+        try:
+            parse_ssh_host_key(config.ssh_host_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _require_proxy_credentials(config, proxy_type)
+
     # Non-secret fields — always overwrite so disabling a setting
     # actually clears the stored value.
     values = {
@@ -555,6 +690,9 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
         "proxy_port": str(config.proxy_port) if config.proxy_port else "",
         "proxy_username": config.proxy_username or "",
         "ssh_private_key_path": config.ssh_private_key_path or "",
+        "ssh_host_key": (
+            (config.ssh_host_key or "").strip() if proxy_type == "ssh_tunnel" else ""
+        ),
         "verify_proxy_tls": "true" if config.verify_proxy_tls else "false",
     }
     # Secret fields — only overwrite when caller supplied a non-empty
@@ -563,10 +701,19 @@ def set_platform_database_config(config: PlatformDatabaseProxyConfig):
         values["proxy_password"] = config.proxy_password
     if config.ssh_key_passphrase:
         values["ssh_key_passphrase"] = config.ssh_key_passphrase
-    _set_secrets_or_raise(
-        {_PLATFORM_DB_PROXY_KEYS[k]: v for k, v in values.items()},
-        "platform DB proxy configuration",
-    )
+    # Settings only; a re-entered secret is named, never copied.
+    old = {
+        f: get_secret(k) or ""
+        for f, k in _PLATFORM_DB_PROXY_KEYS.items()
+        if f not in _PLATFORM_DB_SECRET_FIELDS
+    }
+    new = {f: v for f, v in values.items() if f not in _PLATFORM_DB_SECRET_FIELDS}
+    new["rotated"] = sorted(_PLATFORM_DB_SECRET_FIELDS & values.keys())
+    with _audited(current_user, "database", "PLATFORM_DB_PROXY", old, new):
+        _set_secrets_or_raise(
+            {_PLATFORM_DB_PROXY_KEYS[k]: v for k, v in values.items()},
+            "platform DB proxy configuration",
+        )
 
     return {
         "success": True,
@@ -999,7 +1146,8 @@ def set_integrations_config(
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
     clobber stored credentials, unless a destination field (URL, host, ...) also
-    changed: then every stored secret must be re-entered (HTTP 400 otherwise),
+    changed or TLS trust was loosened (verify_ssl off, ca_cert_path or proxy_type
+    changed): then every stored secret must be re-entered (HTTP 400 otherwise),
     so a saved credential is never carried to a destination its owner did not
     choose. A failed secret write or integration-config
     row is HTTP 500; the detail names the integration and field, never the value.
@@ -1476,6 +1624,18 @@ def set_operator_instructions(
     return {"text": text, "max_bytes": MAX_SYSTEM_PROMPT_BYTES}
 
 
+def _connection_preview(conn_str: Optional[str]) -> Optional[str]:
+    """The host part of a connection string, with its login and database masked."""
+    if not conn_str:
+        return None
+    if "://" not in conn_str:
+        return "***"
+    # Format: postgresql://user:pass@host:port/db
+    scheme, rest = conn_str.split("://", 1)
+    host = re.split(r"[/?]", rest.split("@")[-1])[0]
+    return f"{scheme}://***@{host}/***"
+
+
 @router.get("/postgresql", dependencies=_PLATFORM_READ)
 def get_postgresql_config():
     """
@@ -1488,27 +1648,20 @@ def get_postgresql_config():
         conn_str = get_secret("POSTGRESQL_CONNECTION_STRING")
         has_config = bool(conn_str)
 
-        # Extract host from connection string for preview (if exists)
-        preview = None
-        if conn_str and "postgresql://" in conn_str:
-            try:
-                # Format: postgresql://user:pass@host:port/db
-                parts = conn_str.split("@")
-                if len(parts) > 1:
-                    host_part = parts[1].split("/")[0]
-                    preview = f"postgresql://***@{host_part}/***"
-            except Exception as e:
-                logger.debug(f"Error parsing connection string preview: {e}")
-                preview = "postgresql://***:***@***/***"
-
-        return {"configured": has_config, "connection_preview": preview}
+        return {
+            "configured": has_config,
+            "connection_preview": _connection_preview(conn_str),
+        }
     except Exception as e:
         logger.error(f"Error getting PostgreSQL config: {e}")
         return {"configured": False, "error": INTERNAL_ERROR_DETAIL}
 
 
 @router.post("/postgresql", dependencies=_PLATFORM_WRITE)
-def set_postgresql_config(config: PostgreSQLConfig):
+def set_postgresql_config(
+    config: PostgreSQLConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set PostgreSQL database backend configuration.
 
@@ -1518,19 +1671,24 @@ def set_postgresql_config(config: PostgreSQLConfig):
     Returns:
         Success status
     """
-    success = set_secret("POSTGRESQL_CONNECTION_STRING", config.connection_string)
-    if success:
-        return {
-            "success": True,
-            "message": "PostgreSQL connection string saved securely",
-        }
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail=secret_write_failure_detail(
-                "Failed to save PostgreSQL connection string"
-            ),
-        )
+    with _audited(
+        current_user,
+        "database",
+        "POSTGRESQL_CONNECTION_STRING",
+        {"connection": _connection_preview(get_secret("POSTGRESQL_CONNECTION_STRING"))},
+        {"connection": _connection_preview(config.connection_string)},
+    ):
+        if not set_secret("POSTGRESQL_CONNECTION_STRING", config.connection_string):
+            raise HTTPException(
+                status_code=500,
+                detail=secret_write_failure_detail(
+                    "Failed to save PostgreSQL connection string"
+                ),
+            )
+    return {
+        "success": True,
+        "message": "PostgreSQL connection string saved securely",
+    }
 
 
 class AIOperationsSettingsConfig(BaseModel):
@@ -1768,6 +1926,18 @@ class IntentDiffRow(BaseModel):
     effective: Any
     source: str
     label: str
+    # Set for a key a declared directory manages: the file, line and the
+    # revision that last changed it. ``drift`` is a local or env narrowing;
+    # ``pending`` a loosening waiting for a person; ``env_value`` the env
+    # value the declared one overrides, when they differ.
+    managed: bool = False
+    file: Optional[str] = None
+    line: Optional[int] = None
+    revision: Optional[str] = None
+    drift: bool = False
+    pending: bool = False
+    env_ignored: bool = False
+    env_value: Any = None
 
 
 class IntentReportResponse(BaseModel):
@@ -1776,33 +1946,97 @@ class IntentReportResponse(BaseModel):
     path: str
     readable: bool
     rows: list[IntentDiffRow] = Field(default_factory=list)
+    # Set when VIGIL_INTENT_DIR is applied by the daemon: the applied
+    # revision, ok | degraded | rejected and why, and loosenings not written.
+    revision: Optional[str] = None
+    state: Optional[str] = None
+    reason: Optional[str] = None
+    pending: list[str] = Field(default_factory=list)
+    directory: Optional[str] = None
+    # The newest revision the daemon read; "unknown" while degraded.
+    revision_on_disk: Optional[str] = None
+    in_sync: Optional[bool] = None
+    hash: Optional[str] = None
+    applied_at: Optional[str] = None
+    rejected: Optional[Dict[str, Any]] = None
+    verification: Optional[str] = None
 
 
 @router.get("/intent", response_model=IntentReportResponse, dependencies=_AUTONOMY_READ)
-def get_intent_report() -> IntentReportResponse:
-    """Declared intent beside effective config.
+def get_intent_report() -> Dict[str, Any]:
+    """Declared intent beside effective config, and what a declared directory manages.
 
     A missing or unreadable manifest is 200 with ``readable`` false and no
     rows, so the Settings card can say so in one line.
     """
-    rows = intent_report(include_same=True)
-    path = str(intent_file())
-    if rows is None:
-        return IntentReportResponse(path=path, readable=False, rows=[])
-    return IntentReportResponse(
-        path=path,
-        readable=True,
-        rows=[
-            IntentDiffRow(
-                key=row.key,
-                declared=row.declared,
-                effective=row.effective,
-                source=row.source,
-                label=row.label,
-            )
-            for row in rows
-        ],
-    )
+    return intent_body()
+
+
+class IntentAcceptBody(BaseModel):
+    """The revision (and hash) the person reviewed; a newer one is a 409."""
+
+    revision: str
+    hash: Optional[str] = None
+
+
+@router.post(
+    "/intent/accept", response_model=IntentReportResponse, dependencies=_AUTONOMY_WRITE
+)
+def accept_intent_pending(
+    body: IntentAcceptBody,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """Apply the pending loosenings of the applied revision. A person's act.
+
+    Each key's declared value goes into its store under the person's name,
+    with the revision on the audit entry. No timer, and not over /mcp.
+    """
+    if is_machine_request(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="A service account or API token cannot raise autonomy",
+        )
+    try:
+        stopped = read_ceiling().stopped
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+    if stopped:
+        raise HTTPException(status_code=409, detail="Stopped: resume first")
+    report = intent_body()
+    if not report["directory"]:
+        raise HTTPException(status_code=409, detail="No declared directory is applied")
+    if report["revision"] != body.revision or (
+        body.hash is not None and body.hash != report["hash"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"The applied revision is now {report['revision']}; review it again",
+        )
+    if not report["pending"]:
+        raise HTTPException(status_code=409, detail="Nothing is pending")
+    who = current_user.username or str(current_user.user_id)
+    try:
+        accept_pending(
+            report["pending"], body.revision, body.hash, str(current_user.user_id), who
+        )
+    except CeilingRefusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except (CeilingWriteError, StoreWriteFailed) as exc:
+        raise HTTPException(
+            status_code=500, detail="The pending keys were not all stored"
+        ) from exc
+    return intent_body()
+
+
+def refuse_managed_widening(values: Dict[str, Any]) -> None:
+    """409 when a local write would widen a key the declared directory manages."""
+    applied = applied_intent(fresh=True)
+    for key, value in values.items():
+        refused = managed_widening(key, value, applied)
+        if refused:
+            raise HTTPException(status_code=409, detail=refused)
 
 
 @router.get(
@@ -1836,6 +2070,16 @@ def set_orchestrator_config(
     flat keys; no profile name is written.
     """
     config_data = config.model_dump()
+    managed = {
+        f"investigate.{name}": config_data[name]
+        for name in (
+            "enabled",
+            "max_cost_per_investigation",
+            "max_total_hourly_cost",
+            "max_runtime_per_investigation",
+        )
+    }
+    refuse_managed_widening(managed)
 
     config_service = _for_user(current_user)
     success = config_service.set_system_config(
@@ -1850,6 +2094,7 @@ def set_orchestrator_config(
         raise HTTPException(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
+    settle_pending(managed, str(current_user.user_id))
 
     return {"success": True, "message": "Orchestrator settings saved"}
 

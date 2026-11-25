@@ -5,7 +5,9 @@ from typing import Sequence, Tuple
 
 import httpx
 
-from core.config import get_integration_config, get_settings
+from core.config import get_settings, is_integration_enabled
+from core.integrations._base.config import resolve
+from core.integrations.pagerduty.descriptor import PAGERDUTY
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +26,11 @@ def page_proposed_containment(
     try:
         if not actions or not get_settings().daemon_pagerduty_enabled:
             return
-        config = get_integration_config("pagerduty")
-        routing_key = config.get("routing_key") or config.get("integration_key")
+        # resolve returns secrets even when the integration is disabled.
+        if not is_integration_enabled("pagerduty"):
+            return
+        config = resolve(PAGERDUTY)
+        routing_key = config.get("integration_key")
         if not routing_key:
             logger.warning("PagerDuty not configured, skipping page for %s", case_id)
             return

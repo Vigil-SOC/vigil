@@ -29,6 +29,7 @@ from core.storage.models import (
     User,
 )
 from core.time import utcnow
+from core.workflows.routing import EMULATE_WORKFLOW
 from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
@@ -60,7 +61,7 @@ _cached_orchestrator = None
 def _get_orchestrator():
     global _cached_orchestrator
     try:
-        from services.daemon.config import DaemonConfig
+        from core.daemon_config import DaemonConfig
         from services.daemon.orchestrator import Orchestrator
 
         config = DaemonConfig.from_env().orchestrator
@@ -86,6 +87,9 @@ class InvestigationCreateRequest(BaseModel):
     # and onto the Case as evidence when the ask has one. The cap is the only
     # check, and it is sized for a pasted report.
     document: Optional[str] = Field(None, max_length=65_536)
+    # Open no Case: only for the MITRE analyst (a person's Emulate), whose record is
+    # the run's coverage report, as the daily gaps run's is.
+    no_case: bool = False
 
 
 # ---- Status & Control ----
@@ -175,9 +179,15 @@ def _persist_orchestrator_enabled(
     defaults defined in services/api/routers/config.py. Raises when the write
     fails: the daemon only learns of a toggle through this row.
     """
+    from core.response.config import settle_pending
     from core.storage.config_service import get_config_service
-    from services.api.routers.config import ORCHESTRATOR_DEFAULTS
+    from services.api.routers.config import (
+        ORCHESTRATOR_DEFAULTS,
+        refuse_managed_widening,
+    )
 
+    if enabled:
+        refuse_managed_widening({"investigate.enabled": True})
     svc = get_config_service(user_id=user_id)
     current = svc.get_system_config("orchestrator.settings")
     base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
@@ -194,6 +204,8 @@ def _persist_orchestrator_enabled(
     )
     if stored is False:
         raise RuntimeError("orchestrator.settings was not stored")
+    if enabled:
+        settle_pending({"investigate.enabled": True}, user_id)
 
 
 @router.post("/enable", dependencies=_ENABLE)
@@ -380,7 +392,8 @@ def wake_investigation(
     A run's id is derived from its investigation id and its ledger is terminal
     once finished, so the same investigation cannot run twice. The failure stays
     on record; the restart is a fresh Human Ask over the same workflow and findings.
-    A daily gaps run restarts as a gaps run: no Case, the same gap proposals.
+    A daily gaps run restarts as a gaps run: no Case, the same gap proposals. An
+    Emulate restarts as an Emulate, with no Case.
     """
     orch = _get_orchestrator()
     if not orch:
@@ -399,7 +412,7 @@ def wake_investigation(
         )
 
     from core.storage.intake_queue import insert_intake_trigger
-    from services.daemon.orchestrator import gaps_run_of
+    from services.daemon.orchestrator import caseless_run_of
 
     case_id = inv.get("case_id")
     payload = {
@@ -410,13 +423,17 @@ def wake_investigation(
         or None,
         **_person(user, tool_principal.sid_of(http_request)),
     }
-    # A Human Ask with no case_id gets a Case; only a schedule intake keeps no_case
-    # and the gap proposals.
-    gaps_run = None if case_id else gaps_run_of(investigation_id)
-    if gaps_run is not None:
-        payload.update(gaps_run, trigger_type="manual")
+    # A Human Ask with no case_id gets a Case. A gaps run reruns as a schedule
+    # intake with its gap proposals, an Emulate as a Human Ask; neither opens one.
+    caseless = None if case_id else caseless_run_of(investigation_id)
+    kind = "human_ask"
+    if caseless is not None:
+        kind = caseless.pop("kind")
+        payload.update(caseless)
+        if kind == "schedule":
+            payload["trigger_type"] = "manual"
     insert_intake_trigger(
-        kind="human_ask" if gaps_run is None else "schedule",
+        kind=kind,
         priority=inv.get("priority") or "medium",
         payload=payload,
     )
@@ -504,6 +521,19 @@ def create_investigation(
     }
     if request.document:
         payload["document"] = request.document
+    if request.no_case:
+        # A run opened on findings needs a Case, so no_case takes none.
+        if (
+            request.workflow_id != EMULATE_WORKFLOW
+            or request.case_id
+            or request.finding_ids
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"no_case is only for {EMULATE_WORKFLOW}, "
+                "with no case_id and no finding_ids",
+            )
+        payload["no_case"] = True
     # The daemon copies these onto the run. The token is not a session, and the
     # triage read drops it; the username is what the run row is attributed to.
     payload.update(_person(user, tool_principal.sid_of(http_request)))

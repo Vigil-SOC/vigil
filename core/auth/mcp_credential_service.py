@@ -144,12 +144,14 @@ def mint(
     days: Optional[int] = None,
     session: Optional[Session] = None,
     actor: Optional[str] = None,
+    sign_in: Optional[str] = None,
 ) -> Optional[MintedCredential]:
     """Issue a token for ``user_id``. Returns None if there is no such user.
 
     It expires after :func:`lifetime` of ``days``. The caller must show the token
     to the operator now; it is not recoverable. ``actor`` is the principal minting
-    it; its trail entry commits with it. The policy is read in this transaction
+    it; its trail entry commits with it and names ``sign_in`` when a person
+    signed in to mint it. The policy is read in this transaction
     (PolicyUnreadable if it cannot be: nothing falls back to defaults).
     """
     with unit_of_work(session) as session:
@@ -177,6 +179,7 @@ def mint(
             principal=user.principal_id,
             credential_id=record.credential_id,
             expires_at=expires_at.isoformat(),
+            sign_in=sign_in,
         )
 
         logger.info(
@@ -323,6 +326,7 @@ def rotate(
     days: Optional[int] = None,
     session: Optional[Session] = None,
     actor: Optional[str] = None,
+    sign_in: Optional[str] = None,
 ) -> Optional[tuple[MintedCredential, McpCredential]]:
     """Mint a successor with the same holder and label; returns it with the old
     record as it now stands, or None if there is no such token.
@@ -345,7 +349,9 @@ def rotate(
         now = utcnow()
         if old.status(now) != "active":
             raise NotRotatable(f"This token is {old.status(now)}")
-        minted = mint(old.user_id, old.label, days, session=session, actor=actor)
+        minted = mint(
+            old.user_id, old.label, days, session=session, actor=actor, sign_in=sign_in
+        )
         if minted is None:
             return None
         end = now if compromised else now + ROTATION_GRACE
@@ -360,5 +366,6 @@ def rotate(
             credential_id=credential_id,
             successor_id=old.successor_id,
             compromised=True if compromised else None,
+            sign_in=sign_in,
         )
         return minted, old

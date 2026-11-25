@@ -79,11 +79,17 @@ export interface TurnConfig {
   // Turns the caller already holds, seeded before the loop. A stateless client
   // posts the whole conversation each time and the run is one turn of it.
   history?: readonly Message[];
+  // On a resume, the approved tool call this role parked on and has not made runs once,
+  // through the invoke door under its checkpoint, before the first model call (#5077).
+  resume_approved?: boolean;
   // The harness's own cap on tool turns, held whatever a workflow asks for.
   max_turns: number;
   // Which tools ask a human first is deployment's answer, not a property of the
   // tool: the same tool needs approval in one deployment and not in another.
   approvals: ReadonlySet<string>;
+  // Tools the deployment marks as emulators (`emulator` on a tool spec). Each call
+  // to one is journaled with its result, gated or not.
+  emulators?: ReadonlySet<string>;
   // Whether a denied call parks the run on its reason. A conversation's turn gets
   // the denial as a result instead: the person is there to read it.
   park_on_denial?: boolean;

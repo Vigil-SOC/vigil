@@ -8,20 +8,25 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from redis.exceptions import RedisError
 
+from core.config import is_integration_enabled
+from core.daemon_config import ProcessingConfig, ResponseConfig
 from core.findings import triage_citations as citations
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.ingestion.ack import settle_ack
 from core.ingestion.dedup import RedisDedupSet
 from core.ingestion.triage_signal import CHANNEL as TRIAGE_SIGNAL_CHANNEL
 from core.integrations import entity_facts
+from core.integrations._base.config import resolve
 from core.integrations.entity_facts import FactRead as EntityFactRead
+from core.integrations.shodan.descriptor import SHODAN
+from core.integrations.virustotal.descriptor import VIRUSTOTAL
 from core.llm.gateway.gateway import JOB_TIMEOUT
 from core.llm.outage import report_outage, report_recovered
 from core.llm.security import alert_text
 from core.redis_client import open_async_redis, redact_logged_text
+from core.response.config import applied_values
 from core.storage.service import DAEMON_ENRICHMENT_KEYS
 from core.time import utcnow
-from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import ACTIONS as TRIAGE_ACTIONS
 from services.daemon.probes import PROBE_DATA_SOURCE
 from services.daemon.vendor_errors import (
@@ -283,14 +288,9 @@ def not_offered_reason(
 class FindingProcessor:
     """Processes findings through AI triage and enrichment."""
 
-    def __init__(
-        self,
-        config: ProcessingConfig,
-        response_config: Optional[ResponseConfig] = None,
-    ):
+    def __init__(self, config: ProcessingConfig):
         self.config = config
-        # The intake line is the band's review threshold (#916).
-        self.response_config = response_config or ResponseConfig.from_settings()
+        self._enrichment_ready = False
         # Bounded so a stalled processor holds producers back (put blocks)
         # instead of piling findings up in memory.
         self.input_queue: asyncio.Queue = asyncio.Queue(maxsize=INPUT_QUEUE_MAXSIZE)
@@ -390,20 +390,35 @@ class FindingProcessor:
         except Exception as e:
             logger.error(f"Failed to initialize database service: {e}")
 
-        if self.config.auto_triage_enabled:
-            self._llm_gateway = None  # lazy-init in async context
-
-        if self.config.auto_enrich_enabled:
+        self._llm_gateway = None  # lazy-init in async context
+        if self.auto_enrich:
             self._init_enrichment_services()
+
+    # Read live, so an applied INTENT.md revision reaches the running daemon.
+    @property
+    def response_config(self) -> ResponseConfig:
+        """The band; the intake line is its review threshold (#916)."""
+        return ResponseConfig.from_settings()
+
+    @property
+    def auto_triage(self) -> bool:
+        return bool(
+            applied_values().get("triage.auto_triage", self.config.auto_triage_enabled)
+        )
+
+    @property
+    def auto_enrich(self) -> bool:
+        return bool(
+            applied_values().get("enrich.auto_enrich", self.config.auto_enrich_enabled)
+        )
 
     def _init_enrichment_services(self):
         """Initialize threat intelligence enrichment services."""
-        from core.config import get_integration_config, is_integration_enabled
-
+        self._enrichment_ready = True
         # VirusTotal
         if is_integration_enabled("virustotal"):
             try:
-                config = get_integration_config("virustotal")
+                config = resolve(VIRUSTOTAL)
                 self._enrichment_services["virustotal"] = {
                     "api_key": config.get("api_key"),
                     "enabled": True,
@@ -415,7 +430,7 @@ class FindingProcessor:
         # Shodan
         if is_integration_enabled("shodan"):
             try:
-                config = get_integration_config("shodan")
+                config = resolve(SHODAN)
                 self._enrichment_services["shodan"] = {
                     "api_key": config.get("api_key"),
                     "enabled": True,
@@ -497,7 +512,7 @@ class FindingProcessor:
         return self.config.enrich_backfill_enabled and self._signal_enabled()
 
     def _signal_enabled(self) -> bool:
-        return bool(self.config.auto_triage_enabled or self.config.auto_enrich_enabled)
+        return self.auto_triage or self.auto_enrich
 
     async def _process_worker(self, worker_id: int, shutdown_event: asyncio.Event):
         """Worker coroutine for processing findings."""
@@ -634,17 +649,20 @@ class FindingProcessor:
         evaluation always runs on whatever severity we have."""
         finding_id = finding.get("finding_id", "unknown")
 
-        want_llm = self.config.auto_triage_enabled or self.config.auto_enrich_enabled
+        auto_triage, auto_enrich = self.auto_triage, self.auto_enrich
+        if auto_enrich and not self._enrichment_ready:
+            self._init_enrichment_services()
+        want_llm = auto_triage or auto_enrich
         if want_llm and time.monotonic() >= self._enrich_paused_until:
             async with self._semaphore:
                 try:
                     triaged_ok = True
-                    if self.config.auto_triage_enabled:
+                    if auto_triage:
                         finding = await self._triage_finding(finding)
                         # _triage_finding sets ai_triage only when the gateway answered.
                         triaged_ok = bool(finding.get("ai_triage"))
 
-                    if self.config.auto_enrich_enabled:
+                    if auto_enrich:
                         finding = await self._enrich_finding(finding)
 
                     if self._data_service:
@@ -657,7 +675,7 @@ class FindingProcessor:
                     # breaker keys off triage success and the except-path below.
                     # The threat-intel outcome alone is not enrichment data.
                     produced = set(finding.get("enrichment") or ()) - {TI_CHECK_KEY}
-                    if self.config.auto_enrich_enabled and produced:
+                    if auto_enrich and produced:
                         self.stats["enriched"] += 1
 
                     if triaged_ok:
@@ -881,9 +899,14 @@ class FindingProcessor:
         if not ai_enrichment:
             return
         # Replaces only the triage keys; a generated analysis survives. It
-        # reports failure by returning False rather than raising.
+        # reports failure by returning False rather than raising. The first
+        # verdict time is a column, set once, not an enrichment key.
+        updates = {}
+        stamp = finding.get("_record_first_verdict_at")
+        if stamp is not None:
+            updates["first_verdict_at"] = stamp
         ok = self._data_service.write_ai_enrichment(
-            finding_id, ai_enrichment, daemon=True
+            finding_id, ai_enrichment, daemon=True, **updates
         )
         if not ok:
             logger.error(
@@ -1121,6 +1144,8 @@ REASONING: one sentence summing up the verdict
     ) -> Dict[str, Any]:
         """Apply AI triage result to finding."""
         triage_result = {}
+        # Only a verdict recorded by this call is offered to the column.
+        finding.pop("_record_first_verdict_at", None)
         fields = _reply_fields(response)
 
         said = (fields.get("VERDICT") or "").lower()
@@ -1149,6 +1174,7 @@ REASONING: one sentence summing up the verdict
 
         if verdict:
             triage_result["verdict"] = verdict
+            finding["_record_first_verdict_at"] = utcnow()
 
         # Kept as triage's opinion only: a finding's severity is the detector's
         # or an analyst's, never the model's.
@@ -1442,7 +1468,7 @@ REASONING: one sentence summing up the verdict
         # A dismissal stands only when the feed that could override it answered;
         # a feed that is off or not configured is not a failed check.
         feed_on = bool(
-            self.config.auto_enrich_enabled
+            self.auto_enrich
             and self._enrichment_services.get("cloudforce_one", {}).get("enabled")
         )
         if (

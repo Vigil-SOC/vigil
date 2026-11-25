@@ -13,6 +13,7 @@ import { agreementText, falseCloseText, workflowTier, type WorkflowTier } from '
 import {
   matchesProfile,
   useCeiling,
+  useEmulation,
   useInvestigateWorkflows,
   useOrchestrator,
   useUnverifiedTools,
@@ -24,6 +25,7 @@ import {
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
+import EmulatorsBlock from './EmulatorsBlock'
 import {
   approvalsApi,
   detectionRulesApi,
@@ -205,6 +207,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const investigate = useInvestigateWorkflows()
   const [floor, setFloor] = useState('')
   const unverified = useUnverifiedTools()
+  const emulation = useEmulation()
   const [allTools, setAllTools] = useState(false)
   const { hasPermission } = useAuth()
   // write raises, resumes and switches four-eyes; stop stops and lowers
@@ -342,6 +345,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     try {
       await ceiling.save(patch)
       notify('ok', 'Limits saved.')
+      setIntentRevision((n) => n + 1) // a narrowing shows as drift
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
     }
@@ -535,6 +539,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span title={server}>{server || 'Unknown server'}</span>
         </span>
         <span className={`lim-row-tag${t.effect_class ? '' : ' fair'}`}>
+          {emulation.data?.tools.includes(t.name) && <span className="lim-emu-mark">Emulator</span>}{' '}
           {t.effect_class ? 'Runs as a read, unconfirmed' : 'Unclassified, waits for a person'}
         </span>
         <span className="lim-row-ctl">
@@ -1007,6 +1012,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
+            <EmulatorsBlock
+              emulation={emulation}
+              stopped={ceil.stopped}
+              canRaise={canRaise}
+              canLower={canLower}
+              notify={notify}
+            />
           </>
         )}
       </SettingsCard>
@@ -1063,7 +1075,14 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 onBlur={persistIfChanged}
               />
             </Field>
-            <IntentReportCard reloadKey={intentRevision} />
+            <IntentReportCard
+              reloadKey={intentRevision}
+              notify={notify}
+              onAccepted={() => {
+                void ceiling.refresh()
+                reload()
+              }}
+            />
           </div>
         ) : (
           <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage and the intent report.</span>

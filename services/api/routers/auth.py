@@ -424,7 +424,11 @@ def _get_user(session: Session, user_id: str, lock: bool = False) -> Optional[Us
 
 
 def _limits(user: User, session: Session) -> session_policy.Limits:
-    """The session limits for this account, by the permissions it holds."""
+    """The session limits for this account, by the permissions it holds.
+
+    An idle of 0 is no idle limit: ``limits`` returns None, and a refresh does
+    not end the sign-in for idleness.
+    """
     held = AuthService.get_user_permissions(user.user_id, session)
     return session_policy.limits(
         [name for name, on in held.items() if on], _is_service_account(user)
@@ -1273,6 +1277,16 @@ def login(
         )
     if marked:
         auth_method = sign_ins.BREAK_GLASS
+    # Under Require MFA off, this password was just checked, so a person with
+    # no factor is not asked again for the confirmation window.
+    password_confirmed = None
+    if (
+        not service_account
+        and not user.mfa_enabled
+        and not marked
+        and session_policy.policy().require_mfa == "off"
+    ):
+        password_confirmed = utcnow()
     sign_ins.start(
         session,
         sid,
@@ -1281,6 +1295,7 @@ def login(
         auth_method=auth_method,
         user_agent=_ua,
         address=source,
+        confirmed_at=password_confirmed,
     )
     if evicted:
         _tell_of_eviction(session, user, sid, _ua, source)
@@ -1290,6 +1305,7 @@ def login(
         {"source_ip": source},
         actor=user.principal_id,
         sign_in=sid,
+        method=auth_method,
         **({"step_down": step_down} if step_down else {}),
     )
     # A service account gets body tokens only: a cookie is a console session.
@@ -1586,15 +1602,40 @@ def _sso_confirm(held: dict, code, error, source: Optional[str]) -> RedirectResp
             return _sso_redirect(_with_outcome(back, "failed", True))
         proof = sso.issue_proof(sid, pid)
         return _sso_redirect(_with_outcome(back, "ok", True, sso_proof=proof))
-    if sso.judged(claims, _sso_absolute())[0] is None:
+    if (
+        sso.judged(claims, _sso_absolute())[0] is None
+        and session_policy.policy().require_mfa != "off"
+    ):
         # Not a failed confirmation: the provider confirmed who, not a second factor.
+        # Require MFA off does not assume a Vigil factor, so the round-trip below
+        # opens the window. Any other setting still sends them to set one up.
         logger.info("Confirm it's you through SSO: no qualifying MFA claim")
         return _sso_redirect(_with_outcome(back, step_up.MFA_FIRST))
     with unit_of_work() as session:
         # Still the person who confirms at the provider, with the sign-in still open.
-        done = step_up.at_provider(session, pid, sid) and step_up.confirmed(
-            session, pid, sid, source
+        # Under off, that person has no Vigil factor to set up, so a password
+        # sign-in left open after the password was removed counts too. A sign-in
+        # Require SSO would now refuse ends instead, and opens nothing.
+        user = session.query(User).filter(User.principal_id == pid).first()
+        row = session.get(SignIn, sid)
+        open_row = (
+            user is not None
+            and row is not None
+            and row.ended_at is None
+            and row.principal_id == pid
         )
+        if open_row and step_up.non_sso_now_refused(user, row.auth_method):
+            sign_ins.end(sid, sign_ins.SSO_REQUIRED, session)
+            done = False
+        else:
+            holds = step_up.at_provider(session, pid, sid) or (
+                open_row
+                and session_policy.policy().require_mfa == "off"
+                and step_up.provider_only(session, user)
+            )
+            done = bool(holds) and step_up.confirmed(
+                session, pid, sid, source, factor=step_up.PROVIDER
+            )
     return _sso_redirect(_with_outcome(back, "ok" if done else "failed"))
 
 
@@ -2203,7 +2244,7 @@ def _confirm_it_is_you(
             source=source,
         )
         return
-    step_up.confirm(
+    factor = step_up.confirm(
         user,
         session,
         sid,
@@ -2215,18 +2256,27 @@ def _confirm_it_is_you(
         settle=False,
     )
     _settle_end_confirmation(
-        user, sid, source, not step_up.provider_only(session, user)
+        user, sid, source, not step_up.provider_only(session, user), factor
     )
 
 
 def _settle_end_confirmation(
-    user: User, sid: Optional[str], source: Optional[str], window: bool = True
+    user: User,
+    sid: Optional[str],
+    source: Optional[str],
+    window: bool = True,
+    factor: Optional[str] = None,
 ) -> None:
     """Append ``auth.confirmed`` and open the window together, or hold it shut.
     ``window=False``: append it only (the password never opens the window of a
-    person who confirms at the provider)."""
+    person who confirms at the provider). ``factor`` names what held."""
     beside = {"source_ip": source}
-    fields = dict(actor=user.principal_id, principal=user.principal_id, sign_in=sid)
+    fields = dict(
+        actor=user.principal_id,
+        principal=user.principal_id,
+        sign_in=sid,
+        factor=factor,
+    )
     try:
         with unit_of_work() as own:
             if window and sid and not step_up.open_window(own, sid):
@@ -2507,9 +2557,10 @@ async def refresh_token(
 
 
 def _sign_in_timing(request: Request, user: User, session: Session) -> Optional[dict]:
-    """Seconds until this sign-in goes idle (None: no idle limit) and reaches its
-    absolute end, as the server counts them. Relative, so the browser's clock
-    does not matter. None when the request has no sign-in (dev mode)."""
+    """Seconds until this sign-in goes idle (None: no idle limit, including an
+    idle setting of 0) and reaches its absolute end, as the server counts them.
+    Relative, so the browser's clock does not matter. None when the request has
+    no sign-in (dev mode)."""
     sid = _session_sid(request)
     row = session.get(SignIn, sid) if sid else None
     if row is None:

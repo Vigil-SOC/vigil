@@ -94,18 +94,34 @@ def _techniques(named: Any) -> List[str]:
     return list(dict.fromkeys(t.upper() for t in named if isinstance(t, str)))
 
 
-def _tactics(names: List[str]) -> List[str]:
-    return sorted({normalize_label(name) for name in names} & TACTICS)
+def _tactics(names: Any) -> List[str]:
+    if not isinstance(names, list):
+        return []
+    # Sentinel writes PascalCase ("CommandAndControl"): split it into words first.
+    return sorted(
+        {
+            normalize_label(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name))
+            for name in names
+            if isinstance(name, str)
+        }
+        & TACTICS
+    )
 
 
 def _sigma(doc: Dict[str, Any], rel: str) -> RuleRecord:
     tags = doc.get("tags") or []
+    correlation = doc.get("correlation")
+    logic = {"level": doc.get("level"), "logsource": doc.get("logsource")}
+    if correlation is not None:
+        # A correlation over other rules, not a detection of its own.
+        kind = correlation.get("type") if isinstance(correlation, dict) else None
+        logic["correlation"] = kind or True
     return RuleRecord(
         native_key=str(doc.get("id") or rel),
         name=str(doc.get("title") or doc.get("name") or rel),
         language="sigma",
         path=rel,
-        query=_dump(doc.get("detection")),
+        query=_dump(doc.get("detection") if correlation is None else correlation),
         techniques=_techniques(
             [
                 tag.replace("attack.", "")
@@ -120,7 +136,7 @@ def _sigma(doc: Dict[str, Any], rel: str) -> RuleRecord:
                 if isinstance(tag, str) and tag.startswith("attack.")
             ]
         ),
-        logic={"level": doc.get("level"), "logsource": doc.get("logsource")},
+        logic=logic,
         content=_json_safe(doc),
     )
 
@@ -229,23 +245,37 @@ def _kql_yaml(doc: Dict[str, Any], rel: str) -> RuleRecord:
         language="kql",
         path=rel,
         query=str(doc.get("query") or ""),
-        techniques=_techniques(doc.get("mitre") or []),
+        # Sentinel analytics name them relevantTechniques; Bert-JanP, mitre.
+        techniques=_techniques(doc.get("relevantTechniques") or doc.get("mitre") or []),
+        tactics=_tactics(doc.get("tactics") or []),
         content=_json_safe(doc),
     )
 
 
+MD_FENCE = re.compile(
+    r"^[ \t]*```[ \t]*(\w*)[^\n]*\n(.*?)^[ \t]*```", re.MULTILINE | re.DOTALL
+)
+
+
 def _kql_markdown(text: str, rel: str) -> Optional[RuleRecord]:
     """A Hunting-Queries-Detection-Rules page: a title, a technique table, KQL blocks."""
-    if not text.strip():
-        return None
     path = Path(rel)
     title_match = re.search(r"^#\s+(.+)", text, re.MULTILINE)
     title = title_match.group(1).strip() if title_match else path.stem
     desc_match = re.search(
         r"####\s+Description\s*\n(.*?)(?=\n####|\n##|\n```|\Z)", text, re.DOTALL
     )
-    blocks = re.findall(r"```(?:KQL|kql)\s*\n(.*?)```", text, re.DOTALL)
+    # A KQL/kusto fence, or an untagged one holding a pipeline; a page with
+    # neither (a README, a changelog, notes) holds no query and is no rule.
+    blocks = [
+        body
+        for tag, body in MD_FENCE.findall(text)
+        if tag.lower() in ("kql", "kusto")
+        or (not tag and re.search(r"^\s*\|", body, re.MULTILINE))
+    ]
     query = "\n---\n".join(block.strip() for block in blocks)
+    if not query:
+        return None
     techniques = sorted(set(TECHNIQUE_ID.findall(text)))
     return RuleRecord(
         native_key=rel,
@@ -279,37 +309,86 @@ def _kql_file(text: str, rel: str) -> Optional[RuleRecord]:
     )
 
 
-def parse_file(fmt: str, path: Path, rel: str, text: str) -> Optional[RuleRecord]:
-    """The rule a file holds under ``fmt``, or None when it holds none."""
-    suffix = path.suffix
-    if suffix == ".toml":
-        return _elastic(text, rel)
-    if suffix == ".md":
-        if path.name.lower() in KQL_SKIPPED_DOCS:
-            return None
-        return _kql_markdown(text, rel)
-    if suffix == ".kql":
-        return _kql_file(text, rel)
-    if suffix == ".xml":
-        return _wazuh(text, rel)
-    doc = yaml.load(text, Loader=_YAML_LOADER)  # nosec B506
-    if not isinstance(doc, dict):
-        return None
+def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _yaml_doc(fmt: str, doc: Dict[str, Any], rel: str) -> Optional[RuleRecord]:
+    """The rule one YAML document holds, or None when it holds no query."""
     if fmt == "auto":
-        if "detection" in doc:
+        if "detection" in doc or "correlation" in doc:
             fmt = "sigma"
         elif "search" in doc:
             fmt = "splunk"
-        elif suffix == ".yaml":
+        elif "query" in doc:
             fmt = "kql"
         else:
             return None
+    if fmt == "sigma" and "detection" not in doc and "correlation" not in doc:
+        return None
+    if fmt == "splunk" and "search" not in doc:
+        return None
+    if fmt == "kql" and "query" not in doc:
+        return None
     parsers: Dict[str, Callable[[Dict[str, Any], str], RuleRecord]] = {
         "sigma": _sigma,
         "splunk": _splunk,
         "kql": _kql_yaml,
     }
     return parsers[fmt](doc, rel)
+
+
+def parse_file(fmt: str, path: Path, rel: str, text: str) -> List[RuleRecord]:
+    """The rules a file holds under ``fmt``: one per YAML document, at most one
+    for any other file (a Wazuh ruleset file reads through wazuh_records())."""
+    suffix = path.suffix
+    if suffix == ".toml":
+        return [_elastic(text, rel)]
+    if suffix == ".md":
+        if path.name.lower() in KQL_SKIPPED_DOCS:
+            return []
+        one = _kql_markdown(text, rel)
+    elif suffix == ".kql":
+        one = _kql_file(text, rel)
+    elif suffix == ".xml":
+        one = _wazuh(text, rel)
+    else:
+        return _yaml_records(fmt, text, rel)
+    return [one] if one else []
+
+
+def _yaml_records(fmt: str, text: str, rel: str) -> List[RuleRecord]:
+    docs = list(yaml.load_all(text, Loader=_YAML_LOADER))  # nosec B506
+    if len(docs) == 1:
+        one = _yaml_doc(fmt, docs[0], rel) if isinstance(docs[0], dict) else None
+        return [one] if one else []
+    # A Sigma collection: an ``action: global`` document is merged into the
+    # documents after it; each other document is its own rule.
+    records: List[RuleRecord] = []
+    base: Dict[str, Any] = {}
+    for n, doc in enumerate(docs, start=1):
+        if not isinstance(doc, dict):
+            continue
+        action = doc.get("action")
+        own = {k: v for k, v in doc.items() if k != "action"}
+        if action == "global":
+            base = _deep_merge(base, own)
+            continue
+        if action == "reset":
+            base = {}
+            continue
+        record = _yaml_doc(fmt, _deep_merge(base, own), rel)
+        if record:
+            # Keyed by its own id: one inherited from the global document is shared.
+            record.native_key = str(own.get("id") or f"{rel}#{n}")
+            records.append(record)
+    return records
 
 
 def _raise(error: OSError) -> None:
@@ -342,16 +421,14 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
     if not root.is_dir():
         raise SourceUnreadable(f"{root} is not a directory")
     fmt = source.get("format") or "auto"
-    suffixes = FORMAT_SUFFIXES.get(fmt, FORMAT_SUFFIXES["auto"])
     records: List[RuleRecord] = []
     keys: set = set()
-    for path in _files(root, suffixes):
+    for path in rule_files(root, fmt):
         rel = path.relative_to(root).as_posix()
         # An OSError is not a bad file: it fails the whole source.
         raw = path.read_bytes()
         try:
-            # Postgres text cannot hold NUL, so such a file is not stored.
-            found = [] if b"\x00" in raw else _records(fmt, path, rel, raw)
+            found = read_file(fmt, path, rel, raw)
         except Exception as exc:  # noqa: BLE001 -- a malformed file is not a rule
             logger.warning(
                 "detection rules: %s not read, no rules listed: %s", rel, exc
@@ -365,16 +442,31 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
                     rel,
                     record.native_key,
                 )
-                record.native_key = f"{record.native_key}@{rel}"
+                key, n = f"{record.native_key}@{rel}", 1
+                # A file of many rules can repeat one id more than once.
+                while key in keys:
+                    n += 1
+                    key = f"{record.native_key}@{rel}#{n}"
+                record.native_key = key
             keys.add(record.native_key)
             records.append(record)
     return records
 
 
+def rule_files(root: Path, fmt: str) -> List[Path]:
+    """The files under ``root`` a source of ``fmt`` reads, sorted; .git skipped."""
+    return _files(root, FORMAT_SUFFIXES.get(fmt, FORMAT_SUFFIXES["auto"]))
+
+
+def read_file(fmt: str, path: Path, rel: str, raw: bytes) -> List[RuleRecord]:
+    """The rules one file's bytes hold; raises when the file does not parse."""
+    # Postgres text cannot hold NUL, so such a file is not stored.
+    return [] if b"\x00" in raw else _records(fmt, path, rel, raw)
+
+
 def _records(fmt: str, path: Path, rel: str, raw: bytes) -> List[RuleRecord]:
-    """The rules a file holds: many in a Wazuh ruleset file, else one or none."""
+    """The rules a file holds: many in a Wazuh ruleset file or a YAML collection."""
     text = raw.decode("utf-8")
     if path.suffix == ".xml":
         return wazuh_records(text, rel)
-    record = parse_file(fmt, path, rel, text)
-    return [record] if record else []
+    return parse_file(fmt, path, rel, text)

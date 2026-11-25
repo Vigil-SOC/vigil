@@ -163,14 +163,18 @@ def summarize_stats(
     stats: Dict[str, int],
     first_error: Optional[str] = None,
     unmapped: Optional[Dict[str, int]] = None,
+    dropped_columns: Optional[Dict[str, int]] = None,
 ) -> tuple:
     """Reduce ingestion stats to a (success, human message) pair.
 
     ``first_error`` is the reason the first row failed; it follows the counts.
     ``unmapped`` is a history import's unmapped disposition values.
+    ``dropped_columns`` is its alert columns whose values were not stored.
     """
     if "verdicts_written" in stats or "alerts_total" in stats:
-        return _summarize_history(stats, first_error, unmapped or {})
+        return _summarize_history(
+            stats, first_error, unmapped or {}, dropped_columns or {}
+        )
     imported = stats.get("findings_imported", 0) + stats.get("cases_imported", 0)
     skipped = stats.get("findings_skipped", 0) + stats.get("cases_skipped", 0)
     errors = stats.get("findings_errors", 0) + stats.get("cases_errors", 0)
@@ -196,10 +200,13 @@ def summarize_stats(
 
 
 def _summarize_history(
-    stats: Dict[str, int], first_error: Optional[str], unmapped: Dict[str, int]
+    stats: Dict[str, int],
+    first_error: Optional[str],
+    unmapped: Dict[str, int],
+    dropped_columns: Dict[str, int],
 ) -> tuple:
     """A history import: what memory got, and what was left out and why."""
-    from core.memory.imported_history import describe_unmapped
+    from core.memory.imported_history import describe_dropped, describe_unmapped
 
     if "verdicts_written" not in stats:
         return False, first_error or "Nothing was written to memory"
@@ -222,6 +229,8 @@ def _summarize_history(
         messages.append(f"{stats['rows_unreadable']} unreadable rows")
     if unmapped_line := describe_unmapped(unmapped):
         messages.append(unmapped_line)
+    if dropped_line := describe_dropped(dropped_columns):
+        messages.append(dropped_line)
     if first_error:
         messages.append(first_error)
     success = first_error is None
@@ -273,7 +282,10 @@ def run_connected_history_job(job: IngestionJob, days: int) -> None:
                 pull_days=days,
             )
         success, message = summarize_stats(
-            service.stats, service.first_error, result["unmapped"]
+            service.stats,
+            service.first_error,
+            result["unmapped"],
+            result["dropped_columns"],
         )
         job.finish(message) if success else job.fail(message)
     except Exception as e:
@@ -324,7 +336,10 @@ def run_job(job: IngestionJob, source_path: Path) -> None:
             )
             signal_new_findings(service.stored_ids)
         success, message = summarize_stats(
-            stats or {}, service.first_error, getattr(service, "unmapped", None)
+            stats or {},
+            service.first_error,
+            getattr(service, "unmapped", None),
+            getattr(service, "dropped_columns", None),
         )
         if success:
             job.finish(message)

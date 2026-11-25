@@ -21,11 +21,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from core.agents.queue import RUN_QUEUE
 from core.config import get_settings
+from core.daemon_config import MetricsConfig
 from core.llm.gateway.gateway import QUEUE_NAME
 from core.redis_client import configured_redis_url, open_sync_redis, redact_logged_text
 from core.telemetry import get_meter
 from core.time import utcnow
-from services.daemon.config import MetricsConfig
 from services.daemon.vendor_errors import vendor_error_snapshot
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ _LEGACY_POLL_SOURCES = (
 _FEDERATION_ZERO = {"polls": 0, "findings": 0, "errors": 0, "dropped": 0}
 
 # Work-loop pass counters on /health. One integer per component the hang rule
-# reads. Kafka and the executor are not in that set.
+# reads. Kafka is not in that set.
 _PASS_COMPONENTS = ("poller", "processor", "scheduler", "orchestrator")
 
 
@@ -131,7 +131,6 @@ class MetricsServer:
         self.poller = None
         self.kafka_ingestor = None
         self.processor = None
-        self.executor = None
         self.scheduler = None
         self.orchestrator = None
 
@@ -263,7 +262,6 @@ class MetricsServer:
                 ("poller", self.poller),
                 ("kafka", self.kafka_ingestor),
                 ("processor", self.processor),
-                ("executor", self.executor),
                 ("scheduler", self.scheduler),
                 ("orchestrator", self.orchestrator),
             )
@@ -289,7 +287,6 @@ class MetricsServer:
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),
             "processor": metrics.get("processor", {}),
-            "executor": metrics.get("executor", {}),
             "scheduler": metrics.get("scheduler", {}),
             "orchestrator": metrics.get("orchestrator", {}),
             "federation": metrics["federation"],
@@ -315,8 +312,6 @@ class MetricsServer:
         processor_stats.update(_processor_pipeline(self.processor))
         processor_stats["loops"] = self.loops_status("processor")
         metrics["processor"] = processor_stats
-
-        metrics["executor"] = self.executor.stats.copy() if self.executor else {}
 
         if self.scheduler:
             metrics["scheduler"] = self.scheduler.stats.copy()
@@ -371,9 +366,7 @@ def _processor_pipeline(processor: Any) -> Dict[str, Any]:
             getattr(processor, "_enrich_breaker_tripped", False)
         ),
         "enrich_paused_until": _enrich_paused_until(processor),
-        "auto_triage_enabled": bool(
-            getattr(getattr(processor, "config", None), "auto_triage_enabled", False)
-        ),
+        "auto_triage_enabled": bool(getattr(processor, "auto_triage", False)),
     }
 
 
