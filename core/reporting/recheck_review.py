@@ -316,7 +316,8 @@ def queue(session: Session, *, actor: Optional[str]) -> Dict[str, List[Dict[str,
     rows = _members(session)
     reviews = _review_rows(session, [int(row.id) for row in rows])
     cases = _case_by_run(session, [row.run_id for row in rows])
-    pending, reviewed = [], []
+    pending: List[Dict[str, Any]] = []
+    reviewed: List[Dict[str, Any]] = []
     for row in rows:
         calls = reviews.get(int(row.id), [])
         item = _summary(row, calls, actor, cases.get(row.run_id))
@@ -438,7 +439,7 @@ def _alerts(session: Session, row: _Ticket) -> List[Dict[str, Any]]:
 
 
 def _actions(raw: Any) -> List[Dict[str, Any]]:
-    actions = []
+    actions: List[Dict[str, Any]] = []
     if not isinstance(raw, list):
         return actions
     for item in raw:
