@@ -56,6 +56,11 @@ from core.detections.reconstruction import _LOG_LM
 from core.storage.connection import get_db_manager
 from core.storage.models import DetectionRule, DetectionRuleVersion, Finding
 
+# The sources Caught credits or fails: a provider inventory (Sentinel) is not one.
+_JUDGED = DetectionRule.source.in_(catalog.RESOLVES) | (
+    DetectionRule.source == readers.OVERLAY_SOURCE
+)
+
 logger = logging.getLogger(__name__)
 
 CHECK = "caught"
@@ -276,7 +281,8 @@ def judge(
                 .where(
                     tuple_(
                         DetectionRuleVersion.rule_id, DetectionRuleVersion.version
-                    ).in_(set(resolved.values()))
+                    ).in_(set(resolved.values())),
+                    _JUDGED,
                 )
             )
         }
@@ -333,6 +339,7 @@ def judge(
         .join(DetectionRule, DetectionRule.id == DetectionRuleVersion.rule_id)
         .outerjoin(stage, stage.c.rule_id == DetectionRule.id)
         .where(
+            _JUDGED,
             # A miss is no live rule alerting: it says nothing of a copy still in
             # shadow whose pass came from its own search.
             or_(

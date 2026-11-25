@@ -74,9 +74,10 @@ class SignIn(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     end_reason: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    # When MFA was last passed: completing MFA at sign-in, a confirmation or a
-    # strong check. Confirm it's you counts from it (core/auth/step_up.py): the
-    # privileged idle limit, up to 12 hours, or 10 minutes when that limit is 0.
+    # When the person last confirmed: completing MFA at sign-in, a confirmation
+    # or a strong check, and, with Require MFA off, a password. Confirm it's you
+    # counts from it (core/auth/step_up.py): the privileged idle limit, up to
+    # 12 hours, or 10 minutes when that limit is 0.
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Failed confirmations in a row; the third ends the sign-in.
     confirm_failures: Mapped[int] = mapped_column(

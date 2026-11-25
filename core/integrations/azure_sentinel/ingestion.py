@@ -184,6 +184,11 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             if incident.additional_data
                             else 0
                         ),
+                        # The analytic rules that raised it, as full ARM ids;
+                        # the detection inventory resolves the rule from these.
+                        "related_analytic_rule_ids": list(
+                            getattr(incident, "related_analytic_rule_ids", None) or []
+                        ),
                     }
                 )
 

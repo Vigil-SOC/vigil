@@ -427,17 +427,20 @@ class TaskScheduler:
 
     async def _run_detection_rules_sync(self):
         """Run the overlay copies (rollout), record new, changed and removed rules
-        from every configured repo, then move the copies' stages.
+        from every configured repo, judge the repo versions the import check
+        holds, then move the copies' stages.
 
         The copies search first, so Sees spends only what they leave of each
         SIEM's hourly budget (decision 13)."""
-        from core.detections.inventory import rollout
+        from core.detections.inventory import import_check, rollout
         from core.detections.inventory.sync import sync_repos
 
         queue = self._processor_queue
         report = await asyncio.to_thread(rollout.run_copies, queue is not None)
         try:
             await asyncio.to_thread(sync_repos)
+            # Field lists only: no replay, and Splunk's one search from its budget.
+            await asyncio.to_thread(import_check.sweep)
         finally:
             # The runs already moved last_success: their findings go out regardless.
             await asyncio.to_thread(rollout.run_sweep, report)

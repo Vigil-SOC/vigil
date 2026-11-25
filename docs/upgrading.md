@@ -236,3 +236,37 @@ That switch is off by default, so after the upgrade these closes are left open f
 REST closes are unchanged: `POST /api/v1/cases/{id}/close`, a `PATCH` to status closed and a merge close as before, whichever token or service account sends them. A case created closed by a tool now also gets a closure row, with category `unspecified`.
 
 The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for a close that passed this check, `person` for a console close, `api` for everything else. The closure row's channel is unchanged, so nothing is migrated.
+
+## One image registry for the Helm chart
+
+From this release `global.imageRegistry` moves every image the chart renders, not only Vigil's own: Postgres, Redis, Bifrost, pgAdmin, Splunk, the `helm test` pod, and the Bitnami and OpenTelemetry subcharts. Its default is now empty. Unset, Vigil's images still come from `ghcr.io/vigil-soc/vigil-<component>` and the others from Docker Hub.
+
+**Values that carry the old default `global.imageRegistry: ghcr.io` must drop it.** Left in, it moves Postgres, Redis and Bifrost to `ghcr.io/library/postgres` and the like, which do not exist, and those pods cannot pull.
+
+**An install that sets `global.imageRegistry` must mirror the third-party images first**, at these paths, with Docker Hub's implied `library/` written out:
+
+- `<registry>/library/postgres:16-alpine` and `<registry>/library/redis:7-alpine`
+- `<registry>/maximhq/bifrost:v2.2.1`
+- `<registry>/dpage/pgadmin4` and `<registry>/splunk/splunk`, if enabled
+- `<registry>/otel/opentelemetry-collector-contrib`, if `otelCollector.enabled`
+
+Or set that component's `image.repository` to a full reference; it is used as written (the Bitnami and OpenTelemetry subcharts still put the registry in front of theirs). Until then those pods cannot pull.
+
+Postgres, Redis and Bifrost are pinned by digest, the same references as both Compose files, so the upgrade restarts their StatefulSets on the pinned image. Nodes that can't reach Docker Hub need it loaded or mirrored first. The digest is part of the default tag (`16-alpine@sha256:…`), so a mirror must keep it: copy the multi-arch index (`docker buildx imagetools create` or `crane copy`), not one platform. A tag you set replaces the pin, and `image.digest`, if set, replaces the tag.
+
+`helm test` now runs from the backend image, which ships curl. `tests.image` is gone and `curlimages/curl` is no longer pulled; remove `tests:` from your values.
+
+## Running with no route out
+
+**The gateway's sheets.** At boot Bifrost fetches its pricing and model-parameter sheets from `getbifrost.ai`, and with no route there it exits. Set `BIFROST_LOCAL_SHEETS=true` in `.env` (Compose) or `bifrost.localSheets: true` (Helm) to read the empty sheets shipped beside `infra/docker/bifrost/config.json` instead. Left unset, the publisher's sheets are used, as before. Turning it off again on an existing gateway volume brings the publisher's pricing back, but Bifrost 2.2.1 keeps the local model-parameter sheet it stored until it is changed in the gateway's own console; Vigil's rate reads do not use that sheet. Bifrost's MCP catalogue sync is off on every install; Vigil does not use it.
+
+With empty sheets the gateway knows no rates, so a hosted model's calls are recorded unpriced, and a run under a cost ceiling (`max_cost_usd`) is parked once too many of its calls are unpriced. A model server inside your site prices at zero instead:
+
+- Ollama always does.
+- Any other provider (an OpenAI-compatible server, a LAN gateway) does once it is stated self-hosted: Settings > AI models, the provider's card, Statements, Self-hosted: "Yes, on hardware we control". That writes `config.self_hosted: true` on every active row of the provider type, and the type prices at zero only when every active row carries it. Through the API, `PUT /api/llm/providers/{provider_id}` with `"statements": {"self_hosted": "yes"}` does the same.
+
+A hosted model you still reach through a proxy can be priced by hand in the gateway's pricing overrides.
+
+**OCR.** The backend image carries Tesseract's English data (`eng.traineddata`) in `/usr/share/vigil/tessdata`, which `TESSDATA_PREFIX` names, so a scanned English page is read without a download. Other languages are still fetched on first use; with no route out, put their `.traineddata` files in a folder and point `TESSDATA_PREFIX` at it. That folder must hold `eng.traineddata` too.
+
+**Rule libraries.** A library imported from a repo cannot update without a route to its host, and says so. To keep those rules current, copy them onto the server and add them as a local source under a root listed in `VIGIL_DETECTION_LOCAL_ROOTS`.

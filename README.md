@@ -151,15 +151,22 @@ Security keys (WebAuthn) are tied to the hostname the console is reached at: set
 > | `stable` (same as `latest`) | The newest stable release | Anyone who wants stable without pinning |
 > | `beta` | The newest daily build of `main` | Our own deployments, testers |
 >
-> Every `ghcr.io/vigil-soc/vigil-*` image (`backend`, `daemon`, `agent`, `mcp-runner`) is tagged this way. A beta also carries its own version, like `1.2.0-beta.20261115.42`; it never gets `latest` or `stable`, and that version tag is deleted 14 days after it is built, so pin to one only for a short test. `beta` is a daily build of `main` that may include database changes, and it is one-way: a database that has run a beta can't go back to the previous stable release.
+> Every `ghcr.io/vigil-soc/vigil-*` image (`backend`, `daemon`, `agent`, `mcp-runner`, `medic`, `medic-gateway`, `medic-dockerproxy`) is tagged this way. A beta also carries its own version, like `1.2.0-beta.20261115.42`; it never gets `latest` or `stable`, and that version tag is deleted 14 days after it is built, so pin to one only for a short test. `beta` is a daily build of `main` that may include database changes, and it is one-way: a database that has run a beta can't go back to the previous stable release.
 >
-> Released images are signed keyless by [`.github/workflows/release.yml`](.github/workflows/release.yml); betas are signed by [`beta.yml`](.github/workflows/beta.yml), so this command rejects them. To verify a release (the image tag drops the leading `v`; the certificate identity uses the git tag):
+> Each release and beta also publishes, under its version only: the Helm chart at `oci://ghcr.io/vigil-soc/charts/vigil`, its dependencies vendored, and `ghcr.io/vigil-soc/vigil-release`, a scratch image holding `list.json` (every image an install runs, Vigil's and third-party, by index digest and per-platform digest) and the source tree it was built from. The release notes list each artifact's digest.
+>
+> All of them are signed keyless: releases by [`.github/workflows/release.yml`](.github/workflows/release.yml), betas by [`beta.yml`](.github/workflows/beta.yml). Images are signed per index and per platform manifest. Verify an image, one of its platform manifests, the chart and the list (image tags drop the leading `v`; the certificate identity uses the git tag):
 >
 > ```bash
-> cosign verify \
->   --certificate-identity https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version> \
->   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
->   ghcr.io/vigil-soc/vigil-backend:<version>
+> ID=https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version>
+> # A beta instead: ID=https://github.com/Vigil-SOC/vigil/.github/workflows/beta.yml@refs/heads/main
+> ISSUER=https://token.actions.githubusercontent.com
+> cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/vigil-backend:<version>
+> AMD64=$(docker buildx imagetools inspect --raw ghcr.io/vigil-soc/vigil-backend:<version> \
+>   | jq -r '.manifests[] | select(.platform.architecture == "amd64") | .digest')
+> cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" "ghcr.io/vigil-soc/vigil-backend@$AMD64"
+> cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/charts/vigil:<version>
+> cosign verify --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" ghcr.io/vigil-soc/vigil-release:<version>
 > ```
 
 ### Prerequisites
@@ -277,6 +284,41 @@ SQL
 ```
 
 On the host, `./start.sh -d` also runs the daemon (`services/daemon/main.py`), or run it alone against a running stack with `python services/daemon/main.py`.
+
+### Run released images
+
+Compose can run a release's images with nothing built on the host. Every image comes from one variable, each defaulting to what a checkout builds or pulls today:
+
+| Variable | Services | Default |
+|---|---|---|
+| `VIGIL_BACKEND_IMAGE` | `upgrade`, `backend`, `backup`, `backup-pre-upgrade`, `llm-worker` | `vigil-backend:local` |
+| `VIGIL_DAEMON_IMAGE` | `soc-daemon` | `vigil-daemon:local` |
+| `VIGIL_AGENT_IMAGE` | `agent-worker`, `agent-serve`, `agent-shell` | `vigil-agent:local` |
+| `VIGIL_MCP_RUNNER_IMAGE` | `mcp-runner-token`, `metrics-token`, `mcp-runner` | `vigil-mcp-runner:local` |
+| `VIGIL_MEDIC_IMAGE` | `medic` | `vigil-medic:local` |
+| `VIGIL_MEDIC_GATEWAY_IMAGE` | `medic-gateway` | `vigil-medic-gateway:local` |
+| `VIGIL_MEDIC_DOCKERPROXY_IMAGE` | `medic-dockerproxy` | `vigil-medic-dockerproxy:local` |
+| `VIGIL_POSTGRES_IMAGE` | `postgres` | `postgres:16-alpine@sha256:…` (pinned) |
+| `VIGIL_REDIS_IMAGE` | `redis` | `redis:7-alpine@sha256:…` (pinned) |
+| `VIGIL_BIFROST_IMAGE` | `bifrost` | `maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1@sha256:…}` (pinned) |
+
+Load (or pull) the images first, set the variables in `.env` or the shell, then mint this install's secrets and start. `./start.sh secrets` needs only openssl, awk and Docker: no virtualenv, no package install, nothing started. It prints the two `export` lines below, because the JWT secret and the Redis password stay in `~/.vigil`, never in `.env`:
+
+```bash
+./start.sh secrets
+export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"
+export REDIS_PASSWORD="$(cat ~/.vigil/redis_password)"
+scripts/medic/enable-compose.sh --secrets-only   # with Medic only
+docker compose --env-file .env --env-file ~/.vigil-medic/secrets/compose.env \
+  -f infra/docker/docker-compose.yml -f infra/docker/medic/docker-compose.medic.yml \
+  --profile daemon --profile medic up -d --no-build
+```
+
+Without Medic, leave out its `compose.env`, its Compose file and `--profile medic`. `--no-build` makes a missing image an error that names it (`No such image: …`) instead of a build. `scripts/medic/enable-compose.sh` builds no Medic image while any of the three Medic variables is set.
+
+**On Compose, an image's integrity holds when it is loaded, not when it runs.** Compose starts whatever the tag points at when the container is created, and anyone with Docker on the host can retag it afterwards. Verify each image when you load it (`cosign verify`, see [SECURITY.md](SECURITY.md)), and name it by digest (`ghcr.io/vigil-soc/vigil-backend@sha256:…`) to make a retag visible.
+
+The optional profiles (`dev`, `observability`, `splunk`, `kafka`, `elastic`, `misp`, `wazuh-sandbox`) are not covered: their images keep their fixed references and are pulled from their registries.
 
 ### Install on Kubernetes
 

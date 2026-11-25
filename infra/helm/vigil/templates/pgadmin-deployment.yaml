@@ -26,8 +26,8 @@ spec:
         fsGroup: 5050
       containers:
         - name: pgadmin
-          image: "{{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}"
-          imagePullPolicy: {{ .Values.pgadmin.image.pullPolicy | default "IfNotPresent" }}
+          image: {{ include "vigil.image" (dict "context" . "component" "pgadmin" "default" "dpage/pgadmin4") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "pgadmin") }}
           env:
             - name: PGADMIN_DEFAULT_EMAIL
               value: {{ .Values.pgadmin.auth.email | quote }}

@@ -16,7 +16,7 @@ Only `migrate-to-encrypted` writes an audit record (config type `secrets`, key `
 From a script, use a personal API token. Mint one in the console: **Settings**, **Team & access**, the **API tokens** card. Give it a label and a lifetime, then **Mint**. The token is shown once, so store it then.
 
 - A person's token lasts 90 days by default and 365 at most. A service account's lasts 365 days. An administrator with `sessions.manage` can set a lower maximum for each under **Settings**, **Sessions**, **API tokens**. Lowering a maximum also shortens the tokens already issued to end no later than that many days from the change; raising it never lengthens one. A request for longer than the maximum is refused with the maximum in the message, and if the stored policy can't be read no token is minted until it is saved again.
-- A Manager or Admin must confirm it's them to mint one, so they need two-step sign-in set up.
+- Creating or rotating a token asks the person calling to confirm it's them, whatever their role. With Require MFA off, a person with no second factor confirms with their password. Otherwise they need two-step sign-in set up first.
 - A token can do what its holder's role allows. It can never mint or rotate a token, or change an account.
 - For unattended work, use a service account's token. Someone who holds `users.write` mints it, from the **Tokens of** card on that account.
 
@@ -44,7 +44,7 @@ A script can still sign in with a password and use the bearer token the login re
 - It is bound to the `User-Agent` it signed in with. Send the same one on every call.
 - Every `POST` must pass the CSRF check, unless `VIGIL_CSRF_ENABLED=false` or `VIGIL_CSRF_REPORT_ONLY=true`. The check compares the `X-CSRF-Token` header with the `csrf_token` cookie, so a script can pick any value and send it as both. This applies to the login call too.
 - With two-step sign-in on, the login needs a current `mfa_code`.
-- A privileged write such as `migrate-to-encrypted` asks it to confirm it's you. With no two-step sign-in it is refused outright. With it, the call works only inside the window the login's code opened: the privileged idle limit, up to 12 hours, or 10 minutes when that limit is 0. After that it is refused until the person confirms again, and the refusal names that length in minutes.
+- A privileged write such as `migrate-to-encrypted` asks it to confirm it's you. With Require MFA off, a person with no second factor confirms with their password, and a password sign-in by that person opens the confirmation window. Otherwise, with no two-step sign-in the call is refused until they set it up. With two-step sign-in, the call works only inside the confirmation window: the privileged idle limit, up to 12 hours, or 10 minutes when that limit is 0. After that it is refused until the person confirms again, and the refusal names that length in minutes.
 
 ## `GET /api/config/secrets/status`
 

@@ -282,9 +282,13 @@ def start(
         refresh_generation=0,
         mfa_met=mfa_met,
         ends_at=ends_at,
-        # Completing MFA at sign-in starts the confirmation window.
+        # Completing MFA at sign-in starts the confirmation window. A password
+        # sign-in starts it only when the caller passes confirmed_at: Require
+        # MFA is off and this person holds no second factor.
         confirmed_at=(
-            (confirmed_at or now) if auth_method in WITH_MFA or mfa_met in MET else None
+            (confirmed_at or now)
+            if auth_method in WITH_MFA or mfa_met in MET
+            else confirmed_at if auth_method == "password" else None
         ),
     )
     session.add(row)

@@ -1,11 +1,12 @@
 """Confirm it's you (#4179, epic #4164 decision 11).
 
-A privileged change asks the person again unless their sign-in passed MFA inside
+A privileged change asks the person again unless their sign-in confirmed inside
 the confirmation window. The window is the privileged idle limit
 (``session_policy.idle_privileged_minutes``), up to 12 hours; when that limit
 is 0 (no idle limit) the window is 10 minutes. It is ``sign_ins.confirmed_at``:
 completing MFA at sign-in, a one-factor confirmation or a strong check sets it.
-Which permissions ask is
+With Require MFA off, a password confirmation sets it too, and so does a
+password sign-in by a person who holds no second factor. Which permissions ask is
 ``permissions.STEP_UP``, declared beside the registry. Agent runs, service
 accounts and every other non-person caller are never asked.
 
@@ -33,6 +34,11 @@ CONFIRMATION_REQUIRED = "confirmation_required"
 MFA_FIRST = "step_up_mfa_setup"
 # The refusal's variant for a person who confirms at the provider.
 SSO = "sso"
+# What a confirmation was: named on auth.confirmed, under every setting.
+PASSWORD = "password"
+CODE = "code"
+KEY = "key"
+PROVIDER = "provider"
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -153,10 +159,12 @@ def confirmed(
     source: Optional[str],
     strong: bool = False,
     window: bool = True,
+    factor: Optional[str] = None,
 ) -> bool:
     """A confirmation that held: open the window and put it on the trail. False,
     and nothing recorded, when the sign-in has ended meanwhile. ``window=False``
-    only records it: the factor given cannot open the window."""
+    only records it: the factor given cannot open the window. ``factor`` is
+    password, code, key or provider."""
     if window and sign_in_id and not open_window(session, sign_in_id):
         return False
     trail_events.record(
@@ -167,6 +175,7 @@ def confirmed(
         principal=principal_id,
         sign_in=sign_in_id,
         strong=strong or None,
+        factor=factor,
     )
     return True
 
@@ -181,8 +190,11 @@ def check(request: Request, user_id: str, action: str) -> None:
     """403 unless the caller is not a person, or is inside the window.
 
     ``action`` names the change in the dialog's title ("change settings").
-    A person with no MFA is sent to set it up: the window needs a factor. One
-    who signs in only through the provider (``sso.sso_only``) confirms there (#4285).
+    A person with no MFA is sent to set it up, unless Require MFA is off: then
+    they confirm with their password. The setting is read here, each request,
+    the same way sign-in reads it (``session_policy.policy``); an unreadable
+    row is the default, which is not off. One who signs in only through the
+    provider (``sso.sso_only``) confirms there (#4285).
     """
     actor = getattr(request.state, "vigil_http_actor", None)
     claims = getattr(request.state, "access_claims", None)
@@ -201,10 +213,18 @@ def check(request: Request, user_id: str, action: str) -> None:
         if method == sign_ins.BREAK_GLASS:
             return
         mfa = bool(user and user.mfa_enabled)
+        only_provider = provider_only(session, user)
         # Only a sign-in through the provider: an open password sign-in stays
         # held to the two-step rule it had before Require SSO.
-        via_provider = method == sign_ins.SSO and provider_only(session, user)
-    if not mfa and not via_provider:
+        via_provider = method == sign_ins.SSO and only_provider
+        # Before the window, so raising the setting inside one still sends a
+        # person with no factor to set one up.
+        require_mfa = session_policy.policy().require_mfa
+        # Under off, confirm() will not take a password from someone who can
+        # sign in only at the provider. Ask for that, not a password.
+        if require_mfa == "off" and only_provider:
+            via_provider = True
+    if not mfa and not via_provider and require_mfa != "off":
         raise _refusal(
             MFA_FIRST,
             action=action,
@@ -216,6 +236,9 @@ def check(request: Request, user_id: str, action: str) -> None:
             variant=SSO if via_provider else "one_factor",
             action=action,
             **({"provider": _provider_name()} if via_provider else {}),
+            # What this request will accept, so the dialog does not keep a
+            # factor the sign-in loaded and that has since been cleared.
+            **({} if via_provider else {"accepts": CODE if mfa else PASSWORD}),
             window_minutes=int(window().total_seconds() // 60),
             confirmed_at=confirmed.isoformat() if confirmed else None,
         )
@@ -308,8 +331,8 @@ def confirm(
     settle: bool = True,
     method_change: bool = False,
     sso_proof: Optional[str] = None,
-) -> None:
-    """Check it is still the person, or raise.
+) -> str:
+    """Check it is still the person, or raise. Returns the factor that held.
 
     One-factor: the authenticator or recovery code with MFA, the password
     without it. Strong: the password and, with MFA, a current code, on every call
@@ -359,10 +382,12 @@ def confirm(
     elif needs_code and not AuthService.verify_mfa_code(user.user_id, code, session):
         problem = BAD_STRONG if strong else BAD_CODE
 
+    kind = _factor(via_proof=via_proof, assertion=assertion, needs_code=needs_code)
     if problem is None:
         if settle:
             # The password checks this one action, but never opens the window
-            # of a person who confirms at the provider.
+            # of a person who confirms at the provider. Under Require MFA off
+            # it does open the window of a person with no factor.
             confirmed(
                 session,
                 user.principal_id,
@@ -370,9 +395,21 @@ def confirm(
                 source,
                 strong=strong,
                 window=not provider_only(session, user),
+                factor=kind,
             )
-        return
+        return kind
     _refuse(user, sign_in_id, source, problem)
+
+
+def _factor(*, via_proof: bool, assertion: Optional[dict], needs_code: bool) -> str:
+    """The kind of factor that held: password, code, key or provider."""
+    if via_proof:
+        return PROVIDER
+    if assertion:
+        return KEY
+    if needs_code:
+        return CODE
+    return PASSWORD
 
 
 def _refuse(user: User, sign_in_id: Optional[str], source, problem: str) -> NoReturn:

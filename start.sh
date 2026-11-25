@@ -16,6 +16,7 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
        $0 backup --repo PATH --passphrase-file PATH
        $0 restore --repo PATH --passphrase-file PATH [--snapshot ID] [--test]
                   [--reason TEXT]
+       $0 secrets
 
   -d, --daemon      Run in the background (logs/ + pidfiles)
       --with NAME   Also start a profiled service (splunk, kafka, pgadmin,
@@ -28,6 +29,10 @@ Usage: $0 [--daemon|-d] [--with <profile>] [--all]
                     live state untouched. --reason is recorded in the upgrade
                     history. Pass JWT_SECRET_KEY in the shell when Compose, not
                     .env, holds it.
+      secrets       Mint this install's secrets and exit: no virtualenv, no
+                    package install, nothing started. Prints the export lines
+                    a bare \`docker compose up\` needs (README, Run released
+                    images).
 
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
@@ -153,9 +158,35 @@ run_restore() {
     dc "${BACKUP_RUN_ARGS[@]}"
 }
 
+# The secrets start.sh mints below, for a Compose install that runs released
+# images. Only openssl, awk and docker. No --replace-published: replacing a
+# published database password needs the database set to match, which only a
+# full ./start.sh does (sync_postgres_passwords).
+run_secrets() {
+    [ $# -eq 0 ] || { usage >&2; exit 1; }
+    load_env
+    ensure_jwt_secret || exit 1
+    ensure_agent_token
+    ensure_bifrost_admin_password
+    ensure_redis_password || exit 1
+    ensure_postgres_passwords
+    # The JWT secret and Redis password live in ~/.vigil, never in .env, so the
+    # shell running `docker compose` has to export them.
+    local dir="${VIGIL_DIR:-$HOME/.vigil}" key file
+    echo ""
+    echo "Before docker compose, in the same shell:"
+    for key in JWT_SECRET_KEY:jwt_secret REDIS_PASSWORD:redis_password; do
+        file="$dir/${key#*:}"
+        [ -z "$(env_file_value "${key%%:*}")" ] && [ -s "$file" ] \
+            && echo "  export ${key%%:*}=\"\$(cat $file)\""
+    done
+    return 0
+}
+
 case "${1:-}" in
     backup) shift; run_backup "$@"; exit $? ;;
     restore) shift; run_restore "$@"; exit $? ;;
+    secrets) shift; run_secrets "$@"; exit $? ;;
 esac
 
 DAEMON=0
