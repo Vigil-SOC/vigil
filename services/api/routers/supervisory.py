@@ -22,6 +22,7 @@ from core.storage.unit_of_work import unit_of_work
 from core.supervisory import store
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
+from services.api.middleware.auth import get_current_active_user
 from services.api.routers.config import (
     OrchestratorSettingsConfig,
     set_orchestrator_config,
@@ -133,14 +134,16 @@ def dismiss_suggestion(
 def apply_suggestion(
     suggestion_id: str,
     session: UnitOfWorkSession,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> HistoryEntryResponse:
     """Change the setting to the suggested value, when it still has the value the
     suggestion started from. Returns the history entry."""
     with unit_of_work() as locked:
         row = _refusing(store.locked_live, locked, suggestion_id)
         _change(row.setting_key, row.from_value, row.to_value, session, current_user)
-        return _record(locked, row, "applied", current_user)
+        entry = _record(locked, row, "applied", current_user)
+    # Shaped after the commit, so nothing here can roll back a recorded change.
+    return HistoryEntryResponse.model_validate(entry)
 
 
 @router.post(
@@ -153,14 +156,15 @@ def apply_suggestion(
 def undo_apply(
     history_id: str,
     session: UnitOfWorkSession,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> HistoryEntryResponse:
     """Put the setting back to its value before an apply, when nothing has
     changed it since. Returns the new history entry."""
     with unit_of_work() as locked:
         _entry, row = _refusing(store.locked_applied, locked, history_id)
         _change(row.setting_key, row.to_value, row.from_value, session, current_user)
-        return _record(locked, row, "undone", current_user)
+        entry = _record(locked, row, "undone", current_user)
+    return HistoryEntryResponse.model_validate(entry)
 
 
 def _refusing(fn, *args):
@@ -170,12 +174,11 @@ def _refusing(fn, *args):
         raise HTTPException(status_code=refusal.status, detail=refusal.detail) from None
 
 
-def _record(locked, row, outcome: str, user: User) -> HistoryEntryResponse:
+def _record(locked, row, outcome: str, user: User) -> dict:
     principal_id = getattr(user, "principal_id", None) or getattr(user, "user_id", None)
-    entry = store.record(
+    return store.record(
         locked, row, outcome, user.username, principal_id and str(principal_id)
     )
-    return HistoryEntryResponse.model_validate(entry)
 
 
 _CEILING_FIELDS = {
