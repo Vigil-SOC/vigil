@@ -1,4 +1,4 @@
-"""Password strength validation using zxcvbn entropy scoring (NIST 800-63B)."""
+"""Password strength validation using zxcvbn entropy scoring."""
 
 import logging
 import math
@@ -17,9 +17,6 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
-
-# zxcvbn score a password must reach (0-4). Fixed: AUTH_MIN_ZXCVBN_SCORE is retired.
-MIN_ZXCVBN_SCORE = 3
 
 _BLOCKLIST_PATH = (
     Path(__file__).resolve().parent.parent.parent / "data" / "common_passwords.txt"
@@ -147,13 +144,14 @@ def validate_password_strength(
 ) -> None:
     """Raise PasswordPolicyError if password fails policy.
 
-    The minimum length and character rule come from the session policy; the
-    kwargs override for tests.
+    The minimum length, character rule and strength score come from the session
+    policy. ``min_length`` and ``min_score`` override the two numbers. A score
+    of 0 requires none.
     user_inputs: terms (username, email) zxcvbn penalizes if embedded.
     """
     policy = session_policy.policy()
     limit = min_length if min_length is not None else policy.password_min_length
-    threshold = min_score if min_score is not None else MIN_ZXCVBN_SCORE
+    threshold = min_score if min_score is not None else policy.password_min_score
     # zxcvbn scores run 0-4; clamp so a caller's 5+ can't reject every
     # password and a negative value can't underflow the check.
     threshold = max(0, min(4, threshold))
@@ -172,6 +170,8 @@ def validate_password_strength(
 
     check_character_rules(password, policy.password_character_rules)
     check_not_listed(password, user_inputs=user_inputs, blocklist=blocklist)
+    if threshold == 0:
+        return
 
     result = zxcvbn(
         password, user_inputs=user_inputs or [], max_length=MAX_PASSWORD_LENGTH
