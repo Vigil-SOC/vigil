@@ -6,8 +6,13 @@ ATT&CK tactic columns, with its state:
 - ``proven``: an active SIEM copy of a rule declaring it passes both Runs and
   Sees, as ``catalog.siem_checks_by_technique`` counts ``proven`` (#3910);
 - ``unproven``: an active rule declares it, but no SIEM copy of one is proven;
-- ``no_rule``: no active rule declares it: only a disabled rule does, or only
-  alerts show it.
+- ``no_rule``: no active rule that counts declares it: only a disabled, held
+  or lint-failing rule does, or only alerts show it.
+
+What counts is ``catalog.CREDITED``, as everywhere coverage is read: a rule
+failing lint, or held by the import check (``import_check``: a new repo rule
+or version not yet passed or approved), is no coverage. Each row says how many
+held rules declare it, as it says for disabled ones.
 
 Each row is split by SIEM (Elastic, Splunk, Wazuh): that SIEM's active copies
 declaring it and how many are proven and caught. A rule counts once however many copies
@@ -81,6 +86,8 @@ def _copies(session: Any) -> List[Any]:
             catalog.RUNS.label("runs"),
             catalog.SEES.label("sees"),
             catalog.CAUGHT.label("caught"),
+            catalog.CREDITED.label("credited"),
+            catalog.HELD.label("held"),
             DetectionRuleVersion.checks["replay"]["result"].astext.label("replay"),
             DetectionRuleVersion.checks["replay"]["source"].astext.label(
                 "replay_source"
@@ -159,6 +166,9 @@ def coverage() -> Dict[str, Any]:
         rule_of = catalog._rule_of_copy(session)
     rules: Dict[str, Set[Any]] = {}
     disabled: Dict[str, Set[Any]] = {}
+    held: Dict[str, Set[Any]] = {}
+    # Techniques an active rule declares that is no coverage (lint or held).
+    uncounted: Set[str] = set()
     replayed: Dict[str, Set[Any]] = {}
     caught: Dict[str, Set[Any]] = {}
     siems: Dict[str, Dict[str, Dict[str, int]]] = {}
@@ -171,6 +181,11 @@ def coverage() -> Dict[str, Any]:
                 declared.setdefault(technique, copy.tactics[0])
             if copy.status != "active":
                 disabled.setdefault(technique, set()).add(rule)
+                continue
+            if not copy.credited:
+                uncounted.add(technique)
+                if copy.held:
+                    held.setdefault(technique, set()).add(rule)
                 continue
             rules.setdefault(technique, set()).add(rule)
             if (
@@ -196,7 +211,7 @@ def coverage() -> Dict[str, Any]:
     order = tactic_order()
     columns = {_label(tactic): tactic for tactic in order}
     rows = []
-    for technique in sorted({*rules, *disabled, *seen}):
+    for technique in sorted({*rules, *disabled, *uncounted, *seen}):
         split = siems.get(technique, {})
         proven = sum(t["proven"] for t in split.values())
         state = "proven" if proven else "unproven" if technique in rules else "no_rule"
@@ -212,6 +227,8 @@ def coverage() -> Dict[str, Any]:
                 "disabled": len(
                     disabled.get(technique, set()) - rules.get(technique, set())
                 ),
+                # Active rules declaring it held by the import check.
+                "held": len(held.get(technique, set()) - rules.get(technique, set())),
                 "seen": seen.get(technique, 0),
                 "replayed": len(replayed.get(technique, ())),
                 "caught": len(caught.get(technique, ())),
@@ -251,7 +268,8 @@ def coverage() -> Dict[str, Any]:
             "hunt or Case). The emulate-next order is no rule, then unproven, then "
             "proven with nothing caught, then the rest, most alerts seen first; it "
             "says nothing about which tests an emulation runner holds. A disabled "
-            "rule is no coverage. A rule counts once however many copies it has."
+            "rule, one failing lint, or one held by the import check (a new repo "
+            "rule or version not yet passed or approved) is no coverage. A rule counts once however many copies it has."
         ),
     }
 
@@ -383,7 +401,8 @@ def _reads(runs: List[_Run], since: datetime) -> Dict[str, Any]:
                 ),
             )
             .join(DetectionRuleVersion, catalog._latest_join())
-            .where(catalog.ACTIVE)
+            # A held or lint-failing rule is no coverage, here as everywhere.
+            .where(catalog.ACTIVE, catalog.CREDITED)
         ).all()
         out["rule_of"] = catalog._rule_of_copy(session)
         # Counted, not named (#4359): run_unreadable's test, in this session.

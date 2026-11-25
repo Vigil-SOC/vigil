@@ -880,6 +880,9 @@ config:
   # $0.16 and 70 s per skill with gemini-2.5-pro), and a CRITICAL finding holds
   # a skill. Shared with the daemon and llm-worker because the mode picks the rule.
   VIGIL_SKILL_SCANNER_MODEL: ""
+  # Hold new repo rule versions from coverage until the import check passes them
+  # or a person approves them; "false" lets them count unchecked.
+  VIGIL_RULE_IMPORT_CHECK: "true"
   # Include the context path under a subdirectory (e.g. https://example.com/vigil).
   VIGIL_FRONTEND_URL: ""
 

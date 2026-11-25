@@ -29,6 +29,12 @@ One failing lint is keyed to one environment: it is listed and searched, but
 left out of every coverage count (``CREDITED``), and analyze_coverage's by_tool
 counts it as ``lint_failing``. Lint is no flag and no rule_health entry.
 
+A new repo or local rule, or a new version of one (not the overlay's, never a
+SIEM copy), also carries checks['import'] (``import_check``): pending, then
+passed, flagged, failed or approved; unchecked with the check switched off.
+Only passed, approved and unchecked count; a held rule is listed and searched
+(its hit says ``held``), never counted, and by_tool counts it as ``held``.
+
 A flag is a (rule, check) whose latest recorded change went pass -> fail, on a
 rule not removed (a drift flag stays on a removed copy). Nothing to fail, or a
 change to unknown, is no flag; a later change back to pass clears it. It is a
@@ -85,7 +91,17 @@ CAUGHT = DetectionRuleVersion.checks["caught"]["result"].astext
 # environment): listed and searched, never counted as coverage.
 LINT = DetectionRuleVersion.checks["lint"]["result"].astext
 LINT_FAILS = LINT == "fail"
-CREDITED = LINT.is_distinct_from("fail")
+# A new repo rule or version (not the overlay's) is held from coverage until the
+# import check passes or a person approves it (``import_check``); a version
+# stored before the hold has no key and counts.
+IMPORT = DetectionRuleVersion.checks["import"]["result"].astext
+IMPORT_COUNTS = ("passed", "approved", "unchecked")
+IMPORT_HELD = ("pending", "flagged", "failed")
+HELD = IMPORT.in_(IMPORT_HELD)
+# The one predicate for what counts as coverage, everywhere.
+CREDITED = and_(
+    LINT.is_distinct_from("fail"), or_(IMPORT.is_(None), IMPORT.in_(IMPORT_COUNTS))
+)
 # No alert across Quiet's whole 30-day search: a never-firing rule.
 NEVER_FIRED = DetectionRuleVersion.checks["silent"]["days_fired"].astext == "0"
 # The per-tool tally columns _by_tool reads, in order, before the count.
@@ -100,6 +116,7 @@ TALLIED = (
     CAUGHT,
     NEVER_FIRED,
     LINT_FAILS,
+    HELD,
 )
 RUNS_RESULTS = ("pass", "fail", "unknown")
 # The rollout stages a listed copy can be in (#3995).
@@ -328,7 +345,15 @@ def _summary(
         "description": str(description or "")[:width],
         "file_path": rule.path,
         "checks": checks or {},
+        # Held from coverage by the import check: checks.import says why.
+        "held": held_state(checks) is not None,
     }
+
+
+def held_state(checks: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The import check's result when it holds the version from coverage, else None."""
+    result = ((checks or {}).get("import") or {}).get("result")
+    return result if result in IMPORT_HELD else None
 
 
 def open_flags() -> List[Dict[str, Any]]:
@@ -561,18 +586,30 @@ def _by_tool(rows: Iterable[Any]) -> Dict[str, Dict[str, Any]]:
     """(TALLIED..., count) rows as rules per tool, and for a SIEM's its Runs, Sees,
     Quiet, Accurate, Noisy, Silent and Caught, and (where Noisy and Silent run)
     its never-firing rules. A repo or overlay entry counts its rules failing lint
-    (``lint_failing``), which are not coverage."""
+    (``lint_failing``) and those held by the import check (``held``), which are
+    not coverage."""
     out: Dict[str, Dict[str, Any]] = {}
     for *tallied, count in rows:
-        tool, runs, sees, quiet, accurate, noisy, silent, caught, never, lint_fails = (
-            tallied
-        )
+        (
+            tool,
+            runs,
+            sees,
+            quiet,
+            accurate,
+            noisy,
+            silent,
+            caught,
+            never,
+            lint_fails,
+            held,
+        ) = tallied
         entry = out.setdefault(tool, {"rules": 0})
         entry["rules"] += count
         if tool in ("repo", OVERLAY):
             entry["lint_failing"] = entry.get("lint_failing", 0) + (
                 count if lint_fails else 0
             )
+            entry["held"] = entry.get("held", 0) + (count if held else 0)
         else:
             for check, result in (
                 ("runs", runs),
@@ -607,7 +644,7 @@ def rule_counts() -> Dict[str, int]:
 
 def rules_by_technique() -> Dict[str, Set[int]]:
     """Each technique an active rule declares, and the ids of those rules; a rule
-    failing lint is no coverage and left out."""
+    failing lint or held by the import check is no coverage and left out."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
@@ -623,7 +660,7 @@ def rules_by_technique() -> Dict[str, Set[int]]:
 
 def rules_by_tactic() -> Dict[str, int]:
     """How many active rules declare each tactic (only Sigma and Elastic do),
-    leaving out rules failing lint."""
+    leaving out rules failing lint or held."""
     tactic = func.unnest(DetectionRule.tactics).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
@@ -639,7 +676,7 @@ def rules_by_tactic() -> Dict[str, int]:
 
 def techniques_per_language() -> Dict[str, int]:
     """Distinct techniques the active rules of each format declare, leaving out
-    rules failing lint."""
+    rules failing lint or held."""
     technique = func.unnest(DetectionRule.techniques).table_valued("t").alias("t")
     with get_db_manager().session_scope() as session:
         rows = session.execute(
@@ -655,7 +692,7 @@ def techniques_per_language() -> Dict[str, int]:
 
 def rules_for_technique(technique: str, top: int = 5) -> Dict[str, Any]:
     """Active rules declaring ``technique``: the count by format (rules failing lint
-    left out, as they are no coverage) and the first ``top`` with their stage,
+    or held left out, as they are no coverage) and the first ``top`` with their stage,
     what LogLM flagged on it, and the concluded hunts that tested it."""
     declares = DetectionRule.techniques.contains([technique])
     with get_db_manager().session_scope() as session:
@@ -1971,6 +2008,7 @@ def search(
     accurate: Optional[str] = None,
     caught: Optional[str] = None,
     rule_id: Optional[int] = None,
+    held: Optional[bool] = None,
 ) -> List[Dict]:
     """Active and disabled rules whose format, path or parsed content contains ``query``.
 
@@ -1978,8 +2016,9 @@ def search(
     ``quiet`` and ``accurate`` keep rules whose latest version has that check result;
     ``caught`` 'pass' keeps caught versions, 'untested' the rest; ``stage`` keeps
     rules currently there; ``flagged`` keeps rules with (or without) an open
-    flag. ``rule_id`` keeps that one rule. Each hit says whether it is flagged;
-    a single hit carries its recent check changes.
+    flag. ``rule_id`` keeps that one rule. ``held`` keeps rules the import check
+    holds from coverage (or those it does not). Each hit says whether it is
+    flagged and whether it is held; a single hit carries its recent check changes.
     """
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     haystack = (
@@ -2018,6 +2057,8 @@ def search(
         )
     if rule_id is not None:
         statement = statement.where(DetectionRule.id == rule_id)
+    if held is not None:
+        statement = statement.where(HELD if held else HELD.isnot(True))
     flags = _flags().subquery()
     if flagged is not None:
         is_flagged = DetectionRule.id.in_(select(flags.c.rule_id))

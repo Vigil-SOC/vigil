@@ -1890,7 +1890,8 @@ async def get_detection_coverage(
 ) -> str:
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
-    Sees), unproven or with no rule.
+    Sees), unproven or with no rule. A rule failing lint, or a repo rule the
+    import check holds (``held`` on each row counts those), is no coverage.
 
     ``by_layer`` adds ``by_layer``: which detection layer catches each technique,
     shown by attack. Rows are layers (each SIEM with rules, each alert source
@@ -1970,6 +1971,30 @@ def switch_off_detection_rule(
     try:
         return jdump(
             stages.switch_off(
+                rule_id, (username, acting_principal() or username), reason.strip()
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
+@tool("Approve a held detection rule")
+@requires("detections.write")
+def approve_detection_rule(
+    rule_id: int, reason: Annotated[str, Field(min_length=1, max_length=2000)]
+) -> str:
+    """Makes a repo or local rule's latest version count as coverage although the
+    import check holds it (checks.import pending, flagged or failed): for
+    example a KQL rule whose Sentinel tables you know are there. Refused when
+    its lint fails or it is not held; its next version is held again."""
+    from core.detections.inventory import import_check
+
+    if not reason.strip():
+        return jdump({"error": "reason must not be blank"})
+    username = actor()
+    try:
+        return jdump(
+            import_check.approve(
                 rule_id, (username, acting_principal() or username), reason.strip()
             )
         )
