@@ -45,7 +45,7 @@ What is counted, per function, by the time each item happened:
 
 Sample alerts and probes are left out, as the evidence counts leave them out.
 
-Judged in Gray's order, first difference wins: missed attacks, then false
+Judged in this order, first difference wins: missed attacks, then false
 alarms, then cost, then time. Missed attacks and false alarms are compared as
 rates, so a busier or quieter fortnight does not read as better or worse: the
 before count is scaled to the after side's labelled total, and the two differ
