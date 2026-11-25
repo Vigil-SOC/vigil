@@ -20,7 +20,7 @@ from core.auth import trail_events
 from core.integrations.credential_check import NotChecked, check_credentials, has_check
 from core.integrations.readiness import NOT_READY, READY, evaluate
 from core.platform.process_health import ProcessHealth
-from core.reporting import day1, production
+from core.reporting import capped_recheck, day1, production
 from core.storage import source_health
 from core.storage.models import IntegrationConfig, SourceHealth
 from core.storage.unit_of_work import unit_of_work
@@ -98,6 +98,7 @@ def _commit(
             source_id = _claim(session)
             started = day1.consider(session, state)
             production_started = production.consider(session)
+            capped_recheck.consider(session)
         return source_id, started, production_started
     except Exception:
         if started is not None:

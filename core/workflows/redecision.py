@@ -2,9 +2,9 @@
 
 The run is an ordinary ``investigate`` workflow. ``trigger_context`` carries
 the mark (``re_decision``), the import, the ticket, the source and the close,
-and no ``case_id``. The batch calls ``start_redecision`` and reads
-``redecision_result`` off the terminal. Nothing here writes an investigation,
-a Case, a Finding or an approval.
+and no ``case_id``. The batch calls ``start_redecision`` with the run id it
+already committed, and reads ``redecision_result`` off the terminal. Nothing
+here writes an investigation, a Case, a Finding or an approval.
 """
 
 from __future__ import annotations
@@ -252,6 +252,7 @@ async def start_redecision(
     ticket_id: str,
     *,
     triggered_by: str = "re-decision",
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Enqueue one re-decision, or return ``could not re-check`` and enqueue none.
 
@@ -291,7 +292,9 @@ async def start_redecision(
     if workflow is None:
         return _refused(COULD_NOT)
 
-    run_id = new_run_id()
+    # The batch commits this id before the call, so the ticket and the ledger
+    # name one run. A caller with no id still gets one minted here.
+    run_id = run_id or new_run_id()
     context = {
         MARK: True,
         "import_id": import_id,
