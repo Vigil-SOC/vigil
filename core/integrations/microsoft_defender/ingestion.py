@@ -432,6 +432,12 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
                 entity_context["category"] = alert["category"]
             if alert.get("threatFamilyName"):
                 entity_context["threat_family"] = alert["threatFamilyName"]
+            # Tells a custom detection (attributable to its rule) from a built-in one.
+            if (
+                isinstance(alert.get("detectionSource"), str)
+                and alert["detectionSource"]
+            ):
+                entity_context["detectionSource"] = alert["detectionSource"]
 
             return {
                 "finding_id": finding_id,
