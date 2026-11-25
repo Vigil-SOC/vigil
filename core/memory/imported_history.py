@@ -35,9 +35,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from core.auth import trail_events
+from core.auth.permissions import LEDGERS_ERASE
 from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory
 from core.memory.distil import clear_investigation
 from core.memory.entity_keys import entity_context_candidates, entity_key
+from core.memory.ledger_erasure import marked_run_ids
 from core.memory.recall_contract import (
     ENTITY_KEY_TYPES,
     VERDICT_SUBJECT_CAP,
@@ -850,6 +852,8 @@ def delete_import(
     if _lock_held(session):
         raise ImportRunning(investigation_id)
     row = _import_row(record, False)
+    # The ledgers stay. The count is for the result; the erase is a later call.
+    kept = marked_run_ids(session, investigation_id)
     clear_investigation(session, KIND, investigation_id)
     session.execute(
         delete(HistoryTicket).where(HistoryTicket.import_id == investigation_id)
@@ -866,4 +870,7 @@ def delete_import(
         verdicts=row["verdicts_written"],
         sightings=row["sightings_written"],
     )
+    row["ledgers_kept"] = len(kept)
+    row["run_ids"] = kept
+    row["erase_permission"] = LEDGERS_ERASE
     return row

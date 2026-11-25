@@ -571,6 +571,31 @@ function ImportDetails({ row, canWrite, rerun }: { row: HistoryImport; canWrite:
   )
 }
 
+function deleteImportBody(
+  row: HistoryImport | null,
+  ledgers: number | null,
+  ledgerError: string | null,
+): string {
+  const verdicts = row?.verdicts_written ?? 0
+  const sightings = row?.sightings_written ?? 0
+  const source = row ? sourceLabel(row) : ''
+  const sentences = [
+    `Deletes the ${verdicts} Verdicts and ${sightings} Sightings this ${source} import wrote to agent memory. Agents stop recalling them.`,
+  ]
+  if (ledgerError) sentences.push(ledgerError)
+  else if (ledgers === null) sentences.push('Counting re-decision ledgers…')
+  else if (ledgers === 0) sentences.push('No re-decision ledgers stay.')
+  else if (ledgers === 1) sentences.push('1 re-decision ledger stays.')
+  else sentences.push(`${ledgers} re-decision ledgers stay.`)
+  // A later sentence, the queued reviews that will leave the queue, appends here.
+  return sentences.join(' ')
+}
+
+function eraseLedgersBody(count: number): string {
+  const ledgers = count === 1 ? '1 re-decision ledger' : `${count} re-decision ledgers`
+  return `Erases ${ledgers}. This cannot be undone.`
+}
+
 export function HistoryImportCard({
   notify,
   title = 'Alert and ticket history',
@@ -593,6 +618,9 @@ export function HistoryImportCard({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [source, setSource] = useState('')
   const [removing, setRemoving] = useState<HistoryImport | null>(null)
+  const [ledgerCount, setLedgerCount] = useState<number | null>(null)
+  const [ledgerError, setLedgerError] = useState<string | null>(null)
+  const [erasing, setErasing] = useState<{ importId: string; runIds: string[]; count: number } | null>(null)
   const [busy, setBusy] = useState(false)
   // ids whose details were toggled away from their default (open when they need attention)
   const [toggled, setToggled] = useState<Set<string>>(new Set())
@@ -606,6 +634,19 @@ export function HistoryImportCard({
   }, [])
   // on open, and again when an import finishes, so it lists without a reload
   useEffect(load, [load, job?.job_id, running])
+  // The list has no ledger count. Read it when the dialog opens, and leave a
+  // sentence free for a later count of queued reviews.
+  useEffect(() => {
+    if (!removing) return
+    let live = true
+    setLedgerCount(null)
+    setLedgerError(null)
+    importsApi.ledgers(removing.import_id).then(
+      (res) => { if (live) setLedgerCount(res.data.count) },
+      (e) => { if (live) setLedgerError(errorText(e, 'Could not count re-decision ledgers.')) },
+    )
+    return () => { live = false }
+  }, [removing])
   useEffect(() => {
     let cancelled = false
     day1Api.status().then(
@@ -637,14 +678,39 @@ export function HistoryImportCard({
 
   const remove = async () => {
     if (!removing) return
+    const name = sourceLabel(removing)
     setBusy(true)
     try {
-      await importsApi.remove(removing.import_id)
-      notify('ok', `Deleted the ${sourceLabel(removing)} import.`)
+      const res = await importsApi.remove(removing.import_id)
+      const kept = res.data.ledgers_kept
+      const keptText = kept === 0
+        ? 'No re-decision ledgers were kept.'
+        : kept === 1
+          ? `1 re-decision ledger was kept. An admin with ${res.data.erase_permission} can erase it.`
+          : `${kept} re-decision ledgers were kept. An admin with ${res.data.erase_permission} can erase them.`
+      notify('ok', `Deleted the ${name} import. ${keptText}`)
       setRemoving(null)
+      if (kept > 0 && hasPermission(res.data.erase_permission)) {
+        setErasing({ importId: res.data.import_id, runIds: res.data.run_ids, count: kept })
+      }
       load()
     } catch (e) {
       notify('err', errorText(e, 'Could not delete the import.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const erase = async () => {
+    if (!erasing) return
+    setBusy(true)
+    try {
+      const res = await importsApi.eraseLedgers(erasing.importId, erasing.runIds)
+      const n = res.data.erased
+      notify('ok', n === 1 ? 'Erased 1 re-decision ledger.' : `Erased ${n} re-decision ledgers.`)
+      setErasing(null)
+    } catch (e) {
+      if (!stepUpDetailOf(e)) notify('err', errorText(e, 'Could not erase the ledgers.'))
     } finally {
       setBusy(false)
     }
@@ -760,7 +826,11 @@ export function HistoryImportCard({
                         <button
                           className="data-link"
                           aria-label={`Delete the ${name} import`}
-                          onClick={() => setRemoving(row)}
+                          onClick={() => {
+                            setLedgerCount(null)
+                            setLedgerError(null)
+                            setRemoving(row)
+                          }}
                         >
                           Delete
                         </button>
@@ -794,11 +864,21 @@ export function HistoryImportCard({
       <ConfirmDialog
         open={removing !== null}
         title="Delete import"
-        body={`Deletes the ${removing?.verdicts_written ?? 0} Verdicts and ${removing?.sightings_written ?? 0} Sightings this ${removing ? sourceLabel(removing) : ''} import wrote to agent memory. Agents stop recalling them.`}
+        body={deleteImportBody(removing, ledgerCount, ledgerError)}
         confirmLabel="Delete"
         busy={busy}
+        confirmDisabled={ledgerCount === null || ledgerError !== null}
         onConfirm={remove}
-        onClose={() => setRemoving(null)}
+        onClose={() => { if (!busy) setRemoving(null) }}
+      />
+      <ConfirmDialog
+        open={erasing !== null}
+        title="Erase re-decision ledgers"
+        body={erasing ? eraseLedgersBody(erasing.count) : ''}
+        confirmLabel="Erase"
+        busy={busy}
+        onConfirm={erase}
+        onClose={() => { if (!busy) setErasing(null) }}
       />
     </SettingsCard>
   )
