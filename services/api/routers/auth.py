@@ -124,7 +124,8 @@ _INVALID_RESET_TOKEN = "Invalid or expired reset token"
 PASSWORD_MIN_AGE = "password_min_age"
 # Login's 403 detail.code when the password must change before sign-in.
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
-# A password under this many characters is not enough on its own, without MFA.
+# A sign-in without MFA rechecks a password shorter than the lower of this and
+# the policy minimum. Out of the box the minimum is 16, so this stays 15.
 SINGLE_FACTOR_MIN = 15
 
 
@@ -1231,9 +1232,12 @@ def login(
             check_not_listed(payload.password, user_inputs=[user.username, user.email])
             if not marked:  # a break-glass password never expires
                 check_not_expired(user)
-            if not had_mfa and len(payload.password) < SINGLE_FACTOR_MIN:
+            short_for_one_factor = min(
+                SINGLE_FACTOR_MIN, session_policy.policy().password_min_length
+            )
+            if not had_mfa and len(payload.password) < short_for_one_factor:
                 raise PasswordPolicyError(
-                    f"Password is under {SINGLE_FACTOR_MIN} characters, too short "
+                    f"Password is under {short_for_one_factor} characters, too short "
                     "without a second factor"
                 )
         except PasswordPolicyError as exc:
