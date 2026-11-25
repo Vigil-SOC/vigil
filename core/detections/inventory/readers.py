@@ -342,16 +342,14 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
     if not root.is_dir():
         raise SourceUnreadable(f"{root} is not a directory")
     fmt = source.get("format") or "auto"
-    suffixes = FORMAT_SUFFIXES.get(fmt, FORMAT_SUFFIXES["auto"])
     records: List[RuleRecord] = []
     keys: set = set()
-    for path in _files(root, suffixes):
+    for path in rule_files(root, fmt):
         rel = path.relative_to(root).as_posix()
         # An OSError is not a bad file: it fails the whole source.
         raw = path.read_bytes()
         try:
-            # Postgres text cannot hold NUL, so such a file is not stored.
-            found = [] if b"\x00" in raw else _records(fmt, path, rel, raw)
+            found = read_file(fmt, path, rel, raw)
         except Exception as exc:  # noqa: BLE001 -- a malformed file is not a rule
             logger.warning(
                 "detection rules: %s not read, no rules listed: %s", rel, exc
@@ -369,6 +367,17 @@ def read_source(source: Dict[str, Any], root: Path) -> List[RuleRecord]:
             keys.add(record.native_key)
             records.append(record)
     return records
+
+
+def rule_files(root: Path, fmt: str) -> List[Path]:
+    """The files under ``root`` a source of ``fmt`` reads, sorted; .git skipped."""
+    return _files(root, FORMAT_SUFFIXES.get(fmt, FORMAT_SUFFIXES["auto"]))
+
+
+def read_file(fmt: str, path: Path, rel: str, raw: bytes) -> List[RuleRecord]:
+    """The rules one file's bytes hold; raises when the file does not parse."""
+    # Postgres text cannot hold NUL, so such a file is not stored.
+    return [] if b"\x00" in raw else _records(fmt, path, rel, raw)
 
 
 def _records(fmt: str, path: Path, rel: str, raw: bytes) -> List[RuleRecord]:
