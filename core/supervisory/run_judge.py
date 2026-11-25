@@ -1,25 +1,28 @@
 """How each investigation run was done, rolled up per model, by rules only.
 
-Read-only. A judged run is one of an investigation's own runs that ended in the
-window with an answer (``outcome`` completed). Shadow runs, removed runs, and
+Read-only. A judged run is one of an investigation's own runs (any kind its
+workflow declares) that ended in the window with an answer (``outcome``
+completed). Shadow runs, removed runs, and
 investigations of sample alerts or probes (through their Case or the findings
 that started them) are left out. Four flags, each a rule on what the run
 recorded:
 
 - thin evidence: its report cites nothing (``citation_count`` 0) or its review
   found it ungrounded (``grounded`` false). Null is unsaid, never a flag.
-- gave up on tools: a tool call failed and no tool call after it succeeded.
+- gave up on tools: a tool call failed and no tool call after it succeeded. The
+  kernel's own tools count on neither side, so the conclude call is not a recovery.
 - skipped steps: no tool call gathered evidence. A call gathers evidence when it
-  succeeded, is not one of the kernel's own bookkeeping tools (the hypothesis
-  record and the playbook loader), and its tool is not stored as one that acts
+  succeeded, is not one of the kernel's own tools (the hypothesis record, the
+  playbook loader, and conclude and the other tools a run answers through), and
+  its tool is not stored as one that acts
   (``reversible`` or ``irreversible`` in ``tool_effect_classes``). Vigil's own
   tools carry no class and count as reads: an investigation run takes no action.
 - ran out of turns: the turn cap ended it (``capped``), and it still answered.
 
 A run's model is the one its own agent calls used, as each call's spend event
 on the agent ledger records it (role ``agent``; the reviewer's calls are not the
-run's). A run whose agent calls used more than one model, or none recorded, is
-counted under no model.
+run's). A run whose agent calls used more than one model, or none recorded (a
+compose run's phases spend under their own roles), is counted under no model.
 
 Only investigation is judged. Triage records no model per finding and makes no
 tool calls, and there is no response model setting: response proposals come out
@@ -36,6 +39,7 @@ so the card cannot be applied from here.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from fractions import Fraction
 from typing import Any
 
 from sqlalchemy import (
@@ -61,7 +65,7 @@ from core.supervisory.feedback import _NOT_REAL_DATA, _naive
 
 WINDOW_DAYS = 30
 FLOOR = 20
-GAP = 0.10
+GAP = Fraction(1, 10)
 GAP_RUNS = 2
 KEY = "model.investigation"
 COMPONENT = "investigation"
@@ -72,9 +76,18 @@ LABELS = {
     "skipped_steps": "Answered without gathering evidence",
     "out_of_turns": "Ran out of turns and still answered",
 }
-# The kernel's own tools: the hypothesis record and the playbook loader. They
-# keep the run's notes; none of them looks at the estate.
-_BOOKKEEPING = ("propose_hypothesis", "link_evidence", "open_question", "load_skill")
+# The kernel's own tools: the hypothesis record, the playbook loader, and the
+# tools a run answers through (conclude is journaled as a call like any other).
+# None of them looks at the estate.
+_BOOKKEEPING = (
+    "propose_hypothesis",
+    "link_evidence",
+    "open_question",
+    "load_skill",
+    "conclude",
+    "submit_answer",
+    "emit",
+)
 _ACTING = ("reversible", "irreversible")
 _SHADOW_KIND = "adjudicate"
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
@@ -255,8 +268,9 @@ def _current_model() -> str | None:
     return resolved[1] if resolved else None
 
 
-def _rate(stats: dict[str, int], flag: str) -> float:
-    return stats[flag] / stats["runs"]
+def _rate(stats: dict[str, int], flag: str) -> Fraction:
+    """Exact, so a gap of exactly GAP counts: 6/20 - 4/20 is 0.1, not 0.0999…."""
+    return Fraction(stats[flag], stats["runs"])
 
 
 def _clearly_worse(a: dict[str, int], b: dict[str, int]) -> bool:
@@ -270,7 +284,7 @@ def _gap(a: dict[str, int], b: dict[str, int], flag: str) -> bool:
 
 
 def _pct(stats: dict[str, int], flag: str) -> str:
-    return f"{_rate(stats, flag):.0%}"
+    return f"{float(_rate(stats, flag)):.0%}"
 
 
 def _proposal(
