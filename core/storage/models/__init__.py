@@ -32,6 +32,7 @@ from core.storage.models.auth import (
 )
 from core.storage.models.autonomy import ToolEffectClass
 from core.storage.models.base import Base, JSONBList, case_findings
+from core.storage.models.capped_recheck import CappedRecheckBatch, CappedRecheckTicket
 from core.storage.models.case import Case
 from core.storage.models.case_entities import (
     CaseAttachment,
@@ -125,6 +126,8 @@ __all__ = [
     "InvestigationReplay",
     "ApprovalAction",
     "Base",
+    "CappedRecheckBatch",
+    "CappedRecheckTicket",
     "Case",
     "CaseAttachment",
     "CaseAuditLog",

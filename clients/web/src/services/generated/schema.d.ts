@@ -3989,6 +3989,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Batch
+         * @description The latest capped batch.
+         */
+        get: operations["get_api_day1-report_capped-recheck"];
+        put?: never;
+        /**
+         * Start
+         * @description Draw the next capped batch and start runs up to the two in flight.
+         */
+        post: operations["post_api_day1-report_capped-recheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/ceiling": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Ceiling
+         * @description The run ceiling. No row is 0, and 0 refuses a start.
+         */
+        get: operations["get_api_day1-report_capped-recheck_ceiling"];
+        /**
+         * Write Ceiling
+         * @description Set how many re-decision runs one batch may start.
+         */
+        put: operations["put_api_day1-report_capped-recheck_ceiling"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume
+         * @description Continue the open batch. The sweep does not do this.
+         */
+        post: operations["post_api_day1-report_capped-recheck_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/modules": {
         parameters: {
             query?: never;
@@ -4414,6 +4482,69 @@ export interface paths {
          */
         post: operations["post_api_detection-rules_health-inbox_read"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Library Rules
+         * @description Import the picked files at the commit read; refused (409) when the repo
+         *     has moved since. All or nothing; audited.
+         */
+        post: operations["post_api_detection-rules_libraries_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Library
+         * @description The commit a repo is at and the rule files in it, grouped by folder, each
+         *     with its language, techniques and why it cannot be picked; for a library,
+         *     also Changed, Gone from the repo, and In the repo, not imported.
+         */
+        post: operations["post_api_detection-rules_libraries_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Library
+         * @description Remove a rule library and its files; the next sync marks its rules removed.
+         */
+        delete: operations["delete_api_detection-rules_libraries_source_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4926,7 +5057,8 @@ export interface paths {
         put?: never;
         /**
          * Update Source
-         * @description Update a single detection rule source (git pull or rescan).
+         * @description Update a single detection rule source: a rule library takes its repo whole
+         *     at the commit read now; a local source is rescanned.
          *
          *     Args:
          *         source_id: The source ID to update
@@ -4975,7 +5107,9 @@ export interface paths {
         put?: never;
         /**
          * Update All Sources
-         * @description Update all detection rule sources (git pull all repos).
+         * @description Update all detection rule sources: each rule library is taken whole at the
+         *     commit read now, one after another; local sources are rescanned. A library
+         *     that cannot be read is a ``success: false`` row saying why.
          *
          *     Returns:
          *         Results for each source update
@@ -6216,6 +6350,33 @@ export interface paths {
         get: operations["get_api_memory_imports"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/memory/imports/ledgers/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Ledgers
+         * @description How many marked re-decision ledgers this import would keep.
+         */
+        get: operations["get_api_memory_imports_ledgers_import_id"];
+        put?: never;
+        /**
+         * Remove Ledgers
+         * @description Erase marked re-decision ledgers once the import is gone.
+         *
+         *     A run a Case was opened from is not passed. ``cases`` names those, and
+         *     is empty until that link is recorded. Any other id erases nothing.
+         */
+        post: operations["post_api_memory_imports_ledgers_import_id"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11224,6 +11385,11 @@ export interface components {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
+        /** CappedRecheckCeiling */
+        CappedRecheckCeiling: {
+            /** Runs */
+            runs: number;
+        };
         /** CaseCloseResponse */
         CaseCloseResponse: {
             closure: components["schemas"]["CaseClosureInfoSchema"];
@@ -13966,6 +14132,13 @@ export interface components {
             /** Feedback */
             feedback?: string | null;
         };
+        /** GroupCounts */
+        GroupCounts: {
+            /** Control */
+            control: number;
+            /** Top */
+            top: number;
+        };
         /** GroupRole */
         GroupRole: {
             /** Group */
@@ -14367,6 +14540,71 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * ImportDeleteOut
+         * @description The import is gone. Its marked ledgers were kept.
+         */
+        ImportDeleteOut: {
+            /** Bulk Not Tested */
+            bulk_not_tested: number;
+            /** Concluded At */
+            concluded_at: string | null;
+            /** Dropped Columns */
+            dropped_columns: components["schemas"]["DroppedColumn"][];
+            /** Erase Permission */
+            erase_permission: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Has Ticket Detail */
+            has_ticket_detail: boolean;
+            /** Import Id */
+            import_id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Ledgers Kept */
+            ledgers_kept: number;
+            /** Left Out */
+            left_out: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Pull Days */
+            pull_days: number | null;
+            /** Pulled At */
+            pulled_at: string | null;
+            /** Rows Read */
+            rows_read: number;
+            /** Run Ids */
+            run_ids: string[];
+            /** Severity Unknown */
+            severity_unknown: number;
+            /** Sightings Written */
+            sightings_written: number;
+            /** Source System */
+            source_system: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "done" | "failed" | "incomplete";
+            /** Tickets Kept */
+            tickets_kept: number;
+            /** Unmapped */
+            unmapped: components["schemas"]["UnmappedValue"][];
+            /** Verdicts Written */
+            verdicts_written: number;
+        };
         /** ImportListResponse */
         ImportListResponse: {
             /** Imports */
@@ -14444,6 +14682,25 @@ export interface components {
             sha256: string;
             /** Skipped */
             skipped: number;
+        };
+        /**
+         * ImportRulesRequest
+         * @description Picked rule files at the commit read: a new library from ``repo``, or an
+         *     update to the library ``source_id``.
+         */
+        ImportRulesRequest: {
+            /** Commit */
+            commit: string;
+            /** Format */
+            format?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Picks */
+            picks?: string[];
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** InactiveKind */
         InactiveKind: {
@@ -15078,6 +15335,27 @@ export interface components {
             statements?: {
                 [key: string]: string;
             } | null;
+        };
+        /** LedgerCountOut */
+        LedgerCountOut: {
+            /** Count */
+            count: number;
+            /** Erase Permission */
+            erase_permission: string;
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseIn */
+        LedgerEraseIn: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseOut */
+        LedgerEraseOut: {
+            /** Cases */
+            cases: components["schemas"]["SparedCase"][];
+            /** Erased */
+            erased: number;
         };
         /** LinkRequest */
         LinkRequest: {
@@ -16220,6 +16498,28 @@ export interface components {
             /** Max Cost Usd */
             max_cost_usd: number;
         };
+        /** Projection */
+        Projection: {
+            /** Batch Id */
+            batch_id: string;
+            ceiling_reaches: components["schemas"]["GroupCounts"];
+            /** Control Count */
+            control_count: number;
+            /** Control Short */
+            control_short: boolean;
+            /** Could Not Recheck */
+            could_not_recheck: number;
+            /** Post Install Closures */
+            post_install_closures: number;
+            reserve?: components["schemas"]["Reserve"] | null;
+            /** Run Count */
+            run_count: number;
+            /** Status */
+            status: string;
+            /** Tickets Chosen */
+            tickets_chosen: number;
+            worst_case: components["schemas"]["WorstCase"];
+        };
         /**
          * ProofCardRequest
          * @description What to export: these rules, or (none) every live rule with coverage.
@@ -16264,6 +16564,19 @@ export interface components {
             max: number;
             /** Min */
             min: number;
+        };
+        /**
+         * ReadLibraryRequest
+         * @description A repo to read (owner/repo, a GitHub link, an https URL, with @ref), or a
+         *     library to read with its update diff.
+         */
+        ReadLibraryRequest: {
+            /** Format */
+            format?: string | null;
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** ReadinessItem */
         ReadinessItem: {
@@ -16400,6 +16713,13 @@ export interface components {
              * @enum {string}
              */
             channel: "email" | "copy";
+        };
+        /** Reserve */
+        Reserve: {
+            /** Note */
+            note: string;
+            /** Remainder */
+            remainder?: number | null;
         };
         /** ResetLinkEntry */
         ResetLinkEntry: {
@@ -17538,6 +17858,14 @@ export interface components {
             version: 1;
         };
         /**
+         * SparedCase
+         * @description A Case a run was opened from. That run is not erased.
+         */
+        SparedCase: {
+            /** Case Id */
+            case_id: string;
+        };
+        /**
          * SsoFinishRequest
          * @description The Vigil factor after the provider: a code, or a key's assertion and the
          *     challenge the first call's 401 carried.
@@ -18637,6 +18965,15 @@ export interface components {
         WorkflowRunCancelRequest: {
             /** Reason */
             reason: string;
+        };
+        /** WorstCase */
+        WorstCase: {
+            /** Calls */
+            calls: number;
+            /** Dollars */
+            dollars: number;
+            /** Wall Ms */
+            wall_ms: number;
         };
         /** _SecretsMigrateRequest */
         _SecretsMigrateRequest: {
@@ -25815,6 +26152,165 @@ export interface operations {
             };
         };
     };
+    "get_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CappedRecheckCeiling"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck_resume": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_day1-report_modules": {
         parameters: {
             query?: never;
@@ -26643,6 +27139,109 @@ export interface operations {
                 "application/json": components["schemas"]["HealthReadRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_import": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRulesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_read": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadLibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_detection-rules_libraries_source_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -29826,6 +30425,76 @@ export interface operations {
             };
         };
     };
+    get_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerCountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LedgerEraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerEraseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_api_memory_imports_import_id: {
         parameters: {
             query?: never;
@@ -29845,7 +30514,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportOut"];
+                    "application/json": components["schemas"]["ImportDeleteOut"];
                 };
             };
             /** @description Validation Error */

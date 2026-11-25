@@ -1,0 +1,22 @@
+/* Import rules and Update library: a rule set is hundreds of files by folder. */
+.rl-read { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rl-read .grow { flex: 1 1 200px; min-width: 0; }
+.rl-format { flex: 0 0 170px; }
+.rl-bulk { display: flex; gap: 4px; margin: -4px 0 0 -6px; }
+.rl-folders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; background: var(--ln0); border: 1px solid var(--ln0); border-radius: 10px; overflow: hidden auto; max-height: min(46vh, 420px); }
+.rl-folder { background: var(--bg2); }
+.rl-folder-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-width: 0; }
+.rl-folder-head input, .rl-rules input { accent-color: var(--ac); flex-shrink: 0; }
+.rl-folder-toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: var(--tx0); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.rl-folder-name { font-family: var(--font-mono); font-size: 12px; overflow-wrap: break-word; min-width: 0; }
+.rl-count { flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--tx2); white-space: nowrap; }
+.rl-rules { list-style: none; margin: 0; padding: 0 12px 8px 34px; display: flex; flex-direction: column; gap: 2px; }
+/* Lighter than a skill row: no box per rule inside a folder. */
+.sk-pick .rl-rules label { padding: 6px 8px; border: 0; border-radius: 8px; }
+.sk-pick .rl-rules label:has(input:checked) { background: var(--bg3); }
+.rl-path { font-family: var(--font-mono); font-size: 11px !important; overflow-wrap: anywhere; }
+/* A path and a reason wrap in full: the skill rows' two-line clamp would cut them. */
+.sk-pick .rl-path, .sk-pick .rl-why { display: block; -webkit-line-clamp: none; overflow: visible; }
+.rl-meta { font-size: 12px !important; }
+.rl-why { font-size: 12px !important; }
+.rl-error { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12.5px; color: var(--crit); }

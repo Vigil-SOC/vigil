@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 PASSWORD_RESET_REQUIRED = "password_reset_required"
 
 # A person's own act (decision 9). Never held by a service account, token, or agent.
-PERSON_ONLY = frozenset({"audit.forward", "audit.manage"})
+# ledgers.erase is the same string as permissions.LEDGERS_ERASE. This module
+# cannot import that one: permissions imports AuthService.
+PERSON_ONLY = frozenset({"audit.forward", "audit.manage", "ledgers.erase"})
 
 
 def _is_person(user_id: str, session: Optional[Session]) -> bool:

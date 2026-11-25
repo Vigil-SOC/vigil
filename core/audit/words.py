@@ -614,6 +614,8 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # Imported history (core/memory/imported_history.py)
     "memory.import.written": _import("Imported"),
     "memory.import.deleted": _import("Deleted"),
+    "memory.ledgers.erased": lambda p: "Erased re-decision ledgers"
+    + (f" of {p['import_id']}" if p.get("import_id") else ""),
     # Old audit stores copied on upgrade (0018_legacy_audit_copy)
     "case.history": _case_history,
     "investigation.log": _investigation_log,

@@ -39,6 +39,8 @@ APPROVE_PERMISSION = "ai_decisions.approve"
 # pack). Seeded by 45_medic_permissions.sql; pinned by test_medic_route_matrix.
 MEDIC_READ_PERMISSION = "medic.read"
 MEDIC_ADMIN_PERMISSION = "medic.admin"
+# Erases re-decision ledgers once the import is gone. A person's own act.
+LEDGERS_ERASE = "ledgers.erase"
 
 # The permission vocabulary (#2915). ``permissions`` is each name's origin.
 # ``builtins`` is what an unmodified built-in holds once 0008 has run.
@@ -82,6 +84,9 @@ CATALOG = {
         # Releases a held operator skill to agents. Apart from automation.write
         # so whoever uploads a skill cannot also approve it.
         "skills.approve": _NEW_CAPABILITY,
+        # Erases re-decision ledgers after the import is gone. Apart from
+        # findings.write, which deletes the import and keeps the ledgers.
+        LEDGERS_ERASE: _NEW_CAPABILITY,
     },
     "builtins": {
         "role-admin": {
@@ -110,6 +115,7 @@ CATALOG = {
             "integrations.install": True,
             "integrations.read": True,
             "integrations.write": True,
+            LEDGERS_ERASE: True,
             "loglm.view": True,
             "medic.admin": True,
             "medic.read": True,
@@ -248,6 +254,7 @@ STEP_UP = {
     "skills.approve": "approve a skill",
     "users.write": "change users",
     "users.delete": "delete a user",
+    LEDGERS_ERASE: "erase re-decision ledgers",
 }
 
 

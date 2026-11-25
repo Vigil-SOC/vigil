@@ -271,11 +271,19 @@ export const notesApi = {
 }
 
 export type HistoryImport = Schema<'ImportOut'>
+export type ImportDelete = Schema<'ImportDeleteOut'>
 
 /** Alert and ticket history imported into agent memory (#3965); an id holds a ':'. */
 export const importsApi = {
   list: () => api.get<Schema<'ImportListResponse'>>('/memory/imports'),
-  remove: (id: string) => api.delete<HistoryImport>(`/memory/imports/${encodeURIComponent(id)}`),
+  /** Marked re-decision ledgers this import would keep. Read when the delete dialog opens. */
+  ledgers: (id: string) =>
+    api.get<Schema<'LedgerCountOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`),
+  remove: (id: string) => api.delete<ImportDelete>(`/memory/imports/${encodeURIComponent(id)}`),
+  eraseLedgers: (id: string, runIds: string[]) =>
+    api.post<Schema<'LedgerEraseOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`, {
+      run_ids: runIds,
+    }),
 }
 
 export interface CaseRecordRow {
@@ -1394,6 +1402,43 @@ export const noticesApi = {
     api.post<Notices>('/notices/read', ids === 'all' ? { all: true } : { ids }),
 }
 
+/** One rule file a repo read found: its rules' language and techniques, and why it can't be picked. */
+export interface RuleLibraryFile {
+  path: string
+  name: string
+  language: string | null
+  techniques: string[]
+  keys: string[]
+  problem: string | null
+  /** A proposal adopted this rule at an earlier version: that version */
+  adopted_version?: number
+}
+
+export interface RuleLibraryChange {
+  path: string
+  name: string
+  problem?: string | null
+}
+
+export interface RuleLibraryRead {
+  repo: string
+  url: string
+  ref: string
+  path: string
+  commit: string
+  format: string
+  rule_files: number
+  folders: { folder: string; rules: RuleLibraryFile[] }[]
+  library: {
+    id: string
+    name: string | null
+    commit: string | null
+    changed: RuleLibraryChange[]
+    gone: RuleLibraryChange[]
+    new: RuleLibraryChange[]
+  } | null
+}
+
 export const detectionRulesApi = {
   listSources: () => api.get('/detection-rules/sources'),
 
@@ -1468,6 +1513,17 @@ export const detectionRulesApi = {
       ...(githubEnterprise === undefined ? {} : { github_enterprise: githubEnterprise }),
     }),
   
+  /** Read a repo (new library) or a library (with its update diff) at the commit it is at now. A clone runs long. */
+  readLibrary: (data: { repo: string; format: string } | { source_id: string }) =>
+    api.post<RuleLibraryRead>('/detection-rules/libraries/read', data, { timeout: 0 }),
+
+  /** Import picked rule files at the commit read: a new library from repo, or an update to source_id. */
+  importLibrary: (data: { commit: string; picks: string[]; repo?: string; source_id?: string; name?: string; format?: string }) =>
+    api.post('/detection-rules/libraries/import', data, { timeout: 0 }),
+
+  /** Remove a rule library and its files (step-up gated). */
+  removeLibrary: (sourceId: string) => api.delete(`/detection-rules/libraries/${sourceId}`),
+
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
   

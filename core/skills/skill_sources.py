@@ -22,6 +22,11 @@ trusted through ``GIT_SSL_CAINFO`` (or ``SSL_CERT_FILE``/``SSL_CERT_DIR``).
 Only hosts in ``vigil_skill_source_hosts`` are fetched from, over https only.
 Each installed skill keeps a ``skill_installs`` row: the repo, the commit, and
 the digest of its content as installed.
+
+Detection rule libraries (``core.detections.rule_libraries``) read rule repos
+through this same reader: ``parse_source``, ``cloned`` and ``remote_commit``,
+under the same host list, credentials and caps. Messages on that shared path
+say "repo", not "skill".
 """
 
 from __future__ import annotations
@@ -199,12 +204,13 @@ def parse_source(text: str, settings: Optional[Settings] = None) -> RepoSource:
     ]
     if not allowed:
         raise SkillError(
-            "Installing skills from a repo is off: no host is allowed "
+            "Reading from a repo is off: no host is allowed "
             "(VIGIL_SKILL_SOURCE_HOSTS)"
         )
     if host not in allowed:
         raise SkillError(
-            f"{host} is not an allowed skill source. Allowed: {', '.join(allowed)}"
+            f"{host} is not an allowed source: an admin can add it to "
+            f"VIGIL_SKILL_SOURCE_HOSTS. Allowed: {', '.join(allowed)}"
         )
     if guess:
         # Only now that the host is allowed: the one network call.
@@ -416,7 +422,7 @@ def _git(
         refused = code != 0 and any(r in err for r in _REFUSED)
         if code == 0:
             logger.warning(
-                "%s refused the stored skill-source credential; read anonymously",
+                "%s refused the stored repo credential; read anonymously",
                 host,
             )
     if code != 0:
@@ -448,12 +454,12 @@ def _refusal(host: Optional[str], tokened: bool) -> str:
         )
     if tokened:
         return (
-            f"The skill-source credential for {host} did not grant repository "
+            f"The stored credential for {host} did not grant repository "
             "access. Check token expiry and read permission."
         )
     keys = _host_keys(host)
     if keys:
-        return f"No skill-source credential for {host}. Set {keys[0]} and {keys[1]}."
+        return f"No credential for {host} is stored. Set {keys[0]} and {keys[1]}."
     return "No repo by that name that Vigil can read"
 
 
@@ -934,7 +940,12 @@ def latest_commit(name: str, settings: Optional[Settings] = None) -> Optional[st
     One ``git ls-remote``: nothing is cloned.
     """
     row, _ = _library(name)
-    source = _row_source(row, settings)
+    return remote_commit(_row_source(row, settings))
+
+
+def remote_commit(source: RepoSource) -> Optional[str]:
+    """The commit ``source``'s ref (or default branch) is at now, or None when the
+    ref is gone. One ``git ls-remote``: nothing is cloned."""
     scratch = Path(tempfile.mkdtemp(prefix="vigil-skill-repo-"))
     try:
         out = _git(
