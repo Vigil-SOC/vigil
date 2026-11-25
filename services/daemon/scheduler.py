@@ -175,14 +175,17 @@ class TaskScheduler:
             )
         )
 
-        # The tick skips when a check ran within the interval, here or on another
-        # replica, and keeps the interval's five-minute floor.
+        # Asked often; the tick itself runs a check only when the last one, here or
+        # on another replica, is an interval old. A skip still counts as a run
+        # here, so asking at the full interval would let a check slip by up to one.
         if self.config.supervisory_enabled:
+            from core.supervisory.worker import poll_seconds
+
             self._tasks.append(
                 ScheduledTask(
                     name="supervisory_check",
                     func=self._run_supervisory_check,
-                    interval=self.config.supervisory_interval,
+                    interval=poll_seconds(self.config.supervisory_interval),
                 )
             )
 

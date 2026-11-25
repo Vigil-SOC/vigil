@@ -6,12 +6,16 @@ About once an interval the daemon's scheduler runs :func:`tick`:
    and so does one that finds a check made less than an interval ago.
 2. Medic is read once. The sweep holds and releases suggestions on that read, and
    every proposal made in this tick is held on the same read. When Medic cannot be
-   read, holds stay as they are and new proposals go in open.
+   read, or the sweep fails, holds stay as they are and new proposals go in open.
 3. Each registered check runs in turn. A check returns proposals: the keyword
    arguments of :func:`core.supervisory.store.propose`, without ``held_incident``,
    which the tick supplies. A check that raises, or makes a proposal the store
    refuses, is logged and named on the state row; the other checks still run.
 4. When it ran, and when the next is due, go on the one-row state table.
+
+The scheduler asks every few minutes (:func:`poll_seconds`); the tick decides
+from the state table whether a check is due, so a restart or a slow pass of the
+scheduler's other tasks does not push a check back by a whole interval.
 
 The scheduler runs its tasks one after another, so a check must stay light: work
 that takes long goes through a queued job, not the tick.
@@ -43,6 +47,7 @@ logger = logging.getLogger(__name__)
 Check = Callable[[], Iterable[dict[str, Any]]]
 
 MIN_INTERVAL = 300
+MAX_POLL = 300
 # The scheduler wakes once a minute, so a tick due now may start a little early.
 _SLACK = timedelta(seconds=60)
 # Two-key advisory locks never collide with the one-key per-setting locks.
@@ -69,6 +74,11 @@ def enabled(settings: Settings | None = None) -> bool:
 
 def interval_seconds(settings: Settings | None = None) -> int:
     return max(MIN_INTERVAL, (settings or get_settings()).daemon_supervisory_interval)
+
+
+def poll_seconds(interval: int) -> int:
+    """How often the scheduler asks: a check then starts at most this late."""
+    return min(MAX_POLL, max(MIN_INTERVAL, interval) // 2)
 
 
 def tick(settings: Settings | None = None) -> dict[str, Any] | None:
@@ -102,9 +112,14 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
         timedelta(seconds=interval) - _SLACK
     ):
         return None
-    incidents = medic_hold.open_incidents(settings)
-    swept = medic_hold.sweep(settings, incidents) if incidents is not None else None
     proposed, failed = 0, []
+    try:
+        incidents = medic_hold.open_incidents(settings)
+        swept = medic_hold.sweep(settings, incidents) if incidents is not None else None
+    except Exception:  # noqa: BLE001 - read as Medic unreadable; the checks still run
+        logger.exception("supervisory hold sweep failed")
+        incidents, swept = None, None
+        failed.append("medic_hold")
     for name, check in list(_CHECKS.items()):
         try:
             for proposal in check():
@@ -152,7 +167,7 @@ def status(
 ) -> dict[str, Any]:
     """The page's state, and when the check last ran and runs next.
 
-    - off: switched off on this install. Nothing is due, so no next check.
+    - off: switched off on this install. Nothing is read, and no times are given.
     - unknown: the state row could not be read, there is none yet (no check has
       run), or the last check is more than two intervals old, so no daemon is
       checking on schedule.
@@ -161,14 +176,13 @@ def status(
     """
     settings = settings or get_settings()
     now = now or datetime.now(UTC)
+    if not enabled(settings):
+        return {"state": "off", "last_check_at": None, "next_check_at": None}
     try:
         state = _read_state()
     except Exception:  # noqa: BLE001 - the page says unknown rather than failing
         logger.exception("could not read the supervisory worker state")
         return {"state": "unknown", "last_check_at": None, "next_check_at": None}
-    last = state.last_check_at.isoformat() if state is not None else None
-    if not enabled(settings):
-        return {"state": "off", "last_check_at": last, "next_check_at": None}
     if state is None:
         return {"state": "unknown", "last_check_at": None, "next_check_at": None}
     stale = now - state.last_check_at > 2 * timedelta(
@@ -182,6 +196,6 @@ def status(
         word = "running"
     return {
         "state": word,
-        "last_check_at": last,
+        "last_check_at": state.last_check_at.isoformat(),
         "next_check_at": state.next_check_at.isoformat(),
     }
