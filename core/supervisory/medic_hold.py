@@ -41,7 +41,7 @@ from sqlalchemy import func, select, text
 
 from core.config import Settings, get_settings
 from core.platform import medic_last_seen
-from core.platform.medic_incidents import _pages
+from core.platform.medic_incidents import _INCIDENT, _TS, _clip, _pages
 from core.platform.medic_status import medic_enabled
 from core.storage.connection import get_db_manager
 from core.storage.models.supervisory import SupervisorySuggestion
@@ -55,6 +55,8 @@ FAMILIES = {
 }
 _HOLDING_STATES = ("firing", "resolving")
 _INCIDENT_FIELDS = ("id", "title", "firing_since")
+# As long as a held card's line can usefully be; the incident notices clip the same way.
+_TITLE_LIMIT = 200
 # Two-key advisory locks never collide with the one-key per-setting locks.
 _SWEEP_LOCK = (
     "SELECT pg_advisory_lock(hashtext('supervisory'), hashtext('medic-sweep'))"
@@ -95,7 +97,11 @@ def _incident(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     iid, rule = raw.get("incident_id"), raw.get("rule")
-    if not isinstance(iid, str) or not iid or not isinstance(rule, dict):
+    # Medic's text is untrusted: the id and time are checked for shape, as the
+    # incident notices check them, and the title is clipped to one plain line.
+    if not isinstance(iid, str) or not _INCIDENT.fullmatch(iid):
+        return None
+    if not isinstance(rule, dict):
         return None
     if raw.get("subject") != "vigil" or raw.get("state") not in _HOLDING_STATES:
         return None
@@ -106,14 +112,14 @@ def _incident(raw: Any) -> dict[str, Any] | None:
     if holds is None:
         return None
     since = raw.get("active_since")
-    if not isinstance(since, str) or not since:
+    if not isinstance(since, str) or not _TS.fullmatch(since):
         since = raw.get("opened_at")
-    if not isinstance(since, str) or not since:
+    if not isinstance(since, str) or not _TS.fullmatch(since):
         return None
-    title = raw.get("title")
+    title = _clip(raw.get("title"), _TITLE_LIMIT, one_line=True)
     return {
         "id": iid,
-        "title": title if isinstance(title, str) and title else rule_id,
+        "title": title or _clip(rule_id, _TITLE_LIMIT, one_line=True),
         "firing_since": since,
         "holds": holds,
     }
