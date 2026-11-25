@@ -4,8 +4,8 @@ Read-only. Every agent-run kind that investigates is judged: ``investigate``,
 ``hunt``, ``root_cause`` and ``compose``. ``adjudicate`` is a second look at
 another run's verdict and is left out, and so are removed runs. So are runs on
 sample alerts or probes, known by the run's Case (its investigation's, else the
-one it was started on) or by the findings that started it. A run is judged only once it answered, which each kind does its
-own way:
+one it was started on) or by the findings that started it. A run is judged only
+once it answered, which each kind does its own way:
 
 - investigate: ``completed``, or ``data_starved``, which still reports a verdict
   though it could not look and so is exactly what the tool flags are for;
@@ -47,9 +47,9 @@ A run's model is the one its spend events on the agent ledger record. For
 investigate and hunt, only the run's own agent counts (role ``agent``; the
 reviewer's and critic's calls are not the run's answer). root_cause spends under
 the name of each move and compose under each phase, so every role counts for
-them that has a role, but ``reader``, the guard that reads tool output. A run that used more than
-one model, or recorded none, is counted under no model, and the card says how
-many such runs it left out.
+them except ``reader``, the guard that reads tool output, and a spend with no
+role counts for none. A run that used more than one model, or recorded none, is
+counted under no model, and the card says how many such runs it left out.
 
 Models are compared only within one run kind. Triage records no model per
 finding and there is no response model setting, so neither is judged.
