@@ -25,8 +25,8 @@ spec:
       {{- include "vigil.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: splunk
-          image: "{{ .Values.splunk.image.repository }}:{{ .Values.splunk.image.tag }}"
-          imagePullPolicy: {{ .Values.splunk.image.pullPolicy | default "IfNotPresent" }}
+          image: {{ include "vigil.image" (dict "context" . "component" "splunk" "default" "splunk/splunk") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "splunk") }}
           env:
             - name: SPLUNK_START_ARGS
               value: "--accept-license"

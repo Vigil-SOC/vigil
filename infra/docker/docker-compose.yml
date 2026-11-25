@@ -102,7 +102,7 @@ services:
     # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
     # The upgrade one-shot creates the extensions, the role and the tables.
     # First boot must not apply infra/database/init.
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
@@ -174,7 +174,7 @@ services:
 
   # Redis - Job queue backend for ARQ (LLM request queuing + session store)
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     container_name: deeptempo-redis
     ports:
       # Loopback-only, for the same reason as postgres above. It also requires
@@ -978,7 +978,7 @@ services:
   #   everything in _ALLOWED_PATHS in services/api/routers/bifrost_config.py,
   #     including models/(base|details|parameters)
   bifrost:
-    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
+    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1@sha256:a8942692af7b4b89196cd8fc33653b7353488dfd58b24078fe793b8574a8084b}
     container_name: deeptempo-bifrost
     ports:
       # Loopback-only, for the same reason as postgres and redis above.
