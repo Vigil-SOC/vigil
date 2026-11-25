@@ -2,9 +2,9 @@
 
 Read-only. Every agent-run kind that investigates is judged: ``investigate``,
 ``hunt``, ``root_cause`` and ``compose``. ``adjudicate`` is a second look at
-another run's verdict and is left out, as are removed runs and runs on an
-investigation of sample alerts or probes (through its Case or the findings that
-started it). A run is judged only once it answered, which each kind does its
+another run's verdict and is left out, as are removed runs and runs on sample
+alerts or probes: through the run's Case (its investigation's, else the one it
+was started on), or the findings that started it. A run is judged only once it answered, which each kind does its
 own way:
 
 - investigate: ``completed``, or ``data_starved``, which still reports a verdict
@@ -18,30 +18,36 @@ own way:
 
 Four flags, each a rule on what the run recorded:
 
-- thin evidence: its report cites nothing (``citation_count`` 0) or its review
-  found it ungrounded (``grounded`` false). Null is unsaid, never a flag. Only
-  investigate and hunt report these; root_cause and compose never do, so the
-  flag does not apply to them.
+- thin evidence: its final answer cites nothing (``citation_count`` 0) or its
+  review found it ungrounded (``grounded`` false). Null is unsaid, never a flag.
+  A hunt's evidence lives in its record, so for a hunt this says only that the
+  account it ended on cites none of it. Only investigate and hunt report these;
+  root_cause and compose never do, so the flag does not apply to them.
 - gave up on tools: a tool call failed and no tool call after it succeeded.
-- skipped steps: no tool call gathered evidence.
+- skipped steps: no tool call gathered evidence. Not judged for compose: a
+  workflow's phases are written by an operator, and one may only act.
 - ran out of turns: the turn cap ended it (``capped``), and it still answered.
   Only investigate and hunt report it; root_cause and compose do not apply.
 
-A tool call gathers evidence when it succeeded, is not one of the run's own
-tools, and is not a tool stored as one that acts (``reversible`` or
-``irreversible`` in ``tool_effect_classes``); Vigil's own tools carry no class
-and count as reads, since no judged run takes an action. A run's own tools count
-on neither side of the first two flags: they keep its notes or carry its answer,
-and none looks at the estate. They are the kernel's hypothesis record, playbook
-loader and answer tools, and a hunt's own tools (the hunt plugin's HUNT_TOOLS and
-``expand``). root_cause and compose have none beyond the playbook loader.
+Only the model's own calls are judged. A root-cause trace journals its engine's
+fixed searches as calls too (role ``code``); those are not the model's choice and
+count on neither side. A tool call gathers evidence when it succeeded, is not one
+of the run's own tools, and does not act: neither stored as ``reversible`` or
+``irreversible`` in ``tool_effect_classes``, nor one of Vigil's tools that
+changes something, by the same rule the playbook marks writes with. A run's own
+tools count on neither side of the first two flags: they keep its notes or carry
+its answer, and none looks at the estate. They are the kernel's hypothesis
+record, playbook loader and answer tools, and a hunt's own tools (the hunt
+plugin's HUNT_TOOLS and ``expand``). root_cause and compose have none beyond the
+playbook loader.
 
 A run's model is the one its spend events on the agent ledger record. For
 investigate and hunt, only the run's own agent counts (role ``agent``; the
 reviewer's and critic's calls are not the run's answer). root_cause spends under
 the name of each move and compose under each phase, so every role counts for
-them. A run that used more than one model, or recorded none, is counted under
-no model.
+them but ``reader``, the guard that reads tool output. A run that used more than
+one model, or recorded none, is counted under no model, and the card says how
+many such runs it left out.
 
 Models are compared only within one run kind. Triage records no model per
 finding and there is no response model setting, so neither is judged.
@@ -108,7 +114,8 @@ APPLIES = {
     "investigate": FLAGS,
     "hunt": FLAGS,
     "root_cause": ("gave_up", "skipped_steps"),
-    "compose": ("gave_up", "skipped_steps"),
+    # An operator's workflow may only act, so gathering nothing is no flag.
+    "compose": ("gave_up",),
 }
 _ANSWERED = {
     "investigate": ("completed", "data_starved"),
@@ -118,6 +125,10 @@ _ANSWERED = {
 }
 # Kinds whose answer is one agent's: other roles on their ledger are reviewers.
 _AGENT_ONLY = ("investigate", "hunt")
+# The guard that reads tool output for the model; its spend is not the answer.
+_SIDE_ROLES = ("reader",)
+# A root-cause trace's own fixed searches, journaled as calls.
+_ENGINE_ROLE = "code"
 # A run's own tools. The kernel's: the hypothesis record, the playbook loader,
 # and the tools a run answers through (conclude is journaled as a call like any
 # other). A hunt's: services/agent/plugins/hunt/hooks.ts HUNT_TOOLS, and expand,
@@ -159,7 +170,7 @@ def rates(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any
     """Per run kind and model, judged runs and how many raised each flag that
     applies; and per kind, the runs with no model."""
     end = _naive(now or datetime.now(UTC))
-    runs = _judged_runs(end - timedelta(days=days), end)
+    runs = _judged_runs(end - timedelta(days=days), end, _vigil_writes())
     with unit_of_work() as session:
         rows = session.execute(
             select(
@@ -184,7 +195,26 @@ def rates(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any
     return {"days": days, "kinds": kinds, "unattributed": unattributed}
 
 
-def _judged_runs(start: datetime, end: datetime):
+def _vigil_writes() -> list[str]:
+    """Vigil's own tools that change something, by the rule the playbook marks
+    writes with: the tool's read-only hint, else a permission that is not a read."""
+    from core.agents.tool_registry import TOOL_PERMISSIONS
+    from core.integrations.mcp import in_process
+
+    names = {tool["name"] for tool in in_process.list_tools()} | set(TOOL_PERMISSIONS)
+    return sorted(
+        name
+        for name in names
+        if (hint := in_process.changes(name)) is True
+        or (
+            hint is None
+            and name in TOOL_PERMISSIONS
+            and not TOOL_PERMISSIONS[name].endswith(".read")
+        )
+    )
+
+
+def _judged_runs(start: datetime, end: datetime, writes: list[str]):
     """One row per judged run: its kind, model, how many models, and its flags."""
     kind = WorkflowRun.trigger_context["run_kind"].astext
     ledger = case(
@@ -200,9 +230,13 @@ def _judged_runs(start: datetime, end: datetime):
         return e, and_(e.c.run_id == ledger, e.c.kind == event_kind)
 
     spend, own_spend = events("judge_spend", "spend")
+    role = spend.c.payload["role"].astext
     its_spend = and_(
         own_spend,
-        or_(kind.notin_(_AGENT_ONLY), spend.c.payload["role"].astext == "agent"),
+        case(
+            (kind.in_(_AGENT_ONLY), role == "agent"),
+            else_=role.is_distinct_from(None) & role.notin_(_SIDE_ROLES),
+        ),
     )
     model_of = spend.c.payload["model_id"].astext
     models = (
@@ -215,12 +249,14 @@ def _judged_runs(start: datetime, end: datetime):
     gathered, own_gathered = events("judge_gathered", "call")
     gave_up = exists().where(
         own_failed,
+        _models_call(failed),
         _ok(failed).is_(False),
         _tool(failed).notin_(_OWN_TOOLS),
         # Explicit: nested two deep, the run and the failed call are outer rows.
         ~exists()
         .where(
             own_later,
+            _models_call(later),
             later.c.seq > failed.c.seq,
             _ok(later).is_(True),
             _tool(later).notin_(_OWN_TOOLS),
@@ -230,11 +266,16 @@ def _judged_runs(start: datetime, end: datetime):
     acting = select(_tool_classes.c.tool_name).where(
         _tool_classes.c.effect_class.in_(_ACTING)
     )
-    skipped = ~exists().where(
-        own_gathered,
-        _ok(gathered).is_(True),
-        _tool(gathered).notin_(_OWN_TOOLS),
-        _tool(gathered).notin_(acting),
+    skipped = and_(
+        kind != "compose",
+        ~exists().where(
+            own_gathered,
+            _models_call(gathered),
+            _ok(gathered).is_(True),
+            _tool(gathered).notin_(_OWN_TOOLS),
+            _tool(gathered).notin_(acting),
+            _tool(gathered).notin_(writes),
+        ),
     )
     reports = kind.in_(_AGENT_ONLY)
     thin = and_(
@@ -272,7 +313,7 @@ def _judged_runs(start: datetime, end: datetime):
             WorkflowRun.deleted_at.is_(None),
             kind.in_(KINDS),
             answered,
-            or_(Investigation.investigation_id.is_(None), ~_not_real_data()),
+            ~_not_real_data(),
         )
         .subquery("judged_runs")
     )
@@ -286,16 +327,25 @@ def _tool(e):
     return e.c.payload["tool"].astext
 
 
+def _models_call(e):
+    """A call the model chose, not one the engine made itself."""
+    return e.c.payload["role"].astext.is_distinct_from(_ENGINE_ROLE)
+
+
 def _not_real_data():
-    """The investigation's Case, or a finding that started it, is a sample or probe."""
+    """The run's Case, or a finding that started it, is a sample or probe. The Case
+    is its investigation's, else the one it was started on; the findings are its
+    investigation's triggers and the one it was started on."""
+    context = WorkflowRun.trigger_context
+    case_id = func.coalesce(Investigation.case_id, context["case_id"].astext)
     in_case = (
         exists()
         .where(
-            case_findings.c.case_id == Investigation.case_id,
+            case_findings.c.case_id == case_id,
             case_findings.c.finding_id == Finding.finding_id,
             Finding.data_source.in_(_NOT_REAL_DATA),
         )
-        .correlate(Investigation)
+        .correlate_except(case_findings, Finding)
     )
     trigger_ids = select(
         func.jsonb_array_elements_text(Investigation.trigger_ids)
@@ -303,10 +353,13 @@ def _not_real_data():
     started_by = (
         exists()
         .where(
-            Finding.finding_id.in_(trigger_ids),
+            or_(
+                Finding.finding_id.in_(trigger_ids),
+                Finding.finding_id == context["finding_id"].astext,
+            ),
             Finding.data_source.in_(_NOT_REAL_DATA),
         )
-        .correlate(Investigation)
+        .correlate_except(Finding)
     )
     return or_(in_case, started_by)
 
@@ -336,7 +389,11 @@ def check() -> list[dict[str, Any]]:
     if not offers:
         return []
     _, _, other, better = min(offers)
-    return [_proposal(current, other, better, kinds, measured["days"])]
+    return [
+        _proposal(
+            current, other, better, kinds, measured["days"], measured["unattributed"]
+        )
+    ]
 
 
 def _current_model() -> str | None:
@@ -372,6 +429,7 @@ def _proposal(
     better: list[str],
     kinds: dict[str, dict[str, dict[str, int]]],
     days: int,
+    unattributed: dict[str, int],
 ) -> dict[str, Any]:
     lead = better[0]
     now, then = kinds[lead][current], kinds[lead][other]
@@ -382,15 +440,27 @@ def _proposal(
         f"{KIND_LABELS[lead]}: {LABELS[worst].lower()} in {_pct(now, worst)} of "
         f"{current}'s runs, {_pct(then, worst)} of {other}'s"
     )
+    shown = [
+        k
+        for k in KINDS
+        if current in kinds[k]
+        and other in kinds[k]
+        and min(kinds[k][current]["runs"], kinds[k][other]["runs"]) >= FLOOR
+    ]
+    judged = sum(kinds[k][m]["runs"] for k in shown for m in (current, other))
+    left_out = sum(unattributed[k] for k in shown)
     plain = (
         f"Over the last {days} days {other} raised fewer of these flags than "
-        f"{current} on {named}, and more on none of the kinds both have run. "
-        "Investigations, hunts, root-cause traces and workflows all use this one "
-        "setting. The flags are rules on what each run recorded, not a judge of its "
-        "verdict: change the model in AI settings if you agree."
+        f"{current} on {named}, and clearly more on none of the kinds where both "
+        f"have {FLOOR} runs. Investigations, hunts, root-cause traces and workflows "
+        "all use this one setting. The flags are rules on what each run recorded, "
+        "not a judge of its verdict: change the model in AI settings if you agree."
     )
-    shown = [k for k in KINDS if current in kinds[k] and other in kinds[k]]
-    judged = sum(kinds[k][m]["runs"] for k in shown for m in (current, other))
+    if left_out:
+        plain += (
+            f" {left_out} runs of these kinds recorded no single model and are "
+            "left out."
+        )
     return {
         "fn": "investigation",
         "key": KEY,
