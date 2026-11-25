@@ -5,7 +5,8 @@ Read-only. Every agent-run kind that investigates is counted: investigations,
 threat hunts, root-cause traces and workflows (``investigate``, ``hunt``,
 ``root_cause``, ``compose``). ``adjudicate``, a second look at another run's
 verdict, is not. Each reason is counted per kind and named with it, so a hunt's
-budget stop never shares a line with an investigation's.
+budget stop never shares a line with an investigation's; the one exception is the
+quiet kill below, which is the orchestrator's and carries no kind.
 
 Counted per run: a stop is a run that ended without a full answer, in the window
 by the time it ended, so a run retried after a stop can count more than once:
@@ -22,8 +23,8 @@ by the time it ended, so a run retried after a stop can count more than once:
 - it had no data to look at (``data_starved``);
 - it failed for any other reason, or the console ended it before the agent layer
   did;
-- it ran out of turns: a completed report the turn cap ended (only
-  investigations and hunts report the cap);
+- it ran out of turns: a completed report the turn cap ended, read where the
+  run reports the cap;
 - it was a hunt that parked and nobody decided on before the park expired.
 
 A hunt out of turns or budget with a hypothesis still open parks rather than
@@ -79,7 +80,6 @@ from core.supervisory.feedback import _NOT_REAL_DATA, WINDOW_DAYS, _naive
 
 # What the orchestrator writes when it kills an investigation that went quiet.
 STALE_NOTE = "Stale: no activity"
-# The orchestrator's second opinion on an investigation, not the investigation.
 # The agent-run kinds that investigate. adjudicate, a second look at another
 # run's verdict, is not one of them.
 KINDS = ("investigate", "hunt", "root_cause", "compose")
