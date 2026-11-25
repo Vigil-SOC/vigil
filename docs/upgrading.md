@@ -167,10 +167,10 @@ An upgrade from a database older than these changes does the following. Everythi
 
 1. The password is checked. A lock refuses it even when it is right. A good password stored as a bcrypt hash is replaced by a PBKDF2 hash at once; the password itself and `password_changed_at` do not change.
 2. If the account has two-step sign-in, the code or key is checked. An old recovery code (from before the new hashing) is accepted once. The whole old set is then voided and a new set is shown once, so the person must keep those. A person who signed in with the app code gets the new set the same way, as their stored set is from the old scheme.
-3. The password is checked against the breached-password list and the policy: a listed password, one past its maximum age, or one under 15 characters without two-step sign-in is not accepted for a sign-in. The answer is `password_change_required` with a reset link, and the person chooses a new password. A spent code stays spent.
+3. The password is checked against the breached-password list and the policy: a listed password, one past its maximum age, or one shorter than the lower of 15 and the minimum length without two-step sign-in is not accepted for a sign-in. The answer is `password_change_required` with a reset link, and the person chooses a new password. A spent code stays spent.
 4. The sign-in is created. If the account is already at the sign-in limit, its oldest open sign-in ends.
 
-**Settings that left.** These are fixed and ignored when set; the API logs one line per variable at start: `JWT_ACCESS_EXPIRATION_MINUTES` (30 minutes), `JWT_REFRESH_EXPIRATION_DAYS` (7 days), `AUTH_MIN_ZXCVBN_SCORE` (3), `PASSWORD_RESET_TTL_SECONDS` (3600 seconds). `AUTH_LOCKOUT_THRESHOLD`, `AUTH_LOCKOUT_DURATION_MINUTES` (now the session policy's lockout fields) and `REVOCATION_FAIL_OPEN` (Redis no longer holds revocation state) are also ignored. Remove all of them from a copied `.env` and from Helm values.
+**Settings that left.** These are fixed and ignored when set; the API logs one line per variable at start: `JWT_ACCESS_EXPIRATION_MINUTES` (30 minutes), `JWT_REFRESH_EXPIRATION_DAYS` (7 days), `PASSWORD_RESET_TTL_SECONDS` (3600 seconds). `AUTH_MIN_ZXCVBN_SCORE` is ignored too: it is not fixed at 3, and the strength score is set in Settings › Sessions (default 3). `AUTH_LOCKOUT_THRESHOLD`, `AUTH_LOCKOUT_DURATION_MINUTES` (now the session policy's lockout fields) and `REVOCATION_FAIL_OPEN` (Redis no longer holds revocation state) are also ignored. Remove all of them from a copied `.env` and from Helm values.
 
 **Password hashes.** Revision `0040_password_scheme_stamp` writes the upgrade time once, to `system_config` key `auth.password_scheme_upgraded_at`; a re-run never overwrites it. Read it with:
 
@@ -180,6 +180,31 @@ FROM system_config WHERE key = 'auth.password_scheme_upgraded_at';
 ```
 
 Each bcrypt password hash is replaced at that person's first good sign-in. The old hashing ends 12 months after the date in that row. A person who has not signed in by then sets a new password with a reset link. To find accounts that have not signed in, open Settings > Users: the Last Login column shows each account's last sign-in, and "Never" for an account that has none.
+
+## Password minimum and strength score
+
+The minimum length is 3–255 characters (default 16) and the strength score is a setting, 0–4 (default 3). At 0, no score is required. The minimum no longer depends on Require MFA. A policy saved before this release has no score and reads as 3, so an install that never changed a setting behaves the same. Set both in Settings › Sessions.
+
+A sign-in without MFA still rechecks a password shorter than the lower of 15 and the minimum. Raising the minimum sends a person without MFA whose password is under that length to a forced change at the next sign-in. A password on the breached list, and one past its maximum age, are still rechecked. An imported breached list keeps entries down to 3 characters; a list imported before this release covers short entries once it is imported again. The shipped list holds no entry under 12 characters.
+
+An install with no saved policy that still sets `AUTH_MIN_PASSWORD_LENGTH` carries that length once, clamped into 3–255, where the variable reaches the API process. A value of exactly 12 counts as unset, so the defaults apply. `AUTH_MIN_ZXCVBN_SCORE` is not carried into the score.
+
+**Rolling back** to the previous release has costs after either of these:
+
+- saving a length outside 12–64, or any other value the previous release's ranges refuse;
+- saving a minimum under 15, or seeding one from the host, while Require MFA is not everyone (that release refuses the combination).
+
+Until an administrator saves Settings › Sessions again, the previous release:
+
+- reads the policy as unreadable, enforces its own defaults (a 3-character minimum reads as 16) and says so on Sessions;
+- refuses token mint and rotate, and stops the unused-token sweep;
+- shows "Could not read" on the Day 1 session checks.
+
+Also on the previous release:
+
+- it ignores the new strength field and applies 3 silently, and a save made there drops the field;
+- a person without MFA whose password is under 15 characters is sent to a forced change at sign-in;
+- a password over 128 characters is a wrong password, and the way back is a reset link to a password of 128 or fewer.
 
 ## Medic's gateway token on Compose
 
