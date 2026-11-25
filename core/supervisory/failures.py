@@ -1,8 +1,14 @@
-"""Why investigations stopped early, by reason, and how their Cases were closed after.
+"""Why agent runs stopped early, by run kind and reason, and how their Cases were
+closed after.
 
-Read-only. Counted per run: a stop is one of an investigation's runs that ended
-without a full answer, in the window by the time it ended, so an investigation
-retried after a stop can count more than once:
+Read-only. Every agent-run kind that investigates is counted: investigations,
+threat hunts, root-cause traces and workflows (``investigate``, ``hunt``,
+``root_cause``, ``compose``). ``adjudicate``, a second look at another run's
+verdict, is not. Each reason is counted per kind and named with it, so a hunt's
+budget stop never shares a line with an investigation's.
+
+Counted per run: a stop is a run that ended without a full answer, in the window
+by the time it ended, so a run retried after a stop can count more than once:
 
 - the budget refused another iteration: the call limit, the cost cap or the
   runtime cap, which the agent layer tells apart only in the run's ``reason``;
@@ -16,20 +22,29 @@ retried after a stop can count more than once:
 - it had no data to look at (``data_starved``);
 - it failed for any other reason, or the console ended it before the agent layer
   did;
-- it ran out of turns: a completed report the turn cap ended.
+- it ran out of turns: a completed report the turn cap ended (only
+  investigations and hunts report the cap);
+- it was a hunt that parked and nobody decided on before the park expired.
+
+A hunt out of turns or budget with a hypothesis still open parks rather than
+ending, so it is counted only once it ends.
 
 ``budget_exhausted`` and ``data_starved`` are stored as completed, so the reason
 is read from ``outcome``, never ``status``. An operator's stop (aborted, cancelled)
-is a person's decision, not a failure, and is left out.
+is a person's decision, not a failure, and is left out; an expired park is stored
+as aborted too, and is told apart by its reason.
 
 An investigation Vigil killed for no activity has no run outcome of its own: it
 is counted once, from the investigation, and its runs are not counted again
 under another reason. It is windowed by its last activity, which is up to the
 stale threshold before the kill.
 
-Each reason also says how many of those stops a person later closed as real, and
-which tool failed most in their runs. Investigations of sample alerts and probes
-are left out, through their Case or the findings that started them.
+Each reason also says, of its stops that have a Case, how many a person later
+closed as real, and which tool failed most in their runs. A run's Case is its
+investigation's, else the Case it was started on; a run with neither (a
+scheduled hunt, say) has nothing a person's close could judge, so it is counted
+as a stop but not in that note. Runs on sample alerts and probes are left out,
+through their Case or the findings that started their investigation.
 """
 
 from __future__ import annotations
@@ -65,7 +80,15 @@ from core.supervisory.feedback import _NOT_REAL_DATA, WINDOW_DAYS, _naive
 # What the orchestrator writes when it kills an investigation that went quiet.
 STALE_NOTE = "Stale: no activity"
 # The orchestrator's second opinion on an investigation, not the investigation.
-_SHADOW_KIND = "adjudicate"
+# The agent-run kinds that investigate. adjudicate, a second look at another
+# run's verdict, is not one of them.
+KINDS = ("investigate", "hunt", "root_cause", "compose")
+KIND_LABELS = {
+    "investigate": "Investigations",
+    "hunt": "Threat hunts",
+    "root_cause": "Root-cause traces",
+    "compose": "Workflows",
+}
 _REAL = tuple(c.value for c in ClosureCategory if closure_says_real(c.value) is True)
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
@@ -83,6 +106,7 @@ LABELS = {
     "model_error": "A model call failed",
     "stalled": "Stopped advancing",
     "unanswered": "Its question went unanswered",
+    "parked": "Parked, then timed out with no decision",
     "no_data": "No data to look at",
     "stale": "Went quiet and was stopped",
     "other": "Failed for another reason",
@@ -103,44 +127,59 @@ _agent_events = table(
 
 
 def failures(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any]:
-    """Early stops in the window by reason, most first."""
+    """Early stops in the window by run kind and reason, most first."""
     end = _naive(now or datetime.now(UTC))
     start = end - timedelta(days=days)
     runs = _stopped_runs(start, end)
     quiet = _quiet(start, end)
     stops = union_all(
-        select(runs.c.reason, runs.c.real), select(quiet.c.reason, quiet.c.real)
+        select(runs.c.kind, runs.c.reason, runs.c.has_case, runs.c.real),
+        select(quiet.c.kind, quiet.c.reason, quiet.c.has_case, quiet.c.real),
     ).subquery("stops")
     with unit_of_work() as session:
         counts = session.execute(
             select(
-                stops.c.reason, func.count(), func.count().filter(stops.c.real)
-            ).group_by(stops.c.reason)
+                stops.c.kind,
+                stops.c.reason,
+                func.count(),
+                func.count().filter(stops.c.has_case),
+                func.count().filter(stops.c.real),
+            ).group_by(stops.c.kind, stops.c.reason)
         ).all()
         tools = _top_tools(session, runs, quiet)
     items = [
-        {"reason": LABELS[key], "count": n, "note": _note(real, tools.get(key))}
-        for key, n, real in counts
+        {
+            "reason": _label(kind, key),
+            "count": n,
+            "note": _note(with_case, real, tools.get((kind, key))),
+        }
+        for kind, key, n, with_case, real in counts
     ]
     items.sort(key=lambda item: (-item["count"], item["reason"]))
     return {"days": days, "items": items}
 
 
 def _stopped_runs(start: datetime, end: datetime):
-    """One row per stopped run: its reason, whether its Case was later closed as real."""
+    """One row per stopped run: its kind and reason, whether it has a Case, and
+    whether that Case was later closed as real."""
+    case_id = _case_of_run()
     runs = (
         select(
+            _kind().label("kind"),
             _run_reason().label("reason"),
-            _closed_real(Investigation.case_id, WorkflowRun.finished_at).label("real"),
+            case_id.isnot(None).label("has_case"),
+            _closed_real(case_id, WorkflowRun.finished_at).label("real"),
             WorkflowRun.run_id.label("run_id"),
         )
-        .join(Investigation, Investigation.investigation_id == _investigation_of_run())
+        .outerjoin(
+            Investigation, Investigation.investigation_id == _investigation_of_run()
+        )
         .where(
             WorkflowRun.finished_at >= start,
             WorkflowRun.finished_at < end,
             *_counted_run(),
             Investigation.master_review_notes.is_distinct_from(STALE_NOTE),
-            ~_not_real_data(),
+            ~_not_real_data(case_id),
         )
         .subquery()
     )
@@ -151,7 +190,10 @@ def _quiet(start: datetime, end: datetime):
     """One row per investigation killed for going quiet, windowed by its last activity."""
     return (
         select(
+            # The orchestrator's kill is on the investigation, not on a run kind.
+            literal(None, String).label("kind"),
             literal("stale").label("reason"),
+            Investigation.case_id.isnot(None).label("has_case"),
             _closed_real(Investigation.case_id, Investigation.last_activity_at).label(
                 "real"
             ),
@@ -162,7 +204,7 @@ def _quiet(start: datetime, end: datetime):
             Investigation.status == "failed",
             Investigation.last_activity_at >= start,
             Investigation.last_activity_at < end,
-            ~_not_real_data(),
+            ~_not_real_data(Investigation.case_id),
         )
         .subquery("quiet")
     )
@@ -172,13 +214,20 @@ def _investigation_of_run():
     return WorkflowRun.trigger_context["investigation_id"].astext
 
 
-def _counted_run():
-    """A run still in History that is the investigation's own, not its shadow."""
-    return (
-        WorkflowRun.deleted_at.is_(None),
-        func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
-        != _SHADOW_KIND,
+def _kind():
+    return WorkflowRun.trigger_context["run_kind"].astext
+
+
+def _case_of_run():
+    """The run's Case: its investigation's, else the one the run was started on."""
+    return func.coalesce(
+        Investigation.case_id, WorkflowRun.trigger_context["case_id"].astext
     )
+
+
+def _counted_run():
+    """A run still in History, of a kind that investigates (so not a shadow)."""
+    return (WorkflowRun.deleted_at.is_(None), _kind().in_(KINDS))
 
 
 def _run_reason():
@@ -206,6 +255,14 @@ def _run_reason():
             "stalled",
         ),
         (outcome == "abandoned", "unanswered"),
+        # A hunt parked past its TTL ends aborted, though no person stopped it.
+        (
+            and_(
+                outcome == "aborted",
+                reason.startswith("parked since ", autoescape=True),
+            ),
+            "parked",
+        ),
         (outcome == "data_starved", "no_data"),
         (budget, "budget"),
         (failed, "other"),
@@ -224,16 +281,17 @@ def _closed_real(case_id, after):
     )
 
 
-def _not_real_data():
-    """The investigation's Case, or a finding that started it, is a sample or probe."""
+def _not_real_data(case_id):
+    """The run's Case, or a finding that started its investigation, is a sample or
+    probe. A run with neither has no link to sample data, and counts."""
     in_case = (
-        exists()
-        .where(
-            case_findings.c.case_id == Investigation.case_id,
+        exists().where(
+            case_findings.c.case_id == case_id,
             case_findings.c.finding_id == Finding.finding_id,
             Finding.data_source.in_(_NOT_REAL_DATA),
         )
-        .correlate(Investigation)
+        # The run's Case can come from the run itself, so both outer tables correlate.
+        .correlate_except(case_findings, Finding)
     )
     # Looked up by id from the investigation's own list, so the findings table is
     # read by its key rather than scanned.
@@ -255,13 +313,13 @@ def _top_tools(session: Session, runs, quiet) -> dict[str, tuple[str, int]]:
     """Per reason, the tool whose calls failed most in its stopped runs."""
     # A quiet investigation's runs are all of its counted runs; any other stop is one run.
     stale_runs = (
-        select(quiet.c.reason, WorkflowRun.run_id)
+        select(quiet.c.kind, quiet.c.reason, WorkflowRun.run_id)
         .join(WorkflowRun, _investigation_of_run() == quiet.c.investigation_id)
         .where(*_counted_run())
     )
-    ledger = union_all(select(runs.c.reason, runs.c.run_id), stale_runs).subquery(
-        "ledger_runs"
-    )
+    ledger = union_all(
+        select(runs.c.kind, runs.c.reason, runs.c.run_id), stale_runs
+    ).subquery("ledger_runs")
     # Guarded: a console run id that is not a uuid has no ledger.
     ledger_id = case(
         (
@@ -272,28 +330,36 @@ def _top_tools(session: Session, runs, quiet) -> dict[str, tuple[str, int]]:
     )
     tool = _agent_events.c.payload["tool"].astext
     rows = session.execute(
-        select(ledger.c.reason, tool, func.count())
+        select(ledger.c.kind, ledger.c.reason, tool, func.count())
         .select_from(ledger)
         .join(_agent_events, _agent_events.c.run_id == ledger_id)
         .where(
             _agent_events.c.kind == "call",
             _agent_events.c.payload["ok"].astext == "false",
         )
-        .group_by(ledger.c.reason, tool)
+        .group_by(ledger.c.kind, ledger.c.reason, tool)
     ).all()
-    top: dict[str, tuple[str, int]] = {}
-    for reason, name, n in rows:
-        if name and (
-            reason not in top or (-n, name) < (-top[reason][1], top[reason][0])
-        ):
-            top[reason] = (name, n)
+    top: dict[tuple, tuple[str, int]] = {}
+    for kind, reason, name, n in rows:
+        key = (kind, reason)
+        if name and (key not in top or (-n, name) < (-top[key][1], top[key][0])):
+            top[key] = (name, n)
     return top
 
 
-def _note(real: int, tool: tuple[str, int] | None) -> str:
-    """How many were later closed as real, and the tool that failed most."""
-    closed = f"{real} later closed as real" if real else "None later closed as real"
-    if tool is None:
-        return closed
-    name, n = tool
-    return f"{closed} · {name} failed most ({n} {'error' if n == 1 else 'errors'})"
+def _label(kind: str | None, reason: str) -> str:
+    """The reason, under the run kind it stopped, so a hunt's stop and an
+    investigation's never share a line."""
+    return f"{KIND_LABELS[kind]} · {LABELS[reason]}" if kind else LABELS[reason]
+
+
+def _note(with_case: int, real: int, tool: tuple[str, int] | None) -> str | None:
+    """How many with a Case a person later closed as real, and the tool that failed
+    most. A run with no Case has nothing to be judged by, so it is not counted."""
+    parts = []
+    if with_case:
+        parts.append(f"{real} of {with_case} with a Case later closed as real")
+    if tool is not None:
+        name, n = tool
+        parts.append(f"{name} failed most ({n} {'error' if n == 1 else 'errors'})")
+    return " · ".join(parts) or None
