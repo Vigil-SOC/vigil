@@ -32,7 +32,7 @@ type Scope = CoverageScope | 'techniques'
 type Pick = { technique: string; layer: string } | { layer: string; technique?: undefined }
 
 /** Ids from a pasted list: split on commas, spaces or new lines; the server checks each. */
-const parseIds = (text: string) => text.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean)
+const parseIds = (text: string) => [...new Set(text.split(/[\s,;]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))]
 
 export default function CoverageByLayer({ tactics: picked }: { tactics: string[] | null }) {
   const [scope, setScope] = useState<Scope>('all')
@@ -97,9 +97,9 @@ export default function CoverageByLayer({ tactics: picked }: { tactics: string[]
             {scope === 'techniques' ? `Pasted list · ${asked.length}` : 'Answer for these'}
           </button>
         </form>
+        <span className="de-note" role="status">{busy ? 'Reading every layer…' : ''}</span>
       </div>
 
-      {busy && <p className="de-note" role="status">Reading every layer…</p>}
       {error && <p className="de-lay-err" role="alert">{error} <button type="button" className="x1-link" onClick={() => setTries(tries + 1)}>Retry</button></p>}
 
       {data && data.intel?.connected === false && <p className="de-lay-msg">{data.note}</p>}
@@ -107,7 +107,7 @@ export default function CoverageByLayer({ tactics: picked }: { tactics: string[]
       {data && data.techniques && (
         <>
           {m && (
-            <div className="de-lay-measures" aria-label="Measures">
+            <div className="de-lay-measures" role="group" aria-label="Measures">
               <span><b>{m.techniques}</b> techniques</span>
               <span><b>{m.validated.combined ?? 0}</b> validated by the layers together</span>
               {layers.filter((l) => l.kind !== 'combined').map((l) => (
@@ -137,7 +137,7 @@ export default function CoverageByLayer({ tactics: picked }: { tactics: string[]
           {(data.unlabelled?.length ?? 0) > 0 && (
             <p className="de-note">Sources with findings in the window but no technique label, so no row: {data.unlabelled!.join(', ')}.</p>
           )}
-          <p className="de-note">States are the server’s, from the newest compose emulation run in the last {data.window_days ?? 30} days that scored the technique; older runs are evidence. Counts only, no percentage.</p>
+          <p className="de-note">States are the server’s, from the newest compose emulation run in the last {data.window_days ?? 30} days that scored the technique; older runs are evidence. Measures count the whole scope, whichever tactics are shown; counts only, no percentage.</p>
         </>
       )}
     </div>
