@@ -72,8 +72,13 @@ WINDOW = timedelta(days=14)
 LABEL_LAG = timedelta(days=7)
 COUNT_MARGIN = 2
 SHARE_MARGIN = 0.10
-# Applies judged per tick; the rest wait for the next.
-PER_TICK = 20
+# Applies judged per tick; the rest wait for the next. Each reads two windows.
+PER_TICK = 5
+# An apply that failed to measure waits this long before it is tried again, so
+# a few that keep failing cannot hold back the ones behind them.
+RETRY_AFTER = timedelta(days=1)
+# history id -> when it may be tried again. Per process: a restart clears it.
+_failed: dict[int, datetime] = {}
 
 _SAID_REAL = ("malicious", "suspicious")
 _SAID_NOT_REAL = ("benign",)
@@ -99,8 +104,11 @@ def follow_up(now: datetime | None = None) -> dict[str, int]:
     """Judge each apply that is due; returns how many were judged, and how."""
     now = now or datetime.now(UTC)
     done = {"improved": 0, "not_improved": 0, "not_enough": 0, "failed": 0}
+    for history_id, retry_at in list(_failed.items()):
+        if retry_at <= now:
+            del _failed[history_id]
     with unit_of_work() as session:
-        due = session.execute(_due(now)).all()
+        due = session.execute(_due(now, set(_failed))).all()
     for history_id, key, fn, at in due:
         try:
             with unit_of_work() as session:
@@ -111,6 +119,7 @@ def follow_up(now: datetime | None = None) -> dict[str, int]:
             written = _write(history_id, key, improved, note)
         except Exception:  # noqa: BLE001 - one apply must not hold up the rest
             logger.exception("could not follow up apply %s", history_id)
+            _failed[history_id] = now + RETRY_AFTER
             done["failed"] += 1
             continue
         if not written:
@@ -124,8 +133,9 @@ def follow_up(now: datetime | None = None) -> dict[str, int]:
     return done
 
 
-def _due(now: datetime):
-    """Applies still applied, not yet judged, whose after window has been labelled."""
+def _due(now: datetime, waiting: set[int]):
+    """Applies still applied, not yet judged, whose after window has been labelled,
+    except those waiting to be retried."""
     return (
         select(
             SupervisoryHistory.id,
@@ -137,7 +147,11 @@ def _due(now: datetime):
             SupervisorySuggestion,
             SupervisorySuggestion.suggestion_id == SupervisoryHistory.suggestion_id,
         )
-        .where(_unjudged(), SupervisoryHistory.at <= now - (WINDOW + LABEL_LAG))
+        .where(
+            _unjudged(),
+            SupervisoryHistory.at <= now - (WINDOW + LABEL_LAG),
+            SupervisoryHistory.id.notin_(waiting),
+        )
         .order_by(SupervisoryHistory.at, SupervisoryHistory.id)
         .limit(PER_TICK)
     )
