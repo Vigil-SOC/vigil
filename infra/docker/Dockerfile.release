@@ -1,0 +1,8 @@
+# infra/docker/Dockerfile.release
+# The vigil-release image (build-images.yml): list.json and the source tree of
+# the built commit, nothing else. It has no shell and never runs; read it with
+# `crane export`, or `docker create <image> none` then `docker cp`.
+FROM scratch
+ARG VERSION
+COPY list.json /list.json
+COPY vigil-${VERSION}-source.tar.gz /vigil-${VERSION}-source.tar.gz
