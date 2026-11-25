@@ -35,11 +35,14 @@ _SOURCE = {
 
 _ENV_ONLY = "Set in the environment or INTENT.md; Vigil has no write for it"
 _APPLIED = "Set by an earlier INTENT.md revision; Vigil has no write for it"
-_CEILING_UNREAD = "The autonomy ceiling could not be read"
-_STOPPED = "Autonomy is stopped: Vigil can only tighten it until it resumes"
+CEILING_UNREAD = "The autonomy ceiling could not be read"
+_CEILING_UNREAD = CEILING_UNREAD
+STOPPED = "Autonomy is stopped: Vigil can only tighten it until it resumes"
+_STOPPED = STOPPED
 _MANAGED = "Managed by INTENT.md: Vigil can only tighten it"
 _RESTART = "Saved at once; the daemon reads it when it starts"
-_ACT_LOCKED = "The environment forces it off"
+ACT_LOCKED = "The environment forces it off"
+_ACT_LOCKED = ACT_LOCKED
 _MODEL = "Changed in AI model settings, which needs platform.write"
 
 # Intent keys Vigil can write: the orchestrator settings and the autonomy ceiling.
@@ -72,14 +75,20 @@ _COMPONENTS = ("triage", "investigation")
 _EFFORTS = ("low", "medium", "high")
 
 
-def settings() -> list[dict[str, Any]]:
-    """Every watched setting with its effective value, source and change state."""
-    config = effective_daemon_config(DaemonConfig.from_env())
+def settings(
+    applied: dict[str, Any] | None = None, config: DaemonConfig | None = None
+) -> list[dict[str, Any]]:
+    """Every watched setting with its effective value, source and change state.
+
+    ``applied`` is the applied INTENT.md row; read here when not given, so a
+    caller that checks writes against it can read it once and pass it.
+    """
+    config = effective_daemon_config(config or DaemonConfig.from_env())
     env_set = get_settings().model_fields_set
     locked = environment_locks_act()
     loaded = try_read_stored_ceiling()
     ceiling = None if loaded is None else loaded[0]
-    managed = _managed_keys()
+    managed = _managed_keys(applied_intent(fresh=True) if applied is None else applied)
     rows = [_intent_row(f, config, locked, ceiling, managed) for f in INTENT_FIELDS]
     for key, attr, setting in _STARTUP_LIMITS:
         path = f"orchestrator.{attr}"
@@ -139,9 +148,8 @@ def _intent_row(
     return _row(field.key, target, source, True, None)
 
 
-def _managed_keys() -> set[str]:
+def _managed_keys(applied: dict[str, Any]) -> set[str]:
     """Keys the declared INTENT.md directory manages, as the write paths read them."""
-    applied = applied_intent(fresh=True)
     if not applied.get("directory"):
         return set()
     return set(applied.get("keys") or {})

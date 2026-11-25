@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from core.auth.permissions import missing_permission, require_person_permission
 from core.reporting.recheck_review import (
     CALLS,
-    REMOVED,
     CannotOpen,
     NotQueued,
     Removed,
@@ -147,7 +146,7 @@ def get_ticket(
             see_text=see_text,
             see_ledger=see_ledger,
         )
-    except Removed:
+    except Removed as gone:
         return {
             "id": ticket_id,
             "batch_id": "",
@@ -161,7 +160,7 @@ def get_ticket(
             "can_open": False,
             "case_id": None,
             "removed": True,
-            "notice": REMOVED,
+            "notice": gone.notice,
         }
     except NotQueued:
         raise HTTPException(status_code=404, detail="Not in the review queue")
@@ -189,8 +188,8 @@ def post_confirm(
             see_text=see_text,
             see_ledger=see_ledger,
         )
-    except Removed:
-        raise HTTPException(status_code=409, detail=REMOVED)
+    except Removed as gone:
+        raise HTTPException(status_code=409, detail=gone.notice)
     except NotQueued:
         raise HTTPException(status_code=404, detail="Not in the review queue")
 
@@ -204,8 +203,8 @@ def post_case(
     """Open a Case from the first confirming call. No finding, no intake."""
     try:
         return open_reviewed_case(session, ticket_id, actor=user.principal_id)
-    except Removed:
-        raise HTTPException(status_code=409, detail=REMOVED)
+    except Removed as gone:
+        raise HTTPException(status_code=409, detail=gone.notice)
     except NotQueued:
         raise HTTPException(status_code=404, detail="Not in the review queue")
     except CannotOpen:

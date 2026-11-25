@@ -8,15 +8,20 @@ append-only, one row per apply, undo or dismissal.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
+from core.intent import FIELDS_BY_KEY, label
+from core.response.config import applied_intent, managed_widening
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
+from core.supervisory.settings import ACT_LOCKED, CEILING_UNREAD, STOPPED
 
 # The reasons the page offers. Anything else is refused.
 DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already handled")
@@ -29,8 +34,30 @@ RESUGGEST_AFTER = timedelta(days=30)
 LIVE = ("open", "held")
 HISTORY_LIMIT = 100
 
-# Apply and undo are not built yet, so no card offers them.
-_NO_APPLY = {"possible": False, "reason": "One-click apply is not available yet"}
+# Settings one click can change: the autonomy ceiling and the orchestrator settings.
+APPLICABLE = frozenset(
+    {
+        "act.reversible",
+        "act.irreversible",
+        "act.four_eyes",
+        "investigate.enabled",
+        "investigate.max_cost_per_investigation",
+        "investigate.max_total_hourly_cost",
+        "investigate.max_runtime_per_investigation",
+        "investigate.max_iterations_per_agent",
+        "investigate.max_concurrent_agents",
+    }
+)
+# The keys set_orchestrator_config checks against INTENT.md on every write.
+_MANAGED_ORCHESTRATOR_KEYS = frozenset(
+    {
+        "investigate.enabled",
+        "investigate.max_cost_per_investigation",
+        "investigate.max_total_hourly_cost",
+        "investigate.max_runtime_per_investigation",
+    }
+)
+_NOT_APPLICABLE = "Vigil can't change this setting in one click"
 
 _CARD_FIELDS = (
     "why",
@@ -42,6 +69,19 @@ _CARD_FIELDS = (
     "replay_title",
     "replay_rows",
 )
+
+
+# (setting key, target value) -> why the write path refuses that value itself, or None.
+Validate = Callable[[str, str], "str | None"]
+
+
+@dataclass(frozen=True)
+class _Ctx:
+    """What a page read checks cards and undos against."""
+
+    current: dict[str, dict[str, Any]]
+    applied: dict[str, Any]
+    validate: Validate | None
 
 
 class StoreRefusal(Exception):
@@ -135,6 +175,16 @@ def _lock(session: Session, key: str) -> None:
     )
 
 
+def lock_orchestrator_row(session: Session) -> None:
+    """Serialise one-click writes to the orchestrator settings row for this transaction.
+
+    Applying any investigate.* key rewrites the whole row from the values read
+    just before, so two applies on different keys must not overlap. Taken after
+    the setting's own lock, by every caller, so the order never inverts.
+    """
+    _lock(session, "orchestrator.settings")
+
+
 def _still_dismissed(
     session: Session, key: str, from_value: str, to_value: str
 ) -> bool:
@@ -210,8 +260,24 @@ def _check_incident(incident: dict[str, Any] | None) -> None:
         raise TypeError("held_incident needs id, title and firing_since")
 
 
-def read() -> dict[str, list[dict[str, Any]]]:
-    """Open suggestions, held ones, and the latest history, as the page reads them."""
+def read(
+    current: dict[str, dict[str, Any]] | None = None,
+    applied: dict[str, Any] | None = None,
+    validate: Validate | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Open suggestions, held ones, and the latest history, as the page reads them.
+
+    ``current`` is the settings list keyed by setting (value and change): it
+    decides whether a card can be applied and whether an apply can be undone.
+    Without it, nothing can. ``applied`` is the applied INTENT.md row the
+    settings list was built from, read here when not given. ``validate`` says
+    why the write path would refuse a value on its own terms (bounds, type),
+    or None.
+    """
+    current = current or {}
+    if applied is None:
+        applied = applied_intent(fresh=True) if current else {}
+    ctx = _Ctx(current, applied, validate)
     with unit_of_work() as session:
         live = (
             session.execute(
@@ -231,11 +297,149 @@ def read() -> dict[str, list[dict[str, Any]]]:
             .scalars()
             .all()
         )
+        applied_ids = {h.suggestion_id for h in history if h.outcome == "applied"}
+        states = (
+            dict(
+                session.execute(
+                    select(
+                        SupervisorySuggestion.suggestion_id, SupervisorySuggestion.state
+                    ).where(SupervisorySuggestion.suggestion_id.in_(applied_ids))
+                ).all()
+            )
+            if applied_ids
+            else {}
+        )
+        latest = _latest_per_suggestion(session, applied_ids)
         return {
-            "suggestions": [_suggestion(s) for s in live if s.state == "open"],
+            "suggestions": [_suggestion(s, ctx) for s in live if s.state == "open"],
             "held": [_held(s) for s in live if s.state == "held"],
-            "history": [_entry(h) for h in history],
+            "history": [_entry(h, _undoable(h, states, latest, ctx)) for h in history],
         }
+
+
+def can_undo(
+    key: str,
+    applied_value: str,
+    before: str,
+    current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
+    validate: Validate | None = None,
+) -> bool:
+    """Whether an apply that set ``key`` to ``applied_value`` can be put back to
+    ``before`` now: the setting still has the applied value and the write path
+    would take the old one."""
+    now = current.get(key)
+    if now is None or not same_value(now["value"], applied_value):
+        return False
+    ctx = _Ctx(current, applied, validate)
+    return _write_refusal(key, applied_value, before, ctx) is None
+
+
+def locked_live(session: Session, suggestion_id: str) -> SupervisorySuggestion:
+    """The open suggestion, locked with its setting for this transaction."""
+    row = _locked(session, suggestion_id)
+    if row.state != "open":
+        raise StoreRefusal(409, f"Suggestion {suggestion_id} is {row.state}")
+    return row
+
+
+def locked_applied(
+    session: Session, history_id: str
+) -> tuple[SupervisoryHistory, SupervisorySuggestion]:
+    """The apply to undo and its suggestion, locked with its setting.
+
+    Only the latest record of a suggestion that is still applied can be undone.
+    """
+    try:
+        entry_id = int(history_id)
+    except ValueError:
+        raise StoreRefusal(404, f"No history entry {history_id}") from None
+    entry = session.get(SupervisoryHistory, entry_id)
+    if entry is None:
+        raise StoreRefusal(404, f"No history entry {history_id}")
+    if entry.outcome != "applied":
+        raise StoreRefusal(409, f"History entry {history_id} is not an apply")
+    row = _locked(session, entry.suggestion_id)
+    if row.state != "applied":
+        raise StoreRefusal(409, f"That change is {row.state}, not applied")
+    newest = _latest_per_suggestion(session, {row.suggestion_id}).get(row.suggestion_id)
+    if newest != entry.id:
+        raise StoreRefusal(409, "A later record replaced that apply")
+    return entry, row
+
+
+def record(
+    session: Session,
+    row: SupervisorySuggestion,
+    outcome: str,
+    actor: str,
+    principal_id: str | None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Write one history row and move the suggestion to the matching state."""
+    row.state = outcome
+    entry = SupervisoryHistory(
+        suggestion_id=row.suggestion_id,
+        at=datetime.now(UTC),
+        setting_key=row.setting_key,
+        from_value=row.from_value,
+        to_value=row.to_value,
+        outcome=outcome,
+        note=note,
+        actor=actor,
+        actor_principal_id=principal_id,
+    )
+    session.add(entry)
+    session.flush()
+    return _entry(entry, outcome == "applied")
+
+
+def _locked(session: Session, suggestion_id: str) -> SupervisorySuggestion:
+    """The suggestion, its setting's lock taken first, then its row, as propose does."""
+    key = session.execute(
+        select(SupervisorySuggestion.setting_key).where(
+            SupervisorySuggestion.suggestion_id == suggestion_id
+        )
+    ).scalar_one_or_none()
+    if key is None:
+        raise StoreRefusal(404, f"No suggestion {suggestion_id}")
+    _lock(session, key)
+    return session.execute(
+        select(SupervisorySuggestion)
+        .where(SupervisorySuggestion.suggestion_id == suggestion_id)
+        .with_for_update()
+    ).scalar_one()
+
+
+def _latest_per_suggestion(session: Session, ids: set[str]) -> dict[str, int]:
+    if not ids:
+        return {}
+    return dict(
+        session.execute(
+            select(SupervisoryHistory.suggestion_id, func.max(SupervisoryHistory.id))
+            .where(SupervisoryHistory.suggestion_id.in_(ids))
+            .group_by(SupervisoryHistory.suggestion_id)
+        ).all()
+    )
+
+
+def _undoable(
+    h: SupervisoryHistory,
+    states: dict[str, str],
+    latest: dict[str, int],
+    ctx: _Ctx,
+) -> bool:
+    """An apply can be put back while it is the suggestion's last record, still
+    applied, and the setting still has the applied value."""
+    if h.outcome != "applied" or states.get(h.suggestion_id) != "applied":
+        return False
+    if latest.get(h.suggestion_id) != h.id:
+        return False
+    now = ctx.current.get(h.setting_key)
+    if now is None or not same_value(now["value"], h.to_value):
+        return False
+    refused = _write_refusal(h.setting_key, h.to_value, h.from_value, ctx)
+    return refused is None
 
 
 def dismiss(
@@ -245,41 +449,13 @@ def dismiss(
     if reason not in DISMISS_REASONS:
         raise StoreRefusal(422, f"reason must be one of: {', '.join(DISMISS_REASONS)}")
     with unit_of_work() as session:
-        # The setting's lock first, then the row, in the order propose takes them.
-        key = session.execute(
-            select(SupervisorySuggestion.setting_key).where(
-                SupervisorySuggestion.suggestion_id == suggestion_id
-            )
-        ).scalar_one_or_none()
-        if key is not None:
-            _lock(session, key)
-        row = session.execute(
-            select(SupervisorySuggestion)
-            .where(SupervisorySuggestion.suggestion_id == suggestion_id)
-            .with_for_update()
-        ).scalar_one_or_none()
-        if row is None:
-            raise StoreRefusal(404, f"No suggestion {suggestion_id}")
+        row = _locked(session, suggestion_id)
         if row.state not in LIVE:
             raise StoreRefusal(409, f"Suggestion {suggestion_id} is {row.state}")
-        row.state = "dismissed"
-        entry = SupervisoryHistory(
-            suggestion_id=row.suggestion_id,
-            at=datetime.now(UTC),
-            setting_key=row.setting_key,
-            from_value=row.from_value,
-            to_value=row.to_value,
-            outcome="dismissed",
-            note=reason,
-            actor=actor,
-            actor_principal_id=principal_id,
-        )
-        session.add(entry)
-        session.flush()
-        return _entry(entry)
+        return record(session, row, "dismissed", actor, principal_id, reason)
 
 
-def _suggestion(s: SupervisorySuggestion) -> dict[str, Any]:
+def _suggestion(s: SupervisorySuggestion, ctx: _Ctx) -> dict[str, Any]:
     card = s.card or {}
     return {
         "id": s.suggestion_id,
@@ -293,8 +469,96 @@ def _suggestion(s: SupervisorySuggestion) -> dict[str, Any]:
         **{k: card.get(k) for k in _CARD_FIELDS},
         # The 30-case check is for investigation suggestions only.
         "check": card.get("check") if s.fn == "investigation" else None,
-        "apply": dict(_NO_APPLY),
+        "apply": _apply_state(s, ctx),
     }
+
+
+def _apply_state(s: SupervisorySuggestion, ctx: _Ctx) -> dict[str, Any]:
+    setting = ctx.current.get(s.setting_key)
+    if s.setting_key not in APPLICABLE or setting is None:
+        return {"possible": False, "reason": _NOT_APPLICABLE}
+    change = setting.get("change") or {}
+    if not change.get("possible"):
+        return {"possible": False, "reason": change.get("reason") or _NOT_APPLICABLE}
+    if not same_value(setting["value"], s.from_value):
+        return {
+            "possible": False,
+            "reason": f"The setting is {setting['value']} now, not {s.from_value}",
+        }
+    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, ctx)
+    return {"possible": False, "reason": refused} if refused else {"possible": True}
+
+
+def _write_refusal(key: str, from_value: str, to_value: str, ctx: _Ctx) -> str | None:
+    """Why the write path would refuse changing ``key`` from ``from_value`` to
+    ``to_value``, when the settings list can tell; None otherwise.
+
+    The same checks the write paths make: a target wider than INTENT.md
+    declares; an act flag loosened while autonomy is stopped; and, because an
+    orchestrator write sends every managed investigate.* key, another of those
+    keys already wider than declared.
+    """
+    if ctx.validate is not None:
+        refused = ctx.validate(key, to_value)
+        if refused:
+            return refused
+    refused = _past_declared(key, to_value, ctx.applied)
+    if refused:
+        return refused
+    row = ctx.current.get(key) or {}
+    reason = (row.get("change") or {}).get("reason")
+    # The ceiling write refuses while the ceiling can't be read, and any raise
+    # of an act flag while the environment forces them off.
+    if key.startswith("act.") and reason == CEILING_UNREAD:
+        return reason
+    if reason == ACT_LOCKED and _loosens(key, from_value, to_value):
+        return reason
+    if (
+        key.startswith("act.")
+        and (row.get("change") or {}).get("reason") == STOPPED
+        and _loosens(key, from_value, to_value)
+    ):
+        return STOPPED
+    if key.startswith("investigate."):
+        for other in _MANAGED_ORCHESTRATOR_KEYS - {key}:
+            now = ctx.current.get(other)
+            refused = now and _past_declared(other, now["value"], ctx.applied)
+            if refused:
+                return refused
+    return None
+
+
+def _loosens(key: str, from_value: str, to_value: str) -> bool:
+    """Whether going from ``from_value`` to ``to_value`` loosens ``key``, by its
+    INTENT.md tightening rule. False for a key without one."""
+    field = FIELDS_BY_KEY.get(key)
+    if field is None:
+        return False
+
+    try:
+        # label(rule, new, old) reads as what moving from old to new does.
+        return label(field.rule, _typed(to_value), _typed(from_value)) == "loosen"
+    except (TypeError, ValueError):
+        return False
+
+
+def _past_declared(key: str, to_value: str, applied: dict[str, Any]) -> str | None:
+    """Why a write of ``to_value`` would be refused as wider than INTENT.md
+    declares for ``key``, or None. The same check the write paths make."""
+    if key not in FIELDS_BY_KEY:
+        return None
+    try:
+        return managed_widening(key, _typed(to_value), applied)
+    except (TypeError, ValueError):
+        return None
+
+
+def _typed(value: str) -> Any:
+    if value in ("on", "true"):
+        return True
+    if value in ("off", "false"):
+        return False
+    return float(value)
 
 
 def _held(s: SupervisorySuggestion) -> dict[str, Any]:
@@ -309,7 +573,7 @@ def _held(s: SupervisorySuggestion) -> dict[str, Any]:
     }
 
 
-def _entry(h: SupervisoryHistory) -> dict[str, Any]:
+def _entry(h: SupervisoryHistory, undoable: bool = False) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": str(h.id),
         "at": _iso(h.at),
@@ -321,7 +585,7 @@ def _entry(h: SupervisoryHistory) -> dict[str, Any]:
     }
     if h.outcome == "applied":
         entry["improved"] = h.improved
-        entry["undoable"] = False
+        entry["undoable"] = undoable
     return entry
 
 

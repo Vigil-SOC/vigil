@@ -107,7 +107,7 @@ def warn_retired_settings() -> None:
     """Log once, at API start, each retired host setting still in the
     environment or .env: it is ignored. ``Settings`` drops unknown names
     silently, so this reads them itself."""
-    from core.auth import password_reset, password_validator
+    from core.auth import password_reset
 
     env_file = _settings_env_file()
     env = dict(dotenv_values(env_file)) if env_file else {}
@@ -116,11 +116,18 @@ def warn_retired_settings() -> None:
     for name, fixed in (
         ("JWT_ACCESS_EXPIRATION_MINUTES", f"{JWT_ACCESS_EXPIRATION_MINUTES} minutes"),
         ("JWT_REFRESH_EXPIRATION_DAYS", f"{JWT_REFRESH_EXPIRATION_DAYS} days"),
-        ("AUTH_MIN_ZXCVBN_SCORE", f"{password_validator.MIN_ZXCVBN_SCORE}"),
+        ("AUTH_MIN_ZXCVBN_SCORE", None),
         ("PASSWORD_RESET_TTL_SECONDS", f"{password_reset.RESET_TTL_SECONDS} seconds"),
     ):
-        if name in names:
-            logger.warning("%s is ignored: the value is fixed at %s.", name, fixed)
+        if name not in names:
+            continue
+        if name == "AUTH_MIN_ZXCVBN_SCORE":
+            logger.warning(
+                "%s is ignored: set the strength score in Settings › Sessions.",
+                name,
+            )
+            continue
+        logger.warning("%s is ignored: the value is fixed at %s.", name, fixed)
 
 
 # Old codes were 8 hex characters, new ones 16
