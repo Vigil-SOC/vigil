@@ -35,9 +35,9 @@ call stop: its turns, and the call meter they raise, are the hunt's own, not a
 Vigil setting. A park that later ends (extended, concluded by a person, or
 aborted past its time to live) no longer says which cap it met, so it does not
 count. A cost stop whose stated ceiling is above the investigation's cap met a
-person's extension, not the setting, and does not count; a runtime refusal does
-not state its ceiling, so a hunt extended and parked again on runtime still
-counts. A root-cause trace's stop names no cap and its budgets are fixed in code,
+person's extension, not the setting, and does not count. A refusal that states no
+ceiling (runtime, or cost with nothing in flight) cannot be told apart, so a hunt
+extended and parked again that way still counts. A root-cause trace's stop names no cap and its budgets are fixed in code,
 so it does not count either.
 """
 
