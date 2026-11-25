@@ -17,14 +17,23 @@ What is counted, per function, by the time each item happened:
   and that a person judged (a noise mark, or a Case they closed as real or not).
   Missed: Vigil said benign, the person said real. False alarm: Vigil said
   malicious or suspicious, the person said not real. Undetermined is neither.
-- investigation: each Case's last investigation run that ended in the window,
-  on a Case a person then closed as real or not; a run retried after a failure
-  counts once, as its retry. Missed: the Case was real and the run gave no
-  answer that said so: it did not complete, ran out of turns, or recorded on the
-  Case that it concluded benign or a false positive. False alarm: the Case was
-  not real and the run completed without recording a dismissal. Cost and time
-  are the mean cost and run time of every such run in the window, labelled or
-  not.
+- investigation: every agent-run kind that investigates (investigations,
+  threat hunts, root-cause traces and workflows: ``investigate``, ``hunt``,
+  ``root_cause``, ``compose``), since all take their model from this one
+  function; ``adjudicate``, a second look at another run's verdict, is not one.
+  A run's Case is its investigation's, else the one it was started on. Each
+  Case's last such run that ended in the window, on a Case a person then closed
+  as real or not; a run retried after a failure counts once, as its retry, and a
+  hunt and the root-cause trace it handed off to share their Case, so the trace
+  is the one judged. Missed: the Case was real and the run gave no answer that
+  said so: it did not complete, ran out of turns, or recorded on the Case that
+  it concluded benign or a false positive. False alarm: the Case was not real
+  and the run completed without recording a dismissal. Every kind ends and
+  dismisses the same way, so the rule is one for all. Cost and time are the
+  mean cost and run time of every such run in the window, labelled or not, Case
+  or not; a hunt costs far more than an investigation, so they are compared
+  kind by kind and weighted by the after window's runs of each kind, and a
+  fortnight with more hunts does not read as dearer.
 - response: actions Vigil proposed in the window that a person approved or
   rejected. False alarm: rejected, or executed and then undone. Nothing here is
   a missed attack, and there is no cost or time.
@@ -47,7 +56,7 @@ included, marks it done.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -87,7 +96,8 @@ _NOT_REAL = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is False
 )
 _DISMISSED = ("agent_run_closed", "agent_run_left_open")
-_SHADOW_KIND = "adjudicate"
+# The agent-run kinds that investigate; adjudicate, a second look, is not one.
+_KINDS = ("investigate", "hunt", "root_cause", "compose")
 _ISO = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$"
 
 
@@ -98,6 +108,9 @@ class Measure:
     false_alarms: int
     cost: float | None = None
     seconds: float | None = None
+    # Per run kind: (runs with a cost, their total cost, runs with a time, their
+    # total seconds). Where given, cost and time are compared kind by kind.
+    by_kind: dict[str, tuple[int, float, int, float]] = field(default_factory=dict)
 
 
 def follow_up(now: datetime | None = None) -> dict[str, int]:
@@ -204,8 +217,8 @@ def judge(before: Measure, after: Measure) -> tuple[bool | None, str]:
                 f"{b} of {before.labelled} → {a} of {after.labelled}"
             )
     for word, b, a, unit in (
-        ("cost per run", before.cost, after.cost, "$"),
-        ("time per run", before.seconds, after.seconds, "s"),
+        ("cost per run", *_means(before, after, 0, before.cost, after.cost), "$"),
+        ("time per run", *_means(before, after, 2, before.seconds, after.seconds), "s"),
     ):
         if b is None or a is None or b <= 0:
             continue
@@ -219,6 +232,29 @@ def judge(before: Measure, after: Measure) -> tuple[bool | None, str]:
         f"{after.missed} of {after.labelled}, false alarms {before.false_alarms} → "
         f"{after.false_alarms}"
     )
+
+
+def _means(
+    before: Measure, after: Measure, at: int, b: float | None, a: float | None
+) -> tuple[float | None, float | None]:
+    """Before and after means, at the after window's mix of run kinds.
+
+    ``at`` picks cost (0) or time (2) from ``by_kind``. Each kind's before mean
+    is weighted by the after window's runs of that kind, over the kinds both
+    windows ran; with none in common there is nothing to compare."""
+    if not before.by_kind and not after.by_kind:
+        return b, a
+    weight = before_total = after_total = 0.0
+    for kind, now in after.by_kind.items():
+        then = before.by_kind.get(kind)
+        if then is None or not then[at] or not now[at]:
+            continue
+        weight += now[at]
+        before_total += now[at] * then[at + 1] / then[at]
+        after_total += now[at + 1]
+    if not weight:
+        return None, None
+    return before_total / weight, after_total / weight
 
 
 def _amount(value: float, unit: str) -> str:
@@ -288,30 +324,40 @@ def _in_person_closed_case():
 def _investigation(
     session: Session, start: datetime, end: datetime, cutoff: datetime
 ) -> Measure:
-    sample = exists().where(
-        case_findings.c.case_id == Investigation.case_id,
-        case_findings.c.finding_id == Finding.finding_id,
-        Finding.data_source.in_(_NOT_REAL_DATA),
+    kind = WorkflowRun.trigger_context["run_kind"].astext
+    # Its investigation's Case, else the one the run was started on.
+    case_id = func.coalesce(
+        Investigation.case_id, WorkflowRun.trigger_context["case_id"].astext
+    )
+    sample = (
+        exists()
+        .where(
+            case_findings.c.case_id == case_id,
+            case_findings.c.finding_id == Finding.finding_id,
+            Finding.data_source.in_(_NOT_REAL_DATA),
+        )
+        .correlate_except(case_findings, Finding)
     )
     runs = (
         select(
             WorkflowRun.run_id,
+            kind.label("kind"),
             WorkflowRun.outcome,
             WorkflowRun.capped,
             WorkflowRun.finished_at,
             WorkflowRun.total_cost_usd,
             WorkflowRun.duration_ms,
-            Investigation.case_id,
+            case_id.label("case_id"),
             # A Case's last run in the window is the one judged: a retry after a
             # failure replaces the failed run.
             func.row_number()
             .over(
-                partition_by=func.coalesce(Investigation.case_id, WorkflowRun.run_id),
+                partition_by=func.coalesce(case_id, WorkflowRun.run_id),
                 order_by=(WorkflowRun.finished_at.desc(), WorkflowRun.run_id.desc()),
             )
             .label("rank"),
         )
-        .join(
+        .outerjoin(
             Investigation,
             Investigation.investigation_id
             == WorkflowRun.trigger_context["investigation_id"].astext,
@@ -320,8 +366,7 @@ def _investigation(
             WorkflowRun.finished_at >= _naive(start),
             WorkflowRun.finished_at < _naive(end),
             WorkflowRun.deleted_at.is_(None),
-            func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
-            != _SHADOW_KIND,
+            kind.in_(_KINDS),
             ~sample,
         )
         .subquery("followup_runs")
@@ -354,13 +399,16 @@ def _investigation(
     not_completed = or_(
         runs.c.outcome.is_distinct_from("completed"), runs.c.capped.is_(True)
     )
-    row = session.execute(
+    rows = session.execute(
         select(
+            runs.c.kind,
             func.count().filter(or_(real, not_real)),
             func.count().filter(and_(real, or_(not_completed, dismissed))),
             func.count().filter(and_(not_real, ~not_completed, ~dismissed)),
-            func.avg(runs.c.total_cost_usd),
-            func.avg(runs.c.duration_ms),
+            func.count(runs.c.total_cost_usd),
+            func.coalesce(func.sum(runs.c.total_cost_usd), 0),
+            func.count(runs.c.duration_ms),
+            func.coalesce(func.sum(runs.c.duration_ms), 0),
         )
         .select_from(runs)
         .outerjoin(Case, Case.case_id == runs.c.case_id)
@@ -371,14 +419,21 @@ def _investigation(
                 closure.close_channel.in_(PERSON_CHANNELS),
             ),
         )
-    ).one()
-    labelled, missed, false_alarms, cost, ms = row
+        .group_by(runs.c.kind)
+    ).all()
+    by_kind = {
+        kind: (costed, float(cost), timed, float(ms) / 1000)
+        for kind, _, _, _, costed, cost, timed, ms in rows
+    }
+    costed = sum(n for n, _, _, _ in by_kind.values())
+    timed = sum(n for _, _, n, _ in by_kind.values())
     return Measure(
-        labelled,
-        missed,
-        false_alarms,
-        float(cost) if cost is not None else None,
-        float(ms) / 1000 if ms is not None else None,
+        sum(row[1] for row in rows),
+        sum(row[2] for row in rows),
+        sum(row[3] for row in rows),
+        sum(c for _, c, _, _ in by_kind.values()) / costed if costed else None,
+        sum(t for _, _, _, t in by_kind.values()) / timed if timed else None,
+        by_kind,
     )
 
 
