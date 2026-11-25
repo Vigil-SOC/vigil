@@ -31,7 +31,7 @@ from core.detections.detection_rules_service import (
     DetectionRulesService,
     is_vendor_repo,
 )
-from core.detections.inventory import catalog, health_inbox, stages
+from core.detections.inventory import catalog, health_inbox, import_check, stages
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.integrations.mcp.surface import acting_as
@@ -675,7 +675,8 @@ def get_rule_stages(rule_id: int):
 
 
 class StageChangeRequest(BaseModel):
-    """Why a person reverts a rule, switches it off, or releases it."""
+    """Why a person reverts a rule, switches it off, releases its hold, or
+    approves it as coverage."""
 
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -738,6 +739,19 @@ def release_rule(
     """Lifts a person's hold, leaving the rule in its current stage; the normal
     rollout applies again."""
     return _stage_change(stages.release, rule_id, body, current_user)
+
+
+@router.post("/rules/{rule_id}/approve", dependencies=_SETTINGS_WRITE)
+def approve_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Makes a repo or local rule's latest version count as coverage although the
+    import check holds it (a KQL rule, absent fields, no check can judge it). A
+    version failing lint, or one not held, is refused with 409; the next version
+    is held again."""
+    return _stage_change(import_check.approve, rule_id, body, current_user)
 
 
 @router.get("/rules/{rule_id}/findings")

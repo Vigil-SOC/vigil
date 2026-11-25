@@ -4756,6 +4756,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/detection-rules/rules/{rule_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Rule
+         * @description Makes a repo or local rule's latest version count as coverage although the
+         *     import check holds it (a KQL rule, absent fields, no check can judge it). A
+         *     version failing lint, or one not held, is refused with 409; the next version
+         *     is held again.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/detection-rules/rules/{rule_id}/detection-skill": {
         parameters: {
             query?: never;
@@ -17974,7 +17997,8 @@ export interface components {
         };
         /**
          * StageChangeRequest
-         * @description Why a person reverts a rule, switches it off, or releases it.
+         * @description Why a person reverts a rule, switches it off, releases its hold, or
+         *     approves it as coverage.
          */
         StageChangeRequest: {
             /** Reason */
@@ -27517,6 +27541,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_approve": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

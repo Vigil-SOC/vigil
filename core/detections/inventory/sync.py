@@ -75,6 +75,11 @@ whole. One with nothing to lint (a machine learning rule, a KQL query) records
 result 'none' and why, once a version too. It never blocks, stages or disables the rule; the catalog stops counting
 a failing one as coverage.
 
+A new rule or new version of a repo or local source (not the overlay) is held
+from coverage: checks['import'] result 'pending' until ``import_check`` judges
+it, or 'unchecked' (counts) with VIGIL_RULE_IMPORT_CHECK off. A version stored
+before the hold carries no key and counts.
+
 Nothing is ever written to a SIEM.
 """
 
@@ -412,6 +417,39 @@ def _lint_off(lint: Dict[str, Any]) -> tuple:
     return f"fails lint: keyed to {literals}", {"lint": lint}
 
 
+def _import_state(now: str) -> Dict[str, Any]:
+    """checks['import'] of a new repo rule or version: held until judged."""
+    from core.config import get_settings
+
+    if get_settings().vigil_rule_import_check:
+        return {"result": "pending", "at": now}
+    return {
+        "result": "unchecked",
+        "reason": "the import check is switched off",
+        "at": now,
+    }
+
+
+def _keep_import(session: Any, checked: List[tuple]) -> List[tuple]:
+    """``checked`` with each stored version's current checks['import'], read under
+    a row lock: sync only sets it on a version it inserts, so a person's approval
+    or the sweep's verdict since this sync read the version is never undone."""
+    v = DetectionRuleVersion
+    current = {
+        (rid, ver): held
+        for rid, ver, held in session.execute(
+            select(v.rule_id, v.version, v.checks["import"])
+            .where(tuple_(v.rule_id, v.version).in_([(r, n) for r, n, _ in checked]))
+            .with_for_update()
+        ).all()
+        if held is not None
+    }
+    return [
+        (r, n, {**c, "import": current[(r, n)]}) if (r, n) in current else (r, n, c)
+        for r, n, c in checked
+    ]
+
+
 def _rule_fields(record: RuleRecord) -> Dict[str, Any]:
     return {
         "name": record.name,
@@ -627,6 +665,8 @@ def sync_source(
             for rule, fp, checks in session.execute(latest).all()
         }
         overlay = source == readers.OVERLAY_SOURCE
+        # A new rule or version of any other repo source is held (import_check).
+        held = not siem and not overlay
         last = _last_results(session, source) if siem or overlay else {}
         current = _current_stages(session) if overlay else {}
         changes: List[dict] = []
@@ -729,6 +769,8 @@ def sync_source(
             checks = _checks(stored, record, now)
             if lint:
                 checks = {**checks, "lint": lint}
+            if held and fp != latest_fp:
+                checks = {**checks, "import": _import_state(now)}
             if siem and record.status == "disabled":
                 dropped, checks = _dropped(
                     rule.id,
@@ -813,6 +855,8 @@ def sync_source(
                 checks = _checks({}, r, now)
                 if lint:
                     checks = {**checks, "lint": lint}
+                if held:
+                    checks = {**checks, "import": _import_state(now)}
                 if checks:
                     checked.append((rule_id, 1, checks))
                 if siem:
@@ -824,6 +868,8 @@ def sync_source(
             report.new = len(new)
         if versions:
             session.execute(insert(DetectionRuleVersion), versions)
+        if held and checked:
+            checked = _keep_import(session, checked)
         _write_checks(session, checked)
         report.checked = len(checked)
         _record_changes(session, changes, now)
