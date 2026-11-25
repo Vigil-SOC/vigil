@@ -24,7 +24,9 @@ routed yet (``held`` in Medic's own words) or one a person suppressed does not.
 When several hold the same function, the one firing longest holds it.
 
 Medic is off unless ``VIGIL_MEDIC_ENABLED`` is on. While it is off nothing is
-held, and :func:`sweep` releases whatever was. Medic is read through its own API,
+held: :func:`incident_for` holds nothing, and :func:`sweep` releases whatever was
+held before. Until a sweep runs, a suggestion held before Medic was switched off
+reads as held, and is counted as held. Medic is read through its own API,
 as the incident notices read it: nothing here imports Medic or writes to it. A
 read that does not come back changes nothing, so a held suggestion stays held
 until Medic says the incident closed.
@@ -35,12 +37,13 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from core.config import Settings, get_settings
 from core.platform import medic_last_seen
 from core.platform.medic_incidents import _pages
 from core.platform.medic_status import medic_enabled
+from core.storage.connection import get_db_manager
 from core.storage.models.supervisory import SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
 from core.supervisory.store import LIVE, _lock
@@ -52,6 +55,13 @@ FAMILIES = {
 }
 _HOLDING_STATES = ("firing", "resolving")
 _INCIDENT_FIELDS = ("id", "title", "firing_since")
+# Two-key advisory locks never collide with the one-key per-setting locks.
+_SWEEP_LOCK = (
+    "SELECT pg_advisory_lock(hashtext('supervisory'), hashtext('medic-sweep'))"
+)
+_SWEEP_UNLOCK = (
+    "SELECT pg_advisory_unlock(hashtext('supervisory'), hashtext('medic-sweep'))"
+)
 
 
 def open_incidents(settings: Settings | None = None) -> list[dict[str, Any]] | None:
@@ -130,10 +140,26 @@ def incident_for(
 def sweep(settings: Settings | None = None) -> dict[str, int] | None:
     """Hold each live suggestion an open incident is related to, and release the rest.
 
+    One sweep at a time, across replicas: a second waits, then reads Medic afresh,
+    so an older read never lands after a newer one. The wait is on its own
+    connection, outside any transaction, so nothing is held open across the read.
     Each suggestion is moved under its setting's lock, the lock propose and dismiss
     take, and only while it is still live. Returns how many were held and released,
     or None, changing nothing, when Medic could not be read.
     """
+    manager = get_db_manager()
+    manager.initialize()  # a no-op once the process has its engine
+    with manager.engine.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as conn:
+        conn.execute(text(_SWEEP_LOCK))
+        try:
+            return _sweep(settings)
+        finally:
+            conn.execute(text(_SWEEP_UNLOCK))
+
+
+def _sweep(settings: Settings | None) -> dict[str, int] | None:
     incidents = open_incidents(settings)
     if incidents is None:
         return None
@@ -169,7 +195,11 @@ def sweep(settings: Settings | None = None) -> dict[str, int] | None:
 
 
 def open_related() -> int:
-    """How many open Medic incidents hold a suggestion, as the last sweep left them."""
+    """How many Medic incidents are named on a held suggestion, as the last sweep left them.
+
+    Only the incident firing longest is named for a function, so an incident that
+    holds the same functions as an older one is not counted.
+    """
     with unit_of_work() as session:
         return session.execute(
             select(
