@@ -16,6 +16,7 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from core.intent import FIELDS_BY_KEY, label
+from core.response.config import managed_widening
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
 
@@ -434,9 +435,17 @@ def _apply_state(
     change = setting.get("change") or {}
     if not change.get("possible"):
         return {"possible": False, "reason": change.get("reason") or _NOT_APPLICABLE}
-    # A row that can only be tightened (stopped, or managed by INTENT.md) refuses
-    # a loosening, so the card says so instead of failing on click.
-    if change.get("reason") and _loosens(s.setting_key, s.from_value, s.to_value):
+    # The write paths refuse these, so the card says so instead of failing on
+    # click: a value past what INTENT.md declares for a managed key, and an act
+    # flag loosened while autonomy is stopped.
+    refused = _past_declared(s.setting_key, s.to_value)
+    if refused:
+        return {"possible": False, "reason": refused}
+    if (
+        s.setting_key.startswith("act.")
+        and change.get("reason")
+        and _loosens(s.setting_key, s.from_value, s.to_value)
+    ):
         return {"possible": False, "reason": change["reason"]}
     if not same_value(setting["value"], s.from_value):
         return {
@@ -453,16 +462,30 @@ def _loosens(key: str, from_value: str, to_value: str) -> bool:
     if field is None:
         return False
 
-    def typed(value: str) -> Any:
-        if value in ("on", "off"):
-            return value == "on"
-        return float(value)
-
     try:
         # label(rule, new, old) reads as what moving from old to new does.
-        return label(field.rule, typed(to_value), typed(from_value)) == "loosen"
+        return label(field.rule, _typed(to_value), _typed(from_value)) == "loosen"
     except (TypeError, ValueError):
         return False
+
+
+def _past_declared(key: str, to_value: str) -> str | None:
+    """Why a write of ``to_value`` would be refused as wider than INTENT.md
+    declares for ``key``, or None. The same check the write paths make."""
+    if key not in FIELDS_BY_KEY:
+        return None
+    try:
+        return managed_widening(key, _typed(to_value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _typed(value: str) -> Any:
+    if value in ("on", "true"):
+        return True
+    if value in ("off", "false"):
+        return False
+    return float(value)
 
 
 def _held(s: SupervisorySuggestion) -> dict[str, Any]:
