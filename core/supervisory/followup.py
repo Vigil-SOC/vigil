@@ -99,11 +99,10 @@ _NOT_REAL = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is False
 )
 _DISMISSED = ("agent_run_closed", "agent_run_left_open")
-# How long before it ended a run in the window is taken to have started. The
-# runtime cap is a day, but a hunt parks for up to its park TTL (7 days) and can be
-# extended and park again, with its start time set once; a month covers that.
-# Read on the indexed start time, so the run table is not scanned whole.
-RUN_LOOKBACK = timedelta(days=30)
+# A run that ends in a window can have started any time before it: a hunt can
+# park for up to 30 days, be extended and park again, with its start time set
+# once. So runs are read by when they ended, and the start time bounds them only
+# from above.
 # The agent-run kinds that investigate; adjudicate, a second look, is not one.
 _KINDS = ("investigate", "hunt", "root_cause", "compose")
 _ISO = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$"
@@ -376,7 +375,6 @@ def _investigation(
             == WorkflowRun.trigger_context["investigation_id"].astext,
         )
         .where(
-            WorkflowRun.started_at >= _naive(start - RUN_LOOKBACK),
             WorkflowRun.started_at < _naive(end),
             WorkflowRun.finished_at >= _naive(start),
             WorkflowRun.finished_at < _naive(end),
