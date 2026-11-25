@@ -89,10 +89,11 @@ KIND_LABELS = {
     "root_cause": "Root-cause traces",
     "compose": "Workflows",
 }
-# A run that ended in the window started at most this long before it began: the
-# runtime cap is a day, and a hunt parks for at most its park TTL (7 days) before
-# it ends. Read on the indexed start time, so the run table is not scanned whole.
-RUN_LOOKBACK = timedelta(days=14)
+# How long before it ended a run in the window is taken to have started. The
+# runtime cap is a day, but a hunt parks for up to its park TTL (7 days) and can be
+# extended and park again, with its start time set once; a month covers that.
+# Read on the indexed start time, so the run table is not scanned whole.
+RUN_LOOKBACK = timedelta(days=30)
 _REAL = tuple(c.value for c in ClosureCategory if closure_says_real(c.value) is True)
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
@@ -332,7 +333,8 @@ def _top_tools(
         select(quiet.c.kind, quiet.c.reason, WorkflowRun.run_id).join(
             WorkflowRun, _investigation_of_run() == quiet.c.investigation_id
         )
-        # Its last activity is in the window, so its runs started near it.
+        # Bounds the join on the indexed start time. A run of it older than the
+        # lookback drops out of the tool note only; the stop is still counted.
         .where(*_counted_run(), *_started_near(start, end))
     )
     ledger = union_all(
