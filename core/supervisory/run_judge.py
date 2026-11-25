@@ -1,8 +1,10 @@
 """How each investigation run was done, rolled up per model, by rules only.
 
-Read-only. A judged run is one of an investigation's own runs (any kind its
-workflow declares) that ended in the window with an answer (``outcome``
-completed). Shadow runs, removed runs, and
+Read-only. A judged run is an investigation's own ``investigate`` run that
+ended in the window with an answer: ``completed``, or ``data_starved``, which
+still reports a verdict though it could not look and so is exactly what the
+tool flags are for. Other kinds (hunts, compose, root cause) answer through
+tools of their own and are not compared here. Shadow runs, removed runs, and
 investigations of sample alerts or probes (through their Case or the findings
 that started them) are left out. Four flags, each a rule on what the run
 recorded:
@@ -21,8 +23,8 @@ recorded:
 
 A run's model is the one its own agent calls used, as each call's spend event
 on the agent ledger records it (role ``agent``; the reviewer's calls are not the
-run's). A run whose agent calls used more than one model, or none recorded (a
-compose run's phases spend under their own roles), is counted under no model.
+run's). A run whose agent calls used more than one model, or none recorded, is
+counted under no model.
 
 Only investigation is judged. Triage records no model per finding and makes no
 tool calls, and there is no response model setting: response proposals come out
@@ -89,7 +91,9 @@ _BOOKKEEPING = (
     "emit",
 )
 _ACTING = ("reversible", "irreversible")
-_SHADOW_KIND = "adjudicate"
+# Shadow runs are "adjudicate", so naming the kind leaves them out too.
+_RUN_KIND = "investigate"
+_ANSWERED = ("completed", "data_starved")
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
 _events = table(
@@ -156,12 +160,15 @@ def _judged_runs(start: datetime, end: datetime):
         own_failed,
         _ok(failed).is_(False),
         _tool(failed).notin_(_BOOKKEEPING),
-        ~exists().where(
+        # Explicit: nested two deep, the run and the failed call are outer rows.
+        ~exists()
+        .where(
             own_later,
             later.c.seq > failed.c.seq,
             _ok(later).is_(True),
             _tool(later).notin_(_BOOKKEEPING),
-        ),
+        )
+        .correlate_except(later),
     )
     acting = select(_tool_classes.c.tool_name).where(
         _tool_classes.c.effect_class.in_(_ACTING)
@@ -194,9 +201,8 @@ def _judged_runs(start: datetime, end: datetime):
             WorkflowRun.finished_at >= start,
             WorkflowRun.finished_at < end,
             WorkflowRun.deleted_at.is_(None),
-            WorkflowRun.outcome == "completed",
-            func.coalesce(WorkflowRun.trigger_context["run_kind"].astext, "")
-            != _SHADOW_KIND,
+            WorkflowRun.outcome.in_(_ANSWERED),
+            WorkflowRun.trigger_context["run_kind"].astext == _RUN_KIND,
             ~_not_real_data(),
         )
         .subquery("judged_runs")
