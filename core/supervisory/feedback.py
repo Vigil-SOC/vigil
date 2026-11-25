@@ -4,8 +4,10 @@ Read-only. A label is a person's judgement, never an agent's:
 
 - triage: a finding first triaged in the window whose winning determination (a
   closed Case or a noise mark) is a person's;
-- investigation: a Case an investigation ran on, closed in the window by a person
-  with a category that says real or not real;
+- investigation: a Case an agent run worked on (an investigation, a hunt, a
+  root-cause trace or a composed workflow), closed in the window by a person with
+  a category that says real or not real. A shadow adjudication is not a run on
+  the Case;
 - response: an action Vigil proposed that a person approved or rejected in the
   window. A person's own proposal, and the row a person's undo writes, are not
   judgements on Vigil and are left out.
@@ -39,8 +41,14 @@ from core.storage.models import Finding
 from core.storage.models.auth import Principal
 from core.storage.models.base import case_findings
 from core.storage.models.case_entities import CaseClosureInfo
-from core.storage.models.workflow import ApprovalAction, Investigation
+from core.storage.models.workflow import ApprovalAction, Investigation, WorkflowRun
 from core.storage.unit_of_work import unit_of_work
+from core.workflows.workflows_service import (
+    COMPOSE_RUN_KIND,
+    HUNT_RUN_KIND,
+    INVESTIGATE_RUN_KIND,
+    ROOT_CAUSE_RUN_KIND,
+)
 
 # The same floor the detection Accurate check and production tuning use.
 FLOOR = MIN_JUDGED
@@ -50,6 +58,13 @@ _PROBE = "probe"
 _NOT_REAL_DATA = (SAMPLE_DATA_SOURCE, _PROBE)
 # A decision a person made: the row left pending either way.
 _DECIDED = ("approved", "rejected", "executed", "failed")
+# The agent runs a person's close of their Case judges. All share one model setting.
+_RUN_KINDS = (
+    INVESTIGATE_RUN_KIND,
+    HUNT_RUN_KIND,
+    ROOT_CAUSE_RUN_KIND,
+    COMPOSE_RUN_KIND,
+)
 # Close categories that say real or not real; the rest determined neither.
 _DETERMINED = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is not None
@@ -134,9 +149,17 @@ def _in_person_closed_case():
 
 
 def _investigation(session: Session, start: datetime, end: datetime) -> int:
-    """Cases an investigation ran on, closed by a person in the window, real or not."""
-    ran = exists().where(Investigation.case_id == CaseClosureInfo.case_id)
-    return _count_closes(session, start, end, ran)
+    """Cases an agent run worked on, closed by a person in the window, real or not.
+
+    A daemon investigation is tied to its Case by the investigation row; any other
+    run by the ``case_id`` its trigger carries."""
+    investigated = exists().where(Investigation.case_id == CaseClosureInfo.case_id)
+    run_on = exists().where(
+        WorkflowRun.trigger_context["case_id"].astext == CaseClosureInfo.case_id,
+        WorkflowRun.trigger_context["run_kind"].astext.in_(_RUN_KINDS),
+        WorkflowRun.deleted_at.is_(None),
+    )
+    return _count_closes(session, start, end, or_(investigated, run_on))
 
 
 def _response(session: Session, start: datetime, end: datetime) -> int:
