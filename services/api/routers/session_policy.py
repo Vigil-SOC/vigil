@@ -224,6 +224,11 @@ def put_policy(
     if old.version != expected:
         return stale()
 
+    # A body that leaves the score out keeps the stored one. Parsing has already
+    # filled the default, so this is what the loosening check, the dry run, the
+    # trail and the write all see.
+    body = session_policy.with_omitted_score(body, old.policy)
+
     # An unreadable row's real values are unknown, so no save over it can be shown
     # to tighten: a machine may not do it, and a person is asked to confirm.
     loosening = old.unreadable or session_policy.is_loosening(old.policy, body)

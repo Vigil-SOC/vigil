@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from core.auth import trail_events
-from core.auth.password_hash import MAX_PASSWORD_LENGTH
+from core.auth.password_hash import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from core.platform import notices
 from core.storage.models import BreachedPassword, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
@@ -36,7 +36,7 @@ STALE_DAYS = 90
 SETTINGS_LINK = "/settings?section=sessions"
 # Larger than a full 1M-line SecLists file (about 9 MB), with room to spare.
 MAX_BYTES = 64 * 1024 * 1024
-MIN_LENGTH = 12  # no policy minimum lets a shorter entry through
+MIN_LENGTH = MIN_PASSWORD_LENGTH  # shortest password the policy can require
 BATCH = 5000
 
 _NOTICE = Path(__file__).resolve().parent.parent.parent / "data" / "NOTICE"
@@ -104,7 +104,7 @@ def is_stale(effective: Optional[datetime]) -> bool:
 def import_entries(session: Session, stream: BinaryIO, shipped: frozenset) -> dict:
     """Add the usable lines of ``stream`` (one entry per line, read as a stream).
 
-    Skipped: blanks, entries under 12 characters or over the password maximum,
+    Skipped: blanks, entries under 3 characters or over the password maximum,
     email-shaped and undecodable lines. Counts what was read, added, already
     listed (shipped, imported before, or repeated in the file) and skipped; the
     file's SHA-256 goes on the trail with the counts, never the entries."""

@@ -7297,7 +7297,7 @@ export interface paths {
          * Import List
          * @description Add the entries of a plain-text file, one per line, to the breached list.
          *
-         *     Entries under 12 characters, email-shaped ones and blanks are dropped; the
+         *     Entries under 3 characters, email-shaped ones and blanks are dropped; the
          *     rest are lowercased and added, never removed. Every accepted import counts as
          *     a refresh, even one that adds nothing. The trail records the counts and the
          *     file's SHA-256, never an entry. What a file may be used for is the operator's
@@ -16765,6 +16765,11 @@ export interface components {
              */
             password_min_length: number;
             /**
+             * Password Min Score
+             * @default 3
+             */
+            password_min_score: number;
+            /**
              * Personal Token Max Days
              * @default 365
              */
@@ -17786,6 +17791,11 @@ export interface components {
              * @default 16
              */
             password_min_length: number;
+            /**
+             * Password Min Score
+             * @default 3
+             */
+            password_min_score: number;
             /**
              * Personal Token Max Days
              * @default 365
