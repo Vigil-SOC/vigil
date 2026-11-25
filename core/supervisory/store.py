@@ -8,6 +8,8 @@ append-only, one row per apply, undo or dismissal.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -67,6 +69,19 @@ _CARD_FIELDS = (
     "replay_title",
     "replay_rows",
 )
+
+
+# (setting key, target value) -> why the write path refuses that value itself, or None.
+Validate = Callable[[str, str], "str | None"]
+
+
+@dataclass(frozen=True)
+class _Ctx:
+    """What a page read checks cards and undos against."""
+
+    current: dict[str, dict[str, Any]]
+    applied: dict[str, Any]
+    validate: Validate | None
 
 
 class StoreRefusal(Exception):
@@ -247,16 +262,22 @@ def _check_incident(incident: dict[str, Any] | None) -> None:
 
 def read(
     current: dict[str, dict[str, Any]] | None = None,
+    applied: dict[str, Any] | None = None,
+    validate: Validate | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Open suggestions, held ones, and the latest history, as the page reads them.
 
     ``current`` is the settings list keyed by setting (value and change): it
     decides whether a card can be applied and whether an apply can be undone.
-    Without it, nothing can.
+    Without it, nothing can. ``applied`` is the applied INTENT.md row the
+    settings list was built from, read here when not given. ``validate`` says
+    why the write path would refuse a value on its own terms (bounds, type),
+    or None.
     """
     current = current or {}
-    # One read of the applied INTENT.md row for every card and history entry.
-    applied = applied_intent(fresh=True) if current else {}
+    if applied is None:
+        applied = applied_intent(fresh=True) if current else {}
+    ctx = _Ctx(current, applied, validate)
     with unit_of_work() as session:
         live = (
             session.execute(
@@ -290,14 +311,9 @@ def read(
         )
         latest = _latest_per_suggestion(session, applied_ids)
         return {
-            "suggestions": [
-                _suggestion(s, current, applied) for s in live if s.state == "open"
-            ],
+            "suggestions": [_suggestion(s, ctx) for s in live if s.state == "open"],
             "held": [_held(s) for s in live if s.state == "held"],
-            "history": [
-                _entry(h, _undoable(h, states, latest, current, applied))
-                for h in history
-            ],
+            "history": [_entry(h, _undoable(h, states, latest, ctx)) for h in history],
         }
 
 
@@ -393,8 +409,7 @@ def _undoable(
     h: SupervisoryHistory,
     states: dict[str, str],
     latest: dict[str, int],
-    current: dict[str, dict[str, Any]],
-    applied: dict[str, Any],
+    ctx: _Ctx,
 ) -> bool:
     """An apply can be put back while it is the suggestion's last record, still
     applied, and the setting still has the applied value."""
@@ -402,10 +417,10 @@ def _undoable(
         return False
     if latest.get(h.suggestion_id) != h.id:
         return False
-    now = current.get(h.setting_key)
+    now = ctx.current.get(h.setting_key)
     if now is None or not same_value(now["value"], h.to_value):
         return False
-    refused = _write_refusal(h.setting_key, h.to_value, h.from_value, current, applied)
+    refused = _write_refusal(h.setting_key, h.to_value, h.from_value, ctx)
     return refused is None
 
 
@@ -422,11 +437,7 @@ def dismiss(
         return record(session, row, "dismissed", actor, principal_id, reason)
 
 
-def _suggestion(
-    s: SupervisorySuggestion,
-    current: dict[str, dict[str, Any]],
-    applied: dict[str, Any],
-) -> dict[str, Any]:
+def _suggestion(s: SupervisorySuggestion, ctx: _Ctx) -> dict[str, Any]:
     card = s.card or {}
     return {
         "id": s.suggestion_id,
@@ -440,16 +451,12 @@ def _suggestion(
         **{k: card.get(k) for k in _CARD_FIELDS},
         # The 30-case check is for investigation suggestions only.
         "check": card.get("check") if s.fn == "investigation" else None,
-        "apply": _apply_state(s, current, applied),
+        "apply": _apply_state(s, ctx),
     }
 
 
-def _apply_state(
-    s: SupervisorySuggestion,
-    current: dict[str, dict[str, Any]],
-    applied: dict[str, Any],
-) -> dict[str, Any]:
-    setting = current.get(s.setting_key)
+def _apply_state(s: SupervisorySuggestion, ctx: _Ctx) -> dict[str, Any]:
+    setting = ctx.current.get(s.setting_key)
     if s.setting_key not in APPLICABLE or setting is None:
         return {"possible": False, "reason": _NOT_APPLICABLE}
     change = setting.get("change") or {}
@@ -460,17 +467,11 @@ def _apply_state(
             "possible": False,
             "reason": f"The setting is {setting['value']} now, not {s.from_value}",
         }
-    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, current, applied)
+    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, ctx)
     return {"possible": False, "reason": refused} if refused else {"possible": True}
 
 
-def _write_refusal(
-    key: str,
-    from_value: str,
-    to_value: str,
-    current: dict[str, dict[str, Any]],
-    applied: dict[str, Any],
-) -> str | None:
+def _write_refusal(key: str, from_value: str, to_value: str, ctx: _Ctx) -> str | None:
     """Why the write path would refuse changing ``key`` from ``from_value`` to
     ``to_value``, when the settings list can tell; None otherwise.
 
@@ -479,10 +480,14 @@ def _write_refusal(
     orchestrator write sends every managed investigate.* key, another of those
     keys already wider than declared.
     """
-    refused = _past_declared(key, to_value, applied)
+    if ctx.validate is not None:
+        refused = ctx.validate(key, to_value)
+        if refused:
+            return refused
+    refused = _past_declared(key, to_value, ctx.applied)
     if refused:
         return refused
-    row = current.get(key) or {}
+    row = ctx.current.get(key) or {}
     reason = (row.get("change") or {}).get("reason")
     # The ceiling write refuses while the ceiling can't be read, and any raise
     # of an act flag while the environment forces them off.
@@ -498,8 +503,8 @@ def _write_refusal(
         return STOPPED
     if key.startswith("investigate."):
         for other in _MANAGED_ORCHESTRATOR_KEYS - {key}:
-            now = current.get(other)
-            refused = now and _past_declared(other, now["value"], applied)
+            now = ctx.current.get(other)
+            refused = now and _past_declared(other, now["value"], ctx.applied)
             if refused:
                 return refused
     return None

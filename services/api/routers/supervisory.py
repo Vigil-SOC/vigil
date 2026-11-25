@@ -17,6 +17,7 @@ from core.api.v1.autonomy_router import CeilingBody, put_ceiling
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.daemon_config import DaemonConfig
+from core.response.config import applied_intent
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
@@ -72,8 +73,12 @@ def get_supervisory():
     an empty list.
     """
     read = feedback()
-    watched = settings()
-    stored = store.read({row["key"]: row for row in watched})
+    # One INTENT.md read for the settings list and every card and undo checked against it.
+    applied = applied_intent(fresh=True)
+    watched = settings(applied)
+    stored = store.read(
+        {row["key"]: row for row in watched}, applied, _orchestrator_validator()
+    )
     return JSONResponse(
         {
             "status": {
@@ -237,21 +242,65 @@ def _change(key: str, expected: str, value: str, session, user: User) -> None:
     if key in _CEILING_FIELDS:
         put_ceiling(CeilingBody(**{_CEILING_FIELDS[key]: _flag(value)}), session, user)
         return
+    try:
+        body = _orchestrator_body(key, value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=_first_error(exc)) from None
+    set_orchestrator_config(body, user)
+
+
+def _orchestrator_body(key: str, value: str) -> OrchestratorSettingsConfig:
+    """The orchestrator row a one-click write sends: every field from the
+    effective values, so the write changes only ``key``; ValueError when the
+    model refuses it."""
     field = key.removeprefix("investigate.")
     effective = DaemonConfig.from_env().orchestrator
-    # Every field from the effective values, so the write changes only this one:
-    # a saved row overrides env, and model defaults would overwrite env-set values.
+    # A saved row overrides env, and model defaults would overwrite env-set values.
     data = {
         name: getattr(effective, name)
         for name in OrchestratorSettingsConfig.model_fields
         if hasattr(effective, name)
     }
     data[field] = _flag(value) if field == "enabled" else value
-    try:
-        body = OrchestratorSettingsConfig(**data)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    set_orchestrator_config(body, user)
+    return OrchestratorSettingsConfig(**data)
+
+
+def _orchestrator_validator():
+    """A check, for this page read, of whether the orchestrator model would take
+    a value: its bounds and types, with every other field as it is now."""
+    effective = DaemonConfig.from_env().orchestrator
+    base = {
+        name: getattr(effective, name)
+        for name in OrchestratorSettingsConfig.model_fields
+        if hasattr(effective, name)
+    }
+
+    def validate(key: str, value: str) -> str | None:
+        if not key.startswith("investigate."):
+            return None
+        field = key.removeprefix("investigate.")
+        data = dict(base)
+        try:
+            data[field] = _flag(value) if field == "enabled" else value
+            OrchestratorSettingsConfig(**data)
+        except HTTPException as exc:
+            return str(exc.detail)
+        except ValueError as exc:
+            return _first_error(exc)
+        return None
+
+    return validate
+
+
+def _first_error(exc: ValueError) -> str:
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        first = (errors() or [{}])[0]
+        where = ".".join(str(p) for p in first.get("loc", ()))
+        return (
+            f"{where}: {first.get('msg', exc)}" if where else str(first.get("msg", exc))
+        )
+    return str(exc)
 
 
 def _flag(value: str) -> bool:
