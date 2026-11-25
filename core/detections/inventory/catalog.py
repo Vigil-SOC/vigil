@@ -857,7 +857,11 @@ def siem_checks_by_technique() -> Dict[str, Dict[str, Any]]:
             .select_from(DetectionRule)
             .join(DetectionRuleVersion, _latest_join())
             .join(technique, technique.c.t.isnot(None))
-            .where(ACTIVE, ~DetectionRule.source.startswith(REPO_PREFIX))
+            .where(
+                ACTIVE,
+                ~DetectionRule.source.startswith(REPO_PREFIX),
+                DetectionRule.source.not_in(PROVIDER_SOURCES),
+            )
             .group_by(technique.c.t, RUNS, SEES)
         ).all()
     out: Dict[str, Dict[str, Any]] = {}
@@ -2310,14 +2314,14 @@ KEY_READERS = {
     "elastic": (("elastic", _kibana_rule_id), ("wazuh", _wazuh_rule_id)),
     "azure_sentinel": (("azure_sentinel", _sentinel_rule_id),),
 }
-# Sources whose rules are attributed by the provider's rule id only, never by
-# a rule name or an alert title.
-_NAMELESS = ("azure_sentinel",)
+# Read-only provider inventories: attributed by the provider's rule id only,
+# never by a rule name or an alert title, and no check runs on them.
+PROVIDER_SOURCES = ("azure_sentinel",)
 
 
 def _name_answers(source: Optional[str]) -> bool:
     """Whether a rule of ``source`` (or a finding from it) can be traced by name."""
-    return source not in _NAMELESS
+    return source not in PROVIDER_SOURCES
 
 
 def _named(finding: Mapping[str, Any]) -> Optional[Tuple[int, int]]:
@@ -2679,7 +2683,7 @@ def _name_carriers(
             select(DetectionRule).where(
                 LISTED,
                 DetectionRule.name.in_(names),
-                DetectionRule.source.not_in(_NAMELESS),
+                DetectionRule.source.not_in(PROVIDER_SOURCES),
             )
         )
     )
