@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import or_, select, text, update
@@ -19,6 +20,9 @@ from core.storage.unit_of_work import unit_of_work
 
 # The reasons the page offers. Anything else is refused.
 DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already handled")
+FUNCTIONS = ("triage", "investigation", "response")
+COLUMN_KINDS = ("text", "mono", "case", "action")
+EFFECTS = ("better", "worse", "same")
 # A dismissal for these reasons stands for good; any other for RESUGGEST_AFTER.
 STANDING_REASONS = ("Too risky", "Evidence looks wrong")
 RESUGGEST_AFTER = timedelta(days=30)
@@ -63,13 +67,18 @@ def propose(
     """Store a suggestion, replacing the live one for the same setting.
 
     Returns None, storing nothing, when a person dismissed this same change
-    (same setting, same from and to values) and the dismissal still stands:
+    (same setting, same from and to values, see ``same_value``) and the
+    dismissal still stands:
     "Too risky" and "Evidence looks wrong" stand for good, the other reasons
     for ``RESUGGEST_AFTER``. A malformed card or incident raises ``TypeError``.
     """
     _check_card(card)
     _check_incident(held_incident)
-    from_value, to_value = canonical(from_value), canonical(to_value)
+    if fn not in FUNCTIONS:
+        raise TypeError(f"fn must be one of {', '.join(FUNCTIONS)}")
+    if not isinstance(verb, str) or not verb:
+        raise TypeError("verb must be text")
+    from_value, to_value = str(from_value).strip(), str(to_value).strip()
     with unit_of_work() as session:
         _lock(session, key)
         if _still_dismissed(session, key, from_value, to_value):
@@ -100,13 +109,18 @@ def propose(
     return suggestion_id
 
 
-def canonical(value: str) -> str:
-    """One spelling per value, so "8", "8.0" and "8.00" are the same change."""
+def same_value(a: str, b: str) -> bool:
+    """Whether two spellings name one value: "8", "8.0" and "8.00" do; "8" and "9" don't.
+
+    Finite numbers compare exactly by value; anything else as stripped text.
+    """
     try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value).strip()
-    return f"{number:g}"
+        x, y = Decimal(a.strip()), Decimal(b.strip())
+    except (InvalidOperation, AttributeError):
+        return str(a).strip() == str(b).strip()
+    if not (x.is_finite() and y.is_finite()):
+        return str(a).strip() == str(b).strip()
+    return x == y
 
 
 def _lock(session: Session, key: str) -> None:
@@ -121,20 +135,18 @@ def _still_dismissed(
     session: Session, key: str, from_value: str, to_value: str
 ) -> bool:
     since = datetime.now(UTC) - RESUGGEST_AFTER
-    return (
-        session.execute(
-            select(SupervisoryHistory.id).where(
-                SupervisoryHistory.setting_key == key,
-                SupervisoryHistory.from_value == from_value,
-                SupervisoryHistory.to_value == to_value,
-                SupervisoryHistory.outcome == "dismissed",
-                or_(
-                    SupervisoryHistory.note.in_(STANDING_REASONS),
-                    SupervisoryHistory.at >= since,
-                ),
-            )
-        ).first()
-        is not None
+    standing = session.execute(
+        select(SupervisoryHistory.from_value, SupervisoryHistory.to_value).where(
+            SupervisoryHistory.setting_key == key,
+            SupervisoryHistory.outcome == "dismissed",
+            or_(
+                SupervisoryHistory.note.in_(STANDING_REASONS),
+                SupervisoryHistory.at >= since,
+            ),
+        )
+    )
+    return any(
+        same_value(f, from_value) and same_value(t, to_value) for f, t in standing
     )
 
 
@@ -148,8 +160,27 @@ def _check_card(card: dict[str, Any]) -> None:
         for k, t in (("title", str), ("columns", list), ("rows", list), ("foot", str))
     ):
         raise TypeError("card.table needs title, columns, rows and foot")
-    if not isinstance(card.get("replay_rows"), list):
-        raise TypeError("card.replay_rows must be a list")
+    if not all(
+        isinstance(c, dict)
+        and isinstance(c.get("label"), str)
+        and c.get("kind") in COLUMN_KINDS
+        for c in table["columns"]
+    ):
+        raise TypeError("card.table.columns need label and a known kind")
+    if not all(
+        isinstance(r, list)
+        and all(isinstance(c, dict) and isinstance(c.get("text"), str) for c in r)
+        for r in table["rows"]
+    ):
+        raise TypeError("card.table.rows are lists of cells with text")
+    rows = card.get("replay_rows")
+    if not isinstance(rows, list) or not all(
+        isinstance(r, dict)
+        and all(isinstance(r.get(k), str) for k in ("label", "now", "next"))
+        and r.get("effect") in EFFECTS
+        for r in rows
+    ):
+        raise TypeError("card.replay_rows need label, now, next and a known effect")
     check = card.get("check")
     if check is not None and not (
         isinstance(check, dict)

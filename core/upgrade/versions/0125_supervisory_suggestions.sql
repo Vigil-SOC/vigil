@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS public.supervisory_suggestions (
         CHECK (state IN ('open', 'held', 'dismissed', 'applied', 'undone', 'superseded')),
     -- {id, title, firing_since} while held. Null otherwise.
     held_incident JSONB,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT supervisory_suggestions_held_check
+        CHECK (state <> 'held' OR held_incident IS NOT NULL)
 );
 
 -- One live suggestion per setting.
@@ -33,7 +35,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_supervisory_suggestions_live
 CREATE TABLE IF NOT EXISTS public.supervisory_history (
     id BIGSERIAL PRIMARY KEY,
     suggestion_id VARCHAR(36) NOT NULL
-        REFERENCES public.supervisory_suggestions (suggestion_id) ON DELETE CASCADE,
+        REFERENCES public.supervisory_suggestions (suggestion_id) ON DELETE RESTRICT,
     at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     setting_key TEXT NOT NULL,
     from_value TEXT NOT NULL,

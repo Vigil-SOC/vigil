@@ -42,7 +42,7 @@ class SupervisoryHistory(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     suggestion_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("supervisory_suggestions.suggestion_id", ondelete="CASCADE"),
+        ForeignKey("supervisory_suggestions.suggestion_id", ondelete="RESTRICT"),
         nullable=False,
     )
     at: Mapped[datetime] = mapped_column(
@@ -55,3 +55,5 @@ class SupervisoryHistory(Base):
     note: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     actor: Mapped[str] = mapped_column(Text, nullable=False)
     actor_principal_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # applied only: whether results improved after. Null until the follow-up reads it.
+    improved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
