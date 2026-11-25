@@ -4388,7 +4388,11 @@ export interface paths {
          * Get Coverage
          * @description ATT&CK coverage by technique and SIEM: each technique an active rule
          *     declares or an alert shows, proven (an active SIEM copy passes Runs and
-         *     Sees), unproven or with no rule, split by SIEM. Read-only.
+         *     Sees), unproven or with no rule, split by SIEM. ``by_layer`` adds each
+         *     technique's state per detection layer and for the layers together, with
+         *     the measures, from the last 30 days' emulation runs: for ``scope`` (all,
+         *     emulated, intel) or the ``techniques`` given (repeated or comma-separated).
+         *     Read-only.
          */
         get: operations["get_api_detection-rules_coverage"];
         put?: never;
@@ -26999,7 +27003,11 @@ export interface operations {
     };
     "get_api_detection-rules_coverage": {
         parameters: {
-            query?: never;
+            query?: {
+                by_layer?: boolean;
+                scope?: "all" | "emulated" | "intel";
+                techniques?: string[] | null;
+            };
             header?: {
                 authorization?: string | null;
             };

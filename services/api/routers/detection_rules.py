@@ -585,13 +585,25 @@ def get_metrics():
 
 
 @router.get("/coverage")
-def get_coverage():
+async def get_coverage(
+    by_layer: bool = False,
+    scope: Literal["all", "emulated", "intel"] = "all",
+    techniques: Optional[List[str]] = Query(default=None),
+):
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
-    Sees), unproven or with no rule, split by SIEM. Read-only."""
+    Sees), unproven or with no rule, split by SIEM. ``by_layer`` adds each
+    technique's state per detection layer and for the layers together, with
+    the measures, from the last 30 days' emulation runs: for ``scope`` (all,
+    emulated, intel) or the ``techniques`` given (repeated or comma-separated).
+    Read-only."""
     from core.detections.inventory import coverage
 
-    return coverage.coverage()
+    try:
+        wanted = coverage.technique_ids(techniques or ())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return await coverage.read(by_layer, scope, wanted)
 
 
 @router.get("/overlay-only")

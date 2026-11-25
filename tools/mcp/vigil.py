@@ -1883,14 +1883,33 @@ def get_detection_rule(rule_id: int) -> str:
 
 @tool("Detection coverage", reads=True)
 @requires("detections.read")
-def get_detection_coverage() -> str:
+async def get_detection_coverage(
+    by_layer: bool = False,
+    scope: Literal["all", "emulated", "intel"] = "all",
+    techniques: Optional[list[str]] = None,
+) -> str:
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
     Sees), unproven or with no rule. A rule failing lint, or a repo rule the
-    import check holds (``held`` on each row counts those), is no coverage."""
+    import check holds (``held`` on each row counts those), is no coverage.
+
+    ``by_layer`` adds ``by_layer``: which detection layer catches each technique,
+    shown by attack. Rows are layers (each SIEM with rules, each alert source
+    that labels techniques, LogLM when present) and a combined row; each cell is
+    validated, partial, present (not validated), no_detection or not_checked,
+    with marks tested_missed, not_observable and shadow, and its evidence
+    (declaring rules and their checks, the newest emulation run: hosts and steps
+    caught of steps run, older runs, LogLM flags, blind spots). Measures are
+    counts: validated per layer and combined, loglm_lift, validated by one
+    layer, present never validated, not observable. Evidence is the last 30
+    days' compose emulation runs. ``scope``: all (the map's techniques),
+    emulated (those emulated in the window) or intel (those the connected
+    threat intelligence names; says so when none is connected). ``techniques``
+    (e.g. ["T1059", "T1003.001"]) answers for exactly those and implies
+    by_layer."""
     from core.detections.inventory import coverage
 
-    return jdump(coverage.coverage())
+    return jdump(await coverage.read(by_layer, scope, techniques))
 
 
 @tool("List detection proposals", reads=True)
