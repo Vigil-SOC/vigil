@@ -21,7 +21,7 @@ from core.response.config import applied_intent
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
-from core.supervisory import medic_hold, store
+from core.supervisory import medic_hold, store, worker
 from core.supervisory.failures import failures
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
@@ -70,7 +70,8 @@ def get_supervisory():
     """What the supervisory model has to learn from, its suggestions, the settings
     it watches, and why agent runs stopped early.
 
-    Nothing checks settings on a schedule yet, so the state is ``off``.
+    The state and the check times come from the daemon's scheduled check
+    (``core.supervisory.worker``).
     """
     read = feedback()
     # One INTENT.md read for the settings list and every card and undo checked against it.
@@ -82,15 +83,14 @@ def get_supervisory():
         applied,
         _orchestrator_validator(config.orchestrator),
     )
+    held_by = medic_hold.open_related()
     return JSONResponse(
         {
             "status": {
-                "state": "off",
-                "last_check_at": None,
-                "next_check_at": None,
+                **worker.status(held_by),
                 "history_days": read["history_days"],
                 "functions_watched": len(read["functions"]),
-                "medic_open_related": medic_hold.open_related(),
+                "medic_open_related": held_by,
             },
             "functions": read["functions"],
             "suggestions": stored["suggestions"],

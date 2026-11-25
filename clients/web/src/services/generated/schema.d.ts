@@ -7883,7 +7883,8 @@ export interface paths {
          * @description What the supervisory model has to learn from, its suggestions, the settings
          *     it watches, and why agent runs stopped early.
          *
-         *     Nothing checks settings on a schedule yet, so the state is ``off``.
+         *     The state and the check times come from the daemon's scheduled check
+         *     (``core.supervisory.worker``).
          */
         get: operations["get_api_supervisory"];
         put?: never;

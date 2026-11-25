@@ -175,6 +175,20 @@ class TaskScheduler:
             )
         )
 
+        # Asked often; the tick itself runs a check only when the last one, here or
+        # on another replica, is an interval old. A skip still counts as a run
+        # here, so asking at the full interval would let a check slip by up to one.
+        if self.config.supervisory_enabled:
+            from core.supervisory.worker import poll_seconds
+
+            self._tasks.append(
+                ScheduledTask(
+                    name="supervisory_check",
+                    func=self._run_supervisory_check,
+                    interval=poll_seconds(self.config.supervisory_interval),
+                )
+            )
+
     def set_processor_queue(self, queue: asyncio.Queue):
         """Set the processor's input queue that probe sweeps inject onto."""
         self._processor_queue = queue
@@ -379,6 +393,14 @@ class TaskScheduler:
             "read_log_removed": reads,
             "entity_facts_removed": facts,
         }
+
+    async def _run_supervisory_check(self):
+        """The supervisory model's check: hold and release, then run each check."""
+        from core.supervisory import worker
+
+        done = await asyncio.to_thread(worker.tick)
+        if done is not None:
+            logger.info("Supervisory check: %s", done)
 
     async def _run_mfa_coverage(self):
         """Today's count of people who can sign in without MFA, on the trail."""

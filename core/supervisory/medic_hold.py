@@ -41,7 +41,7 @@ from sqlalchemy import func, select, text
 
 from core.config import Settings, get_settings
 from core.platform import medic_last_seen
-from core.platform.medic_incidents import _pages
+from core.platform.medic_incidents import _INCIDENT, _TS, _clip, _pages, _when
 from core.platform.medic_status import medic_enabled
 from core.storage.connection import get_db_manager
 from core.storage.models.supervisory import SupervisorySuggestion
@@ -55,6 +55,8 @@ FAMILIES = {
 }
 _HOLDING_STATES = ("firing", "resolving")
 _INCIDENT_FIELDS = ("id", "title", "firing_since")
+# As long as a held card's line can usefully be; the incident notices clip the same way.
+_TITLE_LIMIT = 200
 # Two-key advisory locks never collide with the one-key per-setting locks.
 _SWEEP_LOCK = (
     "SELECT pg_advisory_lock(hashtext('supervisory'), hashtext('medic-sweep'))"
@@ -87,7 +89,7 @@ def open_incidents(settings: Settings | None = None) -> list[dict[str, Any]] | N
     for item in (_incident(row) for row in raw):
         if item is not None:
             by_id.setdefault(item["id"], item)
-    return sorted(by_id.values(), key=lambda i: (i["firing_since"], i["id"]))
+    return sorted(by_id.values(), key=lambda i: (_when(i["firing_since"]), i["id"]))
 
 
 def _incident(raw: Any) -> dict[str, Any] | None:
@@ -95,7 +97,11 @@ def _incident(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     iid, rule = raw.get("incident_id"), raw.get("rule")
-    if not isinstance(iid, str) or not iid or not isinstance(rule, dict):
+    # Medic's text is untrusted: the id and time are checked for shape, as the
+    # incident notices check them, and the title is clipped to one plain line.
+    if not isinstance(iid, str) or not _INCIDENT.fullmatch(iid):
+        return None
+    if not isinstance(rule, dict):
         return None
     if raw.get("subject") != "vigil" or raw.get("state") not in _HOLDING_STATES:
         return None
@@ -106,14 +112,14 @@ def _incident(raw: Any) -> dict[str, Any] | None:
     if holds is None:
         return None
     since = raw.get("active_since")
-    if not isinstance(since, str) or not since:
+    if not isinstance(since, str) or not _TS.fullmatch(since):
         since = raw.get("opened_at")
-    if not isinstance(since, str) or not since:
+    if not isinstance(since, str) or not _TS.fullmatch(since) or _when(since) is None:
         return None
-    title = raw.get("title")
+    title = _clip(raw.get("title"), _TITLE_LIMIT, one_line=True)
     return {
         "id": iid,
-        "title": title if isinstance(title, str) and title else rule_id,
+        "title": title or _clip(rule_id, _TITLE_LIMIT, one_line=True),
         "firing_since": since,
         "holds": holds,
     }
@@ -137,7 +143,10 @@ def incident_for(
     return None
 
 
-def sweep(settings: Settings | None = None) -> dict[str, int] | None:
+def sweep(
+    settings: Settings | None = None,
+    incidents: list[dict[str, Any]] | None = None,
+) -> dict[str, int] | None:
     """Hold each live suggestion an open incident is related to, and release the rest.
 
     One sweep at a time, across replicas: a second waits, then reads Medic afresh,
@@ -146,6 +155,11 @@ def sweep(settings: Settings | None = None) -> dict[str, int] | None:
     Each suggestion is moved under its setting's lock, the lock propose and dismiss
     take, and only while it is still live. Returns how many were held and released,
     or None, changing nothing, when Medic could not be read.
+
+    ``incidents`` is a read of :func:`open_incidents` the caller already made, so
+    that what it proposes next is held on the same read. The scheduled check passes
+    one, read under its own one-at-a-time lock. Without it the sweep reads Medic
+    itself, inside this lock.
     """
     manager = get_db_manager()
     manager.initialize()  # a no-op once the process has its engine
@@ -154,13 +168,14 @@ def sweep(settings: Settings | None = None) -> dict[str, int] | None:
     ) as conn:
         conn.execute(text(_SWEEP_LOCK))
         try:
-            return _sweep(settings)
+            if incidents is None:
+                incidents = open_incidents(settings)
+            return _sweep(incidents)
         finally:
             conn.execute(text(_SWEEP_UNLOCK))
 
 
-def _sweep(settings: Settings | None) -> dict[str, int] | None:
-    incidents = open_incidents(settings)
+def _sweep(incidents: list[dict[str, Any]] | None) -> dict[str, int] | None:
     if incidents is None:
         return None
     with unit_of_work() as session:

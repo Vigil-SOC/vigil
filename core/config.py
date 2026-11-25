@@ -360,6 +360,9 @@ class Settings(BaseSettings):
     # Known-answer probes (#923): an hourly sweep, injected once a day by id.
     daemon_probes_enabled: bool = True
     daemon_probe_interval: int = 3600
+    # The supervisory model's scheduled check. Off: no check runs and the page says off.
+    daemon_supervisory_enabled: bool = True
+    daemon_supervisory_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
     # Separate from cleanup_retention_days on purpose: that only ages out the
     # episodic read log, while an unanswered containment proposal goes stale
