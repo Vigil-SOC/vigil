@@ -163,7 +163,7 @@ const STAGE: Record<Stage, { label: string; note: string }> = {
 }
 const STAGES: Stage[] = ['shadow', 'live', 'off']
 const SIEMS: Siem[] = ['elastic', 'splunk', 'wazuh']
-const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil', azure_sentinel: 'Sentinel' }
+const SIEM_NAME: Record<string, string> = { elastic: 'Elastic', splunk: 'Splunk', wazuh: 'Wazuh', repo: 'Repo', overlay: 'Vigil', azure_sentinel: 'Sentinel', microsoft_defender: 'Defender' }
 
 const n = (v: number) => v.toLocaleString()
 /** The list's sticky header row, in px: the rows sit under it in the same scroll. */
