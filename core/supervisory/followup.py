@@ -29,7 +29,10 @@ What is counted, per function, by the time each item happened:
   said so: it did not complete, ran out of turns, or recorded on the Case that
   it concluded benign or a false positive. False alarm: the Case was not real
   and the run completed without recording a dismissal. Every kind ends and
-  dismisses the same way, so the rule is one for all. Cost and time are the
+  dismisses the same way, so the rule is one for all; a dismissal is recorded on
+  the Case the run was started on, so that Case is read for it too. A Case a
+  person closed before its last run ended is not labelled, even if an earlier
+  run on it had answered. Cost and time are the
   mean cost and run time of every such run in the window, labelled or not, Case
   or not; a hunt costs far more than an investigation, so they are compared
   kind by kind and weighted by the after window's runs of each kind, and a
@@ -96,10 +99,11 @@ _NOT_REAL = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is False
 )
 _DISMISSED = ("agent_run_closed", "agent_run_left_open")
-# A run that ended in a window started at most this long before it: the runtime
-# cap is a day, and a hunt parks for at most its park TTL (7 days) before it ends.
+# How long before it ended a run in the window is taken to have started. The
+# runtime cap is a day, but a hunt parks for up to its park TTL (7 days) and can be
+# extended and park again, with its start time set once; a month covers that.
 # Read on the indexed start time, so the run table is not scanned whole.
-RUN_LOOKBACK = timedelta(days=14)
+RUN_LOOKBACK = timedelta(days=30)
 # The agent-run kinds that investigate; adjudicate, a second look, is not one.
 _KINDS = ("investigate", "hunt", "root_cause", "compose")
 _ISO = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$"
@@ -353,6 +357,10 @@ def _investigation(
             WorkflowRun.total_cost_usd,
             WorkflowRun.duration_ms,
             case_id.label("case_id"),
+            # Where the run bridge records a dismissal: the Case the run was started on.
+            func.nullif(WorkflowRun.trigger_context["case_id"].astext, "").label(
+                "origin_case_id"
+            ),
             # A Case's last run in the window is the one judged: a retry after a
             # failure replaces the failed run.
             func.row_number()
@@ -387,9 +395,11 @@ def _investigation(
     )
     real = and_(judged, closure.closure_category.in_(_REAL))
     not_real = and_(judged, closure.closure_category.in_(_NOT_REAL))
+    origin = aliased(Case)
+    # Matched by the run's id, so reading both Cases cannot pick up another run's.
     dismissed = or_(
         *(
-            func.coalesce(Case.activities, func.jsonb_build_array()).op("@>")(
+            func.coalesce(held.activities, func.jsonb_build_array()).op("@>")(
                 func.jsonb_build_array(
                     func.jsonb_build_object(
                         "activity_type",
@@ -399,6 +409,7 @@ def _investigation(
                     )
                 )
             )
+            for held in (Case, origin)
             for kind in _DISMISSED
         )
     )
@@ -419,6 +430,7 @@ def _investigation(
         )
         .select_from(runs)
         .outerjoin(Case, Case.case_id == runs.c.case_id)
+        .outerjoin(origin, origin.case_id == runs.c.origin_case_id)
         .outerjoin(
             closure,
             and_(
