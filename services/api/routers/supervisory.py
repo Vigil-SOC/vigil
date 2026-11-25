@@ -1,10 +1,10 @@
 """The Supervisory model page: its read, and a person dismissing a suggestion."""
 
-from typing import Annotated, Any
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
@@ -27,7 +27,22 @@ _WRITE = [permission_gate("ai_autonomy.write")]
 
 
 class DismissBody(BaseModel):
-    reason: str
+    reason: Literal[store.DISMISS_REASONS]  # type: ignore[valid-type]
+
+
+class HistoryEntryResponse(BaseModel):
+    id: str
+    at: str
+    key: str
+    # "from" is a Python keyword.
+    from_: str = Field(alias="from")
+    to: str
+    outcome: Literal["applied", "dismissed", "undone"]
+    note: str
+    improved: bool | None = None
+    undoable: bool | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 # Plain def: the read is synchronous, so FastAPI runs it in its threadpool.
@@ -62,25 +77,33 @@ def get_supervisory():
     )
 
 
-@router.post("/supervisory/suggestions/{suggestion_id}/dismiss", dependencies=_WRITE)
+@router.post(
+    "/supervisory/suggestions/{suggestion_id}/dismiss",
+    dependencies=_WRITE,
+    response_model=HistoryEntryResponse,
+    response_model_by_alias=True,
+    response_model_exclude_none=True,
+)
 def dismiss_suggestion(
     suggestion_id: str,
     body: DismissBody,
     current_user: Annotated[User, Depends(get_current_user)],
-) -> dict[str, Any]:
+) -> HistoryEntryResponse:
     """Dismiss a suggestion with one of the page's reasons. Returns its history entry.
 
-    The same change (setting and target value) is not suggested again.
+    The same change is not suggested again: for good when too risky or the
+    evidence looks wrong, for 30 days otherwise.
     """
     principal_id = getattr(current_user, "principal_id", None) or getattr(
         current_user, "user_id", None
     )
     try:
-        return store.dismiss(
+        entry = store.dismiss(
             suggestion_id,
             body.reason,
             current_user.username,
             principal_id and str(principal_id),
         )
+        return HistoryEntryResponse.model_validate(entry)
     except store.StoreRefusal as refusal:
         raise HTTPException(status_code=refusal.status, detail=refusal.detail) from None

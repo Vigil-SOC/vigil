@@ -8,16 +8,20 @@ append-only, one row per apply, undo or dismissal.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, text, update
+from sqlalchemy.orm import Session
 
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
 
 # The reasons the page offers. Anything else is refused.
 DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already handled")
+# A dismissal for these reasons stands for good; any other for RESUGGEST_AFTER.
+STANDING_REASONS = ("Too risky", "Evidence looks wrong")
+RESUGGEST_AFTER = timedelta(days=30)
 LIVE = ("open", "held")
 HISTORY_LIMIT = 100
 
@@ -59,17 +63,16 @@ def propose(
     """Store a suggestion, replacing the live one for the same setting.
 
     Returns None, storing nothing, when a person dismissed this same change
-    (same setting, same target value) before.
+    (same setting, same from and to values) and the dismissal still stands:
+    "Too risky" and "Evidence looks wrong" stand for good, the other reasons
+    for ``RESUGGEST_AFTER``. A malformed card or incident raises ``TypeError``.
     """
+    _check_card(card)
+    _check_incident(held_incident)
+    from_value, to_value = canonical(from_value), canonical(to_value)
     with unit_of_work() as session:
-        dismissed = session.execute(
-            select(SupervisoryHistory.id).where(
-                SupervisoryHistory.setting_key == key,
-                SupervisoryHistory.to_value == to_value,
-                SupervisoryHistory.outcome == "dismissed",
-            )
-        ).first()
-        if dismissed is not None:
+        _lock(session, key)
+        if _still_dismissed(session, key, from_value, to_value):
             return None
         session.execute(
             update(SupervisorySuggestion)
@@ -95,6 +98,74 @@ def propose(
             )
         )
     return suggestion_id
+
+
+def canonical(value: str) -> str:
+    """One spelling per value, so "8", "8.0" and "8.00" are the same change."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    return f"{number:g}"
+
+
+def _lock(session: Session, key: str) -> None:
+    """Serialise writes to one setting's suggestions for this transaction."""
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+        {"k": f"supervisory:{key}"},
+    )
+
+
+def _still_dismissed(
+    session: Session, key: str, from_value: str, to_value: str
+) -> bool:
+    since = datetime.now(UTC) - RESUGGEST_AFTER
+    return (
+        session.execute(
+            select(SupervisoryHistory.id).where(
+                SupervisoryHistory.setting_key == key,
+                SupervisoryHistory.from_value == from_value,
+                SupervisoryHistory.to_value == to_value,
+                SupervisoryHistory.outcome == "dismissed",
+                or_(
+                    SupervisoryHistory.note.in_(STANDING_REASONS),
+                    SupervisoryHistory.at >= since,
+                ),
+            )
+        ).first()
+        is not None
+    )
+
+
+def _check_card(card: dict[str, Any]) -> None:
+    for name in ("why", "evidence", "replay", "plain_words", "replay_title"):
+        if not isinstance(card.get(name), str):
+            raise TypeError(f"card.{name} must be text")
+    table = card.get("table")
+    if not isinstance(table, dict) or not all(
+        isinstance(table.get(k), t)
+        for k, t in (("title", str), ("columns", list), ("rows", list), ("foot", str))
+    ):
+        raise TypeError("card.table needs title, columns, rows and foot")
+    if not isinstance(card.get("replay_rows"), list):
+        raise TypeError("card.replay_rows must be a list")
+    check = card.get("check")
+    if check is not None and not (
+        isinstance(check, dict)
+        and isinstance(check.get("passed"), bool)
+        and isinstance(check.get("text"), str)
+    ):
+        raise TypeError("card.check needs passed and text, or is null")
+
+
+def _check_incident(incident: dict[str, Any] | None) -> None:
+    if incident is None:
+        return
+    if not all(
+        isinstance(incident.get(k), str) for k in ("id", "title", "firing_since")
+    ):
+        raise TypeError("held_incident needs id, title and firing_since")
 
 
 def read() -> dict[str, list[dict[str, Any]]]:
@@ -132,6 +203,14 @@ def dismiss(
     if reason not in DISMISS_REASONS:
         raise StoreRefusal(422, f"reason must be one of: {', '.join(DISMISS_REASONS)}")
     with unit_of_work() as session:
+        # The setting's lock first, then the row, in the order propose takes them.
+        key = session.execute(
+            select(SupervisorySuggestion.setting_key).where(
+                SupervisorySuggestion.suggestion_id == suggestion_id
+            )
+        ).scalar_one_or_none()
+        if key is not None:
+            _lock(session, key)
         row = session.execute(
             select(SupervisorySuggestion)
             .where(SupervisorySuggestion.suggestion_id == suggestion_id)
@@ -199,7 +278,7 @@ def _entry(h: SupervisoryHistory) -> dict[str, Any]:
         "note": h.note or "",
     }
     if h.outcome == "applied":
-        entry["improved"] = None
+        entry["improved"] = h.improved
         entry["undoable"] = False
     return entry
 

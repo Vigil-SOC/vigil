@@ -35,7 +35,7 @@ class SupervisorySuggestion(Base):
 
 
 class SupervisoryHistory(Base):
-    """One apply, undo or dismissal. Nothing updates a row once written."""
+    """One apply, undo or dismissal. Only the follow-up writes back: improved and note."""
 
     __tablename__ = "supervisory_history"
 

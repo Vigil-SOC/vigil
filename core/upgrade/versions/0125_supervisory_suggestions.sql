@@ -1,6 +1,7 @@
 -- The supervisory model's suggestions to change a setting, and what people did
 -- with them. A suggestion keeps its card (why, evidence, replay) as it was made.
--- History is append-only: one row per apply, undo or dismissal.
+-- History is one row per apply, undo or dismissal. Only the follow-up that reads
+-- whether results improved writes back to a row: improved and note.
 
 CREATE TABLE IF NOT EXISTS public.supervisory_suggestions (
     suggestion_id VARCHAR(36) PRIMARY KEY,
@@ -43,7 +44,9 @@ CREATE TABLE IF NOT EXISTS public.supervisory_history (
     -- dismissed: the reason given. applied: what changed since.
     note TEXT NOT NULL DEFAULT '',
     actor TEXT NOT NULL,
-    actor_principal_id TEXT
+    actor_principal_id TEXT,
+    -- applied only: whether results improved after. Null until the follow-up reads it.
+    improved BOOLEAN
 );
 
 CREATE INDEX IF NOT EXISTS supervisory_history_at_idx
@@ -51,4 +54,5 @@ CREATE INDEX IF NOT EXISTS supervisory_history_at_idx
 
 GRANT SELECT, INSERT, UPDATE ON TABLE public.supervisory_suggestions TO vigil_app;
 GRANT SELECT, INSERT ON TABLE public.supervisory_history TO vigil_app;
+GRANT UPDATE (improved, note) ON TABLE public.supervisory_history TO vigil_app;
 GRANT USAGE, SELECT ON SEQUENCE public.supervisory_history_id_seq TO vigil_app;

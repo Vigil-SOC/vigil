@@ -7908,7 +7908,8 @@ export interface paths {
          * Dismiss Suggestion
          * @description Dismiss a suggestion with one of the page's reasons. Returns its history entry.
          *
-         *     The same change (setting and target value) is not suggested again.
+         *     The same change is not suggested again: for good when too risky or the
+         *     evidence looks wrong, for 30 days otherwise.
          */
         post: operations["post_api_supervisory_suggestions_suggestion_id_dismiss"];
         delete?: never;
@@ -13921,8 +13922,11 @@ export interface components {
         };
         /** DismissBody */
         DismissBody: {
-            /** Reason */
-            reason: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "Too risky" | "Evidence looks wrong" | "Not now" | "Already handled";
         };
         /** DraftRequest */
         DraftRequest: {
@@ -14573,6 +14577,30 @@ export interface components {
              */
             open_only: boolean;
             stopped?: components["schemas"]["CappedBatch"] | null;
+        };
+        /** HistoryEntryResponse */
+        HistoryEntryResponse: {
+            /** At */
+            at: string;
+            /** From */
+            from: string;
+            /** Id */
+            id: string;
+            /** Improved */
+            improved?: boolean | null;
+            /** Key */
+            key: string;
+            /** Note */
+            note: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "applied" | "dismissed" | "undone";
+            /** To */
+            to: string;
+            /** Undoable */
+            undoable?: boolean | null;
         };
         /** HistoryFigure */
         HistoryFigure: {
@@ -33667,9 +33695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HistoryEntryResponse"];
                 };
             };
             /** @description Validation Error */
