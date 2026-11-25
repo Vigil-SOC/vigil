@@ -2,9 +2,9 @@
 
 Read-only. Every agent-run kind that investigates is judged: ``investigate``,
 ``hunt``, ``root_cause`` and ``compose``. ``adjudicate`` is a second look at
-another run's verdict and is left out, as are removed runs and runs on sample
-alerts or probes: through the run's Case (its investigation's, else the one it
-was started on), or the findings that started it. A run is judged only once it answered, which each kind does its
+another run's verdict and is left out, and so are removed runs. So are runs on
+sample alerts or probes, known by the run's Case (its investigation's, else the
+one it was started on) or by the findings that started it. A run is judged only once it answered, which each kind does its
 own way:
 
 - investigate: ``completed``, or ``data_starved``, which still reports a verdict
@@ -29,9 +29,11 @@ Four flags, each a rule on what the run recorded:
 - ran out of turns: the turn cap ended it (``capped``), and it still answered.
   Only investigate and hunt report it; root_cause and compose do not apply.
 
-Only the model's own calls are judged. A root-cause trace journals its engine's
-fixed searches as calls too (role ``code``); those are not the model's choice and
-count on neither side. A tool call gathers evidence when it succeeded, is not one
+Only the model's own calls are judged. For investigate and hunt that is the
+run's own agent, whose calls carry no role (or ``agent``); a reviewer's or
+critic's are not the run's. A root-cause trace journals its engine's fixed
+searches as calls too (role ``code``); those are not the model's choice and count
+on neither side. A tool call gathers evidence when it succeeded, is not one
 of the run's own tools, and does not act: neither stored as ``reversible`` or
 ``irreversible`` in ``tool_effect_classes``, nor one of Vigil's tools that
 changes something, by the same rule the playbook marks writes with. A run's own
@@ -45,7 +47,7 @@ A run's model is the one its spend events on the agent ledger record. For
 investigate and hunt, only the run's own agent counts (role ``agent``; the
 reviewer's and critic's calls are not the run's answer). root_cause spends under
 the name of each move and compose under each phase, so every role counts for
-them but ``reader``, the guard that reads tool output. A run that used more than
+them that has a role, but ``reader``, the guard that reads tool output. A run that used more than
 one model, or recorded none, is counted under no model, and the card says how
 many such runs it left out.
 
@@ -65,6 +67,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
+from functools import cache
 from typing import Any
 
 from sqlalchemy import (
@@ -152,6 +155,11 @@ _OWN_TOOLS = (
     "expand",
 )
 _ACTING = ("reversible", "irreversible")
+# How long before it ended a run in the window is taken to have started. The
+# runtime cap is a day, but a hunt parks for up to its park TTL (7 days) and can be
+# extended and park again, with its start time set once; a month covers that.
+# Read on the indexed start time, so the run table is not scanned whole.
+RUN_LOOKBACK = timedelta(days=30)
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
 _events = table(
@@ -195,9 +203,13 @@ def rates(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any
     return {"days": days, "kinds": kinds, "unattributed": unattributed}
 
 
+@cache
 def _vigil_writes() -> list[str]:
     """Vigil's own tools that change something, by the rule the playbook marks
-    writes with: the tool's read-only hint, else a permission that is not a read."""
+    writes with: the tool's read-only hint, else a permission that is not a read.
+
+    Read once per process: the set is fixed at import, and building Vigil's tool
+    server the first time takes seconds."""
     from core.agents.tool_registry import TOOL_PERMISSIONS
     from core.integrations.mcp import in_process
 
@@ -225,6 +237,15 @@ def _judged_runs(start: datetime, end: datetime, writes: list[str]):
         else_=None,
     )
 
+    def models_call(e):
+        """A call the model chose: the run's own agent's for investigate and hunt,
+        and not one the engine made itself for the rest."""
+        role = e.c.payload["role"].astext
+        return case(
+            (kind.in_(_AGENT_ONLY), or_(role.is_(None), role == "agent")),
+            else_=role.is_distinct_from(_ENGINE_ROLE),
+        )
+
     def events(alias: str, event_kind: str):
         e = _events.alias(alias)
         return e, and_(e.c.run_id == ledger, e.c.kind == event_kind)
@@ -249,14 +270,14 @@ def _judged_runs(start: datetime, end: datetime, writes: list[str]):
     gathered, own_gathered = events("judge_gathered", "call")
     gave_up = exists().where(
         own_failed,
-        _models_call(failed),
+        models_call(failed),
         _ok(failed).is_(False),
         _tool(failed).notin_(_OWN_TOOLS),
         # Explicit: nested two deep, the run and the failed call are outer rows.
         ~exists()
         .where(
             own_later,
-            _models_call(later),
+            models_call(later),
             later.c.seq > failed.c.seq,
             _ok(later).is_(True),
             _tool(later).notin_(_OWN_TOOLS),
@@ -270,7 +291,7 @@ def _judged_runs(start: datetime, end: datetime, writes: list[str]):
         kind != "compose",
         ~exists().where(
             own_gathered,
-            _models_call(gathered),
+            models_call(gathered),
             _ok(gathered).is_(True),
             _tool(gathered).notin_(_OWN_TOOLS),
             _tool(gathered).notin_(acting),
@@ -308,6 +329,8 @@ def _judged_runs(start: datetime, end: datetime, writes: list[str]):
             == WorkflowRun.trigger_context["investigation_id"].astext,
         )
         .where(
+            WorkflowRun.started_at >= start - RUN_LOOKBACK,
+            WorkflowRun.started_at < end,
             WorkflowRun.finished_at >= start,
             WorkflowRun.finished_at < end,
             WorkflowRun.deleted_at.is_(None),
@@ -325,11 +348,6 @@ def _ok(e):
 
 def _tool(e):
     return e.c.payload["tool"].astext
-
-
-def _models_call(e):
-    """A call the model chose, not one the engine made itself."""
-    return e.c.payload["role"].astext.is_distinct_from(_ENGINE_ROLE)
 
 
 def _not_real_data():
