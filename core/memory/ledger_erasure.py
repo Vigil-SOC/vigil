@@ -1,8 +1,8 @@
-"""Erase the re-decision ledgers an import left behind (#5096).
+"""Erase the re-decision ledgers an import left behind (#5096, #5095).
 
 ``delete_import`` does not call this. The import is already gone, and the
 caller passes only that import's marked runs. A run a Case was opened from
-is not passed; nothing records that link yet, so ``cases`` is empty.
+is not passed to ``erase_redecision_ledgers``. ``cases`` names those Cases.
 """
 
 from __future__ import annotations
@@ -46,6 +46,20 @@ def marked_run_ids(session: Session, import_id: str) -> List[str]:
     return list(rows)
 
 
+def _opened_cases(session: Session, run_ids: Sequence[str]) -> List[Dict[str, str]]:
+    """Cases whose mark names one of these runs. The run is not erased."""
+    rows = session.execute(
+        text("""
+            SELECT case_id, recheck_mark->>'run_id' AS run_id
+            FROM cases
+            WHERE recheck_mark->>'run_id' = ANY(:run_ids)
+            ORDER BY case_id
+            """).bindparams(bindparam("run_ids", type_=ARRAY(String()))),
+        {"run_ids": list(run_ids)},
+    )
+    return [{"case_id": row.case_id, "run_id": row.run_id} for row in rows]
+
+
 def erase_ledgers(
     session: Session,
     import_id: str,
@@ -55,16 +69,21 @@ def erase_ledgers(
 ) -> Dict[str, Any]:
     """Delete the ledgers and the run rows. Raises before any delete otherwise.
 
-    ``cases`` names Cases a run was opened from. Those ids are not passed to
-    the function. None are recorded yet.
+    ``cases`` names Cases a run was opened from. Those run ids are not passed
+    to ``erase_redecision_ledgers``.
     """
     if session.get(HistoryImport, import_id) is not None:
         raise ImportStillThere(import_id)
     owned = set(marked_run_ids(session, import_id))
     if not run_ids or any(run_id not in owned for run_id in run_ids):
         raise RunNotMarked(import_id)
+    spared = _opened_cases(session, run_ids)
+    spared_runs = {row["run_id"] for row in spared}
+    to_erase = [run_id for run_id in run_ids if run_id not in spared_runs]
+    if not to_erase:
+        return {"erased": 0, "cases": [{"case_id": row["case_id"]} for row in spared]}
     try:
-        removed = session.execute(_ERASE, {"run_ids": list(run_ids)}).scalar_one()
+        removed = session.execute(_ERASE, {"run_ids": to_erase}).scalar_one()
     except DBAPIError as exc:
         # 22023 is the function refusing an unmarked id. 22P02 is a run id
         # that is not a uuid, so it cannot be a ledger row. Either deletes nothing.
@@ -77,6 +96,9 @@ def erase_ledgers(
         LEDGERS_ERASED,
         actor=actor,
         import_id=import_id,
-        run_ids=list(run_ids),
+        run_ids=to_erase,
     )
-    return {"erased": int(removed), "cases": []}
+    return {
+        "erased": int(removed),
+        "cases": [{"case_id": row["case_id"]} for row in spared],
+    }

@@ -257,12 +257,31 @@ function asClosure(raw: unknown): CaseClosureView | null {
   }
 }
 
+export interface RecheckMark {
+  source: string
+  closed_at: string
+  run_id: string
+}
+
+function asRecheck(raw: unknown): RecheckMark | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.run_id !== 'string' || !o.run_id) return null
+  return {
+    source: typeof o.source === 'string' ? o.source : '',
+    closed_at: typeof o.closed_at === 'string' ? o.closed_at : '',
+    run_id: o.run_id,
+  }
+}
+
 type CaseDetailBody = Parameters<typeof mapApiCase>[0] & {
   combined_state?: unknown
   investigations?: unknown
   closure?: unknown
   linked_findings?: unknown
   opened_from?: unknown
+  recheck?: unknown
+  reviewers_differ?: unknown
 }
 
 export function useCaseDetail(id: string | null) {
@@ -273,6 +292,8 @@ export function useCaseDetail(id: string | null) {
   const [closure, setClosure] = useState<CaseClosureView | null>(null)
   const [linkedFindings, setLinkedFindings] = useState<CaseLinkedFinding[]>([])
   const [openedFrom, setOpenedFrom] = useState<string | null>(null)
+  const [recheck, setRecheck] = useState<RecheckMark | null>(null)
+  const [reviewersDiffer, setReviewersDiffer] = useState(false)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -288,6 +309,8 @@ export function useCaseDetail(id: string | null) {
     setClosure(asClosure(data.closure))
     setLinkedFindings(asLinkedFindings(data.linked_findings))
     setOpenedFrom(typeof data.opened_from === 'string' && data.opened_from ? data.opened_from : null)
+    setRecheck(asRecheck(data.recheck))
+    setReviewersDiffer(data.reviewers_differ === true)
     setCreated(utcDayClock(data.created_at) ?? '—')
   }, [])
 
@@ -302,6 +325,8 @@ export function useCaseDetail(id: string | null) {
     setClosure(null)
     setLinkedFindings([])
     setOpenedFrom(null)
+    setRecheck(null)
+    setReviewersDiffer(false)
     casesApi
       .getById(id)
       .then((res) => {
@@ -329,5 +354,8 @@ export function useCaseDetail(id: string | null) {
       .catch(() => undefined)
   }, [id, apply])
 
-  return { row, created, combinedState, investigations, closure, linkedFindings, openedFrom, phase, error, reload, refresh }
+  return {
+    row, created, combinedState, investigations, closure, linkedFindings, openedFrom,
+    recheck, reviewersDiffer, phase, error, reload, refresh,
+  }
 }
