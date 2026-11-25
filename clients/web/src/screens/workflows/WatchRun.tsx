@@ -21,9 +21,9 @@ export const AGENT_RUN = 'One agent works this on its own, with its own tools. I
 export const PLAYBOOK = 'A playbook runs its phases in order, with no lead agent to watch. Its phases are listed in History.'
 
 
-/** `threat-hunt` → "Threat hunt". The definition carries no display name, so the id is read as words. */
+/** `threat-hunt` → "Threat hunt": a slug is read as words; a display name with spaces is shown as written. */
 const workflowTitle = (name: string) => {
-  const words = name.replace(/[_-]+/g, ' ').trim()
+  const words = /\s/.test(name.trim()) ? name.trim() : name.replace(/[_-]+/g, ' ').trim()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 const HALT_CLOCK: Record<Halt['kind'], string> = { needs_you: 'waiting on you', paused: 'paused', failed: 'stopped', cancelled: 'stopped', rejected: 'rejected' }
@@ -285,7 +285,7 @@ function Header({ d, hypothesis, tail, onBack }: { d: WfRunDetail; hypothesis: s
   const name = d.workflow_name
   const caseId = d.hunt?.scope?.case_id ?? d.trigger_context?.case_id
   // a hunt with no name of its own carries the workflow id as its name; the heading already says which workflow
-  const huntName = d.hunt?.name && d.hunt.name !== name ? d.hunt.name : null
+  const huntName = d.hunt?.name && d.hunt.name !== name && d.hunt.name !== d.workflow_id ? d.hunt.name : null
   const about = [typeof caseId === 'string' && caseId ? `case ${caseId}` : null, huntName].filter(Boolean).join(': ')
   const workflow = name ? `${workflowTitle(name)} ${typeof d.workflow_version === 'number' ? versionText(d) : `(${versionText(d)})`}` : versionText(d)
   const lead = `${workflow}${about ? ` · ${about}` : ''}`
