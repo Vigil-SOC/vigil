@@ -89,6 +89,10 @@ KIND_LABELS = {
     "root_cause": "Root-cause traces",
     "compose": "Workflows",
 }
+# A run that ended in the window started at most this long before it began: the
+# runtime cap is a day, and a hunt parks for at most its park TTL (7 days) before
+# it ends. Read on the indexed start time, so the run table is not scanned whole.
+RUN_LOOKBACK = timedelta(days=14)
 _REAL = tuple(c.value for c in ClosureCategory if closure_says_real(c.value) is True)
 _UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
@@ -146,7 +150,7 @@ def failures(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, 
                 func.count().filter(stops.c.real),
             ).group_by(stops.c.kind, stops.c.reason)
         ).all()
-        tools = _top_tools(session, runs, quiet)
+        tools = _top_tools(session, runs, quiet, start, end)
     items = [
         {
             "reason": _label(kind, key),
@@ -175,6 +179,7 @@ def _stopped_runs(start: datetime, end: datetime):
             Investigation, Investigation.investigation_id == _investigation_of_run()
         )
         .where(
+            *_started_near(start, end),
             WorkflowRun.finished_at >= start,
             WorkflowRun.finished_at < end,
             *_counted_run(),
@@ -193,7 +198,7 @@ def _quiet(start: datetime, end: datetime):
             # The orchestrator's kill is on the investigation, not on a run kind.
             literal(None, String).label("kind"),
             literal("stale").label("reason"),
-            Investigation.case_id.isnot(None).label("has_case"),
+            func.nullif(Investigation.case_id, "").isnot(None).label("has_case"),
             _closed_real(Investigation.case_id, Investigation.last_activity_at).label(
                 "real"
             ),
@@ -221,7 +226,16 @@ def _kind():
 def _case_of_run():
     """The run's Case: its investigation's, else the one the run was started on."""
     return func.coalesce(
-        Investigation.case_id, WorkflowRun.trigger_context["case_id"].astext
+        func.nullif(Investigation.case_id, ""),
+        func.nullif(WorkflowRun.trigger_context["case_id"].astext, ""),
+    )
+
+
+def _started_near(start: datetime, end: datetime):
+    """On the indexed start time: a run in the window started no earlier than this."""
+    return (
+        WorkflowRun.started_at >= start - RUN_LOOKBACK,
+        WorkflowRun.started_at < end,
     )
 
 
@@ -309,13 +323,17 @@ def _not_real_data(case_id):
     return or_(in_case, started_by)
 
 
-def _top_tools(session: Session, runs, quiet) -> dict[str, tuple[str, int]]:
+def _top_tools(
+    session: Session, runs, quiet, start: datetime, end: datetime
+) -> dict[str, tuple[str, int]]:
     """Per reason, the tool whose calls failed most in its stopped runs."""
     # A quiet investigation's runs are all of its counted runs; any other stop is one run.
     stale_runs = (
-        select(quiet.c.kind, quiet.c.reason, WorkflowRun.run_id)
-        .join(WorkflowRun, _investigation_of_run() == quiet.c.investigation_id)
-        .where(*_counted_run())
+        select(quiet.c.kind, quiet.c.reason, WorkflowRun.run_id).join(
+            WorkflowRun, _investigation_of_run() == quiet.c.investigation_id
+        )
+        # Its last activity is in the window, so its runs started near it.
+        .where(*_counted_run(), *_started_near(start, end))
     )
     ledger = union_all(
         select(runs.c.kind, runs.c.reason, runs.c.run_id), stale_runs
