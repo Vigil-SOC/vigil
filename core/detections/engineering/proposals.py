@@ -887,6 +887,17 @@ def from_rule(rule_id: int, actor: str, kind: str = PERSON) -> Dict[str, Any]:
             raise Refused(
                 f"This is a {rule.language} rule. Only a Sigma rule can be replayed here."
             )
+        content = session.scalar(
+            select(DetectionRuleVersion.content).where(
+                DetectionRuleVersion.rule_id == rule_id,
+                DetectionRuleVersion.version == rule.latest_version,
+            )
+        )
+        if isinstance(content, dict) and "correlation" in content:
+            raise Refused(
+                "This is a Sigma correlation rule: it correlates other rules' "
+                "matches and cannot be replayed on its own."
+            )
         existing = session.scalar(
             select(DetectionProposal).where(
                 DetectionProposal.rule_id == rule_id,
@@ -895,12 +906,6 @@ def from_rule(rule_id: int, actor: str, kind: str = PERSON) -> Dict[str, Any]:
         )
         if existing is not None:
             return _view(session, existing)
-        content = session.scalar(
-            select(DetectionRuleVersion.content).where(
-                DetectionRuleVersion.rule_id == rule_id,
-                DetectionRuleVersion.version == rule.latest_version,
-            )
-        )
         version = rule.latest_version
         name = rule.name
     return create(
