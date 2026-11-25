@@ -55,6 +55,7 @@ from core.reporting.checks import (
     scope_label,
     spec_for,
 )
+from core.reporting.coverage import by_layer as coverage_by_layer
 from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import (
     RECURRING_KEY,
@@ -297,6 +298,7 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
+        evidence[COVERAGE.id] = _coverage_layers()
     if ESTATE.id not in disabled:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
@@ -382,6 +384,66 @@ def _coverage_checks() -> list[dict[str, Any]]:
                 "Could not read detection coverage.",
             )
         ]
+
+
+def _coverage_layers() -> dict[str, Any]:
+    """The by-layer figures. A failed read is a not-checked note, not a check."""
+    try:
+        return coverage_by_layer()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read coverage by layer: %s", type(exc).__name__
+        )
+        return {"not_checked": "not checked: could not read coverage by layer."}
+
+
+# A cell's state, worst first. not_checked is not on the scale. A tested-and-
+# missed cell reads no_detection, so it is a regression from any catch.
+_LAYER_RANK = {"no_detection": 0, "present": 1, "partial": 2, "validated": 3}
+
+
+def _layers_comparison(current: Any, prior: Any) -> Any:
+    """Each (technique, layer) cell against the compared run's. Read, never stored.
+
+    ``not_in_compared_run`` when the compared record has no by-layer body. A
+    cell either side could not check, or that only one side has, is not compared,
+    and so is every cell when the compared run's read failed.
+    """
+    if not isinstance(current, dict) or not isinstance(current.get("techniques"), list):
+        return None
+    if not isinstance(prior, dict):
+        return "not_in_compared_run"
+    before = {
+        (row.get("technique"), layer): cell
+        for row in prior.get("techniques") or []
+        for layer, cell in (row.get("layers") or {}).items()
+    }
+    counts = {"improved": 0, "regressed": 0, "unchanged": 0, "not_compared": 0}
+    moves = []
+    for row in current["techniques"]:
+        for layer, cell in (row.get("layers") or {}).items():
+            was = before.get((row.get("technique"), layer)) or {}
+            now_rank = _LAYER_RANK.get(cell.get("state"))
+            was_rank = _LAYER_RANK.get(was.get("state"))
+            if now_rank is None or was_rank is None:
+                counts["not_compared"] += 1
+                continue
+            if now_rank == was_rank:
+                counts["unchanged"] += 1
+                continue
+            kind = "improved" if now_rank > was_rank else "regressed"
+            counts[kind] += 1
+            moves.append(
+                {
+                    "technique": row.get("technique"),
+                    "name": row.get("name"),
+                    "layer": layer,
+                    "kind": kind,
+                    "before": was["state"],
+                    "after": cell["state"],
+                }
+            )
+    return {"counts": counts, "moves": moves}
 
 
 def status() -> dict[str, Any]:
@@ -516,6 +578,11 @@ def _present(
         stored = evidence.get(FORECAST.id)
         if isinstance(stored, dict):
             forecast = stored
+    coverage_comparison = None
+    if compared is not None and COVERAGE.id not in hidden:
+        coverage_comparison = _layers_comparison(
+            evidence.get(COVERAGE.id), (compared.evidence or {}).get(COVERAGE.id)
+        )
     return {
         "id": record.record_id,
         "run_id": record.run_id,
@@ -538,6 +605,7 @@ def _present(
         "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
+        "coverage_comparison": coverage_comparison,
         **present_history(
             session,
             evidence,

@@ -5,11 +5,12 @@ import type { Schema } from '../../services/apiTypes'
 import { useAuth } from '../../contexts/AuthContext'
 import { errorText } from '../../shared/errorText'
 import { InfoTip } from '../../shared/InfoTip'
-import { NumberInput, ToggleRow } from '../../shared/ui'
+import { NumberInput, Toggle, ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
 import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
+import { CoverageLayers, comparisonLine, layerNamer, layersBody, measureLines, nameMasker } from './CoverageLayers'
 import { ProductionFigures } from './ProductionFigures'
 import { SpendSection } from './ProductionSpend'
 import {
@@ -1085,7 +1086,7 @@ function ProductionSummary({ report }: { report: ProductionReport }) {
   )
 }
 
-function Summary({ report }: { report: Loaded }) {
+function Summary({ report, hideNames }: { report: Loaded; hideNames: boolean }) {
   if (isProduction(report)) return <ProductionSummary report={report} />
   const hidden = new Set(report.withheld ?? [])
   const modules = report.modules ?? []
@@ -1116,6 +1117,12 @@ function Summary({ report }: { report: Loaded }) {
   )
   const switchedOff = seeVisibility ? (report.switched_off ?? []) : []
   const showCantSee = neitherRan || seeRan
+  const layers = !hidden.has('coverage') ? layersBody(report.evidence) : null
+  const layerLines = layers ? measureLines(layers, layerNamer(layers, hideNames)) : []
+  const layerCompare = layers ? comparisonLine(report.coverage_comparison, report.compared_at ?? null) : null
+  // With source names hidden, other sections' free text is masked too, so the page names no product.
+  const masked = nameMasker(layers)
+  const say = (text: string) => (hideNames ? masked(text) : text)
   return (
     <section className="d1-card d1-print" aria-label="Summary">
       <h2 className="d1-print-title">Summary</h2>
@@ -1128,8 +1135,8 @@ function Summary({ report }: { report: Loaded }) {
           <ol className="d1-actions-list">
             {actions.map((check) => (
               <li key={check.id}>
-                <span>{check.reason}</span>
-                {check.evidence?.fix && <span className="d1-fix">{check.evidence.fix}</span>}
+                <span>{say(check.reason)}</span>
+                {check.evidence?.fix && <span className="d1-fix">{say(check.evidence.fix)}</span>}
               </li>
             ))}
           </ol>
@@ -1181,6 +1188,18 @@ function Summary({ report }: { report: Loaded }) {
           <p className="d1-quiet">None.</p>
         )}
       </div>
+      {layers && (
+        <div className="d1-print-block">
+          <h2>Detection coverage by layer</h2>
+          {layers.not_checked && <p className="d1-print-line">{layers.not_checked}</p>}
+          {layerLines.map((line) => (
+            <p className="d1-print-line" key={line}>
+              {line}
+            </p>
+          ))}
+          {layerCompare && <p className="d1-print-line">{layerCompare}</p>}
+        </div>
+      )}
       {showCantSee && (
         <div className="d1-print-block">
           <h2>What Vigil can&apos;t see</h2>
@@ -1191,11 +1210,11 @@ function Summary({ report }: { report: Loaded }) {
           {(unmet.length > 0 || switchedOff.length > 0) && (
             <ul className="d1-gaps">
               {unmet.map((check) => (
-                <li key={check.id}>{check.reason}</li>
+                <li key={check.id}>{say(check.reason)}</li>
               ))}
               {switchedOff.map((row) => (
                 <li key={row.source_id}>
-                  {row.source_id}: switched off. Brings {row.brings}.
+                  {say(`${row.source_id}: switched off. Brings ${row.brings}.`)}
                 </li>
               ))}
             </ul>
@@ -1223,6 +1242,8 @@ export default function ReportScreen() {
   const [runningSince, setRunningSince] = useState<string | null>(null)
   const [incompleteSince, setIncompleteSince] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Page-local: numbers the layers on screen and in print. Never saved.
+  const [hideNames, setHideNames] = useState(false)
 
   const load = useCallback(async () => {
     const statusRead = day1Api.status().then(
@@ -1362,6 +1383,7 @@ export default function ReportScreen() {
   const coverageRest = coverageChecks.filter(
     (check) => !coverageGrouped.some((group) => group.checks.includes(check)),
   )
+  const layers = day1 && showCoverage ? layersBody(day1.evidence) : null
   const comparedAt = day1?.compared_at ?? null
   const settingsComparedAt = produced?.compared_at ?? comparedAt
   const span = produced ? productionWindow(produced) : null
@@ -1434,6 +1456,12 @@ export default function ReportScreen() {
                 Print summary
               </button>
             )}
+            {layers && (
+              <label className="d1-hide-names">
+                <Toggle checked={hideNames} onChange={setHideNames} label="Hide source names" />
+                Hide source names
+              </label>
+            )}
           </div>
         )}
         {modules && modules.length > 0 && (
@@ -1495,7 +1523,7 @@ export default function ReportScreen() {
           </section>
         )}
       </div>
-      {report && <Summary report={report} />}
+      {report && <Summary report={report} hideNames={hideNames} />}
       <div className="d1-screen">
         {produced && withheld.includes('production.running') && <Withheld id="production.running" />}
         {produced && !withheld.includes('production.running') && (produced.modules ?? []).includes('production.running') && (
@@ -1636,6 +1664,15 @@ export default function ReportScreen() {
               <h2>{MODULE_TITLE.coverage}</h2>
               <InfoTip label="How detection coverage is judged" align="start" {...COVERAGE_TIP} />
             </div>
+            {layers && (
+              <CoverageLayers
+                body={layers}
+                comparison={day1?.coverage_comparison}
+                comparedAt={comparedAt}
+                preface={day1?.preface}
+                hideNames={hideNames}
+              />
+            )}
             {coverageGrouped.map((group) =>
               group.checks.length === 0 ? null : (
                 <Fragment key={group.id}>
@@ -1655,7 +1692,7 @@ export default function ReportScreen() {
                 ))}
               </div>
             )}
-            {coverageChecks.length === 0 && <p className="d1-quiet">Nothing to report in this section.</p>}
+            {coverageChecks.length === 0 && !layers && <p className="d1-quiet">Nothing to report in this section.</p>}
           </section>
         )}
         {day1 && withheld.includes('history.before') && <Withheld id="history.before" />}
