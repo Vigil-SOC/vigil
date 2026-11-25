@@ -66,15 +66,15 @@ export function classOf(call: CallPayload): CallClass {
   return call.failure === "timeout" || call.failure === "unavailable" || call.failure === "backend_error" ? "visibility_gap" : "defect";
 }
 
-// The run could not look, and its answer rests on nothing it saw (#3248): the ledger holds a
-// blind spot -- a call the estate failed, or a need no tool here answers -- and no ref in
-// `rests` is a served estate call. One gap beside a result the answer stands on is not this.
 // The tools that answer only an optional need: their failure is no blind spot.
 export function optionalTools(plugin: PluginManifest, tools: readonly ToolSpec[]): ReadonlySet<string> {
   const optional = new Set(plugin.optional ?? []);
   return new Set(tools.filter((tool) => typeof tool["provides"] === "string" && optional.has(tool["provides"])).map((tool) => tool.id));
 }
 
+// The run could not look, and its answer rests on nothing it saw (#3248): the ledger holds a
+// blind spot -- a call the estate failed, or a need no tool here answers -- and no ref in
+// `rests` is a served estate call. One gap beside a result the answer stands on is not this.
 // A failed call to a tool in `optional` (one answering an optional need) is no blind spot.
 export function starved(
   events: readonly { kind: string; payload: unknown }[],
