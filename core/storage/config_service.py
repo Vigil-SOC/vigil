@@ -236,9 +236,21 @@ class ConfigService:
             old_value = None
             action = "create"
             was_enabled = bool(integration and integration.enabled)
+            meta_changed = False
+            old_config = None
 
             if integration:
-                old_value = integration.config
+                # The on/off switch is recorded beside the settings it gates.
+                old_value = {**(integration.config or {}), "enabled": was_enabled}
+                meta_changed = any(
+                    new is not None and new != getattr(integration, attr)
+                    for attr, new in (
+                        ("integration_name", integration_name),
+                        ("integration_type", integration_type),
+                        ("description", description),
+                    )
+                )
+                old_config = integration.config
                 integration.config = config
                 integration.enabled = enabled
                 integration.updated_by = self.user_id
@@ -265,7 +277,7 @@ class ConfigService:
             # again from "no attempt yet". A save that changes nothing keeps it.
             if (
                 (enabled and not was_enabled)
-                or (action == "update" and old_value != config)
+                or (action == "update" and old_config != config)
                 or credential_changed
             ):
                 from core.storage import source_health
@@ -281,16 +293,22 @@ class ConfigService:
                         type(e).__name__,
                     )
 
-            # Create audit log
-            self._create_audit_log(
-                session,
-                config_type="integration",
-                config_key=integration_id,
-                action=action,
-                old_value=old_value,
-                new_value=config,
-                change_reason=change_reason,
-            )
+            new_value = {**config, "enabled": bool(enabled)}
+            if credential_changed:
+                # Secrets live outside ``config``; say one was replaced, never its value.
+                new_value["secret_replaced"] = True
+            # A save that changes nothing about this integration records nothing,
+            # so the entry that switched it off or re-keyed it stands out.
+            if action == "create" or old_value != new_value or meta_changed:
+                self._create_audit_log(
+                    session,
+                    config_type="integration",
+                    config_key=integration_id,
+                    action=action,
+                    old_value=old_value,
+                    new_value=new_value,
+                    change_reason=change_reason,
+                )
 
             session.commit()
             logger.info(f"Integration '{integration_id}' {action}d by {self.user_id}")
