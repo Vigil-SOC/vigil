@@ -5,8 +5,10 @@ Read and written by the scheduled check. An apply is judged once,
 ``WINDOW`` after it, on the function the suggestion was for. A label counts only
 if a person gave it within ``LABEL_LAG`` of its window's end, so both windows
 had the same time to be judged. Each side needs ``FLOOR`` labelled examples;
-with fewer, ``improved`` stays null and the note says not enough yet. A change
-that was undone is left alone: no verdict, no note.
+with fewer, ``improved`` stays null and the note says there was not enough to
+tell. That is final: both windows are closed and their labels counted by then. A
+change that was undone is left alone: no verdict, no note. Another change to
+the same function inside the after window is not told apart from this one.
 
 What is counted, per function, by the time each item happened:
 
@@ -38,7 +40,7 @@ only by ``COUNT_MARGIN`` or more of those. Cost and time differ by
 note saying no clear change.
 
 An apply is unjudged while its ``improved`` is null and its note empty: the
-apply path writes no note, so the note this module writes, "not enough yet"
+apply path writes no note, so the note this module writes, "not enough to tell"
 included, marks it done.
 """
 
@@ -174,7 +176,7 @@ def judge(before: Measure, after: Measure) -> tuple[bool | None, str]:
     """Better, worse or no clear change, first difference wins, and a short note."""
     if before.labelled < FLOOR or after.labelled < FLOOR:
         return None, (
-            f"Not enough yet: {before.labelled} judged before and "
+            f"Not enough judged to tell: {before.labelled} before and "
             f"{after.labelled} after; {FLOOR} each needed"
         )
     scale = after.labelled / before.labelled
@@ -217,7 +219,11 @@ def _triage(
     # Guarded: a stamp that is not an ISO time is left out, not a failed cast.
     said_at = case((stamp.op("~")(_ISO), cast(stamp, DateTime)), else_=None)
     where = (
-        # A standing verdict is never older than the first; this bounds the scan.
+        # A verdict made in the window was written then, and its write stamped
+        # updated_at, so a finding not touched since the window opened has none.
+        # This bounds the rows judged; nothing indexes either column, so the scan
+        # is the table's, as feedback's is. Each apply is judged once.
+        Finding.updated_at >= _naive(start),
         Finding.first_verdict_at < _naive(end),
         said_at >= _naive(start),
         said_at < _naive(end),
@@ -370,7 +376,9 @@ def _response(
         proposer.principal_id == ApprovalAction.created_by_principal_id,
         proposer.kind == "person",
     )
-    undone_at = cast(ApprovalAction.execution_result["undone_at"].astext, DateTime)
+    stamp = ApprovalAction.execution_result["undone_at"].astext
+    # Guarded as the triage stamp is: a value that is not an ISO time is not undone.
+    undone_at = case((stamp.op("~")(_ISO), cast(stamp, DateTime)), else_=None)
     undone = and_(
         ApprovalAction.status == "executed",
         undone_at.isnot(None),
