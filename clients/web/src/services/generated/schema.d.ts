@@ -7880,12 +7880,11 @@ export interface paths {
         };
         /**
          * Get Supervisory
-         * @description What the supervisory model has to learn from, per function.
+         * @description What the supervisory model has to learn from, and the settings it watches.
          *
          *     Nothing checks settings on a schedule yet, so the state is ``off`` and there
-         *     are no suggestions, held suggestions or history. Failure reasons and settings
-         *     are not measured yet: ``null``, which the page reads differently from an
-         *     empty list.
+         *     are no suggestions, held suggestions or history. Failure reasons are not
+         *     measured yet: ``null``, which the page reads differently from an empty list.
          */
         get: operations["get_api_supervisory"];
         put?: never;
