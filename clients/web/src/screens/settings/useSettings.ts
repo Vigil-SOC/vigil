@@ -1561,6 +1561,9 @@ export interface DetectionSource {
   vendor_repo?: boolean
   /** The person said this non-github.com host is GitHub Enterprise */
   github_enterprise?: boolean
+  /** A rule library's branch or tag, and the commit its files were taken at */
+  ref?: string
+  commit?: string | null
 }
 
 interface DetectionStats {
@@ -1628,6 +1631,11 @@ export function useDetectionRules() {
       detectionRulesApi.setDeployTarget(id, on, githubEnterprise).then(() => reload()),
     [reload],
   )
+  // A rule library's reads and imports are detectionRulesApi.readLibrary/importLibrary (the dialogs).
+  const removeLibrary = useCallback(
+    (id: string) => detectionRulesApi.removeLibrary(id).then(() => reload()),
+    [reload],
+  )
   const updateAll = useCallback(
     () =>
       detectionRulesApi.updateAll().then((res) => {
@@ -1637,7 +1645,7 @@ export function useDetectionRules() {
     [reload],
   )
 
-  return { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll, setDeployTarget }
+  return { sources, stats, phase, error, reload, addSource, removeSource, removeLibrary, updateSource, updateAll, setDeployTarget }
 }
 
 const JOB_POLL_MS = 1000
