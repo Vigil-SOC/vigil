@@ -96,6 +96,10 @@ _NOT_REAL = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is False
 )
 _DISMISSED = ("agent_run_closed", "agent_run_left_open")
+# A run that ended in a window started at most this long before it: the runtime
+# cap is a day, and a hunt parks for at most its park TTL (7 days) before it ends.
+# Read on the indexed start time, so the run table is not scanned whole.
+RUN_LOOKBACK = timedelta(days=14)
 # The agent-run kinds that investigate; adjudicate, a second look, is not one.
 _KINDS = ("investigate", "hunt", "root_cause", "compose")
 _ISO = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$"
@@ -325,9 +329,10 @@ def _investigation(
     session: Session, start: datetime, end: datetime, cutoff: datetime
 ) -> Measure:
     kind = WorkflowRun.trigger_context["run_kind"].astext
-    # Its investigation's Case, else the one the run was started on.
+    # Its investigation's Case, else the one the run was started on; empty is none.
     case_id = func.coalesce(
-        Investigation.case_id, WorkflowRun.trigger_context["case_id"].astext
+        func.nullif(Investigation.case_id, ""),
+        func.nullif(WorkflowRun.trigger_context["case_id"].astext, ""),
     )
     sample = (
         exists()
@@ -363,6 +368,8 @@ def _investigation(
             == WorkflowRun.trigger_context["investigation_id"].astext,
         )
         .where(
+            WorkflowRun.started_at >= _naive(start - RUN_LOOKBACK),
+            WorkflowRun.started_at < _naive(end),
             WorkflowRun.finished_at >= _naive(start),
             WorkflowRun.finished_at < _naive(end),
             WorkflowRun.deleted_at.is_(None),
