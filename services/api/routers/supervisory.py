@@ -11,6 +11,7 @@ from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.supervisory import store
+from core.supervisory.failures import failures
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
 
@@ -48,11 +49,10 @@ class HistoryEntryResponse(BaseModel):
 # Plain def: the read is synchronous, so FastAPI runs it in its threadpool.
 @router.get("/supervisory")
 def get_supervisory():
-    """What the supervisory model has to learn from, its suggestions, and the settings it watches.
+    """What the supervisory model has to learn from, its suggestions, the settings
+    it watches, and why agent runs stopped early.
 
-    Nothing checks settings on a schedule yet, so the state is ``off``. Failure
-    reasons are not measured yet: ``null``, which the page reads differently from
-    an empty list.
+    Nothing checks settings on a schedule yet, so the state is ``off``.
     """
     read = feedback()
     stored = store.read()
@@ -69,7 +69,7 @@ def get_supervisory():
             "functions": read["functions"],
             "suggestions": stored["suggestions"],
             "held": stored["held"],
-            "failures": None,
+            "failures": failures(),
             "history": stored["history"],
             "settings": settings(),
             "learns_from": {"days": read["history_days"], "items": read["learns_from"]},
