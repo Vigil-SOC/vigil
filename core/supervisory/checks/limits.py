@@ -33,7 +33,7 @@ parked at one counts as stopped there: a refusal names the cap, and "spent its
 allowance" is the cost cap. A hunt out of turns does not count, nor does a hunt's
 call stop: its turns, and the call meter they raise, are the hunt's own, not a
 Vigil setting. A park that later ends (extended, concluded by a person, or
-aborted past its time to live) no longer says which cap it met, so it does not
+ended past its time to live) no longer says which cap it met, so it does not
 count. A cost stop whose stated ceiling is above the investigation's cap met a
 person's extension, not the setting, and does not count. A refusal that states no
 ceiling (runtime, or cost with nothing in flight) cannot be told apart, so a hunt
@@ -275,11 +275,14 @@ def _stopped(start: datetime, end: datetime) -> list[dict[str, Any]]:
                     WorkflowRun.finished_at >= start,
                     WorkflowRun.finished_at < end,
                 ),
-                # Parked, so not finished. A park ends within its week to live,
-                # so a hunt still parked parked recently.
+                # Parked, so not finished. The investigation's last activity is
+                # the last iteration before the park, and a park does not move it,
+                # so a park that began in the window counts; a row left paused
+                # when no worker ran to expire it ages out with it.
                 and_(
                     ranked.c.kind == HUNT_RUN_KIND,
                     ranked.c.status == _PARKED,
+                    Investigation.last_activity_at >= start,
                 ),
             ),
             Investigation.case_id.isnot(None),
