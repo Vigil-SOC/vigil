@@ -7880,15 +7880,37 @@ export interface paths {
         };
         /**
          * Get Supervisory
-         * @description What the supervisory model has to learn from, and the settings it watches.
+         * @description What the supervisory model has to learn from, its suggestions, and the settings it watches.
          *
-         *     Nothing checks settings on a schedule yet, so the state is ``off`` and there
-         *     are no suggestions, held suggestions or history. Failure reasons are not
-         *     measured yet: ``null``, which the page reads differently from an empty list.
+         *     Nothing checks settings on a schedule yet, so the state is ``off``. Failure
+         *     reasons are not measured yet: ``null``, which the page reads differently from
+         *     an empty list.
          */
         get: operations["get_api_supervisory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisory/suggestions/{suggestion_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Suggestion
+         * @description Dismiss a suggestion with one of the page's reasons. Returns its history entry.
+         *
+         *     The same change (setting and target value) is not suggested again.
+         */
+        post: operations["post_api_supervisory_suggestions_suggestion_id_dismiss"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13896,6 +13918,11 @@ export interface components {
             directive_id: string;
             /** Kind */
             kind: string;
+        };
+        /** DismissBody */
+        DismissBody: {
+            /** Reason */
+            reason: string;
         };
         /** DraftRequest */
         DraftRequest: {
@@ -33604,6 +33631,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_supervisory_suggestions_suggestion_id_dismiss: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                suggestion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DismissBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

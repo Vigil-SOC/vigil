@@ -1,0 +1,57 @@
+"""The supervisory model's suggestions and the append-only history of what people did.
+
+The DDL is ``core/upgrade/versions/0125_supervisory_suggestions.sql``.
+"""
+
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from core.storage.models.base import Base
+
+
+class SupervisorySuggestion(Base):
+    """One suggested change to one setting, with the card it was made with."""
+
+    __tablename__ = "supervisory_suggestions"
+
+    suggestion_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    fn: Mapped[str] = mapped_column(Text, nullable=False)
+    setting_key: Mapped[str] = mapped_column(Text, nullable=False)
+    verb: Mapped[str] = mapped_column(Text, nullable=False)
+    from_value: Mapped[str] = mapped_column(Text, nullable=False)
+    to_value: Mapped[str] = mapped_column(Text, nullable=False)
+    widens_autonomy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    card: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    held_incident: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class SupervisoryHistory(Base):
+    """One apply, undo or dismissal. Nothing updates a row once written."""
+
+    __tablename__ = "supervisory_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    suggestion_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("supervisory_suggestions.suggestion_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    setting_key: Mapped[str] = mapped_column(Text, nullable=False)
+    from_value: Mapped[str] = mapped_column(Text, nullable=False)
+    to_value: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_principal_id: Mapped[str | None] = mapped_column(Text, nullable=True)
