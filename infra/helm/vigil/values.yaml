@@ -6,9 +6,13 @@
 # Global
 # -----------------------------------------------------------------------------
 global:
-  # Container registry where Vigil images live. Set in release.yml.
-  imageRegistry: ghcr.io
-  # Image repo namespace. Images resolve to <registry>/<namespace>-<component>
+  # One registry for every image the chart and its subcharts render, for a
+  # mirrored site. Empty: Vigil's images come from ghcr.io and third-party ones
+  # from their own registry. Set: every image moves to <registry>/<path>, with
+  # Docker Hub's implied library/ written out (postgres → <registry>/library/postgres).
+  # An explicit image.repository is used as written.
+  imageRegistry: ""
+  # Image repo namespace. Vigil's images resolve to <registry>/<namespace>-<component>
   # e.g. ghcr.io/vigil-soc/vigil-backend
   imageNamespace: vigil-soc/vigil
   imagePullPolicy: IfNotPresent
@@ -27,7 +31,7 @@ commonLabels: {}
 backend:
   replicaCount: 2
   image:
-    # Final image ref: {{ global.imageRegistry }}/{{ global.imageNamespace }}-backend:{{ tag }}
+    # Final image ref: <global.imageRegistry or ghcr.io>/<global.imageNamespace>-backend:<tag>
     repository: ""   # empty → auto-derive from global.imageNamespace + "-backend"
     tag: ""          # empty → fall back to .Chart.AppVersion
     pullPolicy: ""   # empty → inherit global.imagePullPolicy
@@ -367,8 +371,12 @@ detectionRules:
 postgresql:
   enabled: true
   image:
-    repository: postgres
-    tag: "16-alpine"
+    # Docker Hub's library/ written out: the Bitnami subchart reads this key too,
+    # and both then land on <global.imageRegistry>/library/postgres.
+    repository: library/postgres
+    # Pinned by digest, the same reference as both docker-compose files (CI
+    # checks). A tag you set replaces the pin; image.digest, if set, wins.
+    tag: "16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -441,8 +449,12 @@ postgresql:
 redis:
   enabled: true
   image:
-    repository: redis
-    tag: "7-alpine"
+    # Docker Hub's library/ written out: the Bitnami subchart reads this key too,
+    # and both then land on <global.imageRegistry>/library/redis.
+    repository: library/redis
+    # Pinned by digest, the same reference as both docker-compose files (CI
+    # checks). A tag you set replaces the pin; image.digest, if set, wins.
+    tag: "7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe"
     pullPolicy: IfNotPresent
   service:
     port: 6379
@@ -524,8 +536,9 @@ bifrost:
   enabled: true
   image:
     repository: maximhq/bifrost
-    # Same tag as docker-compose's BIFROST_IMAGE_TAG default.
-    tag: "v2.2.1"
+    # Pinned by digest, the same reference as both docker-compose files (CI
+    # checks). A tag you set replaces the pin; image.digest, if set, wins.
+    tag: "v2.2.1@sha256:a8942692af7b4b89196cd8fc33653b7353488dfd58b24078fe793b8574a8084b"
     pullPolicy: IfNotPresent
   service:
     port: 8080
@@ -1322,11 +1335,3 @@ pgadmin:
     limits:
       cpu: 500m
       memory: 512Mi
-
-# -----------------------------------------------------------------------------
-# Tests (helm test)
-# -----------------------------------------------------------------------------
-tests:
-  image:
-    repository: curlimages/curl
-    tag: "8.10.1"

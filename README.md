@@ -298,9 +298,9 @@ Compose can run a release's images with nothing built on the host. Every image c
 | `VIGIL_MEDIC_IMAGE` | `medic` | `vigil-medic:local` |
 | `VIGIL_MEDIC_GATEWAY_IMAGE` | `medic-gateway` | `vigil-medic-gateway:local` |
 | `VIGIL_MEDIC_DOCKERPROXY_IMAGE` | `medic-dockerproxy` | `vigil-medic-dockerproxy:local` |
-| `VIGIL_POSTGRES_IMAGE` | `postgres` | `postgres:16-alpine` |
-| `VIGIL_REDIS_IMAGE` | `redis` | `redis:7-alpine` |
-| `VIGIL_BIFROST_IMAGE` | `bifrost` | `maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}` |
+| `VIGIL_POSTGRES_IMAGE` | `postgres` | `postgres:16-alpine@sha256:…` (pinned) |
+| `VIGIL_REDIS_IMAGE` | `redis` | `redis:7-alpine@sha256:…` (pinned) |
+| `VIGIL_BIFROST_IMAGE` | `bifrost` | `maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1@sha256:…}` (pinned) |
 
 Load (or pull) the images first, set the variables in `.env` or the shell, then mint this install's secrets and start. `./start.sh secrets` needs only openssl, awk and Docker: no virtualenv, no package install, nothing started. It prints the two `export` lines below, because the JWT secret and the Redis password stay in `~/.vigil`, never in `.env`:
 

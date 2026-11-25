@@ -30,8 +30,8 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: bifrost
-          image: "{{ .Values.bifrost.image.repository }}:{{ .Values.bifrost.image.tag }}"
-          imagePullPolicy: {{ .Values.bifrost.image.pullPolicy | default "IfNotPresent" }}
+          image: {{ include "vigil.image" (dict "context" . "component" "bifrost" "default" "maximhq/bifrost") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "bifrost") }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:

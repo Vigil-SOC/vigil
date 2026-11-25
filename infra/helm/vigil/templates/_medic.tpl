@@ -37,17 +37,6 @@ app.kubernetes.io/managed-by: {{ .context.Release.Service }}
 app.kubernetes.io/part-of: vigil
 {{- end -}}
 
-{{/* Usage: include "vigil.medic.image" (dict "context" . "image" .Values.medic.image "suffix" "medic") */}}
-{{- define "vigil.medic.image" -}}
-{{- $ctx := .context -}}
-{{- $repo := .image.repository | default (printf "%s/%s-%s" $ctx.Values.global.imageRegistry $ctx.Values.global.imageNamespace .suffix) -}}
-{{- printf "%s:%s" $repo (.image.tag | default ($ctx.Chart.AppVersion | toString)) -}}
-{{- end -}}
-
-{{- define "vigil.medic.pullPolicy" -}}
-{{- .image.pullPolicy | default .context.Values.global.imagePullPolicy | default "IfNotPresent" -}}
-{{- end -}}
-
 {{/* Medic's own API port (X2) and the gateway's two listeners (S5-3). */}}
 {{- define "vigil.medic.apiPort" -}}8470{{- end -}}
 {{- define "vigil.medicGateway.outPort" -}}8471{{- end -}}
