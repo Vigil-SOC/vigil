@@ -35,7 +35,7 @@ _SOURCE = {
 _ENV_ONLY = "Set in the environment or INTENT.md; Vigil has no write for it"
 _APPLIED = "Set by an earlier INTENT.md revision; Vigil has no write for it"
 _CEILING_UNREAD = "The autonomy ceiling could not be read"
-_STOPPED = "Autonomy is stopped: resume it first"
+_STOPPED = "Autonomy is stopped: Vigil can only tighten it until it resumes"
 _MANAGED = "Managed by INTENT.md: Vigil can only tighten it"
 _RESTART = "Saved at once; the daemon reads it when it starts"
 _ACT_LOCKED = "The environment forces it off"
@@ -125,7 +125,7 @@ def _intent_row(
         if ceiling is None:
             return _row(field.key, target, source, False, _CEILING_UNREAD)
         if ceiling.stopped:
-            return _row(field.key, target, source, False, _STOPPED)
+            return _row(field.key, target, source, True, _STOPPED)
     if locked and field.key in ("act.reversible", "act.irreversible"):
         return _row(field.key, target, source, False, _ACT_LOCKED)
     if source == "declared":
