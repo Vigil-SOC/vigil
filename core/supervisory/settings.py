@@ -20,6 +20,7 @@ from core.daemon_config import DaemonConfig
 from core.intent import INTENT_FIELDS
 from core.intent_report import effective_daemon_config
 from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
+from core.response.config import applied_intent
 from core.workflows.playbook_resolver import DEFAULT_RUNTIME
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,8 @@ def settings() -> list[dict[str, Any]]:
     locked = environment_locks_act()
     loaded = try_read_stored_ceiling()
     ceiling = None if loaded is None else loaded[0]
-    rows = [_intent_row(f, config, locked, ceiling) for f in INTENT_FIELDS]
+    managed = _managed_keys()
+    rows = [_intent_row(f, config, locked, ceiling, managed) for f in INTENT_FIELDS]
     for key, attr, setting in _STARTUP_LIMITS:
         path = f"orchestrator.{attr}"
         source = config.sources.get(path) or (
@@ -111,9 +113,13 @@ def settings() -> list[dict[str, Any]]:
 
 
 def _intent_row(
-    field: Any, config: DaemonConfig, locked: bool, ceiling: Any
+    field: Any, config: DaemonConfig, locked: bool, ceiling: Any, managed: set[str]
 ) -> dict[str, Any]:
-    """``ceiling`` is the stored autonomy row, None when it could not be read."""
+    """``ceiling`` is the stored autonomy row, None when it could not be read.
+
+    ``managed`` is every key the declared INTENT.md directory manages, pending
+    ones included: a local write that widens any of them is refused.
+    """
     target: Any = config
     for part in field.path.split("."):
         target = getattr(target, part)
@@ -121,16 +127,24 @@ def _intent_row(
     if field.key not in _WRITABLE:
         reason = _APPLIED if source == "db" else _ENV_ONLY
         return _row(field.key, target, source, False, reason)
-    if field.key.startswith("act."):
-        if ceiling is None:
-            return _row(field.key, target, source, False, _CEILING_UNREAD)
-        if ceiling.stopped:
-            return _row(field.key, target, source, True, _STOPPED)
+    if field.key.startswith("act.") and ceiling is None:
+        return _row(field.key, target, source, False, _CEILING_UNREAD)
+    # The environment lock forces the flags off whatever the stop allows.
     if locked and field.key in ("act.reversible", "act.irreversible"):
         return _row(field.key, target, source, False, _ACT_LOCKED)
-    if source == "declared":
+    if field.key.startswith("act.") and ceiling.stopped:
+        return _row(field.key, target, source, True, _STOPPED)
+    if source == "declared" or field.key in managed:
         return _row(field.key, target, source, True, _MANAGED)
     return _row(field.key, target, source, True, None)
+
+
+def _managed_keys() -> set[str]:
+    """Keys the declared INTENT.md directory manages, as the write paths read them."""
+    applied = applied_intent(fresh=True)
+    if not applied.get("directory"):
+        return set()
+    return set(applied.get("keys") or {})
 
 
 def _model_rows() -> list[dict[str, Any]]:
