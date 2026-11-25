@@ -34,13 +34,17 @@ allowance" is the cost cap. A hunt out of turns does not count, nor does a hunt'
 call stop: its turns, and the call meter they raise, are the hunt's own, not a
 Vigil setting. A park that later ends (extended, concluded by a person, or
 aborted past its time to live) no longer says which cap it met, so it does not
-count. A root-cause trace's stop names no cap and its budgets are fixed in code,
+count. A cost stop whose stated ceiling is above the investigation's cap met a
+person's extension, not the setting, and does not count; a runtime refusal does
+not state its ceiling, so a hunt extended and parked again on runtime still
+counts. A root-cause trace's stop names no cap and its budgets are fixed in code,
 so it does not count either.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -63,8 +67,12 @@ from core.supervisory.feedback import (
 )
 from core.workflows.workflows_service import HUNT_RUN_KIND
 
-# What a hunt parked at its own cost check says; a refusal carries the token.
+# What a hunt parked at its own cost check says, and what a refusal says before
+# the token. Any other park reason is the hunt's own words and is not read.
 _HUNT_COST_PARK = "spent its allowance"
+_REFUSED = "the budget refused another iteration"
+# The ceiling a cost stop states: "... of $5.00".
+_STATED_CEILING = re.compile(r" of \$(\d+(?:\.\d+)?)")
 _PARKED = "paused"
 MISSED_MARGIN = 2
 RUN_LOOKBACK = timedelta(days=14)
@@ -178,11 +186,21 @@ def _at(
 def _caps_met(row: dict[str, Any]) -> set[str]:
     """The limit tokens a stopped run's reason says it reached."""
     reason = row["reason"] or ""
-    met = {limit.token for limit in LIMITS if limit.token in reason}
-    if row["kind"] == HUNT_RUN_KIND:
-        if reason.startswith(_HUNT_COST_PARK):
-            met.add("cost_exhausted")
-        met.discard("calls_exhausted")
+    if row["kind"] != HUNT_RUN_KIND:
+        return {limit.token for limit in LIMITS if limit.token in reason}
+    if reason.startswith(_HUNT_COST_PARK):
+        met = {"cost_exhausted"}
+    elif reason.startswith(_REFUSED):
+        met = {limit.token for limit in LIMITS if limit.token in reason}
+    else:
+        return set()
+    met.discard("calls_exhausted")
+    # A person's extension raises the hunt's own ceiling past the investigation's
+    # cap, so a stop at the raised ceiling says nothing about the setting.
+    stated = _STATED_CEILING.search(reason)
+    cap = row["max_cost_usd"]
+    if stated and cap is not None and float(stated.group(1)) > float(cap) + 0.005:
+        met.discard("cost_exhausted")
     return met
 
 
