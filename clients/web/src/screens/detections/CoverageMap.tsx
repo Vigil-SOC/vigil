@@ -3,13 +3,15 @@ import {
   detectionRulesApi, type CoverageCell, type CoverageSiemName, type CoverageState, type DetectionCoverage,
 } from '../../services/api'
 import { Empty, Failure } from '../shared/x1'
+import CoverageByLayer from './CoverageByLayer'
 import { CoverageLoading } from './DetectionsLoading'
 import Emulate from './Emulate'
 
 // The heat map is Alex Margaris's from the 1.x line (ProgramTab's HeatMap), here
 // with main's meaning of proven (an active SIEM copy passes Runs and Sees) and a
 // split by SIEM. It opens on a summary per tactic; the whole grid is "Full map",
-// and "Emulate next" lists the techniques in the server's emulate-next order.
+// "Emulate next" lists the techniques in the server's emulate-next order, and "By layer"
+// reads each detection layer's state (it alone asks for by_layer, when opened).
 
 const STATES: Record<CoverageState, string> = {
   proven: 'Proven',
@@ -22,7 +24,7 @@ const SIEMS: { id: CoverageSiemName; label: string }[] = [
   { id: 'wazuh', label: 'Wazuh' },
 ]
 type Lens = 'all' | CoverageSiemName
-type View = 'summary' | 'full' | 'next'
+type View = 'summary' | 'full' | 'next' | 'layer'
 
 /** A cell's state through the lens: every SIEM, or one SIEM's copies only. */
 function stateIn(cell: CoverageCell, lens: Lens): CoverageState {
@@ -111,8 +113,9 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
   const present = SIEMS.filter((s) => coverage.siems.includes(s.id))
   const known = picked.filter((t) => coverage.tactics.includes(t))
   const tactics = known.length ? coverage.tactics.filter((t) => known.includes(t)) : coverage.tactics
-  // The emulate-next order is across every SIEM, so that view reads every SIEM.
-  const seen = view === 'next' ? 'all' : lens
+  // Emulate next and By layer read every SIEM, so the lens is off there.
+  const lensOff = view === 'next' || view === 'layer'
+  const seen = lensOff ? 'all' : lens
   const inTactics = coverage.techniques.filter((t) => tactics.includes(t.tactic))
   const total = countStates(inTactics, seen)
   const caught = inTactics.filter((t) => caughtIn(t, seen) > 0).length
@@ -123,21 +126,22 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
     <div className="x1-card de-cov" data-testid="coverage-map">
       <div className="de-cov-head">
         <div className="de-cov-lens" role="group" aria-label="Coverage in">
-          <button type="button" className={`de-cov-lens-b${seen === 'all' ? ' on' : ''}`} aria-pressed={seen === 'all'} disabled={view === 'next'} onClick={() => setLens('all')}>Every SIEM</button>
+          <button type="button" className={`de-cov-lens-b${seen === 'all' ? ' on' : ''}`} aria-pressed={seen === 'all'} disabled={lensOff} onClick={() => setLens('all')}>Every SIEM</button>
           {present.map((s) => (
-            <button key={s.id} type="button" className={`de-cov-lens-b${seen === s.id ? ' on' : ''}`} aria-pressed={seen === s.id} disabled={view === 'next'} title={view === 'next' ? 'Emulate next reads every SIEM' : undefined} onClick={() => setLens(s.id)}>{s.label}</button>
+            <button key={s.id} type="button" className={`de-cov-lens-b${seen === s.id ? ' on' : ''}`} aria-pressed={seen === s.id} disabled={lensOff} title={lensOff ? `${view === 'next' ? 'Emulate next' : 'By layer'} reads every SIEM` : undefined} onClick={() => setLens(s.id)}>{s.label}</button>
           ))}
           <span className="de-cov-sep" aria-hidden="true" />
           <button type="button" className={`de-cov-lens-b${view === 'full' ? ' on' : ''}`} aria-pressed={view === 'full'} onClick={() => toggleView('full')}>Full map</button>
           <button type="button" className={`de-cov-lens-b${view === 'next' ? ' on' : ''}`} aria-pressed={view === 'next'} onClick={() => toggleView('next')}>Emulate next</button>
+          <button type="button" className={`de-cov-lens-b${view === 'layer' ? ' on' : ''}`} aria-pressed={view === 'layer'} onClick={() => toggleView('layer')}>By layer</button>
           <TacticMenu tactics={coverage.tactics} known={known} onAll={() => pick([])} onToggle={toggleTactic} />
         </div>
-        <div className="de-cov-legend">
+        {view !== 'layer' && <div className="de-cov-legend">
           {ORDER.map((s) => (
             <span key={s}><span className={`de-swatch ${s}`} />{stateName(s, seen)} · {total[s]}</span>
           ))}
           <span className="de-cov-caught">Caught · {caught}</span>
-        </div>
+        </div>}
       </div>
       <div className="de-cov-tactics" role="group" aria-label="Tactics shown">
         <span className="x1-muted">Tactics</span>
@@ -161,9 +165,10 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
         </div>
       </div>}
       {view === 'full' && cell && <CellDetail cell={cell} />}
-      <p className="de-note">
+      {view === 'layer' && <CoverageByLayer tactics={known.length ? known : null} />}
+      {view !== 'layer' && <p className="de-note">
         Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. Caught: an active rule's latest version alerted on a real attack step. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled rule, one failing lint, or one held from coverage (a new repo rule the import check has not passed and no person approved) is no coverage, so a technique only those declare shows as no active rule.
-      </p>
+      </p>}
     </div>
   )
 }
