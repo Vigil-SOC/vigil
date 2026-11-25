@@ -137,7 +137,10 @@ def incident_for(
     return None
 
 
-def sweep(settings: Settings | None = None) -> dict[str, int] | None:
+def sweep(
+    settings: Settings | None = None,
+    incidents: list[dict[str, Any]] | None = None,
+) -> dict[str, int] | None:
     """Hold each live suggestion an open incident is related to, and release the rest.
 
     One sweep at a time, across replicas: a second waits, then reads Medic afresh,
@@ -146,6 +149,11 @@ def sweep(settings: Settings | None = None) -> dict[str, int] | None:
     Each suggestion is moved under its setting's lock, the lock propose and dismiss
     take, and only while it is still live. Returns how many were held and released,
     or None, changing nothing, when Medic could not be read.
+
+    ``incidents`` is a read of :func:`open_incidents` the caller already made, so
+    that what it proposes next is held on the same read. The scheduled check passes
+    one, read under its own one-at-a-time lock. Without it the sweep reads Medic
+    itself, inside this lock.
     """
     manager = get_db_manager()
     manager.initialize()  # a no-op once the process has its engine
@@ -154,13 +162,14 @@ def sweep(settings: Settings | None = None) -> dict[str, int] | None:
     ) as conn:
         conn.execute(text(_SWEEP_LOCK))
         try:
-            return _sweep(settings)
+            if incidents is None:
+                incidents = open_incidents(settings)
+            return _sweep(incidents)
         finally:
             conn.execute(text(_SWEEP_UNLOCK))
 
 
-def _sweep(settings: Settings | None) -> dict[str, int] | None:
-    incidents = open_incidents(settings)
+def _sweep(incidents: list[dict[str, Any]] | None) -> dict[str, int] | None:
     if incidents is None:
         return None
     with unit_of_work() as session:

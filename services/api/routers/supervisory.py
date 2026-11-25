@@ -10,7 +10,7 @@ from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.supervisory import medic_hold, store
+from core.supervisory import medic_hold, store, worker
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
 
@@ -50,21 +50,20 @@ class HistoryEntryResponse(BaseModel):
 def get_supervisory():
     """What the supervisory model has to learn from, its suggestions, and the settings it watches.
 
-    Nothing checks settings on a schedule yet, so the state is ``off``. Failure
-    reasons are not measured yet: ``null``, which the page reads differently from
-    an empty list.
+    The state and the check times come from the daemon's scheduled check
+    (``core.supervisory.worker``). Failure reasons are not measured yet: ``null``,
+    which the page reads differently from an empty list.
     """
     read = feedback()
     stored = store.read()
+    held_by = medic_hold.open_related()
     return JSONResponse(
         {
             "status": {
-                "state": "off",
-                "last_check_at": None,
-                "next_check_at": None,
+                **worker.status(held_by),
                 "history_days": read["history_days"],
                 "functions_watched": len(read["functions"]),
-                "medic_open_related": medic_hold.open_related(),
+                "medic_open_related": held_by,
             },
             "functions": read["functions"],
             "suggestions": stored["suggestions"],

@@ -7882,9 +7882,9 @@ export interface paths {
          * Get Supervisory
          * @description What the supervisory model has to learn from, its suggestions, and the settings it watches.
          *
-         *     Nothing checks settings on a schedule yet, so the state is ``off``. Failure
-         *     reasons are not measured yet: ``null``, which the page reads differently from
-         *     an empty list.
+         *     The state and the check times come from the daemon's scheduled check
+         *     (``core.supervisory.worker``). Failure reasons are not measured yet: ``null``,
+         *     which the page reads differently from an empty list.
          */
         get: operations["get_api_supervisory"];
         put?: never;

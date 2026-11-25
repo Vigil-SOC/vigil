@@ -1,11 +1,21 @@
 """The supervisory model's suggestions and the append-only history of what people did.
 
-The DDL is ``core/upgrade/versions/0125_supervisory_suggestions.sql``.
+The DDL is ``core/upgrade/versions/0125_supervisory_suggestions.sql`` and
+``0126_supervisory_worker_state.sql``.
 """
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    SmallInteger,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,3 +67,20 @@ class SupervisoryHistory(Base):
     actor_principal_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     # applied only: whether results improved after. Null until the follow-up reads it.
     improved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class SupervisoryWorkerState(Base):
+    """When the scheduled check last ran and when the next is due. One row, id 1."""
+
+    __tablename__ = "supervisory_worker_state"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    last_check_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    next_check_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_error: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )

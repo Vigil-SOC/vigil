@@ -175,6 +175,17 @@ class TaskScheduler:
             )
         )
 
+        # The tick skips when a check ran within the interval, here or on another
+        # replica, and keeps the interval's five-minute floor.
+        if self.config.supervisory_enabled:
+            self._tasks.append(
+                ScheduledTask(
+                    name="supervisory_check",
+                    func=self._run_supervisory_check,
+                    interval=self.config.supervisory_interval,
+                )
+            )
+
     def set_processor_queue(self, queue: asyncio.Queue):
         """Set the processor's input queue that probe sweeps inject onto."""
         self._processor_queue = queue
@@ -379,6 +390,14 @@ class TaskScheduler:
             "read_log_removed": reads,
             "entity_facts_removed": facts,
         }
+
+    async def _run_supervisory_check(self):
+        """The supervisory model's check: hold and release, then run each check."""
+        from core.supervisory import worker
+
+        done = await asyncio.to_thread(worker.tick)
+        if done is not None:
+            logger.info("Supervisory check: %s", done)
 
     async def _run_mfa_coverage(self):
         """Today's count of people who can sign in without MFA, on the trail."""
