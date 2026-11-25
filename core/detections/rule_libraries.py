@@ -30,7 +30,7 @@ import shutil
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +41,7 @@ from sqlalchemy import select
 
 from core.detections.detection_rules_service import (
     FORMAT_EXTENSIONS,
+    LOCAL_ROOTS_ENV,
     DetectionRulesService,
     _host,
     _record_health,
@@ -84,6 +85,29 @@ def _disk_errors(fn):
             ) from exc
 
     return wrapped
+
+
+# skill_sources' words for a host it could not resolve or connect to. Its text
+# stays as is: skill imports have no local route to point at.
+_NO_ROUTE = "could not connect to "
+
+
+@contextmanager
+def _clone(source: RepoSource) -> Iterator[Tuple[Path, str]]:
+    """``cloned``, with a failure to reach the host naming the local route."""
+    with ExitStack() as stack:
+        try:
+            got = stack.enter_context(cloned(source))
+        except SkillError as exc:
+            if _NO_ROUTE not in str(exc):
+                raise
+            raise LibraryError(
+                f"Could not fetch {source.label}: there is no route to "
+                f"{source.host} from this server. To keep these rules without "
+                "one, copy them onto the server and add them as a local source "
+                f"under a root listed in {LOCAL_ROOTS_ENV}."
+            ) from None
+        yield got
 
 
 # ---- Reading ----------------------------------------------------------------
@@ -302,7 +326,7 @@ def read(
         source, fmt = parse_source(repo), _format(fmt)
     else:
         raise LibraryError("Name a repo to read, or a library to update")
-    with cloned(source) as (clone, commit):
+    with _clone(source) as (clone, commit):
         root = _inside(clone, source.path)
         if not root.is_dir() and library is None:
             raise LibraryError(f"{source.path!r} is not a folder in {source.label}")
@@ -533,7 +557,7 @@ def import_rules(
         tree = stage / "library"
         rules = _inside(tree, source.path)
         rules.mkdir(parents=True)
-        with cloned(source) as (clone, got):
+        with _clone(source) as (clone, got):
             _moved(source, got, commit)
             root = _inside(clone, source.path)
             if not root.is_dir():
@@ -613,7 +637,7 @@ def _update(
     try:
         staged, backups = stage / "files", stage / "backup"
         backups.mkdir()
-        with cloned(source) as (clone, got):
+        with _clone(source) as (clone, got):
             _moved(source, got, commit)
             root = _inside(clone, source.path)
             found = _listing(root, fmt)
@@ -683,7 +707,7 @@ def take_whole(
         backups = stage / "backup"
         backups.mkdir()
         staged: List[Tuple[Path, Path]] = []
-        with cloned(source) as (clone, commit):
+        with _clone(source) as (clone, commit):
             for i, folder in enumerate(folders):
                 there = _inside(clone, folder)
                 if not there.is_dir():

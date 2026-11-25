@@ -542,6 +542,12 @@ bifrost:
     pullPolicy: IfNotPresent
   service:
     port: 8080
+  # With no route out the gateway exits at boot fetching its pricing and model
+  # parameter sheets from getbifrost.ai. true points it at the empty sheets in
+  # files/bifrost/ instead: cloud models then go unpriced, and a provider stated
+  # self-hosted prices at zero (docs/upgrading.md, "Running with no route out").
+  # Compose: BIFROST_LOCAL_SHEETS.
+  localSheets: false
   # /app/data holds what Bifrost is told at runtime (provider edits made in its UI)
   # and logs.db. With persistence off that is an emptyDir: both are lost whenever
   # the pod restarts. The backend re-pushes providers and keys on its next start,

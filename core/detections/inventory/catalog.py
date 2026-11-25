@@ -1557,6 +1557,10 @@ def _health_rows(
                 # The Accurate sweep's judged-false split. The screen reads it
                 # here and does not scan findings.
                 "false_split": _false_split(checks),
+                # The import check on this version (checks['import']): its own key,
+                # as ``held`` here is a person's Revert hold on the stage.
+                "import_result": (checks.get("import") or {}).get("result"),
+                "import_reason": (checks.get("import") or {}).get("reason"),
                 **_stage_fields(rule.id, copies),
             }
         )
@@ -1738,6 +1742,14 @@ def _restaged(
 def _row_flags(row: Dict[str, Any]) -> List[str]:
     """The flag filters a row matches: its failing flags, and Caught if it passed."""
     return row["flags"] + ([CAUGHT_CHECK] if row["caught"] else [])
+
+
+def listing_changed() -> None:
+    """Make the next listing read scan its marks now, not after ``_SCAN_EVERY``:
+    for a write the stage marks don't show (an approval rewrites checks only)."""
+    with _listing_lock:
+        if "scanned" in _listing:
+            _listing["scanned"] = float("-inf")
 
 
 def _listing_now() -> Dict[str, Any]:

@@ -1,6 +1,7 @@
 {{- if .Values.bifrost.enabled }}
-{{- /* Bootstrap config for the gateway: a copy of infra/docker/bifrost/config.json
-       (Helm cannot read outside the chart). CI fails if the two differ. */ -}}
+{{- /* Bootstrap config for the gateway and the empty pricing and model-parameter
+       sheets bifrost.localSheets points it at: copies of infra/docker/bifrost/
+       (Helm cannot read outside the chart). CI fails if they differ. */ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,4 +12,8 @@ metadata:
 data:
   config.json: |
     {{- .Files.Get "files/bifrost/config.json" | nindent 4 }}
+  pricing.json: |
+    {{- .Files.Get "files/bifrost/pricing.json" | nindent 4 }}
+  params.json: |
+    {{- .Files.Get "files/bifrost/params.json" | nindent 4 }}
 {{- end }}

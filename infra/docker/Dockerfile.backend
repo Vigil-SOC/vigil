@@ -123,6 +123,18 @@ RUN set -eu; \
     apt-get autoremove -y; \
     rm -rf /var/lib/apt/lists/*
 
+# OCR's English language data (core/documents/extract.py). LiteParse otherwise
+# fetches it on first use, which fails with no route out. Root-owned and outside
+# HOME, which a Helm pod may not share. tessdata_best pinned by commit and sha256.
+ENV TESSDATA_PREFIX=/usr/share/vigil/tessdata
+RUN set -eu; \
+    mkdir -p "$TESSDATA_PREFIX"; \
+    curl -fsSL -o "$TESSDATA_PREFIX/eng.traineddata" \
+      https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/eng.traineddata; \
+    echo "8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba  $TESSDATA_PREFIX/eng.traineddata" | sha256sum -c -; \
+    chmod 0755 "$TESSDATA_PREFIX"; \
+    chmod 0644 "$TESSDATA_PREFIX/eng.traineddata"
+
 # Non-root user (matching UID/GID 1000 from podSecurityContext in Helm chart)
 RUN groupadd -g 1000 vigil && useradd -u 1000 -g 1000 -d /home/vigil -m -s /sbin/nologin vigil
 
