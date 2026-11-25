@@ -10,9 +10,10 @@ import { TabStrip } from '../../shared/TabStrip'
 import RuleExceptions, { KEEP_DAYS } from './RuleExceptions'
 import RuleFindings from './RuleFindings'
 import RuleStages from './RuleStages'
+import RuleImport from './RuleImport'
 import DeployAgain from './DeployAgain'
 import Emulate from './Emulate'
-import { stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
+import { IMPORT_HELD, IMPORT_STATE, stageLine, waitingNote, type Stage, type StageFields } from './ruleStage'
 import CoverageMap from './CoverageMap'
 import RolloutMetrics from './RolloutMetrics'
 import ProposedRules from './ProposedRules'
@@ -80,6 +81,9 @@ interface RuleRow extends StageFields {
   /** Vigil rules only: how many stage moves it has (its rollout fields are StageFields). */
   stage_moves?: number
   silenced?: number
+  /** The import check on a repo rule's latest version (checks.import); null before the hold. */
+  import_result?: keyof typeof IMPORT_STATE | null
+  import_reason?: string | null
 }
 
 interface FalseSplit {
@@ -283,7 +287,7 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // One row opens at a time: its raw error, or (a Vigil copy) its exceptions.
-  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' | 'stages' | 'revert' } | null>(null)
+  const [open, setOpen] = useState<{ id: number; what: 'raw' | 'exceptions' | 'findings' | 'stages' | 'revert' | 'import' } | null>(null)
   const canWrite = useAuth().hasPermission('detections.write')
   // A finding opened from a rule's fire count.
   const [finding, setFinding] = useState<string | null>(null)
@@ -345,7 +349,7 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
   })
   const shown = virtual.getVirtualItems()
   const last = shown.length ? shown[shown.length - 1].index : -1
-  // After a Revert or Release: that rule's row is read again, then the view's counts
+  // After a Revert, Release or Approve: that rule's row is read again, then the view's counts
   // (listing reads queue on the server, so the row goes first); the list, its scroll
   // and the open panel stay.
   const refreshRule = (id: number) => {
@@ -619,6 +623,10 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
             const excOpen = open?.id === r.rule_id && open.what === 'exceptions'
             const fdOpen = open?.id === r.rule_id && open.what === 'findings'
             const stOpen = open?.id === r.rule_id && (open.what === 'stages' || open.what === 'revert')
+            const imOpen = open?.id === r.rule_id && open.what === 'import'
+            const importHeld = !!r.import_result && IMPORT_HELD.has(r.import_result)
+            // A repo rule's import check (and Propose, for Sigma) opens under it.
+            const hasImport = r.tool === 'repo' && (!!r.import_result || r.language === 'sigma')
             const line = stageLine(r)
             const waiting = waitingNote(r, canWrite)
             const siemOnly = r.fires === 0 && (r.siem_alerts ?? 0) > 0
@@ -629,6 +637,14 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
                 <div className="de-rule">
                   <div className="de-name" title={r.name}>{r.name}</div>
                   <div className="de-why-text" title={r.why}>{r.why}</div>
+                  {importHeld && (
+                    <div className="de-flags">
+                      <span className="de-flag-line">
+                        <span className="de-flag fair">Held from coverage · {IMPORT_STATE[r.import_result!]}</span>
+                        {r.import_reason && <span className="de-split de-held-why" title={r.import_reason}>{r.import_reason}</span>}
+                      </span>
+                    </div>
+                  )}
                   {others.length > 0 && (
                     <div className="de-flags">
                       {others.map((f) => (
@@ -684,6 +700,12 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
                         <svg viewBox="0 0 24 24" aria-hidden="true" className={excOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
                       </button>
                     )}
+                    {hasImport && (
+                      <button type="button" className="de-raw-toggle" aria-expanded={imOpen} onClick={() => setOpen(imOpen ? null : { id: r.rule_id, what: 'import' })}>
+                        {imOpen ? 'Hide import check' : 'Import check'}
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className={imOpen ? 'up' : ''}><path d="m6 9 6 6 6-6" /></svg>
+                      </button>
+                    )}
                     {(r.stage_moves ?? 0) > 0 && (
                       <button type="button" className="de-flag idle de-exc-pill de-st-pill" aria-expanded={stOpen} onClick={() => setOpen(stOpen ? null : { id: r.rule_id, what: 'stages' })}>
                         History · {plural(r.stage_moves ?? 0, 'move', 'moves')}
@@ -718,6 +740,7 @@ function RulesTab({ goSettings, openChat, onImport }: Pick<ConsoleScreenProps, '
                 </div>
                 {excOpen && <RuleExceptions ruleId={r.rule_id} />}
                 {fdOpen && <RuleFindings ruleId={r.rule_id} onOpen={setFinding} />}
+                {imOpen && <RuleImport ruleId={r.rule_id} onChanged={() => refreshRule(r.rule_id)} />}
                 {stOpen && (
                   <RuleStages key={open.what} ruleId={r.rule_id} row={r} asking={open.what === 'revert'} onChanged={() => refreshRule(r.rule_id)} />
                 )}

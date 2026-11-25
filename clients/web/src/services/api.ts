@@ -1133,6 +1133,8 @@ export interface CoverageCell {
   state: CoverageState
   rules: number
   disabled: number
+  /** Active rules declaring it that the import check holds from coverage. */
+  held: number
   seen: number
   replayed: number
   /** Active rules whose latest version caught a real attack step, counted once across copies. */
@@ -1265,6 +1267,22 @@ export interface RuleDetail {
   stage: 'shadow' | 'live' | 'off' | null
   /** Oldest first, each with the proof the move was made on. */
   stages: { version: number; stage: 'shadow' | 'live' | 'off'; proof: Record<string, unknown>; actor: string; reason: string; at: string }[]
+  /** The import check holds its latest version from coverage (checks.import says why). */
+  held: boolean
+  /** The latest version's parsed content (a Sigma rule's YAML as an object). */
+  content: Record<string, unknown>
+}
+
+/** checks['import'] on a repo rule version: whether it counts as coverage yet. */
+export interface ImportCheck {
+  result: 'pending' | 'passed' | 'flagged' | 'failed' | 'approved' | 'unchecked'
+  reason?: string
+  /** Flagged for absent fields: the fields each SIEM lacks. */
+  absent_fields?: Record<string, string[]>
+  /** Approved: who, when, and the state it was approved from. */
+  by?: string
+  at?: string
+  was?: { result?: string; reason?: string }
 }
 
 /** The gap a gaps-run proposal answers, as the run recorded it. */
@@ -1382,6 +1400,9 @@ export const detectionEngineeringApi = {
 
   proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
 
+  /** A proposal to prove an inventory Sigma rule, or its open one if it has one. */
+  fromRule: (ruleId: number) => api.post<Proposal>('/detection-engineering/proposals/from-rule', { rule_id: ruleId }),
+
   /** Rejects a proposal; the reason is required and stays on its record. */
   reject: (proposalId: string, reason: string) =>
     api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
@@ -1462,6 +1483,10 @@ export const detectionRulesApi = {
   /** Switches a shadow rule off and holds it there; a signed-in person only. */
   switchOffRule: (ruleId: number, reason: string) =>
     api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/switch-off`, { reason }),
+
+  /** Makes a held repo rule's latest version count as coverage; 409 when lint fails or it is not held. */
+  approveRule: (ruleId: number, reason: string) =>
+    api.post<{ success: boolean; rule_id: number; version: number; import: ImportCheck }>(`/detection-rules/rules/${ruleId}/approve`, { reason }),
 
   /** Lifts a person's hold: the normal rollout applies to the rule again. */
   releaseRule: (ruleId: number, reason: string) =>

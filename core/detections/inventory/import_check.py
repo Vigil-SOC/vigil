@@ -525,4 +525,6 @@ def approve(rule_id: int, who: Tuple[str, str], reason: str) -> Dict[str, Any]:
                 },
                 change_reason=reason,
             )
+    # Committed: the rules list reads the approval on its next read.
+    catalog.listing_changed()
     return {"success": True, **entry, "import": checks["import"]}

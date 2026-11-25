@@ -162,7 +162,7 @@ export default function CoverageMap({ goSettings }: { goSettings: (section: 'dat
       </div>}
       {view === 'full' && cell && <CellDetail cell={cell} />}
       <p className="de-note">
-        Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. Caught: an active rule's latest version alerted on a real attack step. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled one is no coverage, so its technique shows as no active rule.
+        Proven: an active copy in a SIEM passes Runs and Sees, as the Rules page counts it. Caught: an active rule's latest version alerted on a real attack step. A rule counts once however many SIEM copies it has. {plural(coverage.mapped, 'rule')} declare a technique, as on the Rules page; a disabled rule, one failing lint, or one held from coverage (a new repo rule the import check has not passed and no person approved) is no coverage, so a technique only those declare shows as no active rule.
       </p>
     </div>
   )
@@ -294,7 +294,7 @@ function CellDetail({ cell }: { cell: CoverageCell }) {
         <Emulate key={cell.technique} className="btn ghost" goal={`Emulate ${cell.technique} (${cell.name}) on a listed host and report whether any rule caught it. On the coverage map it is ${STATES[cell.state].toLowerCase()}, ${plural(cell.rules, 'active rule')}, ${cell.caught} caught.`} />
       </div>
       <span className="x1-muted">
-        {plural(cell.rules, 'active rule')} declare it{cell.disabled > 0 ? `, and ${plural(cell.disabled, 'disabled rule')}` : ''}. Seen on {plural(cell.seen, 'stored alert')}.
+        {plural(cell.rules, 'active rule')} declare it{[cell.disabled > 0 && plural(cell.disabled, 'disabled rule'), cell.held > 0 && `${plural(cell.held, 'rule')} held from coverage`].filter(Boolean).map((part) => `, and ${part}`).join('')}. Seen on {plural(cell.seen, 'stored alert')}.
         {cell.replayed > 0 && ` ${plural(cell.replayed, 'rule')} passed a replay on stored events.`}
       </span>
       <table className="de-cov-siems">
