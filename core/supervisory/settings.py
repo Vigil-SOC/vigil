@@ -35,12 +35,14 @@ _SOURCE = {
 
 _ENV_ONLY = "Set in the environment or INTENT.md; Vigil has no write for it"
 _APPLIED = "Set by an earlier INTENT.md revision; Vigil has no write for it"
-_CEILING_UNREAD = "The autonomy ceiling could not be read"
+CEILING_UNREAD = "The autonomy ceiling could not be read"
+_CEILING_UNREAD = CEILING_UNREAD
 STOPPED = "Autonomy is stopped: Vigil can only tighten it until it resumes"
 _STOPPED = STOPPED
 _MANAGED = "Managed by INTENT.md: Vigil can only tighten it"
 _RESTART = "Saved at once; the daemon reads it when it starts"
-_ACT_LOCKED = "The environment forces it off"
+ACT_LOCKED = "The environment forces it off"
+_ACT_LOCKED = ACT_LOCKED
 _MODEL = "Changed in AI model settings, which needs platform.write"
 
 # Intent keys Vigil can write: the orchestrator settings and the autonomy ceiling.

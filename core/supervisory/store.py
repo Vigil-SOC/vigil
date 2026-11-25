@@ -16,10 +16,10 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from core.intent import FIELDS_BY_KEY, label
-from core.response.config import managed_widening
+from core.response.config import applied_intent, managed_widening
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
-from core.supervisory.settings import STOPPED
+from core.supervisory.settings import ACT_LOCKED, CEILING_UNREAD, STOPPED
 
 # The reasons the page offers. Anything else is refused.
 DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already handled")
@@ -255,6 +255,8 @@ def read(
     Without it, nothing can.
     """
     current = current or {}
+    # One read of the applied INTENT.md row for every card and history entry.
+    applied = applied_intent(fresh=True) if current else {}
     with unit_of_work() as session:
         live = (
             session.execute(
@@ -288,10 +290,13 @@ def read(
         )
         latest = _latest_per_suggestion(session, applied_ids)
         return {
-            "suggestions": [_suggestion(s, current) for s in live if s.state == "open"],
+            "suggestions": [
+                _suggestion(s, current, applied) for s in live if s.state == "open"
+            ],
             "held": [_held(s) for s in live if s.state == "held"],
             "history": [
-                _entry(h, _undoable(h, states, latest, current)) for h in history
+                _entry(h, _undoable(h, states, latest, current, applied))
+                for h in history
             ],
         }
 
@@ -389,6 +394,7 @@ def _undoable(
     states: dict[str, str],
     latest: dict[str, int],
     current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
 ) -> bool:
     """An apply can be put back while it is the suggestion's last record, still
     applied, and the setting still has the applied value."""
@@ -399,7 +405,8 @@ def _undoable(
     now = current.get(h.setting_key)
     if now is None or not same_value(now["value"], h.to_value):
         return False
-    return _write_refusal(h.setting_key, h.to_value, h.from_value, current) is None
+    refused = _write_refusal(h.setting_key, h.to_value, h.from_value, current, applied)
+    return refused is None
 
 
 def dismiss(
@@ -416,7 +423,9 @@ def dismiss(
 
 
 def _suggestion(
-    s: SupervisorySuggestion, current: dict[str, dict[str, Any]]
+    s: SupervisorySuggestion,
+    current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
 ) -> dict[str, Any]:
     card = s.card or {}
     return {
@@ -431,12 +440,14 @@ def _suggestion(
         **{k: card.get(k) for k in _CARD_FIELDS},
         # The 30-case check is for investigation suggestions only.
         "check": card.get("check") if s.fn == "investigation" else None,
-        "apply": _apply_state(s, current),
+        "apply": _apply_state(s, current, applied),
     }
 
 
 def _apply_state(
-    s: SupervisorySuggestion, current: dict[str, dict[str, Any]]
+    s: SupervisorySuggestion,
+    current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
 ) -> dict[str, Any]:
     setting = current.get(s.setting_key)
     if s.setting_key not in APPLICABLE or setting is None:
@@ -449,12 +460,16 @@ def _apply_state(
             "possible": False,
             "reason": f"The setting is {setting['value']} now, not {s.from_value}",
         }
-    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, current)
+    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, current, applied)
     return {"possible": False, "reason": refused} if refused else {"possible": True}
 
 
 def _write_refusal(
-    key: str, from_value: str, to_value: str, current: dict[str, dict[str, Any]]
+    key: str,
+    from_value: str,
+    to_value: str,
+    current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
 ) -> str | None:
     """Why the write path would refuse changing ``key`` from ``from_value`` to
     ``to_value``, when the settings list can tell; None otherwise.
@@ -464,10 +479,17 @@ def _write_refusal(
     orchestrator write sends every managed investigate.* key, another of those
     keys already wider than declared.
     """
-    refused = _past_declared(key, to_value)
+    refused = _past_declared(key, to_value, applied)
     if refused:
         return refused
     row = current.get(key) or {}
+    reason = (row.get("change") or {}).get("reason")
+    # The ceiling write refuses while the ceiling can't be read, and any raise
+    # of an act flag while the environment forces them off.
+    if key.startswith("act.") and reason == CEILING_UNREAD:
+        return reason
+    if reason == ACT_LOCKED and _loosens(key, from_value, to_value):
+        return reason
     if (
         key.startswith("act.")
         and (row.get("change") or {}).get("reason") == STOPPED
@@ -477,7 +499,7 @@ def _write_refusal(
     if key.startswith("investigate."):
         for other in _MANAGED_ORCHESTRATOR_KEYS - {key}:
             now = current.get(other)
-            refused = now and _past_declared(other, now["value"])
+            refused = now and _past_declared(other, now["value"], applied)
             if refused:
                 return refused
     return None
@@ -497,13 +519,13 @@ def _loosens(key: str, from_value: str, to_value: str) -> bool:
         return False
 
 
-def _past_declared(key: str, to_value: str) -> str | None:
+def _past_declared(key: str, to_value: str, applied: dict[str, Any]) -> str | None:
     """Why a write of ``to_value`` would be refused as wider than INTENT.md
     declares for ``key``, or None. The same check the write paths make."""
     if key not in FIELDS_BY_KEY:
         return None
     try:
-        return managed_widening(key, _typed(to_value))
+        return managed_widening(key, _typed(to_value), applied)
     except (TypeError, ValueError):
         return None
 
