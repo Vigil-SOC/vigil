@@ -11269,6 +11269,11 @@ export interface components {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
+        /** CappedRecheckCeiling */
+        CappedRecheckCeiling: {
+            /** Runs */
+            runs: number;
+        };
         /** CaseCloseResponse */
         CaseCloseResponse: {
             closure: components["schemas"]["CaseClosureInfoSchema"];
@@ -12611,10 +12616,20 @@ export interface components {
             /** Sentence */
             sentence: string;
         };
-        /** CeilingBody */
-        "CeilingBody-Output": {
-            /** Runs */
-            runs: number;
+        /**
+         * CeilingBody
+         * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
+         *
+         *     ``stopped`` is not a field here. Stop is ``POST /api/orchestrator/kill``
+         *     and resume is ``POST /api/autonomy/resume``.
+         */
+        CeilingBody: {
+            /** Act Irreversible */
+            act_irreversible?: boolean | null;
+            /** Act Reversible */
+            act_reversible?: boolean | null;
+            /** Four Eyes */
+            four_eyes?: boolean | null;
         };
         /** CeilingResponse */
         CeilingResponse: {
@@ -18727,26 +18742,6 @@ export interface components {
              */
             remove_from_dotenv: boolean;
         };
-        /**
-         * CeilingBody
-         * @description A partial edit of the stored ceiling. Omitted flags stay as they are.
-         *
-         *     ``stopped`` is not a field here. Stop is ``POST /api/orchestrator/kill``
-         *     and resume is ``POST /api/autonomy/resume``.
-         */
-        core__api__v1__autonomy_router__CeilingBody: {
-            /** Act Irreversible */
-            act_irreversible?: boolean | null;
-            /** Act Reversible */
-            act_reversible?: boolean | null;
-            /** Four Eyes */
-            four_eyes?: boolean | null;
-        };
-        /** CeilingBody */
-        core__reporting__capped_recheck_router__CeilingBody: {
-            /** Runs */
-            runs: number;
-        };
     };
     responses: never;
     parameters: never;
@@ -21565,7 +21560,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["core__api__v1__autonomy_router__CeilingBody"];
+                "application/json": components["schemas"]["CeilingBody"];
             };
         };
         responses: {
@@ -25993,7 +25988,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CeilingBody-Output"];
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
                 };
             };
             /** @description Validation Error */
@@ -26018,7 +26013,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["core__reporting__capped_recheck_router__CeilingBody"];
+                "application/json": components["schemas"]["CappedRecheckCeiling"];
             };
         };
         responses: {
@@ -26028,7 +26023,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CeilingBody-Output"];
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
                 };
             };
             /** @description Validation Error */
@@ -34947,7 +34942,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["core__api__v1__autonomy_router__CeilingBody"];
+                "application/json": components["schemas"]["CeilingBody"];
             };
         };
         responses: {

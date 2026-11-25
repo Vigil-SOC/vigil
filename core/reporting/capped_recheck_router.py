@@ -33,7 +33,7 @@ ROUTER_META = RouterMeta(
 )
 
 
-class CeilingBody(BaseModel):
+class CappedRecheckCeiling(BaseModel):
     runs: int = Field(ge=0)
 
 
@@ -67,19 +67,19 @@ class Projection(BaseModel):
     reserve: Optional[Reserve] = None
 
 
-@router.get("/ceiling", response_model=CeilingBody)
+@router.get("/ceiling", response_model=CappedRecheckCeiling)
 def read_ceiling(
     _user: User = Depends(require_permission("platform.read")),
-) -> CeilingBody:
+) -> CappedRecheckCeiling:
     """The run ceiling. No row is 0, and 0 refuses a start."""
-    return CeilingBody(runs=ceiling_runs())
+    return CappedRecheckCeiling(runs=ceiling_runs())
 
 
-@router.put("/ceiling", response_model=CeilingBody)
+@router.put("/ceiling", response_model=CappedRecheckCeiling)
 def write_ceiling(
-    body: CeilingBody,
+    body: CappedRecheckCeiling,
     user: User = Depends(require_permission("platform.write")),
-) -> CeilingBody:
+) -> CappedRecheckCeiling:
     """Set how many re-decision runs one batch may start."""
     if not set_ceiling(body.runs, str(user.user_id)):
         raise HTTPException(status_code=500, detail="Could not save the ceiling.")
