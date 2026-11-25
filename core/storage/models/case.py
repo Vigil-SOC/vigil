@@ -11,7 +11,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.storage.models.base import Base, JSONBList, case_findings
@@ -59,6 +59,10 @@ class Case(Base):
     reader_team_ids: Mapped[Optional[List[str]]] = mapped_column(
         ARRAY(String(50)), nullable=True
     )
+
+    # Opened from a re-check (#5095): source, closed_at, run_id. Null otherwise.
+    # Agreement leaves a marked Case out. One column is the whole mark.
+    recheck_mark: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     # Tags (array of strings)
     tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True, default=list)

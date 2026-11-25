@@ -15,6 +15,10 @@ The import's own record is ``history_imports`` and its kept tickets, bulk-closed
 included, are ``history_tickets`` (#4886); those hold severity, rule ID and the
 raw disposition, which memory's rows have no place for. No closer is stored:
 ``closed_by``, assignee and owner are read only to find bulk closes.
+
+A file's alerts are also ``history_alerts``, one row per alert id (#5091).
+Each kept ticket stores the alert ids it named (#5092). Sightings stay
+aggregated. A connected pull passes no alerts, so it writes none.
 """
 
 from __future__ import annotations
@@ -31,9 +35,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from core.auth import trail_events
+from core.auth.permissions import LEDGERS_ERASE
 from core.cases.closure import CLOSURE_OUTCOMES, ClosureCategory
 from core.memory.distil import clear_investigation
 from core.memory.entity_keys import entity_context_candidates, entity_key
+from core.memory.ledger_erasure import marked_run_ids
 from core.memory.recall_contract import (
     ENTITY_KEY_TYPES,
     VERDICT_SUBJECT_CAP,
@@ -50,6 +56,7 @@ from core.storage.models import (
     EpisodicSighting,
     EpisodicVerdict,
     EpisodicVerdictSource,
+    HistoryAlert,
     HistoryImport,
     HistoryTicket,
 )
@@ -356,6 +363,76 @@ def _sightings(
     return rows, by_id
 
 
+# Stored on history_alerts under that name. Anything else a row carries, apart
+# from the consumed id, time and source keys and from columns _keys turns into
+# entity keys, is a dropped name: the text is not stored.
+_KEPT_ALERT_FIELDS = frozenset({"title", "description", "rule_id", "severity"})
+_CONSUMED_ALERT_FIELDS = frozenset((*_SOURCE_KEYS, *_ALERT_ID_KEYS, *_ALERT_TIME_KEYS))
+_ENTITY_COLUMN_NAMES = ("entity_context", "iocs", "entities")
+
+
+def _carried(value: Any) -> bool:
+    """A cell the export filled. An empty CSV column is not one."""
+    if value is None or value == "":
+        return False
+    if isinstance(value, (list, tuple, dict)) and len(value) == 0:
+        return False
+    return True
+
+
+def _entity_columns(row: Mapping[str, Any], keys: List[str]) -> Set[str]:
+    """Columns whose values ``_keys`` kept on this row."""
+    kept = set(keys)
+    if not kept:
+        return set()
+    found: Set[str] = set()
+    for name in _ENTITY_COLUMN_NAMES:
+        if not _carried(row.get(name)):
+            continue
+        contributed = _keys({name: row[name]})
+        if any(key in kept for key in contributed):
+            found.add(name)
+    return found
+
+
+def _dropped_names(row: Mapping[str, Any], keys: List[str]) -> List[str]:
+    skip = _CONSUMED_ALERT_FIELDS | _KEPT_ALERT_FIELDS | _entity_columns(row, keys)
+    return [
+        str(key)
+        for key, value in row.items()
+        if _carried(value) and str(key) not in skip
+    ]
+
+
+def _alerts(
+    alerts: List[Mapping[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Counter]:
+    """One ``history_alerts`` row per alert id, last row in the file winning,
+    and the dropped column names with how many alert rows carried each.
+
+    An alert with no id is not stored. A row with no parseable time still is.
+    """
+    dropped: Counter = Counter()
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for alert in alerts:
+        keys = _keys(alert)
+        dropped.update(_dropped_names(alert, keys))
+        ref = _first(alert, _ALERT_ID_KEYS)
+        if ref is None:
+            continue
+        rule_id = _first(alert, ("rule_id",))
+        by_id[str(ref)[:500]] = {
+            "alert_id": str(ref)[:500],
+            "alert_time": parse_time(_first(alert, _ALERT_TIME_KEYS)),
+            "title": bounded_prose(alert.get("title") or ""),
+            "description": bounded_prose(alert.get("description") or ""),
+            "rule_id": None if rule_id is None else str(rule_id)[:500],
+            "severity": _severity(alert.get("severity")),
+            "entity_keys": keys,
+        }
+    return list(by_id.values()), dropped
+
+
 def _tickets(
     tickets: List[Mapping[str, Any]],
     alerts_by_id: Mapping[str, Tuple[str, List[str]]],
@@ -437,6 +514,8 @@ def _tickets(
             "severity": severity,
             "rule_id": str(rule_id)[:500] if rule_id is not None else None,
             "entity_keys": subjects,
+            # The same cap as history_alerts.alert_id. A connected pull names none.
+            "alert_ids": [ref[:500] for ref in _alert_ids(ticket)],
             "title": bounded_prose(ticket.get("title") or ""),
             "notes_fingerprint": (
                 hashlib.sha256(notes.encode()).hexdigest() if notes else None
@@ -508,18 +587,23 @@ def write_import(
 
     Counts are set, not added, so uploading the same file twice changes nothing.
     Per-reason drop counts go into ``stats`` (the ingestion job's); the result
-    also carries the unmapped disposition values and their counts.
+    also carries the unmapped disposition values and the dropped alert-column
+    names, each with their counts.
     """
     counters: Counter = Counter()
     unmapped: Counter = Counter()
     fallback = investigation_id.rpartition(":")[0] or "file"
     sightings, alerts_by_id = _sightings(alerts, fallback, counters)
     kept = _tickets(tickets, alerts_by_id, fallback, counters, unmapped)
+    alert_rows, dropped = _alerts(alerts)
     verdicts = [memory for _, memory in kept if memory is not None]
 
     clear_investigation(session, KIND, investigation_id)
     session.execute(
         delete(HistoryTicket).where(HistoryTicket.import_id == investigation_id)
+    )
+    session.execute(
+        delete(HistoryAlert).where(HistoryAlert.import_id == investigation_id)
     )
     for row in sightings:
         session.add(EpisodicSighting(investigation_id=investigation_id, **row))
@@ -558,12 +642,16 @@ def write_import(
     record.bulk_not_tested = counters["tickets_bulk_not_tested"]
     record.severity_unknown = counters["tickets_severity_unknown"]
     record.unmapped = dict(unmapped.most_common())
+    record.dropped_columns = dict(dropped.most_common())
     record.pull_days = pull_days
     record.pulled_at = now if pull_days is not None else None
     record.concluded_at = max(stamps, default=None)
     record.has_ticket_detail = True
     session.flush()
     session.add_all(HistoryTicket(import_id=investigation_id, **row) for row, _ in kept)
+    session.add_all(
+        HistoryAlert(import_id=investigation_id, **row) for row in alert_rows
+    )
 
     trail_events.record(
         session,
@@ -573,7 +661,12 @@ def write_import(
         verdicts=counts["verdicts"],
         sightings=counts["sightings"],
     )
-    return {**counts, "tickets": len(kept), "unmapped": dict(unmapped)}
+    return {
+        **counts,
+        "tickets": len(kept),
+        "unmapped": dict(unmapped),
+        "dropped_columns": dict(dropped),
+    }
 
 
 def describe_unmapped(unmapped: Mapping[str, int]) -> Optional[str]:
@@ -586,6 +679,18 @@ def describe_unmapped(unmapped: Mapping[str, int]) -> Optional[str]:
     if more > 0:
         named += f" and {more} more"
     return f"Unmapped disposition values: {named}. {UNMAPPED_FIX}"
+
+
+def describe_dropped(dropped: Mapping[str, int]) -> Optional[str]:
+    """The job message's line naming dropped alert columns, most common first."""
+    if not dropped:
+        return None
+    ranked = Counter(dropped).most_common()
+    named = ", ".join(f"'{name}' ({n})" for name, n in ranked[:UNMAPPED_SHOWN])
+    more = len(ranked) - UNMAPPED_SHOWN
+    if more > 0:
+        named += f" and {more} more"
+    return f"Dropped columns: {named}"
 
 
 # --- The run: one at a time, and a start that outlives a crash ---------------
@@ -708,6 +813,10 @@ def _import_row(record: HistoryImport, locked: bool) -> Dict[str, Any]:
             {"value": value, "count": n}
             for value, n in Counter(record.unmapped or {}).most_common()
         ],
+        "dropped_columns": [
+            {"name": name, "count": n}
+            for name, n in Counter(record.dropped_columns or {}).most_common()
+        ],
         "pull_days": record.pull_days,
         "pulled_at": record.pulled_at,
         "has_ticket_detail": record.has_ticket_detail,
@@ -733,7 +842,7 @@ def list_imports(session: Session) -> List[Dict[str, Any]]:
 def delete_import(
     session: Session, investigation_id: str, *, actor: str
 ) -> Optional[Dict[str, Any]]:
-    """Clear one whole import: its memory rows, its tickets and its record.
+    """Clear one whole import: its memory rows, its tickets, its alerts and its record.
     None when there is no such import; ImportRunning while any import runs, since
     a re-run of this one could be about to write it again."""
     # Locked first, so a re-run that is writing it commits before this clears.
@@ -743,9 +852,14 @@ def delete_import(
     if _lock_held(session):
         raise ImportRunning(investigation_id)
     row = _import_row(record, False)
+    # The ledgers stay. The count is for the result; the erase is a later call.
+    kept = marked_run_ids(session, investigation_id)
     clear_investigation(session, KIND, investigation_id)
     session.execute(
         delete(HistoryTicket).where(HistoryTicket.import_id == investigation_id)
+    )
+    session.execute(
+        delete(HistoryAlert).where(HistoryAlert.import_id == investigation_id)
     )
     session.execute(delete(HistoryImport).where(HistoryImport.id == investigation_id))
     trail_events.record(
@@ -756,4 +870,7 @@ def delete_import(
         verdicts=row["verdicts_written"],
         sightings=row["sightings_written"],
     )
+    row["ledgers_kept"] = len(kept)
+    row["run_ids"] = kept
+    row["erase_permission"] = LEDGERS_ERASE
     return row

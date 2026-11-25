@@ -39,12 +39,15 @@ from core.integrations.readiness import (
 from core.llm import residency, statements
 from core.platform import notices
 from core.platform.process_health import ProcessHealth
+from core.reporting.capped_recheck_report import present as present_capped
+from core.reporting.capped_recheck_report import produce as produce_capped
 from core.reporting.checks import (
     CHANGES,
     COVERAGE,
     ESTATE,
     FORECAST,
     HISTORY,
+    HISTORY_CAPPED,
     LEGACY_CITATIONS,
     MODULES,
     SETTINGS,
@@ -55,6 +58,7 @@ from core.reporting.checks import (
     scope_label,
     spec_for,
 )
+from core.reporting.coverage import by_layer as coverage_by_layer
 from core.reporting.coverage import produce as produce_coverage
 from core.reporting.enablement import (
     RECURRING_KEY,
@@ -297,10 +301,12 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
     if COVERAGE.id not in disabled:
         modules.append(COVERAGE.id)
         checks.extend(_coverage_checks())
+        evidence[COVERAGE.id] = _coverage_layers()
     if ESTATE.id not in disabled:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
     _append_history(modules, evidence, disabled)
+    _append_capped(modules, evidence, disabled)
     if FORECAST.id not in disabled:
         modules.append(FORECAST.id)
         evidence[FORECAST.id] = _forecast(state)
@@ -357,6 +363,24 @@ def _append_history(
         evidence[module_id] = produced[module_id]
 
 
+def _append_capped(
+    modules: list[str], evidence: dict[str, Any], disabled: set[str]
+) -> None:
+    """The capped re-check. A failed read is not-checked here, and the report completes."""
+    if HISTORY_CAPPED.id in disabled:
+        return
+    modules.append(HISTORY_CAPPED.id)
+    try:
+        evidence[HISTORY_CAPPED.id] = produce_capped()
+    except Exception as exc:  # noqa: BLE001 - this module only
+        logger.error(
+            "Day 1 Report could not read the capped re-check: %s", type(exc).__name__
+        )
+        evidence[HISTORY_CAPPED.id] = {
+            "not_checked": "not checked: could not read the capped re-check."
+        }
+
+
 def _forecast(state: dict) -> dict[str, Any]:
     """The cost forecast. A failure here is not checked; the report still completes."""
     try:
@@ -382,6 +406,66 @@ def _coverage_checks() -> list[dict[str, Any]]:
                 "Could not read detection coverage.",
             )
         ]
+
+
+def _coverage_layers() -> dict[str, Any]:
+    """The by-layer figures. A failed read is a not-checked note, not a check."""
+    try:
+        return coverage_by_layer()
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error(
+            "Day 1 Report could not read coverage by layer: %s", type(exc).__name__
+        )
+        return {"not_checked": "not checked: could not read coverage by layer."}
+
+
+# A cell's state, worst first. not_checked is not on the scale. A tested-and-
+# missed cell reads no_detection, so it is a regression from any catch.
+_LAYER_RANK = {"no_detection": 0, "present": 1, "partial": 2, "validated": 3}
+
+
+def _layers_comparison(current: Any, prior: Any) -> Any:
+    """Each (technique, layer) cell against the compared run's. Read, never stored.
+
+    ``not_in_compared_run`` when the compared record has no by-layer body. A
+    cell either side could not check, or that only one side has, is not compared,
+    and so is every cell when the compared run's read failed.
+    """
+    if not isinstance(current, dict) or not isinstance(current.get("techniques"), list):
+        return None
+    if not isinstance(prior, dict):
+        return "not_in_compared_run"
+    before = {
+        (row.get("technique"), layer): cell
+        for row in prior.get("techniques") or []
+        for layer, cell in (row.get("layers") or {}).items()
+    }
+    counts = {"improved": 0, "regressed": 0, "unchanged": 0, "not_compared": 0}
+    moves = []
+    for row in current["techniques"]:
+        for layer, cell in (row.get("layers") or {}).items():
+            was = before.get((row.get("technique"), layer)) or {}
+            now_rank = _LAYER_RANK.get(cell.get("state"))
+            was_rank = _LAYER_RANK.get(was.get("state"))
+            if now_rank is None or was_rank is None:
+                counts["not_compared"] += 1
+                continue
+            if now_rank == was_rank:
+                counts["unchanged"] += 1
+                continue
+            kind = "improved" if now_rank > was_rank else "regressed"
+            counts[kind] += 1
+            moves.append(
+                {
+                    "technique": row.get("technique"),
+                    "name": row.get("name"),
+                    "layer": layer,
+                    "kind": kind,
+                    "before": was["state"],
+                    "after": cell["state"],
+                }
+            )
+    return {"counts": counts, "moves": moves}
 
 
 def status() -> dict[str, Any]:
@@ -516,6 +600,11 @@ def _present(
         stored = evidence.get(FORECAST.id)
         if isinstance(stored, dict):
             forecast = stored
+    coverage_comparison = None
+    if compared is not None and COVERAGE.id not in hidden:
+        coverage_comparison = _layers_comparison(
+            evidence.get(COVERAGE.id), (compared.evidence or {}).get(COVERAGE.id)
+        )
     return {
         "id": record.record_id,
         "run_id": record.run_id,
@@ -538,6 +627,15 @@ def _present(
         "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
+        "history_capped_recheck": present_capped(
+            session,
+            evidence,
+            list(record.modules or []),
+            hidden,
+            record.recorded_at,
+            user_id,
+        ),
+        "coverage_comparison": coverage_comparison,
         **present_history(
             session,
             evidence,
@@ -1440,7 +1538,7 @@ def _judge_session(
     rows = (
         (
             "settings.idle",
-            policy.idle_standard_minutes,
+            None if _looser_idle(policy) == 0 else _looser_idle(policy),
             _idle_reason(policy),
             None,
             False,
@@ -1940,10 +2038,38 @@ def _level(actual: str, cited: str, above: Optional[str]) -> tuple[str, str]:
     return FAIL, _WEAKER
 
 
+def _looser_idle(policy) -> int:
+    """The looser idle limit, in minutes. 0 (no idle limit) is the loosest."""
+    standard, privileged = policy.idle_standard_minutes, policy.idle_privileged_minutes
+    if standard == 0 or privileged == 0:
+        return 0
+    return max(standard, privileged)
+
+
 def _idle_reason(policy) -> str:
+    """Name the looser limit, or both when they are equal. 0 reads as no idle limit."""
+    standard = policy.idle_standard_minutes
+    privileged = policy.idle_privileged_minutes
+    if standard == privileged:
+        if standard == 0:
+            return (
+                "Session inactivity: both the standard and the privileged "
+                "idle limits are no idle limit."
+            )
+        return (
+            "Session inactivity: both the standard and the privileged idle "
+            f"limits end a sign-in after {standard} minutes with no activity."
+        )
+    # 0 is looser than any length; otherwise the longer one is.
+    if standard == 0 or (privileged != 0 and standard > privileged):
+        which, minutes = "standard", standard
+    else:
+        which, minutes = "privileged", privileged
+    if minutes == 0:
+        return f"Session inactivity: the {which} idle limit is no idle limit."
     return (
-        "Session inactivity: a standard sign-in ends after "
-        f"{policy.idle_standard_minutes} minutes with no activity."
+        f"Session inactivity: the {which} idle limit ends a sign-in after "
+        f"{minutes} minutes with no activity."
     )
 
 

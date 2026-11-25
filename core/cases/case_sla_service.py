@@ -660,6 +660,7 @@ def open_case(
     assignee: Optional[str] = None,
     readers: Optional[List[str]] = None,
     reader_teams: Optional[List[str]] = None,
+    recheck_mark: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Create a case and give it the default SLA for its priority.
 
@@ -676,6 +677,7 @@ def open_case(
         assignee=assignee,
         readers=readers,
         reader_teams=reader_teams,
+        recheck_mark=recheck_mark,
     )
     if not case:
         return None

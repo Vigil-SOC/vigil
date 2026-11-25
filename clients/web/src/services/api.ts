@@ -271,11 +271,21 @@ export const notesApi = {
 }
 
 export type HistoryImport = Schema<'ImportOut'>
+export type ImportDelete = Schema<'ImportDeleteOut'>
 
 /** Alert and ticket history imported into agent memory (#3965); an id holds a ':'. */
 export const importsApi = {
   list: () => api.get<Schema<'ImportListResponse'>>('/memory/imports'),
-  remove: (id: string) => api.delete<HistoryImport>(`/memory/imports/${encodeURIComponent(id)}`),
+  /** Marked re-decision ledgers this import would keep. Read when the delete dialog opens. */
+  ledgers: (id: string) =>
+    api.get<Schema<'LedgerCountOut'> & { queued_reviews: number }>(
+      `/memory/imports/ledgers/${encodeURIComponent(id)}`,
+    ),
+  remove: (id: string) => api.delete<ImportDelete>(`/memory/imports/${encodeURIComponent(id)}`),
+  eraseLedgers: (id: string, runIds: string[]) =>
+    api.post<Schema<'LedgerEraseOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`, {
+      run_ids: runIds,
+    }),
 }
 
 export interface CaseRecordRow {
@@ -293,6 +303,54 @@ export interface CaseRecordResponse {
   run_id: string | null
   investigation_id: string | null
   rows: CaseRecordRow[]
+}
+
+export type RecheckCall = 'real' | 'not real' | "can't tell"
+
+export interface RecheckQueueItem {
+  id: number
+  batch_id: string
+  source: string
+  closed_at: string
+  ticket_id: string
+  title: string | null
+  recorded: boolean
+  call: RecheckCall | null
+  reviewers_differ: boolean
+  can_open: boolean
+  case_id: string | null
+}
+
+export interface RecheckAlert {
+  time: string
+  title: string
+  rule: string
+  severity: string
+  entity_keys: string[]
+  description: string
+}
+
+export interface RecheckTicket extends RecheckQueueItem {
+  removed: boolean
+  notice: string | null
+  alerts: RecheckAlert[] | null
+  alerts_hidden: boolean
+  evidence: { tool: string; result: string }[] | null
+  evidence_hidden: boolean
+  closure_verdict: string | null
+  vigil_verdict: string | null
+  summary: string | null
+  proposed_actions: { action_type: string; target: string; reason: string }[] | null
+  run_id: string | null
+}
+
+/** Blind review of a finished capped re-check (#5095). */
+export const recheckReviewApi = {
+  queue: () => api.get<{ pending: RecheckQueueItem[]; reviewed: RecheckQueueItem[] }>('/recheck-review'),
+  get: (id: number) => api.get<RecheckTicket>(`/recheck-review/${id}`),
+  confirm: (id: number, call: RecheckCall) =>
+    api.post<RecheckTicket>(`/recheck-review/${id}/confirm`, { call }),
+  openCase: (id: number) => api.post<{ case_id: string }>(`/recheck-review/${id}/case`),
 }
 
 export const casesApi = {
@@ -715,6 +773,7 @@ export const configApi = {
     proxy_password?: string
     ssh_private_key_path?: string
     ssh_key_passphrase?: string
+    ssh_host_key?: string
     verify_proxy_tls?: boolean
     database_password?: string
   }) => api.post('/config/platform-database', data),
@@ -794,12 +853,18 @@ export const day1Api = {
     api.put<SelectionView>('/day1-report/selection', data),
 }
 
+export const cappedRecheckApi = {
+  latest: () => api.get<Schema<'Projection'>>('/day1-report/capped-recheck'),
+  start: () => api.post<Schema<'Projection'>>('/day1-report/capped-recheck'),
+}
+
 export interface PlatformDatabaseProxyConfig {
   proxy_type: string
   proxy_host: string
   proxy_port: number
   proxy_username: string
   ssh_private_key_path: string
+  ssh_host_key: string
   verify_proxy_tls: boolean
   // Booleans only — secret values are never returned by the API.
   has_proxy_password: boolean
@@ -1123,11 +1188,95 @@ export interface CoverageCell {
   state: CoverageState
   rules: number
   disabled: number
+  /** Active rules declaring it that the import check holds from coverage. */
+  held: number
   seen: number
   replayed: number
   /** Active rules whose latest version caught a real attack step, counted once across copies. */
   caught: number
   siems: Partial<Record<CoverageSiemName, CoverageSiem>>
+}
+
+export type LayerState = 'validated' | 'partial' | 'present' | 'no_detection' | 'not_checked'
+export type LayerMark = 'tested_missed' | 'shadow' | 'not_observable'
+
+/** A compose emulation run in a cell's evidence; run_id is null when it ran on a Case the reader can't read. */
+export interface LayerRun {
+  run_id: string | null
+  restricted?: boolean
+  finished_at: string
+  hosts: string[]
+  steps_caught: number
+  steps_run: number
+}
+
+/** A SIEM rule declaring the technique, with its checks. */
+export interface LayerRule {
+  rule_id: number
+  name: string
+  runs: string | null
+  sees: string | null
+  caught: string | null
+  caught_at: string | null
+  shadow?: boolean
+}
+
+/** One layer's answer for one technique. */
+export interface LayerCell {
+  state: LayerState
+  marks?: LayerMark[]
+  reason?: string
+  evidence?: {
+    rules?: LayerRule[]
+    blind_spot?: string[]
+    labelled?: number
+    loglm_flags?: number
+    newest_run?: LayerRun
+    older_runs?: LayerRun[]
+  }
+}
+
+/** A row of the by-layer map: a SIEM, an alert source, LogLM, or every layer together (last). */
+export interface CoverageLayer {
+  layer: string
+  kind: 'siem' | 'alerts' | 'loglm' | 'combined'
+  reads: string
+  rules?: number
+  observable?: string
+  state?: 'not_checked'
+  reason?: string
+}
+
+export interface LayerTechnique {
+  technique: string
+  name: string
+  tactic: string
+  layers: Record<string, LayerCell>
+}
+
+export type CoverageScope = 'all' | 'emulated' | 'intel'
+
+/** by_layer on GET /detection-rules/coverage (#5135): each technique's state per detection layer. With no
+ * threat intelligence connected, an intel scope carries intel.connected false and a note, and no map. */
+export interface CoverageByLayer {
+  scope: CoverageScope | 'techniques'
+  intel?: { connected: boolean; named_by?: Record<string, unknown> }
+  note?: string
+  window_days?: number
+  layers?: CoverageLayer[]
+  unlabelled?: string[]
+  emulation?: { runs: number; error?: string; note?: string }
+  techniques?: LayerTechnique[]
+  tactics?: string[]
+  measures?: {
+    techniques: number
+    validated: Record<string, number>
+    validated_by_one_layer: number
+    present_never_validated: number
+    not_observable: number
+    loglm_lift?: number
+  }
+  source: string
 }
 
 /** GET /detection-rules/coverage: ATT&CK coverage by technique and SIEM (#4103). */
@@ -1144,6 +1293,8 @@ export interface DetectionCoverage {
   rule_total: number
   mapped: number
   source: string
+  /** Only when asked for with by_layer, a scope or techniques. */
+  by_layer?: CoverageByLayer
 }
 
 /** GET /detection-rules/metrics: the rollout's success metrics from stored data. */
@@ -1255,6 +1406,22 @@ export interface RuleDetail {
   stage: 'shadow' | 'live' | 'off' | null
   /** Oldest first, each with the proof the move was made on. */
   stages: { version: number; stage: 'shadow' | 'live' | 'off'; proof: Record<string, unknown>; actor: string; reason: string; at: string }[]
+  /** The import check holds its latest version from coverage (checks.import says why). */
+  held: boolean
+  /** The latest version's parsed content (a Sigma rule's YAML as an object). */
+  content: Record<string, unknown>
+}
+
+/** checks['import'] on a repo rule version: whether it counts as coverage yet. */
+export interface ImportCheck {
+  result: 'pending' | 'passed' | 'flagged' | 'failed' | 'approved' | 'unchecked'
+  reason?: string
+  /** Flagged for absent fields: the fields each SIEM lacks. */
+  absent_fields?: Record<string, string[]>
+  /** Approved: who, when, and the state it was approved from. */
+  by?: string
+  at?: string
+  was?: { result?: string; reason?: string }
 }
 
 /** The gap a gaps-run proposal answers, as the run recorded it. */
@@ -1372,6 +1539,9 @@ export const detectionEngineeringApi = {
 
   proposal: (proposalId: string) => api.get<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}`),
 
+  /** A proposal to prove an inventory Sigma rule, or its open one if it has one. */
+  fromRule: (ruleId: number) => api.post<Proposal>('/detection-engineering/proposals/from-rule', { rule_id: ruleId }),
+
   /** Rejects a proposal; the reason is required and stays on its record. */
   reject: (proposalId: string, reason: string) =>
     api.post<Proposal>(`/detection-engineering/proposals/${encodeURIComponent(proposalId)}/reject`, { reason }),
@@ -1390,6 +1560,43 @@ export const noticesApi = {
   /** Marks these of the person's own notices read, or all of them; returns the list. */
   markRead: (ids: number[] | 'all') =>
     api.post<Notices>('/notices/read', ids === 'all' ? { all: true } : { ids }),
+}
+
+/** One rule file a repo read found: its rules' language and techniques, and why it can't be picked. */
+export interface RuleLibraryFile {
+  path: string
+  name: string
+  language: string | null
+  techniques: string[]
+  keys: string[]
+  problem: string | null
+  /** A proposal adopted this rule at an earlier version: that version */
+  adopted_version?: number
+}
+
+export interface RuleLibraryChange {
+  path: string
+  name: string
+  problem?: string | null
+}
+
+export interface RuleLibraryRead {
+  repo: string
+  url: string
+  ref: string
+  path: string
+  commit: string
+  format: string
+  rule_files: number
+  folders: { folder: string; rules: RuleLibraryFile[] }[]
+  library: {
+    id: string
+    name: string | null
+    commit: string | null
+    changed: RuleLibraryChange[]
+    gone: RuleLibraryChange[]
+    new: RuleLibraryChange[]
+  } | null
 }
 
 export const detectionRulesApi = {
@@ -1416,6 +1623,10 @@ export const detectionRulesApi = {
   switchOffRule: (ruleId: number, reason: string) =>
     api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/switch-off`, { reason }),
 
+  /** Makes a held repo rule's latest version count as coverage; 409 when lint fails or it is not held. */
+  approveRule: (ruleId: number, reason: string) =>
+    api.post<{ success: boolean; rule_id: number; version: number; import: ImportCheck }>(`/detection-rules/rules/${ruleId}/approve`, { reason }),
+
   /** Lifts a person's hold: the normal rollout applies to the rule again. */
   releaseRule: (ruleId: number, reason: string) =>
     api.post<RuleStageChange>(`/detection-rules/rules/${ruleId}/release`, { reason }),
@@ -1429,6 +1640,12 @@ export const detectionRulesApi = {
 
   /** ATT&CK coverage by technique and SIEM: the heat map. */
   coverage: () => api.get<DetectionCoverage>('/detection-rules/coverage'),
+  /** The same, with by_layer for a scope or these technique ids; a bad id is a 422. */
+  coverageByLayer: (scope: CoverageScope, techniques?: string[]) =>
+    api.get<DetectionCoverage>('/detection-rules/coverage', {
+      params: { by_layer: true, ...(techniques?.length ? { techniques } : { scope }) },
+      paramsSerializer: { indexes: null },
+    }),
 
   /** Marks these entries read for the signed-in person, or every open one; returns the inbox. */
   markHealthRead: (changeIds: number[] | 'all') =>
@@ -1466,6 +1683,17 @@ export const detectionRulesApi = {
       ...(githubEnterprise === undefined ? {} : { github_enterprise: githubEnterprise }),
     }),
   
+  /** Read a repo (new library) or a library (with its update diff) at the commit it is at now. A clone runs long. */
+  readLibrary: (data: { repo: string; format: string } | { source_id: string }) =>
+    api.post<RuleLibraryRead>('/detection-rules/libraries/read', data, { timeout: 0 }),
+
+  /** Import picked rule files at the commit read: a new library from repo, or an update to source_id. */
+  importLibrary: (data: { commit: string; picks: string[]; repo?: string; source_id?: string; name?: string; format?: string }) =>
+    api.post('/detection-rules/libraries/import', data, { timeout: 0 }),
+
+  /** Remove a rule library and its files (step-up gated). */
+  removeLibrary: (sourceId: string) => api.delete(`/detection-rules/libraries/${sourceId}`),
+
   removeSource: (sourceId: string, deleteFiles: boolean = false) =>
     api.delete(`/detection-rules/sources/${sourceId}`, { params: { delete_files: deleteFiles } }),
   

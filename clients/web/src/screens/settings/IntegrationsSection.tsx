@@ -133,16 +133,17 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     }
   }
 
-  // master: one switch over both gates
-  const onToggleMaster = async (name: string, id: string, want: boolean) => {
+  // master: one switch over both gates. An alert source's integration gate is its
+  // collection; switching on never enables collection for a source with no saved settings.
+  const onToggleMaster = async (name: string, id: string, want: boolean, collects = false, saved = true) => {
     setBusy(name)
     const res = await setServerEnabled(name, want)
     try {
-      await setIntegrationEnabled(id, want)
+      if (!want || saved) await setIntegrationEnabled(id, want)
       reloadExtensions()
       health.reload()
     } catch {
-      notify('err', `Could not ${want ? 'enable' : 'disable'} the ${id} panel.`)
+      notify('err', `Could not ${want ? 'enable' : 'disable'} ${collects ? `alert collection from ${prettyServerName(name)}` : `the ${id} panel`}.`)
     }
     setBusy(null)
     if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
@@ -400,14 +401,27 @@ function Clamp({ text }: { text: string }) {
 }
 
 /** On/off. A connector-backed integration is one master switch over two gates:
- * the extension (gate D) and the MCP server / agent tools (gate M). */
+ * the extension (gate D) and the MCP server / agent tools (gate M). A built-in alert
+ * source's switch is the same over its collection and its agent tools. */
 function RowToggle({ row, busy, onMcp, onMaster }: {
   row: ServerRow
   busy: string | null
   onMcp: (name: string, want: boolean) => void
-  onMaster: (name: string, id: string, want: boolean) => void
+  onMaster: (name: string, id: string, want: boolean, collects?: boolean, saved?: boolean) => void
 }) {
-  const { name, integration, isEnabled, masterOn, masterMixed, extConfigured } = row
+  const { name, integration, isEnabled, masterOn, masterMixed, extConfigured, collects, saved } = row
+  if (collects && integration) {
+    return (
+      <Toggle
+        checked={masterOn}
+        mixed={masterMixed}
+        label={`Toggle ${name}`}
+        title={masterMixed ? 'Partly on — switch off to stop alert collection and agent tools' : undefined}
+        disabled={busy === name}
+        onChange={(v) => onMaster(name, integration.id, v, true, saved)}
+      />
+    )
+  }
   if (row.isExtension && integration) {
     return (
       <Toggle

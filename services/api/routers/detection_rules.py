@@ -25,17 +25,18 @@ from core.auth import signing_key, step_up, tool_principal, trail_events
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate, require_permission
 from core.deps import provide_detection_rules, provide_mcp_client, provide_mcp_registry
-from core.detections import detection_skill, exceptions, proof_card
+from core.detections import detection_skill, exceptions, proof_card, rule_libraries
 from core.detections.detection_rules_service import (
     DEPLOY_FORMATS,
     DetectionRulesService,
     is_vendor_repo,
 )
-from core.detections.inventory import catalog, health_inbox, stages
+from core.detections.inventory import catalog, health_inbox, import_check, stages
 from core.detections.inventory.sync import sync_repos
 from core.integrations.mcp.registry import MCPRegistry, register_connected
 from core.integrations.mcp.surface import acting_as
 from core.routing import Auth, RouterMeta
+from core.skills.skill_library import SkillConflict, SkillError
 from core.storage.config_service import (
     audited_change,
     get_config_service,
@@ -64,7 +65,7 @@ class AddSourceRequest(BaseModel):
     """Request to add a new detection rule source."""
 
     name: str
-    source_type: str  # 'git' or 'local'
+    source_type: str  # 'local'; a git repo is imported (/libraries/import)
     format: str  # 'sigma', 'splunk', 'elastic', 'kql', 'wazuh', 'auto'
     url: Optional[str] = None
     path: Optional[str] = None
@@ -129,6 +130,7 @@ def list_sources(
     # vendor_repo: a shipped vendor repo, which can never be a deploy target.
     # deploy_target is the one rollout honours per format, so a saved file
     # holding two flags of one format never shows both as on.
+    service.refresh()  # a library imported over /mcp or by another worker
     honoured = {
         target["id"]
         for fmt in DEPLOY_FORMATS
@@ -159,6 +161,7 @@ def get_source(
     Returns:
         Source details
     """
+    service.refresh()
     source = service.get_source(source_id)
     if not source:
         raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
@@ -274,6 +277,19 @@ def remove_source(
     return {"success": True}
 
 
+def _who(user: User) -> rule_libraries.Who:
+    return str(user.user_id), user.username
+
+
+def _library_http(exc: Exception) -> HTTPException:
+    """A library refusal as HTTP: 404 unknown, 409 stale or clashing, else 400."""
+    if isinstance(exc, LookupError):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(
+        status_code=409 if isinstance(exc, SkillConflict) else 400, detail=str(exc)
+    )
+
+
 @router.post("/sources/{source_id}/update", dependencies=_SETTINGS_WRITE)
 async def update_source(
     source_id: str,
@@ -281,9 +297,11 @@ async def update_source(
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
     registry: MCPRegistry = Depends(provide_mcp_registry),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Update a single detection rule source (git pull or rescan).
+    Update a single detection rule source: a rule library takes its repo whole
+    at the commit read now; a local source is rescanned.
 
     Args:
         source_id: The source ID to update
@@ -292,16 +310,117 @@ async def update_source(
         Updated source details
     """
     try:
-        # git pull runs up to 120s; keep it off the event loop.
-        source = await asyncio.to_thread(service.update_source, source_id)
-
-        # After updating, restart the security-detections MCP server to rebuild index
-        await _restart_security_detections_mcp(mcp_client, service, registry)
-        background.add_task(_sync_detection_rules)
-
-        return {"success": True, "source": source}
+        # A clone runs up to 120s; keep it off the event loop.
+        source = await asyncio.to_thread(
+            service.update_source, source_id, _who(current_user)
+        )
+    except (LookupError, SkillError) as e:
+        raise _library_http(e)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    # After updating, restart the security-detections MCP server to rebuild index
+    await _restart_security_detections_mcp(mcp_client, service, registry)
+    background.add_task(_sync_detection_rules)
+    return {"success": True, "source": source}
+
+
+class ReadLibraryRequest(BaseModel):
+    """A repo to read (owner/repo, a GitHub link, an https URL, with @ref), or a
+    library to read with its update diff."""
+
+    repo: Optional[str] = Field(default=None, max_length=500)
+    source_id: Optional[str] = Field(default=None, max_length=64)
+    format: Optional[str] = Field(default=None, max_length=16)
+
+
+class ImportRulesRequest(BaseModel):
+    """Picked rule files at the commit read: a new library from ``repo``, or an
+    update to the library ``source_id``."""
+
+    commit: str = Field(min_length=7, max_length=64)
+    picks: List[str] = Field(default_factory=list, max_length=20000)
+    repo: Optional[str] = Field(default=None, max_length=500)
+    source_id: Optional[str] = Field(default=None, max_length=64)
+    name: Optional[str] = Field(default=None, max_length=200)
+    format: Optional[str] = Field(default=None, max_length=16)
+
+
+@router.post("/libraries/read", dependencies=_SETTINGS_WRITE)
+async def read_library(
+    request: ReadLibraryRequest,
+    service: DetectionRulesService = Depends(provide_detection_rules),
+):
+    """The commit a repo is at and the rule files in it, grouped by folder, each
+    with its language, techniques and why it cannot be picked; for a library,
+    also Changed, Gone from the repo, and In the repo, not imported."""
+    try:
+        return await asyncio.to_thread(
+            rule_libraries.read,
+            service,
+            repo=request.repo,
+            source_id=request.source_id,
+            fmt=request.format,
+        )
+    except (LookupError, SkillError) as e:
+        raise _library_http(e)
+
+
+@router.post("/libraries/import", dependencies=_SETTINGS_WRITE)
+async def import_library_rules(
+    request: ImportRulesRequest,
+    background: BackgroundTasks,
+    service: DetectionRulesService = Depends(provide_detection_rules),
+    mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Import the picked files at the commit read; refused (409) when the repo
+    has moved since. All or nothing; audited."""
+    try:
+        source = await asyncio.to_thread(
+            rule_libraries.import_rules,
+            service,
+            request.commit,
+            request.picks,
+            _who(current_user),
+            repo=request.repo,
+            source_id=request.source_id,
+            name=request.name,
+            fmt=request.format,
+        )
+    except (LookupError, SkillError) as e:
+        raise _library_http(e)
+    await _restart_security_detections_mcp(mcp_client, service, registry)
+    background.add_task(_sync_detection_rules)
+    return {"success": True, "source": source}
+
+
+@router.delete(
+    "/libraries/{source_id}",
+    dependencies=[
+        *_SETTINGS_WRITE,
+        step_up.gate("detections.write", "remove a rule library"),
+    ],
+)
+async def remove_library(
+    source_id: str,
+    background: BackgroundTasks,
+    service: DetectionRulesService = Depends(provide_detection_rules),
+    mcp_client=Depends(provide_mcp_client),
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Remove a rule library and its files; the next sync marks its rules removed."""
+    try:
+        removed = await asyncio.to_thread(
+            rule_libraries.remove, service, source_id, _who(current_user)
+        )
+    except (LookupError, SkillError) as e:
+        raise _library_http(e)
+    await _restart_security_detections_mcp(mcp_client, service, registry)
+    background.add_task(_sync_detection_rules)
+    return {"success": True, **removed}
 
 
 @router.post("/sources/{source_id}/deploy-target", dependencies=_SETTINGS_WRITE)
@@ -331,14 +450,17 @@ async def update_all_sources(
     service: DetectionRulesService = Depends(provide_detection_rules),
     mcp_client=Depends(provide_mcp_client),
     registry: MCPRegistry = Depends(provide_mcp_registry),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Update all detection rule sources (git pull all repos).
+    Update all detection rule sources: each rule library is taken whole at the
+    commit read now, one after another; local sources are rescanned. A library
+    that cannot be read is a ``success: false`` row saying why.
 
     Returns:
         Results for each source update
     """
-    results = await asyncio.to_thread(service.update_all)
+    results = await asyncio.to_thread(service.update_all, _who(current_user))
 
     # After updating all, restart the security-detections MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)
@@ -463,13 +585,25 @@ def get_metrics():
 
 
 @router.get("/coverage")
-def get_coverage():
+async def get_coverage(
+    by_layer: bool = False,
+    scope: Literal["all", "emulated", "intel"] = "all",
+    techniques: Optional[List[str]] = Query(default=None),
+):
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
-    Sees), unproven or with no rule, split by SIEM. Read-only."""
+    Sees), unproven or with no rule, split by SIEM. ``by_layer`` adds each
+    technique's state per detection layer and for the layers together, with
+    the measures, from the last 30 days' emulation runs: for ``scope`` (all,
+    emulated, intel) or the ``techniques`` given (repeated or comma-separated).
+    Read-only."""
     from core.detections.inventory import coverage
 
-    return coverage.coverage()
+    try:
+        wanted = coverage.technique_ids(techniques or ())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return await coverage.read(by_layer, scope, wanted)
 
 
 @router.get("/overlay-only")
@@ -553,7 +687,8 @@ def get_rule_stages(rule_id: int):
 
 
 class StageChangeRequest(BaseModel):
-    """Why a person reverts a rule, switches it off, or releases it."""
+    """Why a person reverts a rule, switches it off, releases its hold, or
+    approves it as coverage."""
 
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -616,6 +751,19 @@ def release_rule(
     """Lifts a person's hold, leaving the rule in its current stage; the normal
     rollout applies again."""
     return _stage_change(stages.release, rule_id, body, current_user)
+
+
+@router.post("/rules/{rule_id}/approve", dependencies=_SETTINGS_WRITE)
+def approve_rule(
+    rule_id: int,
+    body: StageChangeRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Makes a repo or local rule's latest version count as coverage although the
+    import check holds it (a KQL rule, absent fields, no check can judge it). A
+    version failing lint, or one not held, is refused with 409; the next version
+    is held again."""
+    return _stage_change(import_check.approve, rule_id, body, current_user)
 
 
 @router.get("/rules/{rule_id}/findings")

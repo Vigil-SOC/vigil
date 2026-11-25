@@ -1883,13 +1883,33 @@ def get_detection_rule(rule_id: int) -> str:
 
 @tool("Detection coverage", reads=True)
 @requires("detections.read")
-def get_detection_coverage() -> str:
+async def get_detection_coverage(
+    by_layer: bool = False,
+    scope: Literal["all", "emulated", "intel"] = "all",
+    techniques: Optional[list[str]] = None,
+) -> str:
     """ATT&CK coverage by technique and SIEM: each technique an active rule
     declares or an alert shows, proven (an active SIEM copy passes Runs and
-    Sees), unproven or with no rule."""
+    Sees), unproven or with no rule. A rule failing lint, or a repo rule the
+    import check holds (``held`` on each row counts those), is no coverage.
+
+    ``by_layer`` adds ``by_layer``: which detection layer catches each technique,
+    shown by attack. Rows are layers (each SIEM with rules, each alert source
+    that labels techniques, LogLM when present) and a combined row; each cell is
+    validated, partial, present (not validated), no_detection or not_checked,
+    with marks tested_missed, not_observable and shadow, and its evidence
+    (declaring rules and their checks, the newest emulation run: hosts and steps
+    caught of steps run, older runs, LogLM flags, blind spots). Measures are
+    counts: validated per layer and combined, loglm_lift, validated by one
+    layer, present never validated, not observable. Evidence is the last 30
+    days' compose emulation runs. ``scope``: all (the map's techniques),
+    emulated (those emulated in the window) or intel (those the connected
+    threat intelligence names; says so when none is connected). ``techniques``
+    (e.g. ["T1059", "T1003.001"]) answers for exactly those and implies
+    by_layer."""
     from core.detections.inventory import coverage
 
-    return jdump(coverage.coverage())
+    return jdump(await coverage.read(by_layer, scope, techniques))
 
 
 @tool("List detection proposals", reads=True)
@@ -1956,6 +1976,123 @@ def switch_off_detection_rule(
         )
     except (LookupError, ValueError) as exc:
         return jdump({"error": str(exc)})
+
+
+@tool("Approve a held detection rule")
+@requires("detections.write")
+def approve_detection_rule(
+    rule_id: int, reason: Annotated[str, Field(min_length=1, max_length=2000)]
+) -> str:
+    """Makes a repo or local rule's latest version count as coverage although the
+    import check holds it (checks.import pending, flagged or failed): for
+    example a KQL rule whose Sentinel tables you know are there. Refused when
+    its lint fails or it is not held; its next version is held again."""
+    from core.detections.inventory import import_check
+
+    if not reason.strip():
+        return jdump({"error": "reason must not be blank"})
+    username = actor()
+    try:
+        return jdump(
+            import_check.approve(
+                rule_id, (username, acting_principal() or username), reason.strip()
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
+# --- Rule libraries: rules imported from a git repo (#5116) -------------------
+
+
+def _library_call(fn) -> str:
+    """Run a rule-library call on a fresh service; a refusal is an error."""
+    from core.detections.detection_rules_service import DetectionRulesService
+
+    try:
+        return jdump(fn(DetectionRulesService()))
+    except (LookupError, ValueError) as exc:
+        return jdump({"error": str(exc)})
+
+
+def _who() -> tuple:
+    username = actor()
+    return acting_principal() or username, username
+
+
+@tool("Read a rule repo", reads=True)
+@requires("detections.write")
+def read_rule_repo(
+    repo: Annotated[Optional[str], Field(max_length=500)] = None,
+    source_id: Optional[str] = None,
+    format: Optional[
+        Literal["auto", "sigma", "splunk", "elastic", "kql", "wazuh"]
+    ] = None,
+) -> str:
+    """Reads a git repo of detection rules (``repo``: owner/repo, a GitHub link
+    or an https URL, with ``@ref``) or an imported library (``source_id``),
+    installing nothing. Returns the ``commit`` read and the rule files grouped
+    by folder, each with language, techniques and ``problem`` (why it cannot be
+    picked: it does not read, or its key is already another source's active
+    rule). For a library, ``library`` lists changed, gone and new files. Pass
+    the commit to import_rules."""
+    from core.detections import rule_libraries
+
+    return _library_call(
+        lambda service: rule_libraries.read(
+            service, repo=repo, source_id=source_id, fmt=format
+        )
+    )
+
+
+@tool("Import detection rules")
+@requires("detections.write")
+def import_rules(
+    commit: Annotated[str, Field(min_length=7, max_length=64)],
+    picks: Annotated[list[str], Field(max_length=20000)],
+    repo: Annotated[Optional[str], Field(max_length=500)] = None,
+    source_id: Optional[str] = None,
+    name: Annotated[Optional[str], Field(max_length=200)] = None,
+    format: Optional[
+        Literal["auto", "sigma", "splunk", "elastic", "kql", "wazuh"]
+    ] = None,
+) -> str:
+    """Imports the rule files ``picks`` (paths as read_rule_repo listed them) at
+    ``commit``: a new library from ``repo`` (no picks makes an empty one), or
+    changed, new and gone files of the library ``source_id``. Refused when the
+    repo has moved since it was read: read it again. All or nothing."""
+    from core.detections import rule_libraries
+
+    def run(service):
+        source = rule_libraries.import_rules(
+            service,
+            commit,
+            picks,
+            _who(),
+            repo=repo,
+            source_id=source_id,
+            name=name,
+            fmt=format,
+        )
+        rule_libraries.sync_soon()
+        return {"success": True, "source": source}
+
+    return _library_call(run)
+
+
+@tool("Remove a rule library", destructive=True)
+@requires("detections.write")
+def remove_rule_library(source_id: str) -> str:
+    """Removes an imported rule library and its files. Its rules are marked
+    removed on the next sync; proposals made from them stay."""
+    from core.detections import rule_libraries
+
+    def run(service):
+        removed = rule_libraries.remove(service, source_id, _who())
+        rule_libraries.sync_soon()
+        return {"success": True, **removed}
+
+    return _library_call(run)
 
 
 # --- Run lifecycle, for a caller outside Vigil (#4248) ------------------------

@@ -1,3 +1,4 @@
+import type { ImportCheck } from '../../services/api'
 import { relativeTime } from '../settings/integrationHealth'
 
 export type Stage = 'shadow' | 'live' | 'off'
@@ -148,6 +149,16 @@ export const NEW_VERSION = 'new version'
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000
 export const STAGE_NAME: Record<Stage, string> = { shadow: 'Shadow', live: 'Live', off: 'Off' }
 
+/** The import check's states in a word; pending, flagged and failed hold a rule from coverage. */
+export const IMPORT_STATE: Record<ImportCheck['result'], string> = {
+  pending: 'Pending',
+  flagged: 'Flagged',
+  failed: 'Check failed',
+  passed: 'Passed',
+  approved: 'Approved',
+  unchecked: 'Unchecked',
+}
+export const IMPORT_HELD = new Set<string>(['pending', 'flagged', 'failed'])
 export const who = (actor: string) => (actor === 'system' ? 'Vigil' : actor)
 export const dayMonth = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 const days = (d: number) => `${d.toLocaleString()} ${d === 1 ? 'day' : 'days'}`

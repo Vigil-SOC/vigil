@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
@@ -551,13 +552,43 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             **tool,
             **({"writes": True} if tool["id"] in writes else {}),
             **(
-                {**CAPABILITY_BOUNDS[EMULATION], "emulator": True}
+                {
+                    **CAPABILITY_BOUNDS[EMULATION],
+                    "emulator": True,
+                    **_name_hosts(tool, emulation.hosts),
+                }
                 if emulation.marked(tool["id"])
                 else {}
             ),
         }
         for tool in tools
     ]
+
+
+# An emulator's hostname is narrowed to the listed hosts, and its description
+# names them, so the model asks only for a host it can run on. tools_router
+# still refuses an unlisted host: the list may change mid-run. The schema is
+# copied first; the catalogue entry is shared between runs.
+def _name_hosts(tool: Dict[str, Any], hosts: Tuple[str, ...]) -> Dict[str, Any]:
+    from core.response.emulation import LIMITS_POINTER
+
+    parameters = copy.deepcopy(tool.get("parameters") or {})
+    hostname = (parameters.get("properties") or {}).get("hostname")
+    if not isinstance(hostname, dict):
+        return {}
+    if hosts:
+        hostname["enum"] = list(hosts)
+        note = f"Runs only on the hosts listed for emulation: {', '.join(hosts)}."
+    else:
+        note = (
+            "No host is listed for emulation, so every call is refused until "
+            f"an operator lists one under {LIMITS_POINTER}."
+        )
+    description = (tool.get("description") or "").rstrip()
+    return {
+        "parameters": parameters,
+        "description": f"{description}\n\n{note}" if description else note,
+    }
 
 
 def resolve(

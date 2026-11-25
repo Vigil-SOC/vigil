@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     demo_mode: Optional[bool] = None
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    # Any request body over this is refused before the app reads it; only the
+    # upload routes, for a signed-in caller, take more (services/api/middleware/body_limit.py).
+    max_request_body_mb: int = 10
     # Uploads parsed whole in the API process (a history import, or a findings
     # JSON file the streaming reader rejects) are held to this smaller cap.
     max_in_memory_import_mb: int = 25
@@ -159,14 +162,21 @@ class Settings(BaseSettings):
     # skills. Unset (None) is the State Directory's skills/ folder; empty turns
     # operator skills off, as the Helm chart does.
     vigil_skills_path: Optional[str] = None
-    # Hosts skills may be installed from as a git repo (core.skills.skill_sources),
-    # over https only. Empty turns installing from a repo off.
+    # Hosts skills and detection rule libraries may be read from as a git repo
+    # (core.skills.skill_sources), over https only; SKILL_SOURCE_<HOST>_USER/_TOKEN
+    # credentials apply to both. Empty turns reading from a repo off.
     vigil_skill_source_hosts: Annotated[List[str], NoDecode] = ["github.com"]
     # The SkillSpector program that scans a skill folder (core.skills.skill_scan).
     # Empty, the default, turns scanning off; the backend image sets it to the
     # copy it installs. A path that does not exist reads as "scanner
     # unavailable", never a crash.
     vigil_skill_scanner: str = ""
+    # Hold each new repo rule or version from coverage until the import check
+    # (core.detections.inventory.import_check) passes it or a person approves it.
+    # Off, new versions are written 'unchecked' and count, and the daemon's sweep
+    # turns pending ones unchecked; back on, it judges them. The API and daemon
+    # must agree.
+    vigil_rule_import_check: bool = True
     # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
     # uses its bundled list of known-bad packages and sends nothing out.
     vigil_skill_scanner_osv: bool = False

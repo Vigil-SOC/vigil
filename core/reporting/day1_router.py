@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -274,6 +274,94 @@ class HistoryTuning(BaseModel):
     candidates: List[HistoryTuningEntry] = Field(default_factory=list)
 
 
+CappedGroupName = Literal["top", "control"]
+CappedDirectionName = Literal[
+    "not_real_not_real",
+    "not_real_real",
+    "undetermined_real",
+    "undetermined_not_real",
+    "not_real_undetermined",
+    "undetermined_undetermined",
+    "could_not",
+]
+
+
+class CappedDirection(BaseModel):
+    direction: CappedDirectionName
+    k: int
+    low: Optional[float] = None
+    high: Optional[float] = None
+
+
+class CappedTicket(BaseModel):
+    ticket: str
+    source: str
+    group: CappedGroupName
+    direction: CappedDirectionName
+    reason: Optional[str] = None
+    title: Optional[str] = None
+    entities: List[str] = Field(default_factory=list)
+    text_note: Optional[str] = None
+
+
+class CappedCost(BaseModel):
+    runs: int = 0
+    calls: Optional[int] = None
+    wall_ms: Optional[int] = None
+    dollars: Optional[float] = None
+    priced_at_zero: bool = False
+    local_model: bool = False
+    unpriced: bool = False
+    unread: bool = False
+
+
+class CappedGroup(BaseModel):
+    group: CappedGroupName
+    n: int
+    rows: List[CappedDirection] = Field(default_factory=list)
+    after_close: int = 0
+    approximate: int = 0
+    tickets: List[CappedTicket] = Field(default_factory=list)
+
+
+class CappedBatch(BaseModel):
+    batch_id: str
+    status: str
+    groups: List[CappedGroup] = Field(default_factory=list)
+    cost: CappedCost
+
+
+class HistoryCappedRecheck(BaseModel):
+    not_checked: Optional[str] = None
+    how: Optional[str] = None
+    awaiting_list: bool = False
+    none_run: bool = False
+    open_only: bool = False
+    finished: Optional[CappedBatch] = None
+    stopped: Optional[CappedBatch] = None
+
+
+class LayerMove(BaseModel):
+    technique: str
+    name: Optional[str] = None
+    layer: str
+    kind: Literal["improved", "regressed"]
+    before: str
+    after: str
+
+
+class LayerCounts(BaseModel):
+    improved: int
+    regressed: int
+    unchanged: int
+    not_compared: int
+
+
+class LayersComparison(BaseModel):
+    counts: LayerCounts
+    moves: List[LayerMove] = Field(default_factory=list)
+
+
 class Day1Report(BaseModel):
     id: str
     run_id: str
@@ -300,7 +388,12 @@ class Day1Report(BaseModel):
     history_before: Optional[HistoryBefore] = None
     history_recheck: Optional[HistoryRecheck] = None
     history_tuning: Optional[HistoryTuning] = None
+    history_capped_recheck: Optional[HistoryCappedRecheck] = None
     forecast: Optional[Day1Forecast] = None
+    # Coverage by layer against the compared run. Read, never stored.
+    coverage_comparison: Union[
+        LayersComparison, Literal["not_in_compared_run"], None
+    ] = None
 
 
 class Day1Module(BaseModel):

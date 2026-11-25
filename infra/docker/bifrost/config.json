@@ -6,6 +6,13 @@
     "enforce_auth_on_inference": false,
     "allowed_origins": []
   },
+  "framework": {
+    "pricing": {
+      "pricing_url": "env.BIFROST_PRICING_URL",
+      "model_parameters_url": "env.BIFROST_PARAMS_URL",
+      "mcp_library_sync_interval": 0
+    }
+  },
   "governance": {
     "auth_config": {
       "is_enabled": true,

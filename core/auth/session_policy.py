@@ -47,8 +47,26 @@ PRIVILEGED_PERMISSIONS = frozenset(
 
 
 class SessionPolicy(BaseModel):
-    idle_standard_minutes: int = Field(15, ge=1, le=60)
-    idle_privileged_minutes: int = Field(10, ge=1, le=30)
+    # 0: no idle limit. The two are independent; a privileged limit may be longer.
+    idle_standard_minutes: int = Field(
+        15,
+        ge=0,
+        le=720,
+        description=(
+            "Minutes with no activity before a standard sign-in ends. "
+            "0 is no idle limit. 0 to 720 (12 hours)."
+        ),
+    )
+    idle_privileged_minutes: int = Field(
+        10,
+        ge=0,
+        le=720,
+        description=(
+            "Minutes with no activity before a privileged sign-in ends, "
+            "independent of the standard limit. 0 is no idle limit. Also how "
+            "long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes."
+        ),
+    )
     absolute_hours: int = Field(12, ge=1, le=24)
     # Most open sign-ins one account may hold; None: no limit.
     sign_in_limit: Optional[int] = Field(None, ge=1, le=10)
@@ -85,15 +103,6 @@ class SessionPolicy(BaseModel):
     # Days a token may sit unused before it is revoked (reminded 7 days before);
     # None: never. A longer period, or off, is a loosening.
     token_unused_days: Optional[int] = Field(45, ge=7, le=365)
-
-    @model_validator(mode="after")
-    def _privileged_within_standard(self):
-        if self.idle_privileged_minutes > self.idle_standard_minutes:
-            raise ValueError(
-                f"idle_privileged_minutes ({self.idle_privileged_minutes}) cannot "
-                f"exceed idle_standard_minutes ({self.idle_standard_minutes})"
-            )
-        return self
 
     @model_validator(mode="after")
     def _min_age_before_max_age(self):
@@ -158,11 +167,21 @@ def mfa_covered(
     return level == "everyone" or not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
 
 
+def _longer_idle(old: int, new: int) -> bool:
+    """Whether ``new`` lets a sign-in sit idle longer. 0 is no limit, the loosest."""
+    if new == 0:
+        return old != 0
+    if old == 0:
+        return False
+    return new > old
+
+
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
     guesser have more tries or a shorter lock, an idle account stay longer, or a
     password be shorter, simpler, reused sooner, older or changed sooner, a
-    token live longer, or an unused token stay valid longer."""
+    token live longer, or an unused token stay valid longer. An idle of 0 is
+    looser than any positive length; leaving 0, or lowering a nonzero idle, tightens."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -199,8 +218,8 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or lower_keys
         or longer_max_age
         or new.password_min_age_days < old.password_min_age_days
-        or new.idle_standard_minutes > old.idle_standard_minutes
-        or new.idle_privileged_minutes > old.idle_privileged_minutes
+        or _longer_idle(old.idle_standard_minutes, new.idle_standard_minutes)
+        or _longer_idle(old.idle_privileged_minutes, new.idle_privileged_minutes)
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
         or new.password_min_length < old.password_min_length
@@ -332,7 +351,7 @@ def read_row(
 
 
 class Limits(NamedTuple):
-    # None: no idle limit (a service account's).
+    # None: no idle limit (a service account, or an idle setting of 0).
     idle: Optional[timedelta]
     absolute: timedelta
     # None: no limit on open sign-ins (a service account has none).
@@ -357,8 +376,9 @@ def limits(
     """The limits for an account holding ``permissions``.
 
     A service account is bound by the absolute limit only: it has no person
-    whose idleness could end it, and no sign-in limit. ``current`` is the policy
-    when the caller has read it already.
+    whose idleness could end it, and no sign-in limit. An idle setting of 0 is
+    no idle limit for a person too: ``idle`` is None, not a zero timedelta.
+    ``current`` is the policy when the caller has read it already.
     """
     current = current or policy()
     absolute = timedelta(hours=current.absolute_hours)
@@ -368,4 +388,5 @@ def limits(
     minutes = (
         current.idle_privileged_minutes if privileged else current.idle_standard_minutes
     )
-    return Limits(timedelta(minutes=minutes), absolute, current.sign_in_limit)
+    idle = None if minutes == 0 else timedelta(minutes=minutes)
+    return Limits(idle, absolute, current.sign_in_limit)

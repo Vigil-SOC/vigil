@@ -177,6 +177,14 @@ class CaseLinkedFinding(BaseModel):
     entity_keys: list[str] = []
 
 
+class RecheckMarkView(BaseModel):
+    """The one mark on a Case opened from a re-check."""
+
+    source: str
+    closed_at: str
+    run_id: str
+
+
 class CaseDetailResponse(CaseSchema):
     """``GET /cases/{id}`` — the case, its combined state, and the runs on it."""
 
@@ -188,6 +196,10 @@ class CaseDetailResponse(CaseSchema):
     linked_findings: list[CaseLinkedFinding] = []
     # The finding the case was opened from: the first one linked to it.
     opened_from: Optional[str] = None
+    # Opened from a re-check (#5095). Names the source, the close, and the run.
+    recheck: Optional[RecheckMarkView] = None
+    # A later review disagreed with the first. Names nobody.
+    reviewers_differ: bool = False
     # Merged after the case's newest run started, so that run did not read them.
     alerts_since_last_run: int = 0
     owner_state: OwnerStateField

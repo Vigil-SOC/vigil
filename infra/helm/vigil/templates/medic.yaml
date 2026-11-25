@@ -178,8 +178,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: medic
-          image: {{ include "vigil.medic.image" (dict "context" . "image" .Values.medic.image "suffix" "medic") | quote }}
-          imagePullPolicy: {{ include "vigil.medic.pullPolicy" (dict "context" . "image" .Values.medic.image) }}
+          image: {{ include "vigil.image" (dict "context" . "component" "medic" "suffix" "medic") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "medic") }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

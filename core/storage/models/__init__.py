@@ -32,6 +32,7 @@ from core.storage.models.auth import (
 )
 from core.storage.models.autonomy import ToolEffectClass
 from core.storage.models.base import Base, JSONBList, case_findings
+from core.storage.models.capped_recheck import CappedRecheckBatch, CappedRecheckTicket
 from core.storage.models.case import Case
 from core.storage.models.case_entities import (
     CaseAttachment,
@@ -93,12 +94,13 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.exclusion import IpExclusion
 from core.storage.models.finding import Finding, FindingMitrePrediction
-from core.storage.models.history import HistoryImport, HistoryTicket
+from core.storage.models.history import HistoryAlert, HistoryImport, HistoryTicket
 from core.storage.models.medic import (
     MedicIncidentNotice,
     MedicLastSeen,
     MedicWatchState,
 )
+from core.storage.models.recheck_review import RecheckReview
 from core.storage.models.report import ReportRecord, ReportRun
 from core.storage.models.skill import SkillInstall, SkillRead, SkillScan
 from core.storage.models.team import Team, TeamMembership
@@ -125,6 +127,9 @@ __all__ = [
     "InvestigationReplay",
     "ApprovalAction",
     "Base",
+    "CappedRecheckBatch",
+    "CappedRecheckTicket",
+    "RecheckReview",
     "Case",
     "CaseAttachment",
     "CaseAuditLog",
@@ -165,6 +170,7 @@ __all__ = [
     "EpisodicSighting",
     "EpisodicVerdict",
     "EpisodicVerdictSource",
+    "HistoryAlert",
     "HistoryImport",
     "HistoryTicket",
     "FederationSource",

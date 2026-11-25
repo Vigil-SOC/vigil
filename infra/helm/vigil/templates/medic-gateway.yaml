@@ -53,8 +53,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: medic-gateway
-          image: {{ include "vigil.medic.image" (dict "context" . "image" $v.image "suffix" "medic-gateway") | quote }}
-          imagePullPolicy: {{ include "vigil.medic.pullPolicy" (dict "context" . "image" $v.image) }}
+          image: {{ include "vigil.image" (dict "context" . "component" "medicGateway" "image" $v.image "suffix" "medic-gateway") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "medicGateway" "image" $v.image) }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

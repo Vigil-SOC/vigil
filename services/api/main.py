@@ -222,6 +222,12 @@ if _cors_origins_raw:
 else:
     _cors_origins = _DEFAULT_CORS_ORIGINS
 
+# Caps every request body before the app reads it. Added before CORS so CORS
+# and the security headers wrap its 413; nothing outside it reads a body.
+from services.api.middleware.body_limit import BodyLimitMiddleware  # noqa: E402
+
+app.add_middleware(BodyLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -725,6 +731,10 @@ async def _startup(app: FastAPI):
 
         app.state.readiness_task = asyncio.create_task(readiness_sweeper())
 
+        from services.api.capped_recheck import run as capped_recheck_driver
+
+        app.state.capped_recheck_task = asyncio.create_task(capped_recheck_driver())
+
         from services.api.opencti_facts import run as opencti_facts
 
         app.state.opencti_facts_task = asyncio.create_task(opencti_facts())
@@ -779,6 +789,7 @@ async def _stop_setup_code(app) -> None:
         "setup_code_task",
         "dormancy_task",
         "readiness_task",
+        "capped_recheck_task",
         "opencti_facts_task",
         "skill_sweep_task",
         "token_sweep_task",

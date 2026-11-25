@@ -51,9 +51,6 @@ services:
     ports: !reset []
     restart: "no"
     environment:
-      # docker-compose.yml gives the daemon no JWT_SECRET_KEY, and it exits at
-      # start without one (auth_service imports it) with DEV_MODE off.
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # Empty is the I-5.a fault: the daemon then refuses every push with 503.
       DAEMON_WEBHOOK_TOKEN: ${MEDIC_EVAL_WEBHOOK_TOKEN-}
       # sitecustomize.py (below): SIGUSR1 fails the scheduler task (P-3.a).
@@ -83,10 +80,13 @@ services:
     container_name: !reset null
     image: ${COMPOSE_PROJECT_NAME:?}-agent:local
     pull_policy: never
-    build: !reset null
     restart: "no"
     environment:
       AGENT_INTERNAL_TOKEN: ${MEDIC_EVAL_AGENT_TOKEN-}
+
+  # Builds the agent image the two above use; the backend depends on it.
+  agent-shell:
+    image: ${COMPOSE_PROJECT_NAME:?}-agent:local
 
   # The token one-shots only need a shell and Python.
   mcp-runner-token:

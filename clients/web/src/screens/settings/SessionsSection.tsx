@@ -31,12 +31,12 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   {
-    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min',
-    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not.',
+    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not. 0: no idle limit.',
   },
   {
-    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min',
-    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. It cannot exceed the idle limit.',
+    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. Also how long a Confirm-it\'s-you lasts, up to 12 hours; at 0, 10 minutes. 0: no idle limit.',
   },
   {
     key: 'absolute_hours', title: 'Sign-in length', unit: 'hours',
@@ -456,6 +456,9 @@ export default function SessionsSection({ notify }: SectionProps) {
             </ul>
             {confirm?.without_mfa != null && (
               <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
+            )}
+            {next?.require_mfa === 'off' && saved.require_mfa !== 'off' && (
+              <p>People without MFA will confirm privileged changes and create tokens with their password.</p>
             )}
             {confirm?.without_key != null && <p>{noKeyText(confirm.without_key)}.</p>}
             {saved.unreadable && <p>The stored policy could not be read, so this save replaces whatever it held with the values above and the defaults for every other setting.</p>}

@@ -86,9 +86,10 @@ _parsers: Dict[bool, Any] = {}
 _parsers_lock = threading.Lock()
 
 NO_OCR_REASON = (
-    "{name} needs OCR, and its language data (eng.traineddata) is not on this "
-    "server and could not be downloaded. Put it in a folder and set "
-    "TESSDATA_PREFIX to that folder."
+    "{name} needs OCR in a language whose data is not on this server and could "
+    "not be downloaded. The image carries English only. Put the language's "
+    ".traineddata file in the folder TESSDATA_PREFIX names; a folder of your "
+    "own must hold eng.traineddata as well."
 )
 
 
@@ -116,8 +117,9 @@ def _parse(path: Path, filename: str) -> Extracted:
         except ParseError as exc:
             if "ocr failed" not in str(exc).lower():
                 raise
-            # LiteParse fetches its OCR language data on first use, so an
-            # air-gapped install has none. A page with a text layer needs no OCR.
+            # The image carries English; LiteParse fetches any other language
+            # on first use, which fails with no route out. A page with a text
+            # layer needs no OCR.
             result = _liteparse(False).parse(path)
             if not result.text.strip():
                 raise DocumentRefused(NO_OCR_REASON.format(name=filename)) from None

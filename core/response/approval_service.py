@@ -15,6 +15,7 @@ other existing callers) keep working.
 """
 
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -365,6 +366,21 @@ def _isolations_of(names: Sequence[str]):
             )
         )
         .where(or_(target.in_(names), hostname.in_(names)))
+    )
+
+
+def _same_ask(action_type: str, target: str):
+    """Run proposals of ``action_type`` on ``target``, any status; for an isolation,
+    any isolation of that host."""
+    if action_type == ActionType.ISOLATE_HOST.value:
+        return _isolations_of(_host_names(target))
+    return (
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+        .where(ApprovalActionRow.action_type == action_type)
+        .where(
+            func.lower(func.trim(ApprovalActionRow.target)) == target.strip().lower()
+        )
     )
 
 
@@ -1123,20 +1139,10 @@ class ApprovalService:
             own = _nonfailed_by_key(session, key)
             if own is not None:
                 return _row_to_pending(own)
-            if action_type == ActionType.ISOLATE_HOST.value:
-                query = _isolations_of(_host_names(target))
-            else:
-                query = (
-                    select(ApprovalActionRow)
-                    .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
-                    .where(ApprovalActionRow.action_type == action_type)
-                    .where(
-                        func.lower(func.trim(ApprovalActionRow.target))
-                        == target.strip().lower()
-                    )
-                )
             row = session.execute(
-                query.order_by(ApprovalActionRow.created_at.desc()).limit(1)
+                _same_ask(action_type, target)
+                .order_by(ApprovalActionRow.created_at.desc())
+                .limit(1)
             ).scalar_one_or_none()
             return _row_to_pending(row) if row else None
 
@@ -1344,12 +1350,14 @@ def _evidence_ids(action: PendingAction) -> List[str]:
 
 def _case_lookups(
     actions: List[PendingAction],
+    session: Any = None,
 ) -> tuple[
     Dict[str, Any], Dict[str, Optional[str]], Dict[str, str], set[str], Dict[str, str]
 ]:
     """What those actions can name: run trigger contexts, investigation case ids,
     the newest case of each stored alert in their evidence, those alerts, and the
-    status of every case any of them names."""
+    status of every case any of them names. Reads in ``session`` when given, so
+    a caller's own uncommitted writes are seen."""
     run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
     investigation_ids: set[str] = set()
     case_ids: set[str] = set()
@@ -1367,8 +1375,12 @@ def _case_lookups(
     statuses: Dict[str, str] = {}
     if not run_ids and not investigation_ids and not evidence_ids and not case_ids:
         return runs, investigations, evidence_cases, stored, statuses
-    db = get_db_manager()
-    with db.session_scope() as session:
+    scope = (
+        nullcontext(session)
+        if session is not None
+        else get_db_manager().session_scope()
+    )
+    with scope as session:
         if run_ids:
             rows = session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(run_ids))
             for row in rows:
@@ -1787,3 +1799,212 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
 def needs_you_case_ids() -> set[str]:
     """Case ids that need a person, from one ``needs_you()`` read."""
     return {one for item in needs_you()["items"] for one in item["case_ids"]}
+
+
+# ---- A close settles its unanswered asks (#5107) ---------------------------
+# Written in the close's own transaction, so every reader agrees with Home.
+
+SETTLED_BY = "system"
+SETTLED_PREFIX = "settled:"
+_LIVE = (
+    ActionStatus.PENDING.value,
+    ActionStatus.APPROVED.value,
+    ActionStatus.EXECUTED.value,
+)
+
+
+def _not_the_cases_ask(row: ApprovalActionRow) -> bool:
+    """A run's question (its run resumes on the answer) or a rollout: no close
+    answers these."""
+    params = row.parameters if isinstance(row.parameters, dict) else {}
+    checkpoint = params.get("checkpoint_id")
+    return (
+        bool(row.workflow_run_id)
+        or (isinstance(checkpoint, str) and bool(checkpoint.strip()))
+        or row.action_type in ROLLOUT_ACTION_TYPES
+    )
+
+
+def _lock_row(session, action_id: str) -> Optional[ApprovalActionRow]:
+    """The row as committed, locked; None when a decision holds it. Skipped, not
+    waited on: the caller already holds the trail lock, which a decision takes
+    after its row, so waiting would deadlock. Two closers are already in turn on
+    that trail lock."""
+    return session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.action_id == action_id)
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
+def _locked(session, action_ids: Iterable[str]) -> List[ApprovalActionRow]:
+    """Lock rows one by one in ascending id order, so closers never cross."""
+    rows = (_lock_row(session, one) for one in sorted(set(action_ids)))
+    return [row for row in rows if row is not None]
+
+
+def settle_for_close(session, case_id: str) -> int:
+    """Reject, as the system, each pending ask naming ``case_id`` whose every
+    named case is now closed. In the caller's transaction; returns how many."""
+    candidates = [
+        _row_to_pending(row)
+        for row in session.execute(
+            select(ApprovalActionRow)
+            .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+            .where(ApprovalActionRow.requires_approval.is_(True))
+            .where(ApprovalActionRow.workflow_run_id.is_(None))
+            .where(ApprovalActionRow.action_type.notin_(ROLLOUT_ACTION_TYPES))
+        ).scalars()
+    ]
+    # Which cases a row names does not change with a close: resolve before locking.
+    lookups = _case_lookups(candidates, session)[:3]
+    ids = [
+        a.action_id for a in candidates if case_id in _case_ids_for_action(a, *lookups)
+    ]
+    resolved: Dict[str, List[str]] = {}
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.PENDING.value or _not_the_cases_ask(row):
+            continue
+        # Re-read from the locked row: a join may have listed another case.
+        cases = _case_ids_for_action(_row_to_pending(row), *lookups)
+        if case_id in cases:
+            resolved[row.action_id] = cases
+    if not resolved:
+        return 0
+    # Statuses after the locks: a peer that closed while this waited reads closed.
+    named = {one for cases in resolved.values() for one in cases}
+    statuses = dict(
+        session.query(Case.case_id, Case.status).filter(Case.case_id.in_(named))
+    )
+    settled = 0
+    for action_id, cases in resolved.items():
+        if not all(statuses.get(one) == CLOSED for one in cases):
+            continue
+        row = session.get(ApprovalActionRow, action_id)
+        kind = _kind_for_action(_row_to_pending(row))
+        reason = (
+            f"{SETTLED_PREFIX} {cases[0]} closed with this unanswered"
+            if len(cases) == 1
+            else f"{SETTLED_PREFIX} every case it named closed"
+        )
+        row.status = ActionStatus.REJECTED.value
+        row.rejection_reason = reason
+        row.approved_by = SETTLED_BY
+        row.approved_by_principal_id = SETTLED_BY
+        row.approved_at = utcnow()
+        # A new dict: an in-place change to a JSON column is not flushed.
+        row.parameters = {**(row.parameters or {}), "settled_cases": cases}
+        session.flush()
+        for one in cases:
+            case_trail.append_approval(
+                session,
+                action=case_trail.SETTLE,
+                principal_id=SETTLED_BY,
+                action_id=action_id,
+                username=SETTLED_BY,
+                operator_text=reason,
+                case_id=one,
+                action_type=row.action_type,
+                kind=kind,
+            )
+        settled += 1
+    if settled:
+        logger.info("Closing %s settled %d unanswered asks", case_id, settled)
+    return settled
+
+
+def _join_case(session, row: ApprovalActionRow, case_id: str) -> None:
+    """List ``case_id`` on a pending row, as ``add_proposal_case`` does."""
+    params = dict(row.parameters or {})
+    named = proposal_case_ids(params)
+    pending = _row_to_pending(row)
+    listed = named or _case_ids_for_action(
+        pending, *_case_lookups([pending], session)[:3]
+    )
+    if case_id in listed and named:
+        return
+    params.pop("case_id", None)
+    params["case_ids"] = list(dict.fromkeys([*listed, case_id]))
+    row.parameters = params
+
+
+def reopen_settled(session, case_id: str) -> int:
+    """Return to pending what closing ``case_id`` settled, unless a live ask for
+    the same action and target covers it or it is past the expiry window. In the
+    caller's transaction; returns how many."""
+    from core.config import get_settings
+
+    ids = session.execute(
+        select(ApprovalActionRow.action_id)
+        .where(ApprovalActionRow.status == ActionStatus.REJECTED.value)
+        .where(ApprovalActionRow.approved_by == SETTLED_BY)
+        .where(ApprovalActionRow.rejection_reason.like(f"{SETTLED_PREFIX}%"))
+        .where(ApprovalActionRow.parameters.contains({"settled_cases": [case_id]}))
+    ).scalars()
+    cutoff = utcnow() - timedelta(days=get_settings().daemon_approval_expiry_days)
+    restored = 0
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.REJECTED.value:
+            continue
+        # The sweep would expire it on its next tick.
+        if row.created_at < cutoff:
+            continue
+        live = session.execute(
+            _same_ask(row.action_type, row.target)
+            .where(ApprovalActionRow.created_at > row.created_at)
+            .where(ApprovalActionRow.status.in_(_LIVE))
+            .order_by(ApprovalActionRow.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if live is not None:
+            # A decided row takes no case; a pending one keeps this case asked.
+            if live.status == ActionStatus.PENDING.value:
+                live = _lock_row(session, live.action_id)
+                if live is not None and live.status == ActionStatus.PENDING.value:
+                    _join_case(session, live, case_id)
+            continue
+        params = dict(row.parameters or {})
+        params.pop("settled_cases", None)
+        row.parameters = params
+        row.status = ActionStatus.PENDING.value
+        row.rejection_reason = None
+        row.approved_by = None
+        row.approved_by_principal_id = None
+        row.approved_at = None
+        restored += 1
+    session.flush()
+    if restored:
+        logger.info("Reopening %s asked %d settled asks again", case_id, restored)
+    return restored
+
+
+def reparent_for_merge(session, source_case_id: str, target_case_id: str) -> int:
+    """Move pending asks naming the merged-away case onto the case that survives.
+    In the caller's transaction; returns how many."""
+    params = ApprovalActionRow.parameters
+    ids = session.execute(
+        select(ApprovalActionRow.action_id)
+        .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+        .where(
+            or_(
+                params.contains({"case_ids": [source_case_id]}),
+                params.contains({"case_id": source_case_id}),
+            )
+        )
+    ).scalars()
+    moved = 0
+    for row in _locked(session, ids):
+        if row.status != ActionStatus.PENDING.value or _not_the_cases_ask(row):
+            continue
+        listed = proposal_case_ids(row.parameters)
+        if source_case_id not in listed:
+            continue
+        cases = [target_case_id if one == source_case_id else one for one in listed]
+        new = dict(row.parameters or {})
+        new.pop("case_id", None)
+        new["case_ids"] = list(dict.fromkeys(cases))
+        row.parameters = new
+        moved += 1
+    session.flush()
+    return moved

@@ -3,16 +3,21 @@
 // (shell/ConfirmItDialog, mounted once per page: the console, setup and OAuth consent),
 // then retries the request once it is confirmed.
 export const CONFIRMATION_REQUIRED = 'confirmation_required'
-// The person has no two-step sign-in yet: set it up, then the change goes through.
+// Require MFA is not off, and the person has no two-step sign-in yet: set it up,
+// then the change goes through. With Require MFA off they confirm with a password.
 export const STEP_UP_MFA_SETUP = 'step_up_mfa_setup'
 
 export type StepUpDetail = {
   code: typeof CONFIRMATION_REQUIRED | typeof STEP_UP_MFA_SETUP
   /** the action the dialog's title names: "change settings" */
   action: string
-  /** one_factor: a code (or the password with no MFA); strong: password and code;
+  /** one_factor: a code, or the password when accepts is password; strong: password and code;
    *  sso: no password and no MFA, signed in through the provider: confirm there (#4285) */
   variant?: 'one_factor' | 'strong' | 'sso'
+  /** What this request will accept. password: Require MFA is off and the person holds
+   *  no factor (including one cleared during the sign-in). code: an authenticator,
+   *  recovery code or key. Absent on an older refusal: the dialog uses the loaded methods. */
+  accepts?: 'password' | 'code'
   /** sso: the provider's host, for "Confirm at …" */
   provider?: string | null
   window_minutes?: number

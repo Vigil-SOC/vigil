@@ -169,6 +169,7 @@ class SecurityDetectionsTools:
         caught: Optional[str] = None,
         rule_id: Any = None,
         offset: int = 0,
+        held: Optional[bool] = None,
     ) -> Any:
         """
         Search across all detection rules using keywords.
@@ -192,10 +193,12 @@ class SecurityDetectionsTools:
             rule_id: When set, return that one rule plus a page of its judged-false
                 determinations. Without it the call stays a list and builds no page.
             offset: Where that page starts. Ignored without rule_id.
+            held: Optional filter: repo rules the import check holds from
+                coverage (True: checks.import pending, flagged or failed) or not
 
         Returns:
             List of matching detection rules, each with its status, checks and
-            whether it is flagged; an overlay rule also with its stage and stage
+            whether it is flagged and held; an overlay rule also with its stage and stage
             rows; a single hit also carries its recent check changes. With
             rule_id, that one rule plus ``judged_false``.
         """
@@ -225,6 +228,7 @@ class SecurityDetectionsTools:
             quiet,
             accurate,
             caught,
+            held=held,
         )
 
     async def link_detection_rule(

@@ -3989,6 +3989,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/day1-report/capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Batch
+         * @description The latest capped batch.
+         */
+        get: operations["get_api_day1-report_capped-recheck"];
+        put?: never;
+        /**
+         * Start
+         * @description Draw the next capped batch and start runs up to the two in flight.
+         */
+        post: operations["post_api_day1-report_capped-recheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/ceiling": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Ceiling
+         * @description The run ceiling. No row is 0, and 0 refuses a start.
+         */
+        get: operations["get_api_day1-report_capped-recheck_ceiling"];
+        /**
+         * Write Ceiling
+         * @description Set how many re-decision runs one batch may start.
+         */
+        put: operations["put_api_day1-report_capped-recheck_ceiling"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/day1-report/capped-recheck/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume
+         * @description Continue the open batch. The sweep does not do this.
+         */
+        post: operations["post_api_day1-report_capped-recheck_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/day1-report/modules": {
         parameters: {
             query?: never;
@@ -4320,7 +4388,11 @@ export interface paths {
          * Get Coverage
          * @description ATT&CK coverage by technique and SIEM: each technique an active rule
          *     declares or an alert shows, proven (an active SIEM copy passes Runs and
-         *     Sees), unproven or with no rule, split by SIEM. Read-only.
+         *     Sees), unproven or with no rule, split by SIEM. ``by_layer`` adds each
+         *     technique's state per detection layer and for the layers together, with
+         *     the measures, from the last 30 days' emulation runs: for ``scope`` (all,
+         *     emulated, intel) or the ``techniques`` given (repeated or comma-separated).
+         *     Read-only.
          */
         get: operations["get_api_detection-rules_coverage"];
         put?: never;
@@ -4414,6 +4486,69 @@ export interface paths {
          */
         post: operations["post_api_detection-rules_health-inbox_read"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Library Rules
+         * @description Import the picked files at the commit read; refused (409) when the repo
+         *     has moved since. All or nothing; audited.
+         */
+        post: operations["post_api_detection-rules_libraries_import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Library
+         * @description The commit a repo is at and the rule files in it, grouped by folder, each
+         *     with its language, techniques and why it cannot be picked; for a library,
+         *     also Changed, Gone from the repo, and In the repo, not imported.
+         */
+        post: operations["post_api_detection-rules_libraries_read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/libraries/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Library
+         * @description Remove a rule library and its files; the next sync marks its rules removed.
+         */
+        delete: operations["delete_api_detection-rules_libraries_source_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4619,6 +4754,29 @@ export interface paths {
         get: operations["get_api_detection-rules_rules_rule_id"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/detection-rules/rules/{rule_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Rule
+         * @description Makes a repo or local rule's latest version count as coverage although the
+         *     import check holds it (a KQL rule, absent fields, no check can judge it). A
+         *     version failing lint, or one not held, is refused with 409; the next version
+         *     is held again.
+         */
+        post: operations["post_api_detection-rules_rules_rule_id_approve"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4903,7 +5061,8 @@ export interface paths {
         put?: never;
         /**
          * Update Source
-         * @description Update a single detection rule source (git pull or rescan).
+         * @description Update a single detection rule source: a rule library takes its repo whole
+         *     at the commit read now; a local source is rescanned.
          *
          *     Args:
          *         source_id: The source ID to update
@@ -4952,7 +5111,9 @@ export interface paths {
         put?: never;
         /**
          * Update All Sources
-         * @description Update all detection rule sources (git pull all repos).
+         * @description Update all detection rule sources: each rule library is taken whole at the
+         *     commit read now, one after another; local sources are rescanned. A library
+         *     that cannot be read is a ``success: false`` row saying why.
          *
          *     Returns:
          *         Results for each source update
@@ -6199,6 +6360,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/memory/imports/ledgers/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Ledgers
+         * @description How many marked re-decision ledgers this import would keep.
+         */
+        get: operations["get_api_memory_imports_ledgers_import_id"];
+        put?: never;
+        /**
+         * Remove Ledgers
+         * @description Erase marked re-decision ledgers once the import is gone.
+         *
+         *     A run a Case was opened from is not passed. ``cases`` names those.
+         *     Any other id erases nothing.
+         */
+        post: operations["post_api_memory_imports_ledgers_import_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/memory/imports/{import_id}": {
         parameters: {
             query?: never;
@@ -6211,7 +6399,7 @@ export interface paths {
         post?: never;
         /**
          * Remove Import
-         * @description Delete one whole import: its Verdicts, Sightings, tickets and record.
+         * @description Delete one whole import: its Verdicts, Sightings, tickets, alerts and record.
          */
         delete: operations["delete_api_memory_imports_import_id"];
         options?: never;
@@ -6755,6 +6943,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recheck-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Queue
+         * @description Unconfirmed tickets, then confirmed ones. The two are not one list.
+         *
+         *     ``cases.read`` is the screen. Titles still drop without ``automation.read``.
+         */
+        get: operations["get_api_recheck-review"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ticket
+         * @description Alert fields and tool results. Verdicts stay off until a call is stored.
+         */
+        get: operations["get_api_recheck-review_ticket_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/case": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Case
+         * @description Open a Case from the first confirming call. No finding, no intake.
+         */
+        post: operations["post_api_recheck-review_ticket_id_case"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Confirm
+         * @description Record the call. A token or a service account is refused.
+         */
+        post: operations["post_api_recheck-review_ticket_id_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -6994,10 +7264,13 @@ export interface paths {
         get: operations["get_api_session-policy"];
         /**
          * Put Policy
-         * @description Replace the policy. An idle limit above its standard, or a stale version, is refused.
+         * @description Replace the policy. A stale version is refused.
          *
-         *     ``dry_run`` checks the version like a save, then saves nothing and answers whether
-         *     the body would loosen the policy now in force.
+         *     Each idle limit is 0 (no idle limit) through 720 minutes (12 hours), set
+         *     independently of the other. A privileged idle of 0 leaves Confirm it's you
+         *     at 10 minutes. ``dry_run`` checks the version like a save, then saves nothing
+         *     and answers whether the body would loosen the policy now in force. 0 is the
+         *     loosest idle value, so a machine caller may not set it.
          */
         put: operations["put_api_session-policy"];
         post?: never;
@@ -10773,6 +11046,26 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** ActionOut */
+        ActionOut: {
+            /**
+             * Action Type
+             * @default
+             */
+            action_type: string;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -10871,6 +11164,21 @@ export interface components {
             skills?: string[];
             /** Updated At */
             updated_at?: string | null;
+        };
+        /** AlertOut */
+        AlertOut: {
+            /** Description */
+            description: string;
+            /** Entity Keys */
+            entity_keys: string[];
+            /** Rule */
+            rule: string;
+            /** Severity */
+            severity: string;
+            /** Time */
+            time: string;
+            /** Title */
+            title: string;
         };
         /** ApprovalActionResult */
         ApprovalActionResult: {
@@ -11201,6 +11509,118 @@ export interface components {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
+        /** CappedBatch */
+        CappedBatch: {
+            /** Batch Id */
+            batch_id: string;
+            cost: components["schemas"]["CappedCost"];
+            /** Groups */
+            groups?: components["schemas"]["CappedGroup"][];
+            /** Status */
+            status: string;
+        };
+        /** CappedCost */
+        CappedCost: {
+            /** Calls */
+            calls?: number | null;
+            /** Dollars */
+            dollars?: number | null;
+            /**
+             * Local Model
+             * @default false
+             */
+            local_model: boolean;
+            /**
+             * Priced At Zero
+             * @default false
+             */
+            priced_at_zero: boolean;
+            /**
+             * Runs
+             * @default 0
+             */
+            runs: number;
+            /**
+             * Unpriced
+             * @default false
+             */
+            unpriced: boolean;
+            /**
+             * Unread
+             * @default false
+             */
+            unread: boolean;
+            /** Wall Ms */
+            wall_ms?: number | null;
+        };
+        /** CappedDirection */
+        CappedDirection: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** High */
+            high?: number | null;
+            /** K */
+            k: number;
+            /** Low */
+            low?: number | null;
+        };
+        /** CappedGroup */
+        CappedGroup: {
+            /**
+             * After Close
+             * @default 0
+             */
+            after_close: number;
+            /**
+             * Approximate
+             * @default 0
+             */
+            approximate: number;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** N */
+            n: number;
+            /** Rows */
+            rows?: components["schemas"]["CappedDirection"][];
+            /** Tickets */
+            tickets?: components["schemas"]["CappedTicket"][];
+        };
+        /** CappedRecheckCeiling */
+        CappedRecheckCeiling: {
+            /** Runs */
+            runs: number;
+        };
+        /** CappedTicket */
+        CappedTicket: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** Entities */
+            entities?: string[];
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** Reason */
+            reason?: string | null;
+            /** Source */
+            source: string;
+            /** Text Note */
+            text_note?: string | null;
+            /** Ticket */
+            ticket: string;
+            /** Title */
+            title?: string | null;
+        };
         /** CaseCloseResponse */
         CaseCloseResponse: {
             closure: components["schemas"]["CaseClosureInfoSchema"];
@@ -11409,6 +11829,7 @@ export interface components {
             reader_teams?: string[];
             /** Readers */
             readers?: string[];
+            recheck?: components["schemas"]["RecheckMarkView"] | null;
             /**
              * Resolution Steps
              * @default []
@@ -11416,6 +11837,11 @@ export interface components {
             resolution_steps: unknown[];
             /** Restricted */
             readonly restricted: boolean;
+            /**
+             * Reviewers Differ
+             * @default false
+             */
+            reviewers_differ: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -12814,6 +13240,14 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConfirmIn */
+        ConfirmIn: {
+            /**
+             * Call
+             * @enum {string}
+             */
+            call: "real" | "not real" | "can't tell";
+        };
         /**
          * ConfirmItRequest
          * @description Confirm it's you for a privileged change. ``strong``: the password and,
@@ -13285,6 +13719,8 @@ export interface components {
             checks: components["schemas"]["Day1Check"][];
             /** Compared At */
             compared_at?: string | null;
+            /** Coverage Comparison */
+            coverage_comparison?: components["schemas"]["LayersComparison"] | "not_in_compared_run" | null;
             /** Evidence */
             evidence?: {
                 [key: string]: unknown;
@@ -13296,6 +13732,7 @@ export interface components {
              */
             hidden_worse: boolean;
             history_before?: components["schemas"]["HistoryBefore"] | null;
+            history_capped_recheck?: components["schemas"]["HistoryCappedRecheck"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
             history_tuning?: components["schemas"]["HistoryTuning"] | null;
             /** Id */
@@ -13450,6 +13887,13 @@ export interface components {
              * @default
              */
             notes: string;
+        };
+        /** DroppedColumn */
+        DroppedColumn: {
+            /** Count */
+            count: number;
+            /** Name */
+            name: string;
         };
         /** EditRequest */
         EditRequest: {
@@ -13639,6 +14083,13 @@ export interface components {
             source?: string | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /** EvidenceOut */
+        EvidenceOut: {
+            /** Result */
+            result: string;
+            /** Tool */
+            tool: string;
         };
         /** ExclusionCreate */
         ExclusionCreate: {
@@ -13936,6 +14387,13 @@ export interface components {
             /** Feedback */
             feedback?: string | null;
         };
+        /** GroupCounts */
+        GroupCounts: {
+            /** Control */
+            control: number;
+            /** Top */
+            top: number;
+        };
         /** GroupRole */
         GroupRole: {
             /** Group */
@@ -14040,6 +14498,30 @@ export interface components {
             window_end: string;
             /** Window Start */
             window_start: string;
+        };
+        /** HistoryCappedRecheck */
+        HistoryCappedRecheck: {
+            /**
+             * Awaiting List
+             * @default false
+             */
+            awaiting_list: boolean;
+            finished?: components["schemas"]["CappedBatch"] | null;
+            /** How */
+            how?: string | null;
+            /**
+             * None Run
+             * @default false
+             */
+            none_run: boolean;
+            /** Not Checked */
+            not_checked?: string | null;
+            /**
+             * Open Only
+             * @default false
+             */
+            open_only: boolean;
+            stopped?: components["schemas"]["CappedBatch"] | null;
         };
         /** HistoryFigure */
         HistoryFigure: {
@@ -14337,6 +14819,71 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * ImportDeleteOut
+         * @description The import is gone. Its marked ledgers were kept.
+         */
+        ImportDeleteOut: {
+            /** Bulk Not Tested */
+            bulk_not_tested: number;
+            /** Concluded At */
+            concluded_at: string | null;
+            /** Dropped Columns */
+            dropped_columns: components["schemas"]["DroppedColumn"][];
+            /** Erase Permission */
+            erase_permission: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Has Ticket Detail */
+            has_ticket_detail: boolean;
+            /** Import Id */
+            import_id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Ledgers Kept */
+            ledgers_kept: number;
+            /** Left Out */
+            left_out: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Pull Days */
+            pull_days: number | null;
+            /** Pulled At */
+            pulled_at: string | null;
+            /** Rows Read */
+            rows_read: number;
+            /** Run Ids */
+            run_ids: string[];
+            /** Severity Unknown */
+            severity_unknown: number;
+            /** Sightings Written */
+            sightings_written: number;
+            /** Source System */
+            source_system: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "done" | "failed" | "incomplete";
+            /** Tickets Kept */
+            tickets_kept: number;
+            /** Unmapped */
+            unmapped: components["schemas"]["UnmappedValue"][];
+            /** Verdicts Written */
+            verdicts_written: number;
+        };
         /** ImportListResponse */
         ImportListResponse: {
             /** Imports */
@@ -14350,6 +14897,8 @@ export interface components {
             bulk_not_tested: number;
             /** Concluded At */
             concluded_at: string | null;
+            /** Dropped Columns */
+            dropped_columns: components["schemas"]["DroppedColumn"][];
             /** Error */
             error: string | null;
             /** Finished At */
@@ -14412,6 +14961,25 @@ export interface components {
             sha256: string;
             /** Skipped */
             skipped: number;
+        };
+        /**
+         * ImportRulesRequest
+         * @description Picked rule files at the commit read: a new library from ``repo``, or an
+         *     update to the library ``source_id``.
+         */
+        ImportRulesRequest: {
+            /** Commit */
+            commit: string;
+            /** Format */
+            format?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Picks */
+            picks?: string[];
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** InactiveKind */
         InactiveKind: {
@@ -15047,6 +15615,64 @@ export interface components {
                 [key: string]: string;
             } | null;
         };
+        /** LayerCounts */
+        LayerCounts: {
+            /** Improved */
+            improved: number;
+            /** Not Compared */
+            not_compared: number;
+            /** Regressed */
+            regressed: number;
+            /** Unchanged */
+            unchanged: number;
+        };
+        /** LayerMove */
+        LayerMove: {
+            /** After */
+            after: string;
+            /** Before */
+            before: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "improved" | "regressed";
+            /** Layer */
+            layer: string;
+            /** Name */
+            name?: string | null;
+            /** Technique */
+            technique: string;
+        };
+        /** LayersComparison */
+        LayersComparison: {
+            counts: components["schemas"]["LayerCounts"];
+            /** Moves */
+            moves?: components["schemas"]["LayerMove"][];
+        };
+        /** LedgerCountOut */
+        LedgerCountOut: {
+            /** Count */
+            count: number;
+            /** Erase Permission */
+            erase_permission: string;
+            /** Queued Reviews */
+            queued_reviews: number;
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseIn */
+        LedgerEraseIn: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseOut */
+        LedgerEraseOut: {
+            /** Cases */
+            cases: components["schemas"]["SparedCase"][];
+            /** Erased */
+            erased: number;
+        };
         /** LinkRequest */
         LinkRequest: {
             /** User Id */
@@ -15530,6 +16156,11 @@ export interface components {
             /** Ids */
             ids?: number[] | null;
         };
+        /** OpenedOut */
+        OpenedOut: {
+            /** Case Id */
+            case_id: string;
+        };
         /**
          * OperatorInstructions
          * @description Deployment-wide text appended to every agent run's system prompt (#4918).
@@ -15928,6 +16559,11 @@ export interface components {
              */
             proxy_username: string;
             /**
+             * Ssh Host Key
+             * @default
+             */
+            ssh_host_key: string;
+            /**
              * Ssh Key Passphrase
              * @default
              */
@@ -15957,11 +16593,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
@@ -16183,6 +16821,28 @@ export interface components {
             /** Max Cost Usd */
             max_cost_usd: number;
         };
+        /** Projection */
+        Projection: {
+            /** Batch Id */
+            batch_id: string;
+            ceiling_reaches: components["schemas"]["GroupCounts"];
+            /** Control Count */
+            control_count: number;
+            /** Control Short */
+            control_short: boolean;
+            /** Could Not Recheck */
+            could_not_recheck: number;
+            /** Post Install Closures */
+            post_install_closures: number;
+            reserve?: components["schemas"]["Reserve"] | null;
+            /** Run Count */
+            run_count: number;
+            /** Status */
+            status: string;
+            /** Tickets Chosen */
+            tickets_chosen: number;
+            worst_case: components["schemas"]["WorstCase"];
+        };
         /**
          * ProofCardRequest
          * @description What to export: these rules, or (none) every live rule with coverage.
@@ -16221,12 +16881,57 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** QueueItem */
+        QueueItem: {
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Id */
+            id: number;
+            /** Recorded */
+            recorded: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Source */
+            source: string;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** QueueOut */
+        QueueOut: {
+            /** Pending */
+            pending: components["schemas"]["QueueItem"][];
+            /** Reviewed */
+            reviewed: components["schemas"]["QueueItem"][];
+        };
         /** Range */
         Range: {
             /** Max */
             max: number;
             /** Min */
             min: number;
+        };
+        /**
+         * ReadLibraryRequest
+         * @description A repo to read (owner/repo, a GitHub link, an https URL, with @ref), or a
+         *     library to read with its update diff.
+         */
+        ReadLibraryRequest: {
+            /** Format */
+            format?: string | null;
+            /** Repo */
+            repo?: string | null;
+            /** Source Id */
+            source_id?: string | null;
         };
         /** ReadinessItem */
         ReadinessItem: {
@@ -16258,6 +16963,18 @@ export interface components {
         ReassignRequest: {
             /** Accountable */
             accountable: string;
+        };
+        /**
+         * RecheckMarkView
+         * @description The one mark on a Case opened from a re-check.
+         */
+        RecheckMarkView: {
+            /** Closed At */
+            closed_at: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source: string;
         };
         /**
          * RecoveryCodesResponse
@@ -16363,6 +17080,13 @@ export interface components {
              * @enum {string}
              */
             channel: "email" | "copy";
+        };
+        /** Reserve */
+        Reserve: {
+            /** Note */
+            note: string;
+            /** Remainder */
+            remainder?: number | null;
         };
         /** ResetLinkEntry */
         ResetLinkEntry: {
@@ -16893,11 +17617,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
@@ -17501,6 +18227,14 @@ export interface components {
             version: 1;
         };
         /**
+         * SparedCase
+         * @description A Case a run was opened from. That run is not erased.
+         */
+        SparedCase: {
+            /** Case Id */
+            case_id: string;
+        };
+        /**
          * SsoFinishRequest
          * @description The Vigil factor after the provider: a code, or a key's assertion and the
          *     challenge the first call's 401 carried.
@@ -17632,7 +18366,8 @@ export interface components {
         };
         /**
          * StageChangeRequest
-         * @description Why a person reverts a rule, switches it off, or releases it.
+         * @description Why a person reverts a rule, switches it off, releases its hold, or
+         *     approves it as coverage.
          */
         StageChangeRequest: {
             /** Reason */
@@ -18058,6 +18793,62 @@ export interface components {
              * @default dark
              */
             theme: string;
+        };
+        /** TicketOut */
+        TicketOut: {
+            /** Alerts */
+            alerts?: components["schemas"]["AlertOut"][] | null;
+            /**
+             * Alerts Hidden
+             * @default false
+             */
+            alerts_hidden: boolean;
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Closure Verdict */
+            closure_verdict?: string | null;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceOut"][] | null;
+            /**
+             * Evidence Hidden
+             * @default false
+             */
+            evidence_hidden: boolean;
+            /** Id */
+            id: number;
+            /** Notice */
+            notice?: string | null;
+            /** Proposed Actions */
+            proposed_actions?: components["schemas"]["ActionOut"][] | null;
+            /** Recorded */
+            recorded: boolean;
+            /**
+             * Removed
+             * @default false
+             */
+            removed: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /** Source */
+            source: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+            /** Vigil Verdict */
+            vigil_verdict?: string | null;
         };
         /**
          * TimelineEvent
@@ -18599,6 +19390,15 @@ export interface components {
         WorkflowRunCancelRequest: {
             /** Reason */
             reason: string;
+        };
+        /** WorstCase */
+        WorstCase: {
+            /** Calls */
+            calls: number;
+            /** Dollars */
+            dollars: number;
+            /** Wall Ms */
+            wall_ms: number;
         };
         /** _SecretsMigrateRequest */
         _SecretsMigrateRequest: {
@@ -25777,6 +26577,165 @@ export interface operations {
             };
         };
     };
+    "get_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "put_api_day1-report_capped-recheck_ceiling": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CappedRecheckCeiling"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CappedRecheckCeiling"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_day1-report_capped-recheck_resume": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Projection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "get_api_day1-report_modules": {
         parameters: {
             query?: never;
@@ -26465,7 +27424,11 @@ export interface operations {
     };
     "get_api_detection-rules_coverage": {
         parameters: {
-            query?: never;
+            query?: {
+                by_layer?: boolean;
+                scope?: "all" | "emulated" | "intel";
+                techniques?: string[] | null;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -26605,6 +27568,109 @@ export interface operations {
                 "application/json": components["schemas"]["HealthReadRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_import": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRulesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_libraries_read": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadLibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "delete_api_detection-rules_libraries_source_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -26904,6 +27970,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_detection-rules_rules_rule_id_approve": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StageChangeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -29751,6 +30854,76 @@ export interface operations {
             };
         };
     };
+    get_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerCountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LedgerEraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerEraseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_api_memory_imports_import_id: {
         parameters: {
             query?: never;
@@ -29770,7 +30943,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportOut"];
+                    "application/json": components["schemas"]["ImportDeleteOut"];
                 };
             };
             /** @description Validation Error */
@@ -30724,6 +31897,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductionStart"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_recheck-review": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_recheck-review_ticket_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_case": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_confirm": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
                 };
             };
             /** @description Validation Error */

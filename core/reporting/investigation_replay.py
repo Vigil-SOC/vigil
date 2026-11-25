@@ -15,14 +15,15 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from core.agents.projections import _headers, agent_route
+from core.auth.permissions import case_read_clause
 from core.cases.closure import closed_by_person, closure_says_real
 from core.reporting.analytics_service import _NOT_REAL, _REAL, _wilson
 from core.response.ceiling import AGREEMENT_WINDOW
-from core.storage.models import InvestigationReplay, LLMProviderConfig
+from core.storage.models import Case, InvestigationReplay, LLMProviderConfig
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 from core.workflows.playbook_resolver import DEFAULT_SPEND
@@ -38,12 +39,15 @@ CONCURRENCY = 2
 _ROW_ID = 1
 
 # The agreement query's lateral, without the sampled_at arm: closed_at only,
-# and the run id the terminal belongs to.
+# and the run id the terminal belongs to. Open cases only: the result is one row
+# every platform.read holder sees, so a restricted case is never replayed.
 _CASES = text("""
     SELECT ci.case_id, ci.closure_category, ci.close_channel, ci.evidence_opened,
            picked.run_id
     FROM case_closure_info ci
     JOIN cases c ON c.case_id = ci.case_id AND c.status = 'closed'
+         AND coalesce(cardinality(c.reader_principal_ids), 0) = 0
+         AND coalesce(cardinality(c.reader_team_ids), 0) = 0
     JOIN LATERAL (
         SELECT r.run_id
         FROM workflow_runs r
@@ -273,7 +277,19 @@ def read(db: Session) -> dict[str, Any]:
     if _stale(row, now):
         _fail_stale(row, now)
         db.flush()
-    return payload_of(row)
+    payload = payload_of(row)
+    # A case restricted after the replay (or an older row) is not named to a non-reader.
+    named = {entry.get("case_id") for entry in payload["false_close"]}
+    if named:
+        readable = set(
+            db.scalars(
+                select(Case.case_id).where(Case.case_id.in_(named), case_read_clause())
+            )
+        )
+        payload["false_close"] = [
+            e for e in payload["false_close"] if e.get("case_id") in readable
+        ]
+    return payload
 
 
 def _note(tally: Tally, case: Selected, body: dict[str, Any]) -> None:

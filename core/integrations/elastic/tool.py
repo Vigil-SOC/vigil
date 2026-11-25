@@ -25,7 +25,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
-from core.integrations._base.search_params import validate_time_range
+from core.integrations._base.search_params import timestamp_filter, validate_time_range
 from core.integrations._base.tool_result import run_tool
 from core.integrations.elastic.client import ElasticService
 from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
@@ -243,7 +243,9 @@ async def _search_logs(svc, args: dict):
     wrapped = {
         "bool": {
             "must": [query],
-            "filter": [{"range": {"@timestamp": {"gte": f"now-{time_range}"}}}],
+            "filter": [
+                timestamp_filter(time_range, args.get("time_gte"), args.get("time_lte"))
+            ],
         }
     }
 
