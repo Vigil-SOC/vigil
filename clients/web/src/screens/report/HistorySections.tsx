@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { Schema } from '../../services/apiTypes'
+import { CappedRecheckSection } from './CappedRecheckSection'
 import { reportStamp } from './stamp'
 
 type Before = Schema<'HistoryBefore'>
@@ -318,6 +319,7 @@ export function HistorySections({ report }: { report: Report }) {
       {modules.includes('history.recheck') && !hidden.has('history.recheck') && report.history_recheck && (
         <Recheck section={report.history_recheck} />
       )}
+      <CappedRecheckSection report={report} />
       {modules.includes('history.tuning') && !hidden.has('history.tuning') && report.history_tuning && (
         <Tuning section={report.history_tuning} />
       )}

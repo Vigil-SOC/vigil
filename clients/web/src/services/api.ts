@@ -803,6 +803,11 @@ export const day1Api = {
     api.put<SelectionView>('/day1-report/selection', data),
 }
 
+export const cappedRecheckApi = {
+  latest: () => api.get<Schema<'Projection'>>('/day1-report/capped-recheck'),
+  start: () => api.post<Schema<'Projection'>>('/day1-report/capped-recheck'),
+}
+
 export interface PlatformDatabaseProxyConfig {
   proxy_type: string
   proxy_host: string

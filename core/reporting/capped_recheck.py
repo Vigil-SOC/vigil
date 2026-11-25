@@ -134,7 +134,7 @@ def set_ceiling(runs: int, user_id: str) -> bool:
 
 
 def module_off() -> bool:
-    """Off when ``history.capped_recheck`` is listed. It is not a report module."""
+    """Off when the Day 1 module ``history.capped_recheck`` is switched off."""
     return MODULE_ID in disabled_module_ids()
 
 
