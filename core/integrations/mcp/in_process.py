@@ -46,7 +46,8 @@ _cached_tools: Optional[List[Dict[str, Any]]] = None
 # Tools /mcp still serves that are not offered to Vigil's own agents (#4239):
 # agents read rules and coverage through search_detections and analyze_coverage,
 # gaps through identify_gaps and what to emulate next through emulate_next.
-# The Day 1 Report is for outside callers (#5046).
+# The Day 1 Report is for outside callers (#5046). Approving a held repo rule is
+# a person's statement about data Vigil cannot see (#5118).
 _MCP_ONLY = frozenset(
     {
         "get_case",
@@ -58,6 +59,7 @@ _MCP_ONLY = frozenset(
         "get_emulate_next",
         "get_day1_report",
         "start_day1_report",
+        "approve_detection_rule",
     }
 )
 

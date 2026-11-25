@@ -75,6 +75,10 @@ x-intent-env: &intent-env
   # Empty = static scans. A Bifrost model id adds model-backed scanning and
   # changes the hold's rule, so all three processes must agree on it too.
   VIGIL_SKILL_SCANNER_MODEL: ${VIGIL_SKILL_SCANNER_MODEL:-}
+  # Hold new repo rule versions from coverage until the import check passes them
+  # or a person approves them. The backend (sync) and soc-daemon (the sweep)
+  # must agree; false in .env turns the hold off.
+  VIGIL_RULE_IMPORT_CHECK: ${VIGIL_RULE_IMPORT_CHECK:-true}
   # Operator skills root, for every process that loads skills. Pass-through:
   # unset stays unset (the State Directory's skills/ folder), set empty in .env
   # turns operator skills off. A path under VIGIL_INTENT_DIR's mount makes the

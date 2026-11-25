@@ -170,6 +170,12 @@ class Settings(BaseSettings):
     # copy it installs. A path that does not exist reads as "scanner
     # unavailable", never a crash.
     vigil_skill_scanner: str = ""
+    # Hold each new repo rule or version from coverage until the import check
+    # (core.detections.inventory.import_check) passes it or a person approves it.
+    # Off, new versions are written 'unchecked' and count, and the daemon's sweep
+    # turns pending ones unchecked; back on, it judges them. The API and daemon
+    # must agree.
+    vigil_rule_import_check: bool = True
     # Let the scanner look up a skill's declared dependencies on osv.dev. Off, it
     # uses its bundled list of known-bad packages and sends nothing out.
     vigil_skill_scanner_osv: bool = False
