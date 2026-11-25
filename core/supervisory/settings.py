@@ -75,13 +75,15 @@ _COMPONENTS = ("triage", "investigation")
 _EFFORTS = ("low", "medium", "high")
 
 
-def settings(applied: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def settings(
+    applied: dict[str, Any] | None = None, config: DaemonConfig | None = None
+) -> list[dict[str, Any]]:
     """Every watched setting with its effective value, source and change state.
 
     ``applied`` is the applied INTENT.md row; read here when not given, so a
     caller that checks writes against it can read it once and pass it.
     """
-    config = effective_daemon_config(DaemonConfig.from_env())
+    config = effective_daemon_config(config or DaemonConfig.from_env())
     env_set = get_settings().model_fields_set
     locked = environment_locks_act()
     loaded = try_read_stored_ceiling()

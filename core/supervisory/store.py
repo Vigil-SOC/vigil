@@ -317,6 +317,24 @@ def read(
         }
 
 
+def can_undo(
+    key: str,
+    applied_value: str,
+    before: str,
+    current: dict[str, dict[str, Any]],
+    applied: dict[str, Any],
+    validate: Validate | None = None,
+) -> bool:
+    """Whether an apply that set ``key`` to ``applied_value`` can be put back to
+    ``before`` now: the setting still has the applied value and the write path
+    would take the old one."""
+    now = current.get(key)
+    if now is None or not same_value(now["value"], applied_value):
+        return False
+    ctx = _Ctx(current, applied, validate)
+    return _write_refusal(key, applied_value, before, ctx) is None
+
+
 def locked_live(session: Session, suggestion_id: str) -> SupervisorySuggestion:
     """The open suggestion, locked with its setting for this transaction."""
     row = _locked(session, suggestion_id)

@@ -75,9 +75,12 @@ def get_supervisory():
     read = feedback()
     # One INTENT.md read for the settings list and every card and undo checked against it.
     applied = applied_intent(fresh=True)
-    watched = settings(applied)
+    config = DaemonConfig.from_env()
+    watched = settings(applied, config)
     stored = store.read(
-        {row["key"]: row for row in watched}, applied, _orchestrator_validator()
+        {row["key"]: row for row in watched},
+        applied,
+        _orchestrator_validator(config.orchestrator),
     )
     return JSONResponse(
         {
@@ -160,6 +163,7 @@ def apply_suggestion(
     except Exception:
         _unrecorded(written, "apply", suggestion_id)
         raise
+    entry["undoable"] = _undo_possible(entry)
     # Shaped after the commit, so nothing here can roll back a recorded change.
     return HistoryEntryResponse.model_validate(entry)
 
@@ -193,6 +197,26 @@ def undo_apply(
         _unrecorded(written, "undo", history_id)
         raise
     return HistoryEntryResponse.model_validate(entry)
+
+
+def _undo_possible(entry: dict) -> bool:
+    """Whether the apply just recorded can be put back, read fresh after it landed."""
+    try:
+        applied = applied_intent(fresh=True)
+        config = DaemonConfig.from_env()
+        current = {r["key"]: r for r in settings(applied, config)}
+        return store.can_undo(
+            entry["key"],
+            entry["to"],
+            entry["from"],
+            current,
+            applied,
+            _orchestrator_validator(config.orchestrator),
+        )
+    except Exception:  # noqa: BLE001
+        # The apply is recorded; the page's next read says whether it can be undone.
+        logger.warning("could not tell whether %s can be undone", entry["key"])
+        return False
 
 
 def _unrecorded(written: tuple[str, str] | None, what: str, ref: str) -> None:
@@ -265,10 +289,10 @@ def _orchestrator_body(key: str, value: str) -> OrchestratorSettingsConfig:
     return OrchestratorSettingsConfig(**data)
 
 
-def _orchestrator_validator():
+def _orchestrator_validator(effective=None):
     """A check, for this page read, of whether the orchestrator model would take
     a value: its bounds and types, with every other field as it is now."""
-    effective = DaemonConfig.from_env().orchestrator
+    effective = effective or DaemonConfig.from_env().orchestrator
     base = {
         name: getattr(effective, name)
         for name in OrchestratorSettingsConfig.model_fields
