@@ -19,6 +19,7 @@ from core.intent import FIELDS_BY_KEY, label
 from core.response.config import managed_widening
 from core.storage.models.supervisory import SupervisoryHistory, SupervisorySuggestion
 from core.storage.unit_of_work import unit_of_work
+from core.supervisory.settings import STOPPED
 
 # The reasons the page offers. Anything else is refused.
 DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already handled")
@@ -43,6 +44,15 @@ APPLICABLE = frozenset(
         "investigate.max_runtime_per_investigation",
         "investigate.max_iterations_per_agent",
         "investigate.max_concurrent_agents",
+    }
+)
+# The keys set_orchestrator_config checks against INTENT.md on every write.
+_MANAGED_ORCHESTRATOR_KEYS = frozenset(
+    {
+        "investigate.enabled",
+        "investigate.max_cost_per_investigation",
+        "investigate.max_total_hourly_cost",
+        "investigate.max_runtime_per_investigation",
     }
 )
 _NOT_APPLICABLE = "Vigil can't change this setting in one click"
@@ -278,11 +288,7 @@ def read(
         )
         latest = _latest_per_suggestion(session, applied_ids)
         return {
-            "suggestions": [
-                _suggestion(s, current.get(s.setting_key))
-                for s in live
-                if s.state == "open"
-            ],
+            "suggestions": [_suggestion(s, current) for s in live if s.state == "open"],
             "held": [_held(s) for s in live if s.state == "held"],
             "history": [
                 _entry(h, _undoable(h, states, latest, current)) for h in history
@@ -391,7 +397,9 @@ def _undoable(
     if latest.get(h.suggestion_id) != h.id:
         return False
     now = current.get(h.setting_key)
-    return now is not None and same_value(now["value"], h.to_value)
+    if now is None or not same_value(now["value"], h.to_value):
+        return False
+    return _write_refusal(h.setting_key, h.to_value, h.from_value, current) is None
 
 
 def dismiss(
@@ -408,7 +416,7 @@ def dismiss(
 
 
 def _suggestion(
-    s: SupervisorySuggestion, setting: dict[str, Any] | None
+    s: SupervisorySuggestion, current: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
     card = s.card or {}
     return {
@@ -423,36 +431,56 @@ def _suggestion(
         **{k: card.get(k) for k in _CARD_FIELDS},
         # The 30-case check is for investigation suggestions only.
         "check": card.get("check") if s.fn == "investigation" else None,
-        "apply": _apply_state(s, setting),
+        "apply": _apply_state(s, current),
     }
 
 
 def _apply_state(
-    s: SupervisorySuggestion, setting: dict[str, Any] | None
+    s: SupervisorySuggestion, current: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
+    setting = current.get(s.setting_key)
     if s.setting_key not in APPLICABLE or setting is None:
         return {"possible": False, "reason": _NOT_APPLICABLE}
     change = setting.get("change") or {}
     if not change.get("possible"):
         return {"possible": False, "reason": change.get("reason") or _NOT_APPLICABLE}
-    # The write paths refuse these, so the card says so instead of failing on
-    # click: a value past what INTENT.md declares for a managed key, and an act
-    # flag loosened while autonomy is stopped.
-    refused = _past_declared(s.setting_key, s.to_value)
-    if refused:
-        return {"possible": False, "reason": refused}
-    if (
-        s.setting_key.startswith("act.")
-        and change.get("reason")
-        and _loosens(s.setting_key, s.from_value, s.to_value)
-    ):
-        return {"possible": False, "reason": change["reason"]}
     if not same_value(setting["value"], s.from_value):
         return {
             "possible": False,
             "reason": f"The setting is {setting['value']} now, not {s.from_value}",
         }
-    return {"possible": True}
+    refused = _write_refusal(s.setting_key, s.from_value, s.to_value, current)
+    return {"possible": False, "reason": refused} if refused else {"possible": True}
+
+
+def _write_refusal(
+    key: str, from_value: str, to_value: str, current: dict[str, dict[str, Any]]
+) -> str | None:
+    """Why the write path would refuse changing ``key`` from ``from_value`` to
+    ``to_value``, when the settings list can tell; None otherwise.
+
+    The same checks the write paths make: a target wider than INTENT.md
+    declares; an act flag loosened while autonomy is stopped; and, because an
+    orchestrator write sends every managed investigate.* key, another of those
+    keys already wider than declared.
+    """
+    refused = _past_declared(key, to_value)
+    if refused:
+        return refused
+    row = current.get(key) or {}
+    if (
+        key.startswith("act.")
+        and (row.get("change") or {}).get("reason") == STOPPED
+        and _loosens(key, from_value, to_value)
+    ):
+        return STOPPED
+    if key.startswith("investigate."):
+        for other in _MANAGED_ORCHESTRATOR_KEYS - {key}:
+            now = current.get(other)
+            refused = now and _past_declared(other, now["value"])
+            if refused:
+                return refused
+    return None
 
 
 def _loosens(key: str, from_value: str, to_value: str) -> bool:
