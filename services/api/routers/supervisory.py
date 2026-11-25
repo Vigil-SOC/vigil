@@ -40,7 +40,7 @@ class HistoryEntryResponse(BaseModel):
     outcome: Literal["applied", "dismissed", "undone"]
     note: str
     improved: bool | None = None
-    undoable: bool | None = None
+    undoable: bool = False
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -82,7 +82,7 @@ def get_supervisory():
     dependencies=_WRITE,
     response_model=HistoryEntryResponse,
     response_model_by_alias=True,
-    response_model_exclude_none=True,
+    response_model_exclude_unset=True,
 )
 def dismiss_suggestion(
     suggestion_id: str,

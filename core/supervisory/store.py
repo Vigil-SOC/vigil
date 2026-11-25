@@ -74,6 +74,10 @@ def propose(
     """
     _check_card(card)
     _check_incident(held_incident)
+    if not isinstance(key, str) or not key.strip():
+        raise TypeError("key must be text")
+    if not isinstance(widens_autonomy, bool):
+        raise TypeError("widens_autonomy must be true or false")
     if fn not in FUNCTIONS:
         raise TypeError(f"fn must be one of {', '.join(FUNCTIONS)}")
     if not isinstance(verb, str) or not verb:
@@ -151,6 +155,8 @@ def _still_dismissed(
 
 
 def _check_card(card: dict[str, Any]) -> None:
+    if not isinstance(card, dict):
+        raise TypeError("card must be an object")
     for name in ("why", "evidence", "replay", "plain_words", "replay_title"):
         if not isinstance(card.get(name), str):
             raise TypeError(f"card.{name} must be text")
@@ -169,7 +175,12 @@ def _check_card(card: dict[str, Any]) -> None:
         raise TypeError("card.table.columns need label and a known kind")
     if not all(
         isinstance(r, list)
-        and all(isinstance(c, dict) and isinstance(c.get("text"), str) for c in r)
+        and all(
+            isinstance(c, dict)
+            and isinstance(c.get("text"), str)
+            and isinstance(c.get("attack", False), bool)
+            for c in r
+        )
         for r in table["rows"]
     ):
         raise TypeError("card.table.rows are lists of cells with text")
@@ -193,7 +204,7 @@ def _check_card(card: dict[str, Any]) -> None:
 def _check_incident(incident: dict[str, Any] | None) -> None:
     if incident is None:
         return
-    if not all(
+    if not isinstance(incident, dict) or not all(
         isinstance(incident.get(k), str) for k in ("id", "title", "firing_since")
     ):
         raise TypeError("held_incident needs id, title and firing_since")
