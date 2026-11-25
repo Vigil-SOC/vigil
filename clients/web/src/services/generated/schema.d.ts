@@ -6267,6 +6267,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/memory/imports/ledgers/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Ledgers
+         * @description How many marked re-decision ledgers this import would keep.
+         */
+        get: operations["get_api_memory_imports_ledgers_import_id"];
+        put?: never;
+        /**
+         * Remove Ledgers
+         * @description Erase marked re-decision ledgers once the import is gone.
+         *
+         *     A run a Case was opened from is not passed. ``cases`` names those, and
+         *     is empty until that link is recorded. Any other id erases nothing.
+         */
+        post: operations["post_api_memory_imports_ledgers_import_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/memory/imports/{import_id}": {
         parameters: {
             query?: never;
@@ -14424,6 +14451,71 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * ImportDeleteOut
+         * @description The import is gone. Its marked ledgers were kept.
+         */
+        ImportDeleteOut: {
+            /** Bulk Not Tested */
+            bulk_not_tested: number;
+            /** Concluded At */
+            concluded_at: string | null;
+            /** Dropped Columns */
+            dropped_columns: components["schemas"]["DroppedColumn"][];
+            /** Erase Permission */
+            erase_permission: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Has Ticket Detail */
+            has_ticket_detail: boolean;
+            /** Import Id */
+            import_id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Ledgers Kept */
+            ledgers_kept: number;
+            /** Left Out */
+            left_out: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Pull Days */
+            pull_days: number | null;
+            /** Pulled At */
+            pulled_at: string | null;
+            /** Rows Read */
+            rows_read: number;
+            /** Run Ids */
+            run_ids: string[];
+            /** Severity Unknown */
+            severity_unknown: number;
+            /** Sightings Written */
+            sightings_written: number;
+            /** Source System */
+            source_system: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "done" | "failed" | "incomplete";
+            /** Tickets Kept */
+            tickets_kept: number;
+            /** Unmapped */
+            unmapped: components["schemas"]["UnmappedValue"][];
+            /** Verdicts Written */
+            verdicts_written: number;
+        };
         /** ImportListResponse */
         ImportListResponse: {
             /** Imports */
@@ -15135,6 +15227,27 @@ export interface components {
             statements?: {
                 [key: string]: string;
             } | null;
+        };
+        /** LedgerCountOut */
+        LedgerCountOut: {
+            /** Count */
+            count: number;
+            /** Erase Permission */
+            erase_permission: string;
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseIn */
+        LedgerEraseIn: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** LedgerEraseOut */
+        LedgerEraseOut: {
+            /** Cases */
+            cases: components["schemas"]["SparedCase"][];
+            /** Erased */
+            erased: number;
         };
         /** LinkRequest */
         LinkRequest: {
@@ -17622,6 +17735,14 @@ export interface components {
              * @constant
              */
             version: 1;
+        };
+        /**
+         * SparedCase
+         * @description A Case a run was opened from. That run is not erased.
+         */
+        SparedCase: {
+            /** Case Id */
+            case_id: string;
         };
         /**
          * SsoFinishRequest
@@ -30042,6 +30163,76 @@ export interface operations {
             };
         };
     };
+    get_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerCountOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_memory_imports_ledgers_import_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LedgerEraseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerEraseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_api_memory_imports_import_id: {
         parameters: {
             query?: never;
@@ -30061,7 +30252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportOut"];
+                    "application/json": components["schemas"]["ImportDeleteOut"];
                 };
             };
             /** @description Validation Error */

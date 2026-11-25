@@ -1,6 +1,6 @@
 """Capped re-check of the Day 1 list (#5093).
 
-The DDL is ``core/upgrade/versions/0122_capped_recheck.sql``. A batch is
+The DDL is ``core/upgrade/versions/0123_capped_recheck.sql``. A batch is
 inserted once. The driver then writes the run id and a reason.
 """
 

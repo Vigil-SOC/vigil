@@ -271,11 +271,19 @@ export const notesApi = {
 }
 
 export type HistoryImport = Schema<'ImportOut'>
+export type ImportDelete = Schema<'ImportDeleteOut'>
 
 /** Alert and ticket history imported into agent memory (#3965); an id holds a ':'. */
 export const importsApi = {
   list: () => api.get<Schema<'ImportListResponse'>>('/memory/imports'),
-  remove: (id: string) => api.delete<HistoryImport>(`/memory/imports/${encodeURIComponent(id)}`),
+  /** Marked re-decision ledgers this import would keep. Read when the delete dialog opens. */
+  ledgers: (id: string) =>
+    api.get<Schema<'LedgerCountOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`),
+  remove: (id: string) => api.delete<ImportDelete>(`/memory/imports/${encodeURIComponent(id)}`),
+  eraseLedgers: (id: string, runIds: string[]) =>
+    api.post<Schema<'LedgerEraseOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`, {
+      run_ids: runIds,
+    }),
 }
 
 export interface CaseRecordRow {

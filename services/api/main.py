@@ -222,6 +222,12 @@ if _cors_origins_raw:
 else:
     _cors_origins = _DEFAULT_CORS_ORIGINS
 
+# Caps every request body before the app reads it. Added before CORS so CORS
+# and the security headers wrap its 413; nothing outside it reads a body.
+from services.api.middleware.body_limit import BodyLimitMiddleware  # noqa: E402
+
+app.add_middleware(BodyLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
