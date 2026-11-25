@@ -61,7 +61,7 @@ export default function BreachedListCard({ notify }: SectionProps) {
         <span className="lim-row-title">
           Breached-password list
           <span>
-            A plain-text file, one entry per line. Entries under 12 characters, email-shaped ones and blanks are dropped; the rest are
+            A plain-text file, one entry per line. Entries under 3 characters, email-shaped ones and blanks are dropped; the rest are
             added in lowercase, and an import never removes an entry. Any import counts as a refresh and is recorded on the audit trail with
             its counts and SHA-256. The file, and the licence it comes with, are the operator’s choice.
           </span>

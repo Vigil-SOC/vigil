@@ -99,6 +99,7 @@ from sqlalchemy import and_, bindparam, func, insert, or_, select, tuple_, updat
 from core.detections.inventory import (
     accurate,
     caught,
+    defender,
     kibana,
     quiet,
     readers,
@@ -929,7 +930,7 @@ def _remove_unconfigured(configured: List[str]) -> int:
 
 
 def sync_repos() -> List[Any]:
-    """Read every configured repo, Wazuh, Kibana, Splunk and Sentinel, and sync each, checking
+    """Read every configured repo, Wazuh, Kibana, Splunk, Sentinel and Defender, and sync each, checking
     Wazuh, Kibana and Splunk rules' Quiet and Sees, then their Accurate and
     Caught.
 
@@ -965,6 +966,7 @@ def sync_repos() -> List[Any]:
             reports.append(splunk_sees.sweep(splunk_config))
         # A read-only copy of the workspace's analytics rules: no search sweeps.
         reports.append(_sync_azure_sentinel())
+        reports.append(_sync_microsoft_defender())
         reports.append(accurate.sweep())
         # Verdicts at most once a day; each sync, a shadow copy not yet passing is
         # searched once per matching emulated step, from its SIEM's budget.
@@ -1233,6 +1235,38 @@ def _sync_azure_sentinel() -> SourceReport:
     return report
 
 
+def _sync_microsoft_defender() -> SourceReport:
+    """Defender's custom detections, with the microsoft-defender integration's
+    credentials. The same config handling as _sync_azure_sentinel: a failed
+    read (a 403 included) is reported and never removes a rule."""
+    from core.config import load_integrations_config
+    from core.integrations._base.config import missing, resolve
+    from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
+
+    try:
+        integrations = load_integrations_config()
+        if not integrations["configured"]:
+            return SourceReport(source=defender.SOURCE, skipped="no integration config")
+        if MICROSOFT_DEFENDER.id not in integrations["enabled_integrations"]:
+            return SourceReport(
+                source=defender.SOURCE,
+                removed=_remove_siem(defender.SOURCE, MICROSOFT_DEFENDER.id),
+                skipped="not enabled",
+            )
+        config = resolve(MICROSOFT_DEFENDER)
+        absent = missing(config, *(f.name for f in MICROSOFT_DEFENDER.fields))
+        if absent:
+            return SourceReport(source=defender.SOURCE, skipped=f"no {absent[0]}")
+        report = sync_source(defender.SOURCE, defender.read_detections(config))
+    except Exception as exc:  # noqa: BLE001 -- unreachable is reported, never removed
+        logger.warning("detection rules: syncing microsoft_defender failed: %s", exc)
+        return SourceReport(
+            source=defender.SOURCE, error=f"{type(exc).__name__}: {exc}"
+        )
+    logger.info("detection rules: %s", asdict(report))
+    return report
+
+
 def _link_same_id() -> tuple:
     """Link each Kibana rule to the one active repo Elastic rule with its rule_id."""
     return _link(
@@ -1412,6 +1446,7 @@ SIEM_NAMES = {
     splunk.SOURCE: "Splunk",
     wazuh.SOURCE: "Wazuh",
     sentinel.SOURCE: "Sentinel",
+    defender.SOURCE: "Defender",
 }
 
 

@@ -21,11 +21,12 @@ from sqlalchemy.orm import Session
 from core.auth import trail_events
 from core.cases.case_sla_service import case_title, open_case
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import Case, HistoryAlert, RecheckReview
+from core.storage.models import Case, HistoryAlert, RecheckReview, WorkflowRun
 from core.workflows.redecision import _content, redecision_result
 
 REVIEWED = "recheck.reviewed"
 REMOVED = "removed with its import"
+ERASED = "evidence erased with its import"
 CALLS = ("real", "not real", "can't tell")
 
 _DRAWN = text("""
@@ -101,7 +102,11 @@ class NotQueued(LookupError):
 
 
 class Removed(Exception):
-    """The import is gone. The ticket has left the queue."""
+    """The import is gone. ``notice`` is the sentence the reader shows."""
+
+    def __init__(self, notice: str = REMOVED) -> None:
+        self.notice = notice
+        super().__init__(notice)
 
 
 class CannotOpen(Exception):
@@ -335,10 +340,15 @@ def _row(session: Session, ticket_id: int) -> Any:
     match = next((row for row in drawn if int(row.id) == ticket_id), None)
     if match is None:
         raise NotQueued(ticket_id)
+    # Import gone. No run row means the ledger was erased. A row that is
+    # still decisive left the queue with the import, and a reason means
+    # the claim was refused before a run existed.
     if not match.import_present and match.run_id and not match.reason:
+        if session.get(WorkflowRun, match.run_id) is None:
+            raise Removed(ERASED)
         vigil = _vigil(_terminals(session, [match.run_id]).get(match.run_id))
         if vigil is not None:
-            raise Removed(ticket_id)
+            raise Removed(REMOVED)
     members = {int(row.id): row for row in _members(session)}
     found = members.get(ticket_id)
     if found is None:

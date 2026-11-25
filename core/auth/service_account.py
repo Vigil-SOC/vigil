@@ -75,9 +75,10 @@ VIEWER_ROLE_ID = "role-viewer"
 USERNAME_PATTERN = r"^medic-[a-z0-9]{12}$"
 _USERNAME = re.compile(USERNAME_PATTERN)
 TOKEN_LABEL = "Medic gateway"
-# 32 characters floor (D2-17); 128 is the password ceiling
-# (core.auth.password_hash.MAX_PASSWORD_LENGTH). Printable ASCII without spaces
-# survives every login form and file the shapes pass it through.
+# 32 characters floor (D2-17). 128 is this generated secret's own ceiling:
+# the shared maximum (core.auth.password_hash.MAX_PASSWORD_LENGTH) is longer,
+# and the policy minimum and strength score do not apply here. Printable ASCII
+# without spaces survives every login form and file the shapes pass it through.
 _PASSWORD = re.compile(r"^[!-~]{32,128}$")
 
 EX_OK = 0
