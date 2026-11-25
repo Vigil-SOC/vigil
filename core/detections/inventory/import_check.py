@@ -9,7 +9,8 @@ daemon after ``sync_repos``, judges those versions (and 'failed' ones, and
   matched as ``siem_replay`` matches names (case variants, snake case, any
   parent path). Elastic and Wazuh lists come from ``_field_caps`` (metadata, no
   budget); Splunk's from one ``fieldsummary`` search, spent from its budget. A
-  spent budget leaves the versions pending for the next sweep.
+  spent budget, or no SIEM configured at all, leaves them pending for a later
+  sweep.
 - Elastic: Vigil reads Elastic, and the rule's index and required fields are in
   its mapping, as ``sees`` reads them.
 - Splunk, Wazuh: Vigil reads that SIEM.
@@ -196,10 +197,11 @@ def _sigma(
     errors = [f"{fl.siem.title()}: {fl.error}" for fl in lists if fl.error]
     if errors:
         return {"result": "failed", "reason": "could not read " + "; ".join(errors)}
-    if any(fl.deferred for fl in lists):
+    if not lists or any(fl.deferred for fl in lists):
+        # No SIEM configured yet, or a budget spent: judged on a later sweep.
         return None
     if not read:
-        return _flagged("Vigil reads no SIEM holding events (Elastic, Wazuh or Splunk)")
+        return _flagged("no SIEM Vigil reads (Elastic, Wazuh, Splunk) holds any field")
     absent = {fl.siem: [f for f in fields if not fl.holds(f)] for fl in read}
     parts = [
         f"{_plain(names)} not in {siem.title()}'s fields"
