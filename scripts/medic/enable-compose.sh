@@ -14,7 +14,8 @@
 # 2. compose.env beside them: VIGIL_MEDIC_ENABLED=true and the host-specific
 #    values Compose needs. Every later compose command that should keep Medic
 #    passes it (the script prints the command).
-# 3. Builds the three Medic images.
+# 3. Builds the three Medic images, unless VIGIL_MEDIC_IMAGE,
+#    VIGIL_MEDIC_GATEWAY_IMAGE or VIGIL_MEDIC_DOCKERPROXY_IMAGE names one.
 # 4. Starts (or recreates) the backend with the flag on, then, unless
 #    medic_gateway_token already holds one, mints the gateway's token inside it
 #    with `python -m core.auth.service_account token`, which creates the Viewer
@@ -223,6 +224,8 @@ set +a
 env_files=()
 [ -f "$dotenv" ] && env_files+=(--env-file "$dotenv")
 env_files+=(--env-file "$settings")
+# The gateway image, as docker-compose.yml names it, for the chowns below.
+gateway_image="${VIGIL_MEDIC_GATEWAY_IMAGE:-vigil-medic-gateway:local}"
 
 # Every compose call with Medic on: Vigil's .env, Medic's settings, the overlay.
 # lib.sh's dc adds the overlay and VIGIL_MEDIC_COMPOSE_OVERRIDE's files itself
@@ -301,7 +304,7 @@ mint_token() {
             chown 10002:10002 "$tmp"
         else
             docker run --rm --network none --user 0:0 -v "$dir:/s" \
-                --entrypoint chown vigil-medic-gateway:local 10002:10002 "/s/${tmp##*/}"
+                --entrypoint chown "$gateway_image" 10002:10002 "/s/${tmp##*/}"
         fi
     fi
     mv -f "$tmp" "$dir/medic_gateway_token"
@@ -327,7 +330,10 @@ if [ "$secrets_only" = 0 ]; then
         echo "error: the backend would get an empty JWT_SECRET_KEY. Run this from the shell, or with the $REPO_ROOT/.env, you start Vigil with." >&2
         exit 1
     fi
-    dcm build medic medic-gateway medic-dockerproxy
+    # Released images the operator loaded are used as they are, never rebuilt over.
+    if [ -z "${VIGIL_MEDIC_IMAGE:-}${VIGIL_MEDIC_GATEWAY_IMAGE:-}${VIGIL_MEDIC_DOCKERPROXY_IMAGE:-}" ]; then
+        dcm build medic medic-gateway medic-dockerproxy
+    fi
     # Before anything starts that reads them: each file to its reader (step 5).
     if [ "$(uname -s)" = Linux ]; then
         # api_key: read by Medic and the backend through their shared group,
@@ -344,7 +350,7 @@ if [ "$secrets_only" = 0 ]; then
             # Anyone who can run this can already drive Docker as root; this just
             # avoids asking for sudo. --network none: the container needs nothing.
             docker run --rm --network none --user 0:0 -v "$dir:/s" \
-                --entrypoint sh vigil-medic-gateway:local -c "$own"
+                --entrypoint sh "$gateway_image" -c "$own"
         fi
     fi
     # The backend polls Medic with api_key (V2). Compose bind-mounts the file, so

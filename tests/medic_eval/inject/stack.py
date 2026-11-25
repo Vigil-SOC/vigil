@@ -219,7 +219,7 @@ class Stack:
         if stale:
             subprocess.run(["docker", "rm", "-f", *stale], capture_output=True, check=False)
         self.compose("down", "-v", "--remove-orphans", check=False)
-        self.compose("build", "backend", "soc-daemon", "agent-serve")
+        self.compose("build", "backend", "soc-daemon", "agent-shell")
         self.compose("up", "-d", *INSTALL)
         self.wait(
             lambda: self.sql(
