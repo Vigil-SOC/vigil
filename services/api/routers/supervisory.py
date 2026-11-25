@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from core.auth.permissions import permission_gate
 from core.routing import Auth, RouterMeta
+from core.supervisory.failures import failures
 from core.supervisory.feedback import feedback
 from core.supervisory.settings import settings
 
@@ -21,11 +22,11 @@ ROUTER_META = RouterMeta(
 # Plain def: the read is synchronous, so FastAPI runs it in its threadpool.
 @router.get("/supervisory")
 def get_supervisory():
-    """What the supervisory model has to learn from, and the settings it watches.
+    """What the supervisory model has to learn from, the settings it watches, and
+    why investigations stopped early.
 
     Nothing checks settings on a schedule yet, so the state is ``off`` and there
-    are no suggestions, held suggestions or history. Failure reasons are not
-    measured yet: ``null``, which the page reads differently from an empty list.
+    are no suggestions, held suggestions or history.
     """
     read = feedback()
     return JSONResponse(
@@ -41,7 +42,7 @@ def get_supervisory():
             "functions": read["functions"],
             "suggestions": [],
             "held": [],
-            "failures": None,
+            "failures": failures(),
             "history": [],
             "settings": settings(),
             "learns_from": {"days": read["history_days"], "items": read["learns_from"]},
