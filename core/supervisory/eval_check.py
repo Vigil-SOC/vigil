@@ -10,9 +10,11 @@ suggestion whether the proposed limit misses no more attacks than today's
         eval/results/cost-now.jsonl eval/results/cost-next.jsonl
 
 A missed attack is a case whose truth is attack and whose graded verdict is
-benign, as the eval's own score counts it. Both runs must cover the same cases
-with no case in error, on one model, each at a single budget that is the
-suggestion's from and to value; anything else is refused and nothing is written.
+benign, as the eval's own score counts it. Both runs must cover the same cases,
+each with the same truth and none in error, on one model, and agree on every
+budget but the one the setting sets, which must be the suggestion's from value in
+today's run and its to value in the proposed one. Anything else is refused and
+nothing is written.
 """
 
 from __future__ import annotations
@@ -57,12 +59,21 @@ def read_run(path: Path) -> Run:
         rows = [
             json.loads(line) for line in path.read_text().splitlines() if line.strip()
         ]
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RecursionError) as e:
         raise CheckRefusal(f"{path}: {e}") from None
     if not rows:
         raise CheckRefusal(f"{path} has no results")
-    if not all(isinstance(r, dict) for r in rows):
-        raise CheckRefusal(f"{path} has a line that is not a result")
+    if not all(
+        isinstance(r, dict)
+        and isinstance(r.get("case_id"), str)
+        and r["case_id"]
+        and isinstance(r.get("model"), str)
+        and r.get("truth") in ("attack", "benign")
+        for r in rows
+    ):
+        raise CheckRefusal(
+            f"{path} has a line that is not a result with a case, a model and a truth"
+        )
     errored = [r.get("case_id") for r in rows if r.get("error")]
     if errored:
         raise CheckRefusal(f"{path}: {len(errored)} cases errored, e.g. {errored[0]}")
@@ -79,11 +90,14 @@ def read_run(path: Path) -> Run:
     if len(set(cases)) != len(cases):
         raise CheckRefusal(f"{path} has a case more than once")
     attacks = [r for r in rows if r.get("truth") == "attack"]
+    cost_per_case = sum(float(c) for c in costs) / len(rows)
+    if not math.isfinite(cost_per_case):
+        raise CheckRefusal(f"{path} has costs too large to add up")
     return Run(
         truth={r.get("case_id"): r.get("truth") for r in rows},
         attacks=len(attacks),
         missed=sum(1 for r in attacks if r.get("verdict") == "benign"),
-        cost_per_case=sum(float(c) for c in costs) / len(rows),
+        cost_per_case=cost_per_case,
         budgets=rows[0]["budgets"],
         model=str(rows[0].get("model")),
     )
@@ -132,11 +146,12 @@ def compare(
 
 
 def _finite(value: Any) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _numbers(budgets: Any) -> bool:
