@@ -64,6 +64,9 @@ _DIAL_TIMEOUT_S = 10.0
 _dialled: Dict[str, float] = {}
 # Who approves and runs a row the ceiling released: the trail names it, not a person.
 CEILING_APPROVER = "autonomy ceiling"
+# The ceiling's hourly cap counts its releases over this window (#5274).
+CAP_WINDOW = timedelta(minutes=60)
+AUTONOMY_SCREEN = "/settings?section=autoinvestigate"
 
 
 class Unapprovable(ValueError):
@@ -728,10 +731,11 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
     candidates = ((action.parameters or {}).get("containment") or {}).get(
         "candidates"
     ) or []
+    ceiling = await asyncio.to_thread(read_ceiling)
     why = None
     if len(candidates) != 1:
         why = f"{len(candidates)} candidates"
-    elif await asyncio.to_thread(lambda: read_ceiling().four_eyes):
+    elif ceiling.four_eyes:
         why = "four-eyes is on"
     if why:
         logger.info("%s waits for a person: %s", action.action_id, why)
@@ -750,6 +754,19 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
         )
         if why:
             logger.info("%s waits for a person: %s", action.action_id, why)
+            return action
+        # Last, so the case names the cap only when nothing else held the act.
+        released = await asyncio.to_thread(released_last_hour)
+        if released >= ceiling.released_per_hour:
+            logger.info(
+                "%s waits for a person: hourly cap: %d of %d released",
+                action.action_id,
+                released,
+                ceiling.released_per_hour,
+            )
+            await asyncio.to_thread(
+                _note_capped, action, released, ceiling.released_per_hour
+            )
             return action
         approved = await asyncio.to_thread(
             ApprovalService().approve_action,
@@ -785,3 +802,81 @@ def _note_released(action: PendingAction, run_id: str) -> None:
             )
     except Exception:  # noqa: BLE001 — the act runs either way
         logger.exception("release of %s not noted on its case", action.action_id)
+
+
+def released_last_hour() -> int:
+    """Rows the ceiling approved in the last CAP_WINDOW, whatever happened to them since."""
+    from sqlalchemy import func, select
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import ApprovalAction
+
+    with get_db_manager().session_scope() as session:
+        return (
+            session.scalar(
+                select(func.count())
+                .select_from(ApprovalAction)
+                .where(
+                    ApprovalAction.approved_by == CEILING_APPROVER,
+                    ApprovalAction.approved_at >= utcnow() - CAP_WINDOW,
+                )
+            )
+            or 0
+        )
+
+
+def _note_capped(action: PendingAction, released: int, cap: int) -> None:
+    """Never raises: the row waits for a person either way."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_held",
+                f"{action.title} waits for a person: "
+                + (
+                    f"the autonomy ceiling released {released} in the last hour,"
+                    f" at its hourly cap of {cap}"
+                    if cap
+                    else "the autonomy ceiling's hourly cap is 0, so it releases none"
+                ),
+                {
+                    "action_id": action.action_id,
+                    "released": released,
+                    "released_per_hour": cap,
+                    "status": action.status,
+                },
+            )
+    except Exception:  # noqa: BLE001 — the row stays pending either way
+        logger.exception("hold of %s not noted on its case", action.action_id)
+
+
+def cap_reached(user) -> list[dict[str, str]]:
+    """The bell's warning while the hourly cap is reached, for whoever may raise it.
+    A cap of 0 is a choice, not a warning."""
+    from core.auth.permissions import missing_permission
+    from core.response.ceiling import read_ceiling
+
+    if missing_permission(user.user_id, "ai_autonomy.write") is not None:
+        return []
+    cap = read_ceiling().released_per_hour
+    released = released_last_hour() if cap else 0
+    if not cap or released < cap:
+        return []
+    return [
+        {
+            "message": f"The autonomy ceiling has released {released} "
+            f"action{'' if released == 1 else 's'} in the last hour, at its cap of "
+            f"{cap}. New proposals from runs no person "
+            "started wait for a person until the count falls.",
+            "link": AUTONOMY_SCREEN,
+        }
+    ]
+
+
+def register() -> None:
+    from core.platform import notices
+
+    notices.CONDITIONS.append(cap_reached)

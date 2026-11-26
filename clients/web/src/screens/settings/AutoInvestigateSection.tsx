@@ -84,6 +84,89 @@ const splitTool = (name: string) => {
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
 type HeldRow = Ceiling['held'][number]
+const CAP_MAX = 1000
+
+/** The ceiling's hourly release cap. A lower saves for anyone who can lower; a raise needs
+ * ai_autonomy.write and no stop, and says so before it is tried. */
+function ReleaseCap({
+  ceil,
+  canRaise,
+  canLower,
+  save,
+  notify,
+}: {
+  ceil: Ceiling
+  canRaise: boolean
+  canLower: boolean
+  save: (patch: { released_per_hour: number }) => Promise<boolean>
+  notify: SectionProps['notify']
+}) {
+  const saved = ceil.released_per_hour
+  const [draft, setDraft] = useState(String(saved))
+  // Every read of the ceiling, a refused save's refresh included, resets the field.
+  useEffect(() => setDraft(String(saved)), [ceil, saved])
+  // Why a raise would be refused, said before anyone tries.
+  const raiseRefusal = !canRaise
+    ? 'Your role can lower this. Raising it needs permission to loosen autonomy.'
+    : ceil.stopped
+      ? `${STOPPED_LOOSEN}: a higher number is refused; a lower one saves.`
+      : null
+  const commit = () => {
+    const n = Number(draft)
+    if (draft.trim() === '' || !Number.isInteger(n) || n < 0 || n > CAP_MAX) {
+      setDraft(String(saved))
+      notify('err', `Enter a whole number from 0 to ${CAP_MAX}.`)
+      return
+    }
+    if (n === saved) return
+    if (n > saved && raiseRefusal) {
+      setDraft(String(saved))
+      notify('err', raiseRefusal)
+      return
+    }
+    // A refused save whose refresh also failed leaves ceil as it was: put the saved value back.
+    void save({ released_per_hour: n }).then((ok) => ok || setDraft(String(saved)))
+  }
+  return (
+    // Wraps so a narrow screen puts the field under the text, not beside it.
+    <div className="lim-switch mt-3 flex-wrap">
+      <div className="toggle-row-text">
+        <label className="toggle-row-label" htmlFor="lim-released-per-hour">
+          Actions released per hour
+        </label>
+        <span className="toggle-row-hint" id="lim-released-per-hour-hint">
+          The most proposals from runs no person started that the ceiling carries out in any 60 minutes. Past it, each
+          waits for a person and its case says why. 0 releases none.
+        </span>
+        {!canRaise && canLower && <span className="toggle-row-hint">{raiseRefusal}</span>}
+        {canRaise && raiseRefusal && (
+          <span className="lim-class-note">
+            <Icon name="alert" size={13} className="shrink-0" /> {raiseRefusal}
+          </span>
+        )}
+      </div>
+      {canLower ? (
+        <span className="flex items-center gap-2 shrink-0">
+          <NumberInput
+            id="lim-released-per-hour"
+            aria-describedby="lim-released-per-hour-hint"
+            style={{ width: 96 }}
+            min={0}
+            max={raiseRefusal ? saved : CAP_MAX}
+            step={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+          />
+          <span className="text-xs text-tx-3">per hour</span>
+        </span>
+      ) : (
+        <span className="text-sm text-tx-2">{saved} per hour</span>
+      )}
+    </div>
+  )
+}
 
 /** The ceiling stores a naive UTC stamp; without an offset a browser reads it as local. */
 function utcStamp(iso: string | null | undefined): string | null {
@@ -413,8 +496,10 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await ceiling.save(patch)
       notify('ok', 'Limits saved.')
       setIntentRevision((n) => n + 1) // a narrowing shows as drift
+      return true
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
+      return false
     }
   }
 
@@ -1078,7 +1163,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 )}
               </div>
             </div>
-            <div className="lim-switch mt-3">
+            <ReleaseCap ceil={ceil} canRaise={canRaise} canLower={canLower} save={saveCeiling} notify={notify} />
+            <div className="lim-switch">
               <div className="toggle-row-text">
                 <span className="toggle-row-label">Four-eyes approval</span>
                 <span className="toggle-row-hint">

@@ -3228,6 +3228,19 @@
               }
             ],
             "title": "Hold Crown Jewels"
+          },
+          "released_per_hour": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released Per Hour"
           }
         },
         "title": "CeilingBody",
@@ -3274,6 +3287,10 @@
           "read": {
             "title": "Read",
             "type": "boolean"
+          },
+          "released_per_hour": {
+            "title": "Released Per Hour",
+            "type": "integer"
           },
           "stopped": {
             "title": "Stopped",
@@ -3336,7 +3353,8 @@
           "environment_locked",
           "four_eyes",
           "hold_crown_jewels",
-          "crown_jewels"
+          "crown_jewels",
+          "released_per_hour"
         ],
         "title": "CeilingResponse",
         "type": "object"
