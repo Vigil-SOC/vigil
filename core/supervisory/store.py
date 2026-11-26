@@ -127,6 +127,9 @@ def propose(
         _lock(session, key)
         if _still_dismissed(session, key, from_value, to_value):
             return None
+        card = {k: card.get(k) for k in _CARD_FIELDS}
+        if card.get("check") is None:
+            card["check"] = _kept_check(session, key, from_value, to_value)
         session.execute(
             update(SupervisorySuggestion)
             .where(
@@ -145,12 +148,88 @@ def propose(
                 from_value=from_value,
                 to_value=to_value,
                 widens_autonomy=widens_autonomy,
-                card={k: card.get(k) for k in _CARD_FIELDS},
+                card=card,
                 state="held" if held_incident else "open",
                 held_incident=held_incident,
             )
         )
     return suggestion_id
+
+
+def _kept_check(
+    session: Session, key: str, from_value: str, to_value: str
+) -> dict[str, Any] | None:
+    """The 30-case check a person recorded on the live suggestion for this same
+    change, so proposing it again does not drop it; None when there is none."""
+    for live in session.execute(
+        select(SupervisorySuggestion).where(
+            SupervisorySuggestion.setting_key == key,
+            SupervisorySuggestion.state.in_(LIVE),
+        )
+    ).scalars():
+        check = (live.card or {}).get("check")
+        if (
+            check is not None
+            and same_value(live.from_value, from_value)
+            and same_value(live.to_value, to_value)
+        ):
+            return check
+    return None
+
+
+def live_change(key: str) -> tuple[str, str] | None:
+    """The from and to values of the live suggestion for ``key``, or None."""
+    with unit_of_work() as session:
+        row = session.execute(
+            select(
+                SupervisorySuggestion.from_value, SupervisorySuggestion.to_value
+            ).where(
+                SupervisorySuggestion.setting_key == key,
+                SupervisorySuggestion.state.in_(LIVE),
+            )
+        ).first()
+    return (row[0], row[1]) if row else None
+
+
+def record_check(
+    key: str, check: dict[str, Any], from_value: str, to_value: str
+) -> str:
+    """Put a 30-case check on the live suggestion for ``key``, which must still
+    propose ``from_value`` to ``to_value``. Returns its id; refuses otherwise."""
+    if not (
+        isinstance(check, dict)
+        and isinstance(check.get("passed"), bool)
+        and isinstance(check.get("text"), str)
+    ):
+        raise TypeError("check needs passed and text")
+    with unit_of_work() as session:
+        _lock(session, key)
+        row = session.execute(
+            select(SupervisorySuggestion)
+            .where(
+                SupervisorySuggestion.setting_key == key,
+                SupervisorySuggestion.state.in_(LIVE),
+            )
+            .with_for_update()
+        ).scalar_one_or_none()
+        if row is None:
+            raise StoreRefusal(404, f"No live suggestion for {key}")
+        if row.fn != "investigation":
+            raise StoreRefusal(
+                409, "The 30-case check is for investigation suggestions only"
+            )
+        if not (
+            same_value(row.from_value, from_value)
+            and same_value(row.to_value, to_value)
+        ):
+            raise StoreRefusal(
+                409,
+                f"The suggestion is {row.from_value} → {row.to_value}, "
+                f"not {from_value} → {to_value}",
+            )
+        # A new dict, so the JSONB column is written rather than mutated in place.
+        row.card = {**(row.card or {}), "check": check}
+        return row.suggestion_id
 
 
 def same_value(a: str, b: str) -> bool:

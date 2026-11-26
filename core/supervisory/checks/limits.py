@@ -19,7 +19,8 @@ left out.
 What a higher limit would have done cannot be replayed from history: a run cut
 off does not say how much more it needed. The card says how many real attacks
 were cut off and the most it could cost, not a promised result. The 30 labelled
-investigation cases are not run against the new value here.
+investigation cases are not run here: a person runs the engine eval at both
+values and records the result with ``python -m core.supervisory.eval_check``.
 
 Only a stop at a cap at least today's counts, read from the cap the
 investigation was started with, so the runs that led to a raise do not suggest
