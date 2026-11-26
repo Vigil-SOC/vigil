@@ -296,6 +296,9 @@ class WorkflowRun(Base):
     capped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     citation_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     grounded: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # A dismissal's step score and what the close check did (#5275), written once.
+    # Null on a run that dismissed nothing.
+    step_score: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # How far a hunt has got and the ceiling it runs under, as the agent layer last
     # reported them. Null for a run that never has (compose, or a hunt before its first
     # iteration lands), which the case list then reads from the trigger context.

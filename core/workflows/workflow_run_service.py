@@ -133,6 +133,17 @@ class WorkflowRunService:
             logger.error("Could not persist workflow run start: %s", e)
             return None
 
+    def set_step_score(self, run_id: str, step_score: Mapping[str, Any]) -> bool:
+        """Store a dismissal's step score (#5275) once: a re-sent terminal keeps the first."""
+        db = get_db_manager()
+        with db.session_scope() as session:
+            # Locked, so two terminals arriving together store one score.
+            row = session.get(WorkflowRun, run_id, with_for_update=True)
+            if row is None or row.step_score is not None:
+                return False
+            row.step_score = dict(step_score)
+        return True
+
     def set_status(
         self,
         run_id: str,

@@ -266,6 +266,7 @@ def record_close(
     credential_id: Optional[str] = None,
     sampled: bool = False,
     evidence_opened: Optional[bool] = None,
+    step_score: Optional[dict] = None,
 ) -> None:
     """Append the close to the trail in the caller's transaction.
 
@@ -274,6 +275,7 @@ def record_close(
     ``evidence_opened`` is the flag stored on this close, null included.
     ``closed_as`` is ``model`` when the close passed the autonomy check
     (``by_model``), ``person`` for a console close, else ``api``.
+    ``step_score`` is an investigation dismissal's quoted score (#5275).
     """
     if not _trail_ready(session):
         return
@@ -295,6 +297,8 @@ def record_close(
         payload["actor"] = principal_id
     if credential_id:
         payload["credential_id"] = credential_id
+    if step_score:
+        payload["step_score"] = step_score
     run_id = run_agent()[1]
     if run_id:
         payload["run_id"] = run_id

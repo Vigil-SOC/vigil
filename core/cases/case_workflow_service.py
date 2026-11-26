@@ -412,6 +412,7 @@ class CaseWorkflowService:
         on_trail: bool = True,
         by_model: bool = False,
         take_ownership: bool = True,
+        step_score: Optional[dict] = None,
     ):
         """Mark a case closed and record its closure metadata.
 
@@ -574,6 +575,7 @@ class CaseWorkflowService:
                 credential_id=current_credential_id(),
                 sampled=closure.sampled_at is not None,
                 evidence_opened=closure.evidence_opened,
+                step_score=step_score,
             )
             if determining and take_ownership:
                 self._take_on_close(session, case)
