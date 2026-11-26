@@ -58,6 +58,8 @@ interface Ran {
   code: number;
   stdout: Buffer;
   stderr: Buffer;
+  // Every byte the command wrote to stdout, kept or not.
+  stdoutBytes: number;
   truncated: boolean;
   timedOut: boolean;
 }
@@ -129,7 +131,7 @@ function run(script: string, as: As): Promise<Ran> {
       clearTimeout(timer);
       child.stdout.destroy();
       child.stderr.destroy();
-      resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err), truncated, timedOut });
+      resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err), stdoutBytes: outBytes, truncated, timedOut });
     };
     // Not a served answer: the command never ran.
     child.on("error", (error) => {
@@ -148,6 +150,20 @@ function run(script: string, as: As): Promise<Ran> {
       });
     });
   });
+}
+
+// A cap can land inside a multi-byte character: drop its lead and continuation
+// bytes so decoding does not invent a U+FFFD the command never wrote. A buffer
+// short of its cap was not cut and is decoded as written.
+function whole(buf: Buffer, cap: number): Buffer {
+  if (buf.length < cap) return buf;
+  for (let back = 1; back <= Math.min(4, buf.length); back++) {
+    const byte = buf[buf.length - back]!;
+    if ((byte & 0xc0) === 0x80) continue; // continuation byte: keep walking back
+    const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return need > back ? buf.subarray(0, buf.length - back) : buf;
+  }
+  return buf;
 }
 
 const OWNER = (slot: number) => ({ uid: UID_BASE + 2 * slot, gid: UID_BASE + 2 * slot, groups: [WORK_GID] });
@@ -175,8 +191,9 @@ async function execute(view: Buffer, command: string): Promise<Record<string, un
     });
     return {
       exit_code: ran.code,
-      stdout: ran.stdout.toString("utf8"),
-      stderr: ran.stderr.toString("utf8"),
+      stdout: whole(ran.stdout, STDOUT_CAP).toString("utf8"),
+      stderr: whole(ran.stderr, STDERR_CAP).toString("utf8"),
+      stdout_bytes: ran.stdoutBytes,
       truncated: ran.truncated,
       timed_out: ran.timedOut,
       timeout_ms: TIMEOUT_MS,

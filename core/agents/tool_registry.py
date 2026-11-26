@@ -972,6 +972,8 @@ async def _read_case_shell(args: Args) -> Args:
         "stderr": answer.get("stderr", ""),
         # Cut by the shell, so nothing downstream cuts it again unannounced.
         "truncated": bool(answer.get("truncated")),
+        # The full length of stdout, so the agent knows how much a tail -c has left.
+        "stdout_bytes": answer.get("stdout_bytes"),
     }
 
 

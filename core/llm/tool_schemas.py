@@ -594,8 +594,10 @@ DEEPTEMPO_FINDING_TOOLS = [
             "(entities/history.json). README.txt lists it. Use ls, cat, head, "
             "sed -n, grep -n, wc, sort, awk and jq; pipe within one command. "
             "Only scratch/ is writable and nothing outlives the call; there is "
-            "no network. Output past about 8,000 bytes is cut and truncated is "
-            "true: narrow the command and run it again."
+            "no network. stdout is cut at 8,000 bytes and stderr at 2,000; "
+            "truncated is true when either was cut, and stdout_bytes is the "
+            "full length stdout had. Narrow the command and run it again, or "
+            "read another part with tail -c +N, head -c N or sed -n 'A,Bp'."
         ),
         "input_schema": {
             "type": "object",
