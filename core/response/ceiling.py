@@ -38,7 +38,13 @@ from core.response.config import (
 )
 from core.storage import config_service as config_store
 from core.storage.connection import get_db_session
-from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
+from core.storage.models import (
+    Finding,
+    SystemConfig,
+    ToolEffectClass,
+    WorkflowRun,
+    case_findings,
+)
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -67,6 +73,8 @@ class Ceiling:
     four_eyes: bool = False
     # workflow id -> {tier, floor, evidence, by, at}. Absent follows the fleet.
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
+    # Declared crown jewels are left for a person (#5227). On unless stored off.
+    hold_crown_jewels: bool = True
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,11 @@ class CeilingWriteError(Exception):
 
 def _flag(value: Any) -> bool:
     return value if isinstance(value, bool) else False
+
+
+def _on(value: Any) -> bool:
+    """A missing or non-boolean value reads on: the reverse of ``_flag``."""
+    return value if isinstance(value, bool) else True
 
 
 def _text(value: Any) -> Optional[str]:
@@ -151,6 +164,7 @@ def _parse(value: Any) -> Ceiling:
         stopped_at=_text(value.get("stopped_at")),
         four_eyes=_flag(value.get("four_eyes")),
         workflows=_workflow_entries(value.get("workflows")),
+        hold_crown_jewels=_on(value.get("hold_crown_jewels")),
     )
 
 
@@ -236,19 +250,77 @@ def _workflow_held(run_id: Optional[str]) -> tuple[Optional[str], bool]:
         return None, False
 
 
+Values = Iterable[str] | Callable[[], Iterable[str]]
+
+
+def crown_jewel_held(
+    values: Values, stored: Ceiling, *, exact: bool = False
+) -> Optional[str]:
+    """Why an act naming a declared crown jewel is left for a person, or None (#5227).
+
+    ``values`` are Entity Keys or argument values, or a callable read only once
+    a site is declared. None while the hold is off or no site is declared. A
+    site that has never been read, or values that can't be read, hold the act.
+    """
+    if not stored.hold_crown_jewels:
+        return None
+    from core import site
+
+    try:
+        row = site.applied_site(strict=True)
+        if not site.declared(row):
+            return None
+        jewel = site.crown_jewel(
+            values() if callable(values) else values, row, exact=exact
+        )
+    except Exception as exc:  # noqa: BLE001 — no answer is not permission
+        logger.error("crown jewels not checked; act held: %s", exc)
+        return f"declared crown jewels could not be checked ({type(exc).__name__})"
+    if jewel is None:
+        return None
+    return (
+        f"{jewel['name']} is a declared crown jewel "
+        f"({jewel.get('file')}:{jewel.get('line')}, revision {jewel.get('revision')})"
+    )
+
+
+def finding_keys(
+    *, case_id: Optional[str] = None, finding_ids: Iterable[str] = ()
+) -> list[str]:
+    """The Entity Keys of a case's findings, or of the findings ``finding_ids`` name."""
+    from core.memory.entity_keys import finding_entity_keys
+
+    query = select(Finding.entity_context)
+    if case_id:
+        query = query.join(
+            case_findings, case_findings.c.finding_id == Finding.finding_id
+        ).where(case_findings.c.case_id == case_id)
+    else:
+        ids = [str(i) for i in finding_ids if i]
+        if not ids:
+            return []
+        query = query.where(Finding.finding_id.in_(ids))
+    with unit_of_work() as session:
+        contexts = session.execute(query).scalars().all()
+    return finding_entity_keys([{"entity_context": c} for c in contexts])
+
+
 CLOSE_HELD = "autonomy does not let a model close cases on its own"
 
 
-def close_held(run_id: Optional[str]) -> Optional[str]:
+def close_held(run_id: Optional[str], keys: Values = ()) -> Optional[str]:
     """Why a model's close of a case is held, or None when it may close (#4819).
 
     Closing is a reversible act: it passes only where the run's workflow, or
-    with no workflow (chat, an /mcp caller) the fleet, may act on its own.
+    with no workflow (chat, an /mcp caller) the fleet, may act on its own, and
+    then only when the case's ``keys`` name no declared crown jewel (#5227).
     A ceiling that can't be read holds the close.
     """
     try:
-        if effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id)):
-            return None
+        stored = read_ceiling()
+        if effective_act(stored, REVERSIBLE, workflow_of(run_id)):
+            # No keys (the production report's status read) never reads the site.
+            return crown_jewel_held(keys, stored) if keys else None
         return CLOSE_HELD
     except Exception as exc:  # noqa: BLE001 — no answer is not permission
         logger.exception("autonomy not read; close for run %s held", run_id)
@@ -336,6 +408,7 @@ def _dump(ceiling: Ceiling) -> dict[str, Any]:
         "stopped_at": ceiling.stopped_at,
         "four_eyes": ceiling.four_eyes,
         "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
+        "hold_crown_jewels": ceiling.hold_crown_jewels,
     }
 
 
@@ -885,6 +958,36 @@ def _own_reversible(tool: str, args: Optional[Mapping[str, Any]]) -> Optional[st
     return None
 
 
+def _exception_values(tool: str, args: Optional[Mapping[str, Any]]) -> list:
+    """Each ``match`` value of the exceptions a call adds; removals are not read."""
+    args = args or {}
+    if tool == "detection_rule_exception":
+        adds = [args] if args.get("action") == "add" else []
+    else:
+        per_copy = args.get("exceptions")
+        per_copy = per_copy.values() if isinstance(per_copy, Mapping) else []
+        adds = [e for items in per_copy if isinstance(items, list) for e in items]
+    return [
+        value
+        for add in adds
+        if isinstance(add, Mapping) and isinstance(add.get("match"), Mapping)
+        for value in add["match"].values()
+        if isinstance(value, str)
+    ]
+
+
+def _string_values(value: Any) -> Iterable[str]:
+    """Every string value in nested dicts and lists; keys are not read."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _string_values(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _string_values(item)
+
+
 def unattended_refusal(
     tool: str,
     *,
@@ -898,7 +1001,9 @@ def unattended_refusal(
     changes a record; those run unless stopped, except a rule exception, which
     needs the effective act a reversible call does (#3949). An outside call runs
     only under the effective act its class needs, for the run's own workflow
-    (#3624). A ceiling that cannot be read grants nothing.
+    (#3624). A ceiling that cannot be read grants nothing. Where the act would
+    pass, an exception add or outside call naming a declared crown jewel is
+    refused, and a dismissal of a crown jewel's finding always is (#5227).
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -911,12 +1016,20 @@ def unattended_refusal(
     if stored.stopped:
         return STOPPED
     if own:
+        # No ceiling gates a dismissal; a crown jewel's still waits for a person.
+        if tool == "dismiss_finding" and (
+            jewel := crown_jewel_held(
+                lambda: finding_keys(finding_ids=[(args or {}).get("finding_id")]),
+                stored,
+            )
+        ):
+            return jewel
         refusal = _own_reversible(tool, args)
         if refusal is None:
             return None
         workflow, read = _workflow_held(run_id)
         if read and effective_act(stored, REVERSIBLE, workflow):
-            return None
+            return crown_jewel_held(lambda: _exception_values(tool, args), stored)
         return refusal if read else "the run's workflow could not be read"
     effect = classes[tool]
     if effect in (REVERSIBLE, IRREVERSIBLE):
@@ -924,7 +1037,8 @@ def unattended_refusal(
         if not read:
             return "the run's workflow could not be read"
         if effective_act(stored, effect, workflow):
-            return None
+            # Exact selectors only: a name fitted to a pattern can't shield a host.
+            return crown_jewel_held(lambda: _string_values(args), stored, exact=True)
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
         "does not let a run no person started take it"
