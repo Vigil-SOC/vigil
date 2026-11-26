@@ -563,7 +563,9 @@ export interface paths {
          *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
          *     involved. The action returned is that row. The original records ``released``
          *     or ``enabled`` once the vendor reports it. 409 when the original is not
-         *     executed and contained or disabled, or a lift of it is still open.
+         *     executed and contained or disabled, or a lift of it is still open. An
+         *     optional ``reason`` goes on the row and into an analyst note on the target,
+         *     and the undo holds that act there for runs no person started (#5273).
          */
         post: operations["post_api_approvals_action_id_undo"];
         delete?: never;
@@ -9210,7 +9212,9 @@ export interface paths {
          *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
          *     involved. The action returned is that row. The original records ``released``
          *     or ``enabled`` once the vendor reports it. 409 when the original is not
-         *     executed and contained or disabled, or a lift of it is still open.
+         *     executed and contained or disabled, or a lift of it is still open. An
+         *     optional ``reason`` goes on the row and into an analyst note on the target,
+         *     and the undo holds that act there for runs no person started (#5273).
          */
         post: operations["post_api_v1_approvals_action_id_undo"];
         delete?: never;
@@ -19451,6 +19455,14 @@ export interface components {
             /** Values */
             values: string[];
         };
+        /** UndoRequest */
+        UndoRequest: {
+            /**
+             * Reason
+             * @description Why the containment is being undone; the next run reads it.
+             */
+            reason?: string | null;
+        };
         /**
          * UnlockRequest
          * @description A typed reason and how the manager confirmed the person is who they say,
@@ -20964,7 +20976,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UndoRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -36532,7 +36548,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UndoRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -180,8 +180,10 @@ export const approvalsApi = {
   approve: (actionId: string, candidate?: string) =>
     afterWrite('needs-you', api.post(`/approvals/${actionId}/approve`, candidate ? { candidate } : {})),
 
-  /** Release an executed isolation or enable a disabled account (#5060): runs at once, as you. */
-  undo: (actionId: string) => afterWrite('needs-you', api.post(`/approvals/${actionId}/undo`)),
+  /** Release an executed isolation or enable a disabled account (#5060): runs at once, as you.
+   *  The reason goes into an analyst note the next run reads (#5273). */
+  undo: (actionId: string, reason?: string) =>
+    afterWrite('needs-you', api.post(`/approvals/${actionId}/undo`, reason ? { reason } : {})),
 
   reject: (actionId: string, reason: string, rejected_by?: string) =>
     afterWrite('needs-you', api.post(`/approvals/${actionId}/reject`, { reason, rejected_by })),

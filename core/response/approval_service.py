@@ -791,6 +791,17 @@ class ApprovalService:
                         username=rejected_by,
                         operator_text=reason,
                     )
+                    if row.action_type in CONTAINMENT_TYPES:
+                        from core.response.reversals import write_reversal_note
+
+                        # A person's rejection is remembered and holds the target (#5273).
+                        write_reversal_note(
+                            session,
+                            row,
+                            by=rejected_by,
+                            principal_id=row.approved_by_principal_id,
+                            reason=reason,
+                        )
                     pending = _row_to_pending(row)
             if decided is not None:
                 logger.warning(
@@ -973,9 +984,10 @@ class ApprovalService:
         build: Callable[[PendingAction], Union[str, tuple[str, Dict[str, Any]]]],
         approved_by: str,
         approved_by_principal_id: Optional[str],
+        reason: Optional[str] = None,
     ) -> PendingAction:
         """Insert the row that undoes an executed containment, approved by the
-        caller (#5060). ``build`` turns the original into the row's title and
+        caller (#5060), with their ``reason`` on it and in an analyst note (#5273). ``build`` turns the original into the row's title and
         parameters, or says why it can't. No proposal is involved, so four-eyes
         does not apply.
 
@@ -1027,7 +1039,8 @@ class ApprovalService:
                     description=f"Undoes {action_id}: {original.title}",
                     target=original.target,
                     confidence=1.0,
-                    reason=f"{approved_by} undid {action_id}",
+                    reason=f"{approved_by} undid {action_id}"
+                    + (f": {reason.strip()}" if (reason or "").strip() else ""),
                     evidence=list(original.evidence or []),
                     created_at=now,
                     created_by=approved_by,
@@ -1055,6 +1068,17 @@ class ApprovalService:
                     principal_id=approved_by_principal_id,
                     action_id=undo.action_id,
                     username=approved_by,
+                )
+                from core.response.proposal_targets import UNDONE_STATE
+                from core.response.reversals import write_reversal_note
+
+                write_reversal_note(
+                    session,
+                    row,
+                    by=approved_by,
+                    principal_id=approved_by_principal_id,
+                    reason=reason,
+                    undo_verb=UNDONE_STATE.get(original.action_type, "undid"),
                 )
                 pending = _row_to_pending(undo)
         if refusal is not None or pending is None:

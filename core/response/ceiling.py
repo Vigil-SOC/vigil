@@ -1362,7 +1362,8 @@ def unattended_refusal(
     only under the effective act its class needs, for the run's own workflow
     (#3624). A ceiling that cannot be read grants nothing. Where the act would
     pass, an exception add or outside call naming a declared crown jewel is
-    refused, and a dismissal of a crown jewel's finding always is (#5227).
+    refused, and a dismissal of a crown jewel's finding always is (#5227); so is
+    a containment act a person undid or rejected on that target (#5273).
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -1397,7 +1398,14 @@ def unattended_refusal(
             return "the run's workflow could not be read"
         if effective_act(stored, effect, workflow):
             # Exact selectors only: a name fitted to a pattern can't shield a host.
-            return crown_jewel_held(lambda: _string_values(args), stored, exact=True)
+            if jewel := crown_jewel_held(
+                lambda: _string_values(args), stored, exact=True
+            ):
+                return jewel
+            # A person's undo or rejection of this act on this target holds it (#5273).
+            from core.response.reversals import reversal_held
+
+            return reversal_held(tool, _string_values(args))
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
         "does not let a run no person started take it"

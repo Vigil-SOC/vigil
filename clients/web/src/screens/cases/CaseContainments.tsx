@@ -36,6 +36,8 @@ export function CaseContainments({ caseId, canDecide, refreshKey }: { caseId: st
   const [rows, setRows] = useState<ApprovalAction[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The optional reason typed before each act's undo hold.
+  const [why, setWhy] = useState<Record<string, string>>({})
   const own = useOwnAccount()
   const ticket = useRef(0)
 
@@ -103,7 +105,7 @@ export function CaseContainments({ caseId, canDecide, refreshKey }: { caseId: st
                   <ContainmentState state={state} />
                   {(liftable || (canDecide && state === 'failed')) && (
                     <div className="needs-actions">
-                      {liftable && <HoldButton label={`Hold to ${verb.toLowerCase()}`} name={`Hold to ${verb.toLowerCase()} ${a.target}`} disabled={busy !== null} onConfirm={() => void act(id, () => approvalsApi.undo(id))} />}
+                      {liftable && <HoldButton label={`Hold to ${verb.toLowerCase()}`} name={`Hold to ${verb.toLowerCase()} ${a.target}`} disabled={busy !== null} onConfirm={() => void act(id, () => approvalsApi.undo(id, why[id]?.trim() || undefined))} />}
                       {canDecide && state === 'failed' && (
                         <button
                           type="button"
@@ -126,6 +128,21 @@ export function CaseContainments({ caseId, canDecide, refreshKey }: { caseId: st
                   </p>
                 )}
                 {candidate && own(candidate) && <p className="contain-own">This is your own account.</p>}
+                {liftable && (
+                  <div className="contain-why">
+                    <label htmlFor={`undo-why-${id}`}>Why? Optional; the next run reads it. For 7 days only a person may redo this act here.</label>
+                    <textarea
+                      id={`undo-why-${id}`}
+                      className="feedback-box"
+                      rows={2}
+                      maxLength={2000}
+                      value={why[id] ?? ''}
+                      onChange={(event) => setWhy((all) => ({ ...all, [id]: event.target.value }))}
+                      placeholder={`Why is ${a.target} being ${pastOf(verb).toLowerCase()}?`}
+                      disabled={busy !== null}
+                    />
+                  </div>
+                )}
                 {state === 'failed' && result.error && <p className="needs-error">{result.vendor ? vendorName(result.vendor) : 'The vendor'} answered: {result.error}</p>}
                 {state === 'held' && <p className="needs-row-reason">Held by the stop. Releasing it from the stop runs it.</p>}
                 {lift && <LiftLine lift={lift} state={liftState!} verb={verb} />}

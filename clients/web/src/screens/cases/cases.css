@@ -298,6 +298,11 @@
 .case-needs .needs-row .needs-actions .home-hold { min-width: 124px; }
 .case-needs .needs-more li .needs-reject { background: var(--bg1); }
 
+/* The optional reason before a containment's undo hold (#5273). */
+.case-contain .contain-why { display: flex; flex-direction: column; gap: 6px; }
+.case-contain .contain-why label { font-size: 12px; color: var(--tx2); overflow-wrap: anywhere; }
+.case-contain .contain-why textarea { box-sizing: border-box; min-height: 0; }
+
 .case-needs .needs-more-foot {
   display: flex;
   align-items: center;
