@@ -295,7 +295,7 @@ def _begin_run_row(
         version = workflow.version
     WorkflowRunService().begin_run(
         workflow_id=workflow_id,
-        workflow_name=workflow_id,
+        workflow_name=workflow.name if workflow is not None else workflow_id,
         workflow_source="agent",
         workflow_version=version,
         trigger_context={

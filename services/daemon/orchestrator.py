@@ -2115,6 +2115,8 @@ class Orchestrator:
             return
         try:
             run_kind = self._declared_run_kind(inv_record["workflow_id"])
+            # Loaded once: the row's display name, version and the job's metadata.
+            workflow = self._workflows.get_workflow(inv_record["workflow_id"])
             try:
                 if runs.get_run(run_id) is None:
                     context: Dict[str, Any] = {
@@ -2133,11 +2135,11 @@ class Orchestrator:
                     row = runs.begin_run(
                         run_id=run_id,
                         workflow_id=inv_record["workflow_id"],
-                        workflow_name=inv_record["workflow_id"],
-                        workflow_source="agent",
-                        workflow_version=self._workflows.version_of(
-                            inv_record["workflow_id"]
+                        workflow_name=(
+                            workflow.name if workflow else inv_record["workflow_id"]
                         ),
+                        workflow_source="agent",
+                        workflow_version=workflow.version if workflow else None,
                         trigger_context=context,
                         triggered_by=started_by or "orchestrator",
                         triggered_by_principal_id=_principal_of(started_by, principal),
@@ -2159,7 +2161,6 @@ class Orchestrator:
             if row is not None:
                 _record_start(run_id, actor, origin, person, request)
             # A custom agent's manifest and skills ride the job, not the trail entry.
-            workflow = self._workflows.get_workflow(inv_record["workflow_id"])
             job = build_start_job(
                 run_id,
                 run_kind,
