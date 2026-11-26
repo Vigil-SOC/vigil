@@ -91,6 +91,9 @@ def read_run(path: Path) -> Run:
     models = {r.get("model") for r in rows}
     if len(models) != 1:
         raise CheckRefusal(f"{path} mixes models: {sorted(map(str, models))}")
+    # A --dry run answers by schema and examines nothing, so it measures nothing.
+    if rows[0]["model"].startswith("dry/"):
+        raise CheckRefusal(f"{path} is a dry run, which measures nothing")
     cases = [r.get("case_id") for r in rows]
     if len(set(cases)) != len(cases):
         raise CheckRefusal(f"{path} has a case more than once")
