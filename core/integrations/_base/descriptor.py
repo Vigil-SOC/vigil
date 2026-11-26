@@ -15,7 +15,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 _SLICES_DIR = Path(__file__).resolve().parent.parent
 
@@ -75,6 +75,36 @@ class IntegrationField:
 
 
 @dataclass(frozen=True)
+class TaxiiFeed:
+    """A TAXII 2.1 feed an integration serves into ``threat_indicators``.
+
+    Built from the integration's resolved config by its descriptor's
+    ``taxii_feed``. The proxy is not here: the poller reads the integration's
+    own with ``integration_proxy(descriptor.id)``.
+    """
+
+    server_url: Optional[str]
+    api_token: Optional[str]
+    collection_ids: Tuple[str, ...]
+    verify_ssl: bool = True
+    ca_cert_path: Optional[str] = None
+    # Saved poll interval in seconds; the poller takes the smallest across feeds.
+    poll_interval_seconds: Optional[int] = None
+
+    @property
+    def requests_verify(self) -> Union[bool, str]:
+        """``verify`` for ``requests`` (taxii2client): False, a CA path, or True."""
+        if not self.verify_ssl:
+            return False
+        return self.ca_cert_path or True
+
+
+def parse_collection_ids(raw: Any) -> Tuple[str, ...]:
+    """A saved comma-separated collection id list, blanks dropped."""
+    return tuple(c.strip() for c in str(raw or "").split(",") if c.strip())
+
+
+@dataclass(frozen=True)
 class IntegrationDescriptor:
     """One code-backed integration's registry facts.
 
@@ -95,6 +125,9 @@ class IntegrationDescriptor:
     # own alert id and the vendor documents the URL; cite the doc beside it.
     # Evidence refs win when they are links.
     console_link_template: Optional[str] = None
+    # Set when the integration can serve a TAXII feed: takes its resolved
+    # config and returns the feed, or None when no collection ids are saved.
+    taxii_feed: Optional[Callable[[Dict[str, Any]], Optional[TaxiiFeed]]] = None
 
     @property
     def secret_fields(self) -> Tuple[str, ...]:
