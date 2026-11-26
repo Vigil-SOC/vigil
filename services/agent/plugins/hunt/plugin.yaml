@@ -21,7 +21,7 @@ needs: [findings_search, get_finding, telemetry_search, indicator_lookup, entity
         intel_relationships, identity_lookup]
 # Held when answered; when not, the hunt goes without and journals no blind spot, so
 # an opt-in intel platform or a missing coverage read never counts against a
-# verdict. Mirrors OPTIONAL_HUNT_CAPABILITIES.
+# verdict. Mirrors OPTIONAL_CAPABILITIES.
 optional: [detection_coverage, intel_observable, intel_indicator, intel_entities,
            intel_relationships, identity_lookup]
 
