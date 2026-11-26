@@ -497,9 +497,12 @@ could not answer with its reason; a read that could not happen at all -- the
 endpoint failed or refused, or the run may not read its Case -- carries the keys
 and the reason and none of the rest, and the run carries it for its life as it
 would an **Unavailable Read**. A run on a Case reads that Case's own rows, copying
-a fresh caseless row onto the Case before asking a source. The prefix block and a
-replay render from this event, never from the table. Facts inform and settle
-nothing; a hunt reads none.
+a fresh caseless row onto the Case before asking a source. It also carries
+"Declared" rows from the applied site revision for every key the run names, `ip:`
+keys included, each with its kind, name, owner, file, line and revision; they come
+from no source and are never stored. The prefix block and a replay render from
+this event, never from the table. Facts inform and settle nothing; a hunt reads
+declared rows only.
 _Avoid_: enrichment, entity context, Recall (facts are what a source says now, not
 what past work concluded)
 

@@ -17,6 +17,11 @@ row onto the Case before asking a source, and stores what it fetched on the
 Case; only a principal that may read the Case reads or writes its rows. The sweep in
 ``services/daemon/scheduler.py`` calls ``sweep`` to delete expired rows and rows
 whose Case closed. One trail entry per read and one per sweep, never per row.
+
+Each read also carries "Declared" rows (#5211): what the applied site revision
+(``core/site.py``) declares about every key it names, ``ip:`` keys included. They
+come from no source, are never stored or counted, and a key joins the read for
+them only when a declared item matched it.
 """
 
 from __future__ import annotations
@@ -306,7 +311,11 @@ class Fact:
     source: str
     label: str
     facts: Dict[str, Any]
-    fetched_at: datetime
+    fetched_at: datetime  # a Declared row: when its revision was applied
+
+    @property
+    def declared(self) -> bool:
+        return self.label == DECLARED
 
     def age(self, now: datetime) -> str:
         minutes = max(0, int((now - self.fetched_at).total_seconds() // 60))
@@ -330,7 +339,10 @@ class FactRead:
         for fact in self.facts:
             for name, value in fact.facts.items():
                 shown = ", ".join(map(str, value)) if isinstance(value, list) else value
-                out[field_name(fact.label, fact.value, name)] = f"{fact.value}: {shown}"
+                cited = field_name(fact.label, fact.value, name)
+                # Two Declared items on one entity share field names: keep both.
+                held = out.get(cited) if fact.declared else None
+                out[cited] = f"{held}; {shown}" if held else f"{fact.value}: {shown}"
         return out
 
     def journaled(self) -> Dict[str, Any]:
@@ -360,7 +372,7 @@ class FactRead:
                     "entity": f.key,
                     "source": f.label,
                     "fetched_at": f.fetched_at.isoformat(),
-                    "age": f.age(now),
+                    **({} if f.declared else {"age": f.age(now)}),
                     "fields": f.facts,
                 }
                 for f in self.facts
@@ -380,14 +392,17 @@ def field_name(label: str, value: str, name: str) -> str:
     return f"{label}: {' '.join(value.split())} {name}"
 
 
-def candidates(finding: Dict[str, Any]) -> List[Tuple[str, str]]:
-    """(Entity Key, value as spelled) for the finding's users and hosts, in order."""
+def candidates(
+    finding: Dict[str, Any], kinds: Optional[set] = KINDS
+) -> List[Tuple[str, str]]:
+    """(Entity Key, value as spelled) for the finding's entities of ``kinds``
+    (None: every kind), in order."""
     from core.memory.entity_keys import entity_context_candidates, entity_key
 
     out, seen = [], set()
     for kind, value in entity_context_candidates(finding):
         key = entity_key(kind, value)
-        if kind in KINDS and key and key not in seen:
+        if (kinds is None or kind in kinds) and key and key not in seen:
             seen.add(key)
             out.append((key, value.strip()))
     return out
@@ -648,17 +663,20 @@ async def read(finding: Dict[str, Any]) -> FactRead:
     """The facts for a finding's users and hosts. Never raises and never waits past
     the budget: whatever a source has not answered by then is unavailable."""
     return await _guarded(
-        lambda: candidates(finding), {"finding_id": finding.get("finding_id")}, None
+        lambda: candidates(finding),
+        lambda: candidates(finding, None),
+        {"finding_id": finding.get("finding_id")},
+        None,
     )
 
 
-def key_pairs(keys: List[str]) -> List[Tuple[str, str]]:
-    """(Entity Key, value) for the keys of a kind some source answers, in order.
+def key_pairs(keys: List[str], kinds: Optional[set] = KINDS) -> List[Tuple[str, str]]:
+    """(Entity Key, value) for the keys of ``kinds`` (None: every kind), in order.
     The value is the part after ``type:``, as the key spells it."""
     out, seen = [], set()
     for key in keys:
         kind, _, value = str(key).partition(":")
-        if kind in KINDS and value.strip() and key not in seen:
+        if (kinds is None or kind in kinds) and value.strip() and key not in seen:
             seen.add(key)
             out.append((key, value.strip()))
     return out
@@ -689,27 +707,128 @@ def _case_refusal(case_id: str) -> Optional[str]:
     return None if allowed else f"this run may not read case {case_id}"
 
 
-async def read_keys(keys: List[str], case_id: Optional[str] = None) -> FactRead:
+async def read_keys(
+    keys: List[str], case_id: Optional[str] = None, declared_only: bool = False
+) -> FactRead:
     """The facts for a run's trigger Entity Keys, on ``case_id``'s rows when it
     names one. Raises CaseUnreadable when the caller may not read that Case,
-    and never falls back to triage's rows; otherwise as ``read``."""
+    and never falls back to triage's rows; otherwise as ``read``.
+    ``declared_only`` (a hunt's read): the Declared rows alone, no source asked,
+    nothing loaded, stored or put on the trail."""
+    if declared_only:
+        return await _guarded(lambda: [], lambda: key_pairs(keys, None), {}, None, True)
     if case_id and (why := await asyncio.to_thread(_case_refusal, case_id)):
         raise CaseUnreadable(why)
-    return await _guarded(lambda: key_pairs(keys), {"case_id": case_id}, case_id)
+    return await _guarded(
+        lambda: key_pairs(keys),
+        lambda: key_pairs(keys, None),
+        {"case_id": case_id},
+        case_id,
+    )
 
 
 async def _guarded(
     asked: Callable[[], List[Tuple[str, str]]],
+    every: Callable[[], List[Tuple[str, str]]],
     entry: Dict[str, Any],
     case_id: Optional[str],
+    declared_only: bool = False,
 ) -> FactRead:
     result = FactRead()
+    started = time.monotonic()
+    # Beside the source read, not after it, so the two share one wait.
+    declared = asyncio.ensure_future(asyncio.to_thread(lambda: declared_rows(every())))
+    if not declared_only:
+        try:
+            await _read(asked(), result, entry, case_id)
+        except Exception as exc:  # noqa: BLE001 - the reader answers with what was read
+            logger.exception("entity facts not read")
+            result.unavailable["entity facts"] = f"{type(exc).__name__}: {exc}"
     try:
-        await _read(asked(), result, entry, case_id)
-    except Exception as exc:  # noqa: BLE001 - the reader answers with what was read
-        logger.exception("entity facts not read")
-        result.unavailable["entity facts"] = f"{type(exc).__name__}: {exc}"
+        rows = await asyncio.wait_for(
+            declared, _left(started + DEFAULTS.budget_seconds) or 0.1
+        )
+    except Exception as exc:  # noqa: BLE001 - the source rows stand without them
+        logger.warning("declared site rows not read: %s", type(exc).__name__)
+        return result
+    result.facts.extend(rows)
+    result.keys.extend(dict.fromkeys(f.key for f in rows if f.key not in result.keys))
     return result
+
+
+# ---- Declared rows: the applied site revision (#5211) ----
+
+DECLARED = "Declared"
+_DECLARED_KIND = {
+    "zones": "zone",
+    "crown_jewels": "crown jewel",
+    "owners": "owner",
+    "blind_spots": "blind spot",
+}
+
+
+def _applied_at(row: Dict[str, Any]) -> datetime:
+    """The revision's apply time, never the read's, so a re-read says the same."""
+    try:
+        return datetime.fromisoformat(str(row.get("applied_at"))).replace(tzinfo=None)
+    except ValueError:
+        return datetime(1970, 1, 1)
+
+
+def declared_rows(pairs: List[Tuple[str, str]]) -> List[Fact]:
+    """One Declared row per site item matching one of ``pairs`` (key, value):
+    its kind, name, mission or what is unseen, zone, resolved owner, selector,
+    file, line and revision. Blocking (the site row and teams): call off the loop."""
+    from core import site
+    from core.memory.entity_keys import normalise_key
+
+    original: Dict[str, Tuple[str, str]] = {}
+    for key, value in pairs:
+        original.setdefault(normalise_key(key), (key, value))
+    row = site.applied_site()
+    matches = site.match(list(original), row)
+    if not matches:
+        return []
+    teams = site._active_teams() if any(m["kind"] == "owners" for m in matches) else {}
+
+    def owner(m: Dict[str, Any]) -> str:
+        o = site.resolve_owner(m, teams)
+        return o.get("resolved") or f"unassigned: {o['unassigned']}"
+
+    owners: Dict[str, List[str]] = {}
+    zones: Dict[str, List[str]] = {}
+    for m in matches:
+        if m["kind"] == "owners":
+            owners.setdefault(m["key"], []).append(owner(m))
+        elif m["kind"] == "zones":
+            zones.setdefault(m["key"], []).append(m["name"])
+    at = _applied_at(row)
+    out = []
+    for m in matches:
+        kind = m["kind"]
+        key, value = original.get(m["key"], (m["key"], m["key"].partition(":")[2]))
+        who = [owner(m)] if kind == "owners" else owners.get(m["key"], [])
+        where = (
+            [m["zone"]]
+            if m.get("zone")
+            else [] if kind == "zones" else zones.get(m["key"], [])
+        )
+        fields = _clean(
+            {
+                "declared": _DECLARED_KIND[kind],
+                "name": m.get("name"),
+                "mission": m.get("mission"),
+                "what": m.get("what"),
+                "zone": ", ".join(dict.fromkeys(where)),
+                "owner": ", ".join(dict.fromkeys(who)),
+                "selector": m["selector"],
+                "file": m.get("file"),
+                "line": m.get("line"),
+                "revision": m.get("revision"),
+            }
+        )
+        out.append(Fact(key, value, "site", DECLARED, fields, at))
+    return out
 
 
 def _load_for(

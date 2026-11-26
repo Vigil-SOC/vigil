@@ -740,9 +740,12 @@ def own_tool_names() -> frozenset[str]:
     global _own
     if _own is not None:
         return _own
+    from core.agents.tool_registry import FACTS_TOOL
     from core.llm.tool_schemas import ALL_TOOLS
 
-    names = {t["name"] for t in ALL_TOOLS if t.get("name")}
+    # The run-start fact read is in no catalogue but is Vigil's own: unclassified,
+    # a run no person started (an alert's investigation, a scheduled hunt) was refused it.
+    names = {t["name"] for t in ALL_TOOLS if t.get("name")} | {FACTS_TOOL}
     try:
         from core.integrations.mcp import in_process
 
