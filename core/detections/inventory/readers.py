@@ -60,9 +60,12 @@ ELASTIC_LOGIC_KEYS = (
     "timestamp_override",
 )
 
-# The files each format reads; KQL repos also carry these two docs.
+# The files each format reads; KQL repos also carry these two docs. Sigma
+# rules ship as .yml and .yaml alike; a YAML file that holds no ``detection``
+# or ``correlation`` is skipped by _yaml_doc, so a Sentinel .yaml beside them
+# never reads as Sigma. detection_rules_service builds its map from this one.
 FORMAT_SUFFIXES = {
-    "sigma": (".yml",),
+    "sigma": (".yml", ".yaml"),
     "splunk": (".yml",),
     "elastic": (".toml",),
     "kql": (".yaml", ".md", ".kql"),
