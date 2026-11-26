@@ -1442,8 +1442,8 @@ def close_case(
         # After the arguments are checked, before anything is written. A
         # re-close of a closed case is held too, with no "left open" activity.
         stored = get_data_service().get_case(case_id) or {}
-        open_id = None if stored.get("status") == "closed" else case_id
-        if (held := tool_registry.held_close(open_id)) is not None:
+        left_open = stored.get("status") != "closed"
+        if (held := tool_registry.held_close(case_id, left_open=left_open)) is not None:
             return jdump(held)
 
         with service_session() as session:
@@ -1698,6 +1698,26 @@ def get_autonomy_ceiling() -> str:
     except Exception as e:
         logger.error("get_autonomy_ceiling failed: %s", e)
         return jdump({"error": "Could not read the autonomy ceiling"})
+
+
+@tool("Model change preview", reads=True)
+@requires("ai_autonomy.read")
+def preview_model_change(component: str, provider_id: str, model_id: str) -> str:
+    """Preview a model assignment, as GET /api/autonomy/model-change does: the
+    investigation model before and after setting ``component`` to
+    ``provider_id``/``model_id``, and per Act workflow whether it would keep
+    Act (on its live record or replay) or drop to Assist, with the reason.
+    Read only; it saves nothing."""
+    from core.response.ceiling import ModelJudgeError
+    from core.response.ceiling import preview_model_change as preview
+
+    try:
+        return jdump(preview(component, provider_id, model_id))
+    except (ValueError, ModelJudgeError) as e:
+        return jdump({"error": str(e)})
+    except Exception as e:
+        logger.error("preview_model_change failed: %s", e)
+        return jdump({"error": "Could not preview the model change"})
 
 
 @tool("Declared intent report", reads=True)

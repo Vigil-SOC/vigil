@@ -160,6 +160,17 @@ clears the site at start and leaves the intent row alone.
 `platform.read`, not part of `/api/v1`) show the applied revision, its state,
 any refusal, each item with file, line and resolved owner, and the files' text.
 
+A declared crown jewel is left for a person. No model closes a case whose
+findings name it, and a run no person started may not add a detection exception
+whose `match` value names it or a range holding it, dismiss a finding that names
+it, or make a reversible or irreversible outside call with an argument value
+naming it (wildcard selectors do not count for outside calls). The act is held
+with the crown jewel's name, file, line and revision; people's acts are
+unchanged. The limits: a vendor device id is not read; a crown jewel declared
+only by name does not match a range, so declare its addresses too; a case whose
+findings name no crown jewel is not held; an exception keyed on no host,
+address or account is not read.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the
