@@ -183,6 +183,34 @@ daemon:
   for a person. A missing directory keeps the last revision, state `degraded`.
   `GET /api/config/intent` shows the revision, its state and the pending keys.
 
+- **Intent without `INTENT.md`.** A directory with no `INTENT.md` reads intent
+  as `degraded`; an `INTENT.md` with empty front matter declares nothing.
+
+### Site context in the declared directory
+
+Files under `site/*.md` in the same directory declare zones, crown jewels,
+owners and blind spots by selector (format and rules: the "Enforced: a
+declared directory" section of the repo's `INTENT.md`). The daemon applies
+them in the same poll, on their own verdict, to the `site.applied` row, with
+or without `INTENT.md`; a refused site revision names the file and line and
+keeps the last good one, and never holds up an `INTENT.md` change. Unsetting
+`VIGIL_INTENT_DIR` clears the site at the daemon's next start.
+`GET /api/config/site` and the /mcp tool `get_site_context` (`platform.read`)
+show what runs. A ConfigMap is flat, so give the files keys such as
+`site-zones.md` and mount them with `items`:
+
+```yaml
+daemon:
+  extraVolumes:
+    - name: intent
+      configMap:
+        name: vigil-intent
+        items:
+          - {key: INTENT.md, path: INTENT.md}
+          - {key: REVISION, path: REVISION}
+          - {key: site-zones.md, path: site/zones.md}
+```
+
 ### Skills in the declared directory
 
 Keep skills in the same checkout (`skills/<name>/SKILL.md`) and point

@@ -3779,6 +3779,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/site": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Site Context
+         * @description The applied site/ revision: state, any refusal with file and line, each
+         *     item with file, line and resolved owner, and the applied files' text.
+         */
+        get: operations["get_api_config_site"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/theme": {
         parameters: {
             query?: never;
@@ -17909,6 +17930,127 @@ export interface components {
             /** Started At */
             started_at: string;
         };
+        /** SiteBlindSpot */
+        SiteBlindSpot: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Selectors */
+            selectors: string[];
+            /** What */
+            what: string;
+        };
+        /**
+         * SiteContextResponse
+         * @description The declared site (site/*.md) the daemon applied. Read-only; not /api/v1.
+         */
+        SiteContextResponse: {
+            /** Applied At */
+            applied_at?: string | null;
+            /** Blind Spots */
+            blind_spots?: components["schemas"]["SiteBlindSpot"][];
+            /** Crown Jewels */
+            crown_jewels?: components["schemas"]["SiteCrownJewel"][];
+            /** Declared */
+            declared: boolean;
+            /** Directory */
+            directory?: string | null;
+            /** Files */
+            files?: components["schemas"]["SiteFile"][];
+            /** Hash */
+            hash?: string | null;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwner"][];
+            /** Reason */
+            reason: string;
+            /** Rejected */
+            rejected?: {
+                [key: string]: unknown;
+            } | null;
+            /** Revision */
+            revision?: string | null;
+            /** State */
+            state: string;
+            /** Zones */
+            zones?: components["schemas"]["SiteZone"][];
+        };
+        /** SiteCrownJewel */
+        SiteCrownJewel: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Mission */
+            mission: string;
+            /** Name */
+            name: string;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwnerRef"][];
+            /** Selectors */
+            selectors: string[];
+            /** Why */
+            why?: string | null;
+            /** Zone */
+            zone?: string | null;
+        };
+        /** SiteFile */
+        SiteFile: {
+            /** File */
+            file: string;
+            /** Text */
+            text: string;
+        };
+        /** SiteOwner */
+        SiteOwner: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Resolved */
+            resolved?: string | null;
+            /** Selectors */
+            selectors: string[];
+            /** Team */
+            team: string;
+            /** Team Id */
+            team_id?: string | null;
+            /** Unassigned */
+            unassigned?: string | null;
+        };
+        /**
+         * SiteOwnerRef
+         * @description An owner as resolved now: a team, or why it is unassigned.
+         */
+        SiteOwnerRef: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Resolved */
+            resolved?: string | null;
+            /** Team */
+            team: string;
+            /** Team Id */
+            team_id?: string | null;
+            /** Unassigned */
+            unassigned?: string | null;
+        };
+        /** SiteZone */
+        SiteZone: {
+            /** Description */
+            description?: string | null;
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Name */
+            name: string;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwnerRef"][];
+            /** Selectors */
+            selectors: string[];
+        };
         /** SkillApproveRequest */
         SkillApproveRequest: {
             /** Digest */
@@ -26255,6 +26397,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetupStepsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_config_site: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteContextResponse"];
                 };
             };
             /** @description Validation Error */

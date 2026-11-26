@@ -64,6 +64,35 @@ def _first_line(content: str, match: "re.Match[str]") -> int:
     return content.count("\n", 0, match.start(1)) + 1
 
 
+def frontmatter_node(content: str) -> Tuple[Optional[Any], int]:
+    """``(composed YAML node, first frontmatter line)``, for per-node line marks.
+
+    Call after :func:`split_frontmatter` succeeded; ``(None, 1)`` otherwise.
+    A node's document line is ``first + node.start_mark.line``.
+    """
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        return None, 1
+    try:
+        return yaml.compose(match.group(1)), _first_line(content, match)
+    except yaml.YAMLError:
+        return None, 1
+
+
+def frontmatter_alias_line(content: str) -> Optional[int]:
+    """Document line of the first YAML alias (``*name``, ``<<: *name``), or None."""
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        return None
+    try:
+        for event in yaml.parse(match.group(1)):
+            if isinstance(event, yaml.AliasEvent):
+                return _first_line(content, match) + event.start_mark.line
+    except yaml.YAMLError:
+        return None
+    return None
+
+
 def frontmatter_key_lines(content: str) -> Dict[str, int]:
     """Dotted key path -> 1-based document line, for nested mapping keys.
 
