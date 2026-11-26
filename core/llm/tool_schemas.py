@@ -1162,6 +1162,92 @@ SKILL_TOOLS = [
     },
 ]
 
+# The site proposal (#5229): the whole site/ folder for a person to download and
+# commit. core/site_proposal.py checks it; not on /mcp.
+SITE_TOOLS = [
+    {
+        "name": "save_site_proposal",
+        "description": (
+            "Save a proposed site/ folder (zones, crown_jewels, owners, "
+            "blind_spots in each file's YAML front matter, as get_site_context "
+            "shows the applied one) as the one open site proposal, replacing any "
+            "earlier one. A person downloads it and commits it; nothing is applied "
+            "here. Pass the full folder in files, every file, not only the changed "
+            "ones. Vigil parses it as it parses an applied revision and refuses a "
+            "file it would refuse, naming file and line. Every item the folder "
+            "adds, changes or removes against the applied revision needs one "
+            "provenance entry naming it by list (kind) and by its name (zones, "
+            "crown_jewels), team (owners) or what (blind_spots): either ref, the "
+            "ref of a successful tool call earlier in this conversation that shows "
+            "it, or answer, the person's own words in this conversation, quoted. "
+            "A zone may rest on either; a crown jewel, owner or blind spot only on "
+            "a person's answer, never on a call. An item unchanged from the open "
+            "proposal keeps the provenance it was saved with. Put anything only a "
+            "person can settle in questions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file": {
+                                "type": "string",
+                                "description": "site/<name>.md",
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "The whole file: YAML front matter between --- lines, then any prose",
+                            },
+                        },
+                        "required": ["file", "text"],
+                    },
+                    "description": "Every file of the proposed site/ folder.",
+                },
+                "provenance": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "zones",
+                                    "crown_jewels",
+                                    "owners",
+                                    "blind_spots",
+                                ],
+                            },
+                            "item": {
+                                "type": "string",
+                                "description": "The item's name (zones, crown_jewels), team (owners) or what (blind_spots)",
+                            },
+                            "ref": {
+                                "type": "string",
+                                "description": "A successful call of this conversation, by ref",
+                            },
+                            "answer": {
+                                "type": "string",
+                                "description": "The person's answer, quoted as they gave it",
+                            },
+                        },
+                        "required": ["kind", "item"],
+                    },
+                    "description": "One entry per item added, changed or removed: ref or answer, not both.",
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Questions for people that the folder leaves open.",
+                },
+            },
+            "required": ["files"],
+        },
+    },
+]
+
 # Combine all tools
 ALL_TOOLS = (
     SECURITY_DETECTION_TOOLS
@@ -1171,6 +1257,7 @@ ALL_TOOLS = (
     + APPROVAL_TOOLS
     + MEMORY_TOOLS
     + SKILL_TOOLS
+    + SITE_TOOLS
 )
 
 # Chat's door to the connected MCP integrations (#1959). Declared in place of

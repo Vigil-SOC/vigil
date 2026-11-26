@@ -189,6 +189,7 @@ export function AgentDrawer({
   toolChanges = {},
   onClose,
   onSaved,
+  onAsk,
 }: {
   agentId: string | null
   builtIn?: boolean
@@ -199,6 +200,8 @@ export function AgentDrawer({
   onClose: () => void
   /** gets the saved agent's id, so the screen can reopen on it */
   onSaved: (saved: { id?: string }) => void
+  /** opens Ask Vigil under this agent; absent while the agent is off */
+  onAsk?: () => void
 }) {
   const isCreate = agentId === null
   const [text, setText] = useState(BLANK)
@@ -342,6 +345,17 @@ export function AgentDrawer({
                   : 'An agent is its manifest. The fields and the YAML edit the same text.'}
               </span>
             </span>
+            {onAsk && (
+              <button
+                type="button"
+                className="vg-side-btn small line shrink-0"
+                disabled={dirty}
+                title={dirty ? 'Save or discard your changes first' : 'Start a conversation that runs under this agent'}
+                onClick={onAsk}
+              >
+                <Icon name="sparkle" size={14} /> Ask Vigil
+              </button>
+            )}
             <button type="button" className="vg-side-close" aria-label="Close" onClick={close}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />

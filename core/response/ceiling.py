@@ -55,6 +55,8 @@ ACT = "act"
 ASSIST = "assist"
 TIERS = (ACT, ASSIST)
 AGREEMENT_WINDOW = timedelta(days=30)
+RELEASED_PER_HOUR = 10
+RELEASED_PER_HOUR_MAX = 1000
 
 
 def _no_workflows() -> Mapping[str, dict]:
@@ -75,6 +77,8 @@ class Ceiling:
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
     # Declared crown jewels are left for a person (#5227). On unless stored off.
     hold_crown_jewels: bool = True
+    # Proposals the ceiling releases in any 60 minutes (#5274). 0 releases none.
+    released_per_hour: int = RELEASED_PER_HOUR
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,14 @@ def _flag(value: Any) -> bool:
 def _on(value: Any) -> bool:
     """A missing or non-boolean value reads on: the reverse of ``_flag``."""
     return value if isinstance(value, bool) else True
+
+
+def _cap(value: Any) -> int:
+    """A whole number in 0..RELEASED_PER_HOUR_MAX; anything else reads as the default."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        if 0 <= value <= RELEASED_PER_HOUR_MAX:
+            return value
+    return RELEASED_PER_HOUR
 
 
 def _text(value: Any) -> Optional[str]:
@@ -165,6 +177,7 @@ def _parse(value: Any) -> Ceiling:
         four_eyes=_flag(value.get("four_eyes")),
         workflows=_workflow_entries(value.get("workflows")),
         hold_crown_jewels=_on(value.get("hold_crown_jewels")),
+        released_per_hour=_cap(value.get("released_per_hour")),
     )
 
 
@@ -386,7 +399,24 @@ def ceiling_read() -> dict[str, Any]:
             for wid, entry in stored.workflows.items()
         },
         "held": held_for_ceiling(),
+        "hold_crown_jewels": stored.hold_crown_jewels,
+        "crown_jewels": _crown_jewel_count(),
+        "released_per_hour": stored.released_per_hour,
     }
+
+
+def _crown_jewel_count() -> int:
+    """Crown jewels in the applied site revision; 0 when none or unreadable."""
+    from core import site
+
+    try:
+        row = site.applied_site()
+        if not site.declared(row):
+            return 0
+        return len((row.get("items") or {}).get("crown_jewels") or [])
+    except Exception as exc:  # noqa: BLE001 — a count, never a refusal
+        logger.warning("crown jewels not counted: %s", exc)
+        return 0
 
 
 def execution_held() -> bool:
@@ -409,11 +439,16 @@ def _dump(ceiling: Ceiling) -> dict[str, Any]:
         "four_eyes": ceiling.four_eyes,
         "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
         "hold_crown_jewels": ceiling.hold_crown_jewels,
+        "released_per_hour": ceiling.released_per_hour,
     }
 
 
 def _raises(current: bool, requested: Optional[bool]) -> bool:
     return requested is True and not current
+
+
+def raises_cap(current: int, requested: Optional[int]) -> bool:
+    return requested is not None and requested > current
 
 
 def update_ceiling(
@@ -423,14 +458,18 @@ def update_ceiling(
     act_reversible: Optional[bool] = None,
     act_irreversible: Optional[bool] = None,
     four_eyes: Optional[bool] = None,
+    hold_crown_jewels: Optional[bool] = None,
+    released_per_hour: Optional[int] = None,
+    lowers_only: bool = False,
     locked: Optional[bool] = None,
 ) -> Ceiling:
     """Store a person's edit of the ceiling. Does not execute anything.
 
     A service account may lower an act flag. It may not raise one, resume,
-    or switch four-eyes. An act flag is not stored on while the environment
-    has locked them off. While stopped, raising an act flag or turning
-    four-eyes off is refused; a lower, and turning four-eyes on, still store.
+    switch four-eyes, turn the crown-jewel hold off, or raise the hourly cap. An act flag is not stored on while the environment
+    has locked them off. While stopped, raising an act flag or the hourly cap, or turning
+    four-eyes or the crown-jewel hold off is refused; a lower, and turning
+    either on, still store.
     The refusal is decided on the locked row, so a stop that lands during
     the write is not stored past.
     """
@@ -443,11 +482,19 @@ def update_ceiling(
             ("act.reversible", act_reversible),
             ("act.irreversible", act_irreversible),
             ("act.four_eyes", four_eyes),
+            ("act.hold_crown_jewels", hold_crown_jewels),
         )
         if value is not None
     }
 
     def change(current: Ceiling) -> tuple[Ceiling, str]:
+        # A lower-only caller whose number is above a cap lowered since it read
+        # leaves the cap as it is; the rest of its edit still stores.
+        cap = (
+            None
+            if lowers_only and raises_cap(current.released_per_hour, released_per_hour)
+            else released_per_hour
+        )
         wants_act_on = act_reversible is True or act_irreversible is True
         if locked and wants_act_on:
             raise CeilingRefusal(409, "The environment wins; Act was not saved.")
@@ -459,14 +506,22 @@ def update_ceiling(
         if caller_is_service:
             if four_eyes is not None and four_eyes != current.four_eyes:
                 raise CeilingRefusal(403, "A service account cannot switch four-eyes")
-            if _raises(current.act_reversible, act_reversible) or _raises(
-                current.act_irreversible, act_irreversible
+            if hold_crown_jewels is False and current.hold_crown_jewels:
+                raise CeilingRefusal(
+                    403, "A service account cannot turn the crown-jewel hold off"
+                )
+            if (
+                _raises(current.act_reversible, act_reversible)
+                or _raises(current.act_irreversible, act_irreversible)
+                or raises_cap(current.released_per_hour, cap)
             ):
                 raise CeilingRefusal(403, "A service account cannot raise the ceiling")
         if current.stopped and (
             _raises(current.act_reversible, act_reversible)
             or _raises(current.act_irreversible, act_irreversible)
             or (four_eyes is False and current.four_eyes)
+            or (hold_crown_jewels is False and current.hold_crown_jewels)
+            or raises_cap(current.released_per_hour, cap)
         ):
             raise CeilingRefusal(409, "Stopped: resume first")
         edit = {
@@ -475,6 +530,8 @@ def update_ceiling(
                 ("act_reversible", act_reversible),
                 ("act_irreversible", act_irreversible),
                 ("four_eyes", four_eyes),
+                ("hold_crown_jewels", hold_crown_jewels),
+                ("released_per_hour", cap),
             )
             if value is not None
         }
@@ -1337,7 +1394,8 @@ def unattended_refusal(
     only under the effective act its class needs, for the run's own workflow
     (#3624). A ceiling that cannot be read grants nothing. Where the act would
     pass, an exception add or outside call naming a declared crown jewel is
-    refused, and a dismissal of a crown jewel's finding always is (#5227).
+    refused, and a dismissal of a crown jewel's finding always is (#5227); so is
+    a containment act a person undid or rejected on that target (#5273).
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -1372,7 +1430,14 @@ def unattended_refusal(
             return "the run's workflow could not be read"
         if effective_act(stored, effect, workflow):
             # Exact selectors only: a name fitted to a pattern can't shield a host.
-            return crown_jewel_held(lambda: _string_values(args), stored, exact=True)
+            if jewel := crown_jewel_held(
+                lambda: _string_values(args), stored, exact=True
+            ):
+                return jewel
+            # A person's undo or rejection of this act on this target holds it (#5273).
+            from core.response.reversals import reversal_held
+
+            return reversal_held(tool, _string_values(args))
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
         "does not let a run no person started take it"

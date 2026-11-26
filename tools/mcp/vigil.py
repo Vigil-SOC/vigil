@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import inspect
 import json
@@ -1494,9 +1495,21 @@ def close_case(
 # --- Approval queue -------------------------------------------------------
 
 
+# Ceiling releases still running after their tool call returned (#5235).
+_releases: set = set()
+
+
+def _run_case_params(run_id: str) -> dict:
+    from core.workflows.run_bridge_router import _origin_case
+    from core.workflows.workflow_run_service import WorkflowRunService
+
+    case_id = _origin_case(run_id, WorkflowRunService())
+    return {"run_id": run_id, **({"case_ids": [case_id]} if case_id else {})}
+
+
 @tool("Propose an action for approval")
 @requires("ai_chat.use")
-def create_approval_action(
+async def create_approval_action(
     action_type: str,
     title: str,
     description: str,
@@ -1508,27 +1521,39 @@ def create_approval_action(
     """Submit action to approval queue.
 
     ``action_type`` is one of isolate_host, block_ip, block_domain,
-    quarantine_file, disable_user, custom.
+    quarantine_file, disable_user, revoke_session (end an account's sessions;
+    the account stays usable), custom.
 
     The caller's ``confidence`` is its own claim, so it never releases the
-    action: the row waits in the queue for a person.
+    action: the row waits in the queue for a person, unless a run no person
+    started proposed a kind Vigil carries and the autonomy ceiling lets that
+    run take the act, in which case it is carried out at once.
     """
+    from core.auth.tool_principal import current_claims
+    from core.response import containment
     from core.response.proposal_targets import (
         REASON_SENTENCES,
         check_confidence,
         check_target,
     )
 
-    # Only the six kinds a run may propose; the target must fit the kind and the
+    # Only the kinds a run may propose; the target must fit the kind and the
     # confidence be above zero.
     checked, code = check_target(action_type, target)
     code = code or check_confidence({"confidence": confidence})
     if code:
         return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
     target = checked
+    run_claims = containment.unattended(current_claims())
     try:
-        svc = ApprovalService()
-        action = svc.create_action(
+        # On the run's case, as its conclusion's are, so the case shows the ask.
+        params = (
+            await asyncio.to_thread(_run_case_params, run_claims.run_id)
+            if run_claims
+            else None
+        )
+        action, inserted = await asyncio.to_thread(
+            ApprovalService()._put_action,
             action_type=ActionType(action_type),
             title=title,
             description=description,
@@ -1538,18 +1563,34 @@ def create_approval_action(
             evidence=evidence or [],
             created_by=actor(),
             created_by_principal_id=acting_principal(),
+            parameters=params,
+            # A run no person started asks each act once, as its conclusion does:
+            # a retried call finds the row and is not carried out twice.
+            idempotency_key=(
+                f"run-proposal:{run_claims.run_id}:{action_type}:{target}"
+                if run_claims
+                else None
+            ),
             human_only=True,
-        )
-        return jdump(
-            {
-                "success": True,
-                "action_id": action.action_id,
-                "status": action.status,
-                "message": f"Action created. Status: {action.status}",
-            }
         )
     except Exception as e:
         return jdump({"error": str(e)})
+    if inserted and run_claims is not None:
+        # Shielded and held: a timed-out tool call must not cancel an act mid-claim.
+        task = asyncio.ensure_future(
+            containment.release_under_ceiling(action, run_claims)
+        )
+        _releases.add(task)
+        task.add_done_callback(_releases.discard)
+        action = await asyncio.shield(task)
+    return jdump(
+        {
+            "success": True,
+            "action_id": action.action_id,
+            "status": action.status,
+            "message": f"Action created. Status: {action.status}",
+        }
+    )
 
 
 @tool("List approval actions", reads=True)
@@ -1691,8 +1732,9 @@ def get_operator_agent(agent_id: str) -> str:
 def get_autonomy_ceiling() -> str:
     """Read the autonomy ceiling, as GET /api/v1/autonomy does: the stored act
     flags, who stopped it, the actions that stop is holding, the effective
-    read/write/propose state, environment_locked, four_eyes and each workflow's
-    own tier. Read only."""
+    read/write/propose state, environment_locked, four_eyes, hold_crown_jewels,
+    the declared crown_jewels count, released_per_hour and each workflow's own tier. Read only.
+    """
     try:
         return jdump(ceiling_read())
     except Exception as e:

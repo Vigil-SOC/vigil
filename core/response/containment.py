@@ -1,15 +1,19 @@
-"""An approved isolation or account disable, carried out on the vendor's own ID (#5059).
+"""An approved containment, carried out on the vendor's own ID (#5059, #5234).
 
-A pending ``isolate_host`` or ``disable_user`` row is resolved when it is read:
-each connected server in ``CONTAINMENT_TOOLS`` looks the target up, and what it
-finds is stored on ``parameters.containment`` as candidates. Approving names one;
+A pending row of a kind in ``CONTAINMENT_TOOLS`` is resolved when it is read:
+each connected server looks the target up, and what it finds is stored on
+``parameters.containment`` as candidates. A keyless entry (the target is the
+vendor's key: an address, a domain, an email) needs no lookup, only a target it
+takes. The row's ``reversibility`` becomes the strictest stored class of the
+candidates' acts. Approving names one;
 its tool and arguments become ``parameters.tool``/``args`` and the call runs at
 once through ``_run``, as the approver. The row records what the vendor answered
 in ``execution_result.state``; a ``requested`` state is read again on read.
 
 The way back (#5060): Release or Enable on an executed one inserts a row linked
 by ``parameters.undoes``, approved by the person, carrying the table's undo tool
-on the same vendor ID. It runs through ``carry_out`` like any approval; once the
+on the same vendor ID, or on a field of the act's answer (a Cloudflare rule id).
+A carrier with no undo (an Access revoke) has no way back. It runs through ``carry_out`` like any approval; once the
 vendor reports it, the original records ``released`` or ``enabled`` too.
 """
 
@@ -29,11 +33,13 @@ from core.response.approval_service import (
     PendingAction,
     runs_here,
     screen_actions,
+    stored_reversibility,
 )
-from core.response.ceiling import STOPPED
+from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, STOPPED, tool_classes
 from core.response.proposal_targets import (
     CONTAINMENT_TOOLS,
     DONE_STATE,
+    UNDO_VERBS,
     UNDONE_LOOKUP,
     UNDONE_STATE,
 )
@@ -56,6 +62,11 @@ _last_read: Dict[str, float] = {}
 _DIAL_SECONDS = 60.0
 _DIAL_TIMEOUT_S = 10.0
 _dialled: Dict[str, float] = {}
+# Who approves and runs a row the ceiling released: the trail names it, not a person.
+CEILING_APPROVER = "autonomy ceiling"
+# The ceiling's hourly cap counts its releases over this window (#5274).
+CAP_WINDOW = timedelta(minutes=60)
+AUTONOMY_SCREEN = "/settings?section=autoinvestigate"
 
 
 class Unapprovable(ValueError):
@@ -181,12 +192,44 @@ async def _call(
 
 
 def _offered(kind: str, registry) -> List[Dict[str, Any]]:
+    """Entries whose tools are connected: a keyless one needs only its act."""
     names = set(registry.get_tool_names())
     return [
         e
         for e in CONTAINMENT_TOOLS.get(kind, ())
-        if _flat(e, "lookup") in names and _flat(e, "act") in names
+        if (not e["lookup"] or _flat(e, "lookup") in names) and _flat(e, "act") in names
     ]
+
+
+def _candidate(
+    entry: Dict[str, Any], action: PendingAction, vendor_id: Any, name: Any, state
+) -> Dict[str, Any]:
+    return {
+        "id": f"{entry['vendor']}:{vendor_id}",
+        "vendor": entry["vendor"],
+        "carrier": entry.get("carrier"),
+        "tool": _flat(entry, "act"),
+        "args": {entry["id_arg"]: vendor_id, entry["note_arg"]: _note(action)},
+        "vendor_id": vendor_id,
+        "name": name,
+        "state": state,
+        # Whether Vigil can undo the act: the carrier has an undo (#5234).
+        "undoable": bool(entry.get("undo")),
+    }
+
+
+def _reversibility(candidates: List[Dict[str, Any]]) -> Optional[str]:
+    """The strictest stored class of the candidates' acts; unclassified counts
+    as irreversible. None when nothing resolved."""
+    tools = {c["tool"] for c in candidates}
+    if not tools:
+        return None
+    classes = tool_classes(tools)
+    return (
+        IRREVERSIBLE
+        if any(stored_reversibility(classes.get(t)) == IRREVERSIBLE for t in tools)
+        else REVERSIBLE
+    )
 
 
 def _due(action: PendingAction, offered: List[Dict[str, Any]]) -> bool:
@@ -235,7 +278,18 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
         return action
     candidates: List[Dict[str, Any]] = []
     problems: List[str] = []
+    refusals: List[str] = []
     for entry in offered:
+        if not entry["lookup"]:
+            # The target is the vendor's key: one candidate, if the act takes it.
+            refusal = entry.get("takes") and entry["takes"](action.target)
+            if refusal:
+                refusals.append(refusal)
+            else:
+                candidates.append(
+                    _candidate(entry, action, action.target, action.target, None)
+                )
+            continue
         lookup = _flat(entry, "lookup")
         answer, error = await _call(
             registry, lookup, entry["lookup_args"](action.target)
@@ -251,27 +305,28 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
             if not isinstance(vendor_id, (str, int)):
                 continue
             candidates.append(
-                {
-                    "id": f"{entry['vendor']}:{vendor_id}",
-                    "vendor": entry["vendor"],
-                    "tool": _flat(entry, "act"),
-                    "args": {
-                        entry["id_arg"]: vendor_id,
-                        entry["note_arg"]: _note(action),
-                    },
-                    "vendor_id": vendor_id,
-                    "name": record.get(entry["name"]) or action.target,
-                    "state": entry["state"](record),
-                }
+                _candidate(
+                    entry,
+                    action,
+                    vendor_id,
+                    record.get(entry["name"]) or action.target,
+                    entry["state"](record),
+                )
             )
     missing = None
     if not offered:
-        tools = [_flat(e, "lookup") for e in CONTAINMENT_TOOLS[action.action_type]]
-        missing = f"No connected server offers {' or '.join(tools)}"
-    elif not candidates:
-        found_nothing = " or ".join(_flat(e, "lookup") for e in offered)
+        tools = [
+            _flat(e, "lookup" if e["lookup"] else "act")
+            for e in CONTAINMENT_TOOLS[action.action_type]
+        ]
         missing = (
-            "; ".join(problems) or f"{found_nothing} found no match for {action.target}"
+            "No connected integration can carry this: none offers "
+            f"{' or '.join(tools)}"
+        )
+    elif not candidates:
+        found_nothing = " or ".join(_flat(e, "lookup") for e in offered if e["lookup"])
+        missing = "; ".join(refusals + problems) or (
+            f"{found_nothing} found no match for {action.target}"
         )
     stored = {
         "candidates": candidates,
@@ -279,11 +334,13 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
         "missing": missing,
         "resolved_at": utcnow().isoformat(),
     }
+    reversibility = await asyncio.to_thread(_reversibility, candidates)
     updated = await asyncio.to_thread(
         ApprovalService().update_row,
         action.action_id,
         ActionStatus.PENDING.value,
         {"containment": stored},
+        reversibility=reversibility,
     )
     return updated or action
 
@@ -339,7 +396,7 @@ async def carry_out(action: PendingAction, claims, registry) -> PendingAction:
         return action
     service = ApprovalService()
     claimed = await asyncio.to_thread(
-        service.claim_run, action.action_id, claims.username
+        service.claim_run, action.action_id, claims.username or CEILING_APPROVER
     )
     if claimed is None:
         return action
@@ -374,12 +431,9 @@ async def _carry_out(
         answer, error = await _call(
             registry, tool, args, action.action_id, _ACT_TIMEOUT_MS
         )
-    base = {
-        "tool": tool,
-        "vendor": vendor,
-        "vendor_id": vendor_id,
-        "run_by": claims.username,
-    }
+    # A run no person started acts under the ceiling, and the trail says so.
+    by = claims.username or CEILING_APPROVER
+    base = {"tool": tool, "vendor": vendor, "vendor_id": vendor_id, "run_by": by}
     if error == STOPPED:
         # Stopped after the approval: held until a person releases it.
         held = await asyncio.to_thread(service.unclaim_run, action.action_id, True)
@@ -407,7 +461,7 @@ async def _carry_out(
             )
     if updated is None or updated.status not in ("executed", "failed"):
         return updated or action
-    record_execution(updated, claims.username)
+    record_execution(updated, by)
     await _mark_undone(updated)
     return await read_state(updated, registry)
 
@@ -440,7 +494,8 @@ async def read_state(action: PendingAction, registry) -> PendingAction:
     if action.status != ActionStatus.EXECUTED.value or result.get("state") != REQUESTED:
         return action
     entry = _entry(action.action_type, result.get("vendor"))
-    if entry is None:
+    # A keyless act with no state read has nothing to read again: its answer is final.
+    if entry is None or not (entry["state_read"] or entry["lookup"]):
         return action
     now = time.monotonic()
     if now - _last_read.get(action.action_id, 0.0) < _REREAD_SECONDS:
@@ -562,15 +617,25 @@ def _lift(original: PendingAction, offered: set) -> Any:
     entry = _entry(original.action_type, vendor)
     if entry is None or vendor_id in (None, ""):
         return f"{original.action_id} records no vendor ID to undo"
+    if not entry.get("undo"):
+        return f"{entry.get('carrier') or vendor} has no undo: Vigil cannot undo this"
     tool = _flat(entry, "undo")
     if tool not in offered:
         return f"No connected server offers {tool}"
-    verb = "Release" if original.action_type == "isolate_host" else "Enable"
-    args = {
-        entry["id_arg"]: vendor_id,
-        entry["note_arg"]: f"Vigil: {verb} {original.target}, undoing "
-        f"{original.action_id}"[:500],
-    }
+    verb = UNDO_VERBS[original.action_type]
+    if entry.get("undo_from"):
+        # The undo acts on what the act returned (Cloudflare's rule id).
+        field = entry["undo_from"]
+        key = (result.get("answer") or {}).get(field)
+        if key in (None, ""):
+            return f"{original.action_id} records no {field} to undo"
+        args = {field: key}
+    else:
+        args = {
+            entry["id_arg"]: vendor_id,
+            entry["note_arg"]: f"Vigil: {verb} {original.target}, undoing "
+            f"{original.action_id}"[:500],
+        }
     stored = (original.parameters or {}).get("containment") or {}
     name = next(
         (
@@ -587,6 +652,7 @@ def _lift(original: PendingAction, offered: set) -> Any:
         "args": args,
         "vendor_id": vendor_id,
         "name": name,
+        "carrier": entry.get("carrier"),
         "state": DONE_STATE[original.action_type],
     }
     return f"{verb} {name}", {
@@ -596,9 +662,12 @@ def _lift(original: PendingAction, offered: set) -> Any:
     }
 
 
-async def undo(action_id: str, claims, registry) -> PendingAction:
-    """Release or enable what ``action_id`` contained, as ``claims``' person: the
-    approved undo row, run at once (held when stopped). Raises ``NotUndoable``."""
+async def undo(
+    action_id: str, claims, registry, reason: Optional[str] = None
+) -> PendingAction:
+    """Release, enable or unblock what ``action_id`` contained, as ``claims``' person: the
+    approved undo row, run at once (held when stopped), with their ``reason``.
+    Raises ``NotUndoable``."""
     registry = await live_registry(registry)
     offered = set(registry.get_tool_names())
     person = getattr(claims, "person_id", None)
@@ -608,7 +677,231 @@ async def undo(action_id: str, claims, registry) -> PendingAction:
         lambda original: _lift(original, offered),
         claims.username,
         person,
+        reason,
     )
     if row.held:
         return row
     return await carry_out(row, claims, registry)
+
+
+# ---- Under the autonomy ceiling (#5235) ------------------------------------
+
+
+def unattended(claims) -> Optional[Any]:
+    """The run's own claims with no person on them, when ``claims`` are a run's
+    that no person started; None otherwise (a chat turn, a person's run, none)."""
+    from core.auth.tool_principal import Claims
+
+    if claims is None or not claims.run_id:
+        return None
+    if claims.username or claims.person_id or claims.origin == "person":
+        return None
+    return Claims(
+        username=None,
+        person_id=None,
+        agent_id=claims.agent_id,
+        run_id=claims.run_id,
+        origin=claims.origin,
+    )
+
+
+async def release_under_ceiling(
+    action: PendingAction, claims, registry=None
+) -> PendingAction:
+    """Carry out a containment newly proposed by a run no person started, when
+    its row resolves to one candidate, four-eyes is off and the ceiling lets that
+    run take the act. Otherwise, or on any failure, the row stays pending."""
+    if (
+        claims is None
+        or claims.username
+        or action.status != ActionStatus.PENDING.value
+        or action.action_type not in CONTAINMENT_TYPES
+    ):
+        return action
+    try:
+        return await _release(action, claims, registry)
+    except Exception:  # noqa: BLE001 — the proposal stands for a person
+        logger.exception("%s not released under the ceiling", action.action_id)
+        return action
+
+
+async def _release(action: PendingAction, claims, registry) -> PendingAction:
+    from core.auth.principals import SYSTEM_PRINCIPAL_ID
+    from core.auth.tool_principal import bound_claims
+    from core.response.ceiling import read_ceiling, unattended_refusal
+    from core.response.reversals import PersonHold
+
+    registry = await live_registry(registry)
+    action = await resolve(action, registry)
+    candidates = ((action.parameters or {}).get("containment") or {}).get(
+        "candidates"
+    ) or []
+    ceiling = await asyncio.to_thread(read_ceiling)
+    why = None
+    if len(candidates) != 1:
+        why = f"{len(candidates)} candidates"
+    elif ceiling.four_eyes:
+        why = "four-eyes is on"
+    if why:
+        logger.info("%s waits for a person: %s", action.action_id, why)
+        return action
+    call = choose(action, None)
+    # The vendor's ID alone names no crown jewel: the target and name go too.
+    args = {
+        **candidates[0]["args"],
+        "target": action.target,
+        "name": candidates[0].get("name"),
+    }
+    with bound_claims(claims):
+        # The rule _run applies to the act, asked first so a refused row stays pending.
+        why = await asyncio.to_thread(
+            unattended_refusal, call[0], writes=True, run_id=claims.run_id, args=args
+        )
+        if why:
+            logger.info("%s waits for a person: %s", action.action_id, why)
+            if isinstance(why, PersonHold):
+                await asyncio.to_thread(_note_held, action, why, claims.run_id)
+            return action
+        # Last, so the case names the cap only when nothing else held the act.
+        released = await asyncio.to_thread(released_last_hour)
+        if released >= ceiling.released_per_hour:
+            logger.info(
+                "%s waits for a person: hourly cap: %d of %d released",
+                action.action_id,
+                released,
+                ceiling.released_per_hour,
+            )
+            await asyncio.to_thread(
+                _note_capped, action, released, ceiling.released_per_hour
+            )
+            return action
+        approved = await asyncio.to_thread(
+            ApprovalService().approve_action,
+            action.action_id,
+            CEILING_APPROVER,
+            SYSTEM_PRINCIPAL_ID,
+            call,
+        )
+    if approved is None:
+        return action
+    await asyncio.to_thread(_note_released, approved, claims.run_id)
+    return await carry_out(approved, claims, registry)
+
+
+def _note_held(action: PendingAction, why: str, run_id: str) -> None:
+    """Say on the case which person's decision keeps the row pending (#5273).
+    Never raises: the row waits for a person either way."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_held",
+                f"{action.title} waits for a person: {why}",
+                {"action_id": action.action_id, "run_id": run_id, "held_by": why},
+            )
+    except Exception:  # noqa: BLE001 — the row waits either way
+        logger.exception("hold of %s not noted on its case", action.action_id)
+
+
+def _note_released(action: PendingAction, run_id: str) -> None:
+    """Never raises: the row is approved, and carry_out must still run it."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_approved",
+                f"{action.title} released by the autonomy ceiling for run {run_id},"
+                " which no person started",
+                {
+                    "action_id": action.action_id,
+                    "decided_by": CEILING_APPROVER,
+                    "run_id": run_id,
+                    "status": action.status,
+                },
+            )
+    except Exception:  # noqa: BLE001 — the act runs either way
+        logger.exception("release of %s not noted on its case", action.action_id)
+
+
+def released_last_hour() -> int:
+    """Rows the ceiling approved in the last CAP_WINDOW, whatever happened to them since."""
+    from sqlalchemy import func, select
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import ApprovalAction
+
+    with get_db_manager().session_scope() as session:
+        return (
+            session.scalar(
+                select(func.count())
+                .select_from(ApprovalAction)
+                .where(
+                    ApprovalAction.approved_by == CEILING_APPROVER,
+                    ApprovalAction.approved_at >= utcnow() - CAP_WINDOW,
+                )
+            )
+            or 0
+        )
+
+
+def _note_capped(action: PendingAction, released: int, cap: int) -> None:
+    """Never raises: the row waits for a person either way."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_held",
+                f"{action.title} waits for a person: "
+                + (
+                    f"the autonomy ceiling released {released} in the last hour,"
+                    f" at its hourly cap of {cap}"
+                    if cap
+                    else "the autonomy ceiling's hourly cap is 0, so it releases none"
+                ),
+                {
+                    "action_id": action.action_id,
+                    "released": released,
+                    "released_per_hour": cap,
+                    "status": action.status,
+                },
+            )
+    except Exception:  # noqa: BLE001 — the row stays pending either way
+        logger.exception("hold of %s not noted on its case", action.action_id)
+
+
+def cap_reached(user) -> list[dict[str, str]]:
+    """The bell's warning while the hourly cap is reached, for whoever may raise it.
+    A cap of 0 is a choice, not a warning."""
+    from core.auth.permissions import missing_permission
+    from core.response.ceiling import read_ceiling
+
+    if missing_permission(user.user_id, "ai_autonomy.write") is not None:
+        return []
+    cap = read_ceiling().released_per_hour
+    released = released_last_hour() if cap else 0
+    if not cap or released < cap:
+        return []
+    return [
+        {
+            "message": f"The autonomy ceiling has released {released} "
+            f"action{'' if released == 1 else 's'} in the last hour, at its cap of "
+            f"{cap}. New proposals from runs no person "
+            "started wait for a person until the count falls.",
+            "link": AUTONOMY_SCREEN,
+        }
+    ]
+
+
+def register() -> None:
+    from core.platform import notices
+
+    notices.CONDITIONS.append(cap_reached)

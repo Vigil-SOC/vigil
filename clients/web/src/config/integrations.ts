@@ -1038,12 +1038,13 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     name: 'Palo Alto Networks',
     logo: paloaltoLogo,
     category: 'Network Security',
-    description: 'Integrate with Palo Alto Networks firewalls and Panorama for policy management and threat prevention.',
+    description:
+      "One PAN-OS firewall, vsys1: reads threat logs and blocks or unblocks single IPv4/IPv6 addresses by registering them under the User-ID tag 'vigil-block' (no commit, no expiry). One-time setup on the firewall: a dynamic address group filtered on 'vigil-block', used by an enabled deny or drop security rule, and an API key with User-ID and configuration read rights. Test fails until that group and rule exist.",
     functionality_type: 'Network Protection',
     fields: [
       {
         name: 'hostname',
-        label: 'Firewall/Panorama Hostname',
+        label: 'Firewall Hostname',
         type: 'text',
         required: true,
         placeholder: 'firewall.example.com',

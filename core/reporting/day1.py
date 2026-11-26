@@ -328,7 +328,8 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
 def _site(
     sources: Optional[list], health_failed: bool, evidence: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """The declared site against what Wazuh lists. A failure is not checked."""
+    """The declared site against what Wazuh, CrowdStrike and Defender list.
+    A failure is not checked."""
     try:
         checks, evidence[SITE.id] = produce_site(sources, health_failed)
         return checks

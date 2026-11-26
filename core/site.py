@@ -468,8 +468,36 @@ def resolve_owner(
 
 
 def site_view(
-    row: Optional[Dict[str, Any]] = None, *, report: bool = True
+    row: Optional[Dict[str, Any]] = None,
+    *,
+    report: bool = True,
+    proposal: bool = True,
 ) -> Dict[str, Any]:
+    """The applied site, the open proposal and the site questions (#5229).
+
+    The proposal and the questions are ``core/site_proposal.py``'s; a failure
+    there leaves them out and the site still reads. ``proposal`` False skips
+    both, for a caller that wants only the items and their owners.
+    """
+    row = applied_site(fresh=True) if row is None else row
+    view = _site_items_view(row, report=report)
+    if not proposal:
+        return view
+    from core import site_proposal
+
+    extra: Dict[str, Any] = {"proposal": None, "site_questions": []}
+    for field, read in (
+        ("proposal", lambda: site_proposal.proposal_view(row)),
+        ("site_questions", lambda: site_proposal.site_questions(view, row)),
+    ):
+        try:
+            extra[field] = read()
+        except Exception as exc:  # noqa: BLE001 - the site still reads
+            logger.error("site %s not read: %s", field, type(exc).__name__)
+    return {**view, **extra}
+
+
+def _site_items_view(row: Dict[str, Any], *, report: bool) -> Dict[str, Any]:
     """``GET /api/config/site`` and the /mcp ``get_site_context`` tool.
 
     Owners resolve now, against active teams ignoring case, so a team created
@@ -478,7 +506,6 @@ def site_view(
     latest Day 1 Report's site checks and evidence; both callers already
     require platform.read, the module's permission.
     """
-    row = applied_site(fresh=True) if row is None else row
     latest = None
     if report:
         try:

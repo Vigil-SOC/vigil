@@ -86,6 +86,8 @@ button.aim-model-chip:hover { border-color: var(--ac); color: var(--tx0); }
   gap: 6px;
   min-width: 0;
 }
+/* the model-change drop list, the unsaved-candidate note and the replay stack apart */
+.aim-replay + .aim-replay { margin-top: 12px; }
 .aim-replay-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .aim-replay-line {
   margin: 0;

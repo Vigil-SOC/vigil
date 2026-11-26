@@ -13,8 +13,11 @@ import { ConfirmDialog, EmptyState, Field, Popup, Select, SettingsCard } from '.
 import { LevelBadge } from '../../shared/LevelBadge'
 import { NotMeasured } from '../../shared/NotMeasured'
 import {
+  aiConfigApi,
+  autonomyApi,
   llmProviderApi,
   type AIModelInfo,
+  type ModelChangePreview,
   type ComponentAssignment,
   type LLMProvider,
   type StatementView,
@@ -32,7 +35,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
 import { useBifrostProviders } from './useBifrost'
 import { ROUTABILITY_CHANGED } from './routabilityChanged'
-import { useModelAssignment } from './useSettings'
+import { useInvestigateWorkflows, useModelAssignment } from './useSettings'
+import { dropWhy } from '../../shared/autonomy'
 import { COMPONENT_LABELS, CHAT_DEFAULT_KEY, FALLBACK_KEY } from '../../config/aiComponents'
 import { InvestigationReplay } from './InvestigationReplay'
 import { PICK_AGENT_MODEL } from './modelPrompt'
@@ -487,6 +491,36 @@ const rowFor = (c: string, a: ComponentAssignment | undefined): RowState =>
     ? { inherit: false, providerId: a.provider_id, modelId: a.model_id, effort: savedEffort(a) }
     : { inherit: c !== CHAT_DEFAULT_KEY, providerId: '', modelId: '', effort: '' }
 
+function errorDetail(e: unknown): string {
+  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  return typeof detail === 'string' && detail ? detail : (e as { message?: string })?.message || 'no reason given'
+}
+
+/** The Act workflows a model change would drop to Assist, each with the judgement's reason. */
+function DropList({ preview, label }: { preview: ModelChangePreview; label: string }) {
+  const { workflows } = useInvestigateWorkflows()
+  const name = (id: string) => workflows?.find((w) => w.id === id)?.name ?? id
+  const dropping = preview.workflows.filter((w) => w.outcome === 'drop')
+  return (
+    <>
+      <p className="aim-replay-line">
+        Saving {label} on {preview.model_id} moves investigation from {preview.investigation_model_before ?? 'an unresolved model'} to{' '}
+        {preview.investigation_model_after ?? 'an unresolved model'}. {dropping.length === 1 ? 'This workflow' : `These ${dropping.length} workflows`} would
+        drop from Act to Assist:
+      </p>
+      <ul className="aim-replay-cases">
+        {dropping.map((w) => (
+          <li key={w.workflow_id}>
+            <span className="aim-replay-id">{name(w.workflow_id)}</span>
+            {' · '}
+            {dropWhy(w.reason)}
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
 function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignment> } & SectionProps) {
   const { components, assignments, models, phase, error, reload, assign, clearAssign } = ma
   const { notifyUndoable, pending: fusing, settled } = useToast()
@@ -527,18 +561,20 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   const [saving, setSaving] = useState<string[]>([])
   const lock = (component: string, on: boolean) =>
     setSaving((s) => (on ? [...s, component] : s.filter((x) => x !== component)))
-  const persist = async (component: string, next: RowState) => {
+  // Whether it saved; an investigation or Chat save also points the replay row back at the assigned model.
+  const persist = async (component: string, next: RowState): Promise<boolean> => {
+    if (component === 'investigation' || component === CHAT_DEFAULT_KEY) setReplayFor(null)
     try {
       if (next.inherit) {
         if (assignments[component] !== undefined) {
           await clearAssign(component)
           notify('ok', `${component} set to inherit.`)
         }
-        return
+        return true
       }
-      if (!next.providerId || !next.modelId) return
+      if (!next.providerId || !next.modelId) return false
       const a = assignments[component]
-      if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return
+      if (a && a.provider_id === next.providerId && a.model_id === next.modelId && savedEffort(a) === next.effort) return true
       lock(component, true) // the fallback PUT would carry this row's old model
       try {
         // Other settings keys are carried over; the PUT replaces the whole object.
@@ -553,10 +589,78 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
         lock(component, false)
       }
       notify('ok', `${component} saved.`)
+      return true
     } catch (e) {
       notify('err', (e as { message?: string })?.message || `Failed to save ${component}.`)
       setRows((prev) => ({ ...prev, [component]: rowFor(component, assignments[component]) }))
+      return false
     }
+  }
+
+  // A change that moves the investigation model asks the server's judgement first; one that drops
+  // no Act workflow (or can't be previewed) saves as before, with no extra step.
+  const [drops, setDrops] = useState<{ component: string; next: RowState; preview: ModelChangePreview } | null>(null)
+  // The candidate the replay row runs while it is replayed first, unsaved; null is the assigned model.
+  const [replayFor, setReplayFor] = useState<{ providerId: string; modelId: string } | null>(null)
+  const [replayKey, setReplayKey] = useState(0)
+  const dropsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (drops) dropsRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [drops])
+
+  const save = async (component: string, next: RowState) => {
+    // a newer pick on the same row replaces the list it had open
+    if (drops?.component === component) setDrops(null)
+    const a = assignments[component]
+    // Investigation going back to the default runs on Chat's model: previewed as that assignment.
+    const chat = assignments[CHAT_DEFAULT_KEY]
+    const to =
+      component === 'investigation' && next.inherit
+        ? a && chat && { providerId: chat.provider_id, modelId: chat.model_id }
+        : !next.inherit && next.providerId && next.modelId && { providerId: next.providerId, modelId: next.modelId }
+    const moves =
+      (component === 'investigation' || component === CHAT_DEFAULT_KEY) &&
+      !!to &&
+      (!a || a.provider_id !== to.providerId || a.model_id !== to.modelId)
+    if (!moves || !to) return void (await persist(component, next))
+    let preview: ModelChangePreview
+    lock(component, true)
+    try {
+      preview = (await autonomyApi.previewModelChange(component, to.providerId, to.modelId)).data
+    } catch (e) {
+      // 403 without ai_autonomy.read, 503 when it can't be judged: the save goes ahead, said plainly
+      lock(component, false)
+      if (await persist(component, next)) {
+        notify('info', `The preview of which Act workflows this drops was unavailable (${errorDetail(e)}). The server still judged the change after saving.`)
+      }
+      return
+    }
+    lock(component, false)
+    if (preview.moves && preview.workflows.some((w) => w.outcome === 'drop')) setDrops({ component, next, preview })
+    else await persist(component, next)
+  }
+
+  const dropAnyway = () => {
+    if (drops) persist(drops.component, drops.next)
+    setDrops(null)
+  }
+  const dropCancel = () => {
+    if (drops) setRows((prev) => ({ ...prev, [drops.component]: rowFor(drops.component, assignments[drops.component]) }))
+    setDrops(null)
+  }
+  // Starts a replay of the candidate and leaves the assignment as it is.
+  const replayFirst = async () => {
+    if (!drops) return
+    const { providerId, modelId } = drops.next
+    dropCancel()
+    try {
+      await aiConfigApi.startInvestigationReplay({ provider_id: providerId, model_id: modelId })
+      setReplayFor({ providerId, modelId })
+      notify('ok', `Replaying ${modelId}. The assignment was not changed.`)
+    } catch (e) {
+      notify('err', `The replay of ${modelId} did not start: ${errorDetail(e)}. The assignment was not changed.`)
+    }
+    setReplayKey((k) => k + 1) // the replay row reads the new replay
   }
 
   // Saves on select, no confirm: a fallback only acts once the model is unavailable.
@@ -591,7 +695,7 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
     setRows((prev) => ({ ...prev, [component]: next }))
     // chat_default is every unset component's fallback, so it asks first
     if (component === CHAT_DEFAULT_KEY && changes(component, next)) setPending({ component, next })
-    else persist(component, next)
+    else save(component, next)
   }
 
   const resetting = fusing.includes(RESET_KEY)
@@ -660,16 +764,17 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
   }
 
   const confirm = () => {
-    if (pending) persist(pending.component, pending.next)
+    if (pending) save(pending.component, pending.next)
     setPending(null)
   }
 
   // The model this row is showing: its own, or Chat's while it inherits (including a pending reset).
   const replayOf = ownOf('investigation') ?? assignments[CHAT_DEFAULT_KEY]
   const replayIds =
-    replayOf?.provider_id && replayOf.model_id
+    replayFor ??
+    (replayOf?.provider_id && replayOf.model_id
       ? { providerId: replayOf.provider_id, modelId: replayOf.model_id }
-      : { providerId: '', modelId: '' }
+      : { providerId: '', modelId: '' })
 
   // An inheriting row runs on chat_default's row, so it shows that fallback
   const fallbackOf = (c: string) =>
@@ -810,7 +915,30 @@ function AgentModelTable({ ma, notify }: { ma: ReturnType<typeof useModelAssignm
                     {c === 'investigation' && (
                       <tr className="aim-replay-row">
                         <td colSpan={6}>
-                          <InvestigationReplay providerId={replayIds.providerId} modelId={replayIds.modelId} />
+                          {drops && (
+                            <div className="aim-replay" ref={dropsRef}>
+                              <DropList
+                                preview={drops.preview}
+                                label={COMPONENT_LABELS[drops.component]?.label ?? drops.component}
+                              />
+                              <div className="aim-replay-top">
+                                <button type="button" className="btn primary" onClick={dropAnyway}>Change anyway</button>
+                                <button type="button" className="btn ghost" onClick={() => void replayFirst()}>Replay first</button>
+                                <button type="button" className="btn ghost" onClick={dropCancel}>Cancel</button>
+                              </div>
+                            </div>
+                          )}
+                          {replayFor && (
+                            <div className="aim-replay">
+                              <p className="aim-replay-line">
+                                Replaying {replayFor.modelId}, not saved: the assignment is unchanged.{' '}
+                                <button type="button" className="aim-replay-more" onClick={() => setReplayFor(null)}>
+                                  Back to the assigned model
+                                </button>
+                              </p>
+                            </div>
+                          )}
+                          <InvestigationReplay key={replayKey} providerId={replayIds.providerId} modelId={replayIds.modelId} />
                         </td>
                       </tr>
                     )}

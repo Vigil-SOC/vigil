@@ -8,13 +8,15 @@ import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy import exists, select, text
 
+from core import site_proposal
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
+from core.auth import tool_principal
 from core.auth.current_user import is_machine_request
 from core.auth.permissions import permission_gate
 from core.config import (
@@ -29,6 +31,7 @@ from core.deps import (
     provide_detection_rules,
     provide_integration_bridge,
     provide_mcp_client,
+    provide_mcp_registry,
     provide_process_health,
 )
 from core.detections.detection_rules_service import DetectionRulesService
@@ -62,7 +65,7 @@ from core.secrets import (
     set_secret,
 )
 from core.secrets_manager import get_secrets_manager
-from core.site import site_view
+from core.site import applied_site, site_view
 from core.skills.skill_library import (
     is_bundled,
     load_skills,
@@ -1936,9 +1939,19 @@ class IntentDiffRow(BaseModel):
     line: Optional[int] = None
     revision: Optional[str] = None
     drift: bool = False
+    # For a ``workflows.<id>`` row: "lowered by Vigil" or "narrowed locally".
+    drift_reason: Optional[str] = None
     pending: bool = False
     env_ignored: bool = False
     env_value: Any = None
+
+
+class IntentSkipped(BaseModel):
+    """A declared ``workflows.<id>`` this install could not apply, and why."""
+
+    id: str
+    line: Optional[int] = None
+    reason: str
 
 
 class IntentReportResponse(BaseModel):
@@ -1953,6 +1966,8 @@ class IntentReportResponse(BaseModel):
     state: Optional[str] = None
     reason: Optional[str] = None
     pending: list[str] = Field(default_factory=list)
+    # Declared workflow ids missing here or not investigate-kind; the rest applied.
+    skipped: list[IntentSkipped] = Field(default_factory=list)
     directory: Optional[str] = None
     # The newest revision the daemon read; "unknown" while degraded.
     revision_on_disk: Optional[str] = None
@@ -2021,6 +2036,69 @@ class SiteFile(BaseModel):
     text: str
 
 
+class SiteProposalChange(BaseModel):
+    kind: str
+    item: str
+    # added | changed | removed, against the revision applied now
+    change: str
+
+
+class SiteProposalProvenance(BaseModel):
+    """A cited call on the saving run's ledger, or a person's answer, quoted."""
+
+    # citation | answer
+    source: str
+    change: str
+    run_id: Optional[str] = None
+    at: Optional[str] = None
+    ref: Optional[str] = None
+    tool: Optional[str] = None
+    server: Optional[str] = None
+    arguments: Optional[Any] = None
+    person_id: Optional[str] = None
+    answer: Optional[str] = None
+
+
+class SiteNotEvaluated(BaseModel):
+    """An outside tool the site agent holds that cannot run on this deployment."""
+
+    tool: str
+    reason: str
+    # Where to set its class, for a tool that is not classed read.
+    where: Optional[str] = None
+
+
+class SiteProposalResponse(BaseModel):
+    id: str
+    # open | applied | outdated | discarded
+    status: str
+    saved_at: str
+    saved_by: Dict[str, Optional[str]]
+    base_revision: Optional[str] = None
+    files: list[SiteFile] = Field(default_factory=list)
+    # "<list>/<item>" -> what it rests on
+    provenance: Dict[str, SiteProposalProvenance] = Field(default_factory=dict)
+    questions: list[str] = Field(default_factory=list)
+    refresh: Optional[Dict[str, Any]] = None
+    not_evaluated: list[SiteNotEvaluated] = Field(default_factory=list)
+    discarded: Optional[Dict[str, Any]] = None
+    diff: list[SiteProposalChange] = Field(default_factory=list)
+
+
+class SiteQuestion(BaseModel):
+    """Computed on read: unplaced, unowned or contradicted."""
+
+    question: str
+    # host | ip for an entity; zone | crown_jewel for an unowned item
+    kind: str
+    entity_key: Optional[str] = None
+    investigations: Optional[int] = None
+    latest: Optional[str] = None
+    name: Optional[str] = None
+    file: Optional[str] = None
+    line: Optional[int] = None
+
+
 class SiteContextResponse(BaseModel):
     """The declared site (site/*.md) the daemon applied. Read-only; not /api/v1."""
 
@@ -2040,13 +2118,87 @@ class SiteContextResponse(BaseModel):
     files: list[SiteFile] = Field(default_factory=list)
     # The latest Day 1 Report's site checks and evidence; None before one ran.
     report: Optional[Dict[str, Any]] = None
+    # The open site proposal (#5229), with its status and diff; None when none.
+    proposal: Optional[SiteProposalResponse] = None
+    site_questions: list[SiteQuestion] = Field(default_factory=list)
 
 
 @router.get("/site", response_model=SiteContextResponse, dependencies=_PLATFORM_READ)
 def get_site_context() -> Dict[str, Any]:
     """The applied site/ revision: state, any refusal with file and line, each
-    item with file, line and resolved owner, and the applied files' text."""
+    item with file, line and resolved owner, and the applied files' text; the
+    open proposal and the site questions."""
     return site_view()
+
+
+@router.get(
+    "/site/proposal/archive",
+    dependencies=_PLATFORM_READ,
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+def download_site_proposal() -> Response:
+    """The proposed site/ folder as a .tar.gz, to unpack into the declared directory."""
+    value = site_proposal.read_proposal()
+    if not site_proposal._is_proposal(value):
+        raise HTTPException(status_code=404, detail="There is no site proposal")
+    if value.get("discarded"):
+        raise HTTPException(status_code=409, detail="The site proposal was discarded")
+    return Response(
+        content=site_proposal.archive(value),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{site_proposal.archive_name(value)}"'
+            )
+        },
+    )
+
+
+class SiteProposalDiscardBody(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+@router.post(
+    "/site/proposal/discard",
+    response_model=SiteProposalResponse,
+    dependencies=[permission_gate("ai_chat.use")],
+)
+def discard_site_proposal(
+    body: SiteProposalDiscardBody,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """Discard the open proposal; the reason goes on its audit entry."""
+    if not body.reason.strip():
+        raise HTTPException(status_code=422, detail="A discard needs a reason")
+    try:
+        site_proposal.discard(session, body.reason, current_user.username)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except site_proposal.ProposalRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    session.flush()
+    return site_proposal.proposal_view(applied_site(fresh=True), session=session)
+
+
+@router.post(
+    "/site/proposal/refresh",
+    dependencies=[permission_gate("ai_chat.use")],
+)
+async def refresh_site_proposal(
+    request: Request, current_user: User = Depends(get_current_active_user)
+) -> JSONResponse:
+    """Queue the site agent to draft a refresh now, as this user. 200 when queued;
+    409 with the reason when refused (agent or workflow off, AutoOps off, a
+    refresh unfinished, or another start in progress)."""
+    from services.api.routers.orchestrator import _person
+
+    person = _person(current_user, tool_principal.sid_of(request))
+    outcome = await site_proposal.start_refresh(person, provide_mcp_registry(request))
+    code = {site_proposal.REFUSED: 409, site_proposal.NOT_QUEUED: 500}.get(
+        outcome["status"], 200
+    )
+    return JSONResponse(outcome, status_code=code)
 
 
 class IntentAcceptBody(BaseModel):

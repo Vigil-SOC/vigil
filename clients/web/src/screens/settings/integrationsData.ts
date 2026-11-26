@@ -105,7 +105,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   misp: 'Connect to a MISP instance for threat sharing, IOC lookups, and collaborative threat intelligence.',
   'aws-security': 'AWS Security assessment covering GuardDuty, Security Hub, Inspector, and IAM Access Analyzer findings.',
   'gcp-scc': 'Google Cloud Security Command Center for cloud asset inventory, vulnerability findings, and threat detection.',
-  'palo-alto': 'Query Palo Alto Networks firewalls for threat logs, traffic analysis, and IP/domain blocking.',
+  'palo-alto': "Read threat logs from one Palo Alto firewall (vsys1) and block single IPs via the 'vigil-block' tag.",
   okta: 'Query Okta for user authentication events, suspicious sign-ins, and identity-based threat investigation.',
   'azure-ad': 'Query Microsoft Entra ID (Azure AD) for sign-in logs, risky users, and directory lookups.',
   jira: 'Create and manage Jira issues for incident tracking, remediation tasks, and SOC workflow integration.',

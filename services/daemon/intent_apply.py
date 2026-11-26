@@ -8,9 +8,11 @@ their content hash changes it applies the revision:
 - only keys whose declared value changed since the last applied revision
   are considered, each labeled against the current effective value;
   ``tighten``/``same`` are written, ``loosen`` is recorded as pending;
-- ``act.*`` go to ``autonomy.ceiling``, ``investigate.*`` to
+- ``act.*`` and ``workflows.<id>`` go to ``autonomy.ceiling``, ``investigate.*`` to
   ``orchestrator.settings``, the rest to the ``intent.applied`` row, which
-  also records revision, per-key file/line, pending keys and state.
+  also records revision, per-key file/line, pending keys and state;
+- a ``workflows.<id>`` this install lacks, or that is not investigate-kind,
+  is listed in ``skipped`` and kept out of ``keys``; the rest applies.
 
 A poll with an unchanged hash writes nothing, so a local narrowing survives
 until a commit changes that key. A missing directory keeps the last applied
@@ -27,6 +29,7 @@ import hashlib
 import logging
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Set
 
 from core.daemon_config import DaemonConfig
@@ -36,16 +39,23 @@ from core.intent import (
     IntentRejected,
     declared_dir,
     effective_values,
+    is_workflow_key,
     label,
     parse_intent_strict,
     read_revision,
+    workflow_label,
 )
 from core.intent_report import effective_daemon_config
 from core.response.ceiling import (
+    ACT,
+    ASSIST,
     Ceiling,
     CeilingRefusal,
     _locked_update,
     environment_locks_act,
+    investigation_model,
+    workflow_entry,
+    workflow_evidence,
 )
 from core.response.config import INTENT_APPLIED_KEY, applied_intent
 from core.site import (
@@ -58,6 +68,8 @@ from core.site import (
 )
 from core.storage.config_service import get_config_service
 from core.time import utcnow
+from core.workflows.custom_workflow_service import CustomWorkflowService
+from core.workflows.workflows_service import INVESTIGATE_RUN_KIND, WorkflowsService
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +80,10 @@ _CEILING_ATTR = {
     "act.reversible": "act_reversible",
     "act.irreversible": "act_irreversible",
     "act.four_eyes": "four_eyes",
+    "act.hold_crown_jewels": "hold_crown_jewels",
 }
+# On is tighter for these; the environment lock does not force them off.
+_UNLOCKED = ("four_eyes", "hold_crown_jewels")
 
 
 class StoreWriteFailed(Exception):
@@ -112,7 +127,7 @@ def _apply_act(wants: Dict[str, Any], revision: str, pending: Set[str]) -> None:
         for key, want in wants.items():
             attr = _CEILING_ATTR[key]
             have = getattr(current, attr)
-            if locked and attr != "four_eyes":
+            if locked and attr not in _UNLOCKED:
                 have = False  # the effective flag; the lock still wins
             if label(FIELDS_BY_KEY[key].rule, want, have) == "loosen":
                 pending.add(key)
@@ -126,6 +141,54 @@ def _apply_act(wants: Dict[str, Any], revision: str, pending: Set[str]) -> None:
         )
 
     # Only ever lowers autonomy, so it lands during a restore's write pause.
+    _locked_update(change, ACTOR, gated=False)
+
+
+def _skip_reason(
+    service: WorkflowsService, custom: CustomWorkflowService, wid: str
+) -> Optional[str]:
+    """Why ``workflows.<wid>`` cannot apply here, or None. A store error raises."""
+    workflow = service.get_workflow(wid)
+    if workflow is None:
+        custom.get(wid)  # get_workflow swallows a database error; this raises it
+        return "no workflow by that id on this install"
+    if workflow.run_kind != INVESTIGATE_RUN_KIND:
+        return f"not an investigate workflow (run kind {workflow.run_kind})"
+    return None
+
+
+def _apply_workflows(wants: Dict[str, Any], revision: str, pending: Set[str]) -> None:
+    """Write the workflow entries that do not loosen, decided under the row lock."""
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        workflows = dict(current.workflows)
+        done: List[str] = []
+        for key, want in wants.items():
+            wid = key.split(".", 1)[1]
+            have = current.workflows.get(wid)
+            verdict = workflow_label(want, have)
+            if verdict == "loosen":
+                pending.add(key)
+                continue
+            pending.discard(key)
+            if verdict == "same":
+                continue
+            if want["tier"] == ASSIST:
+                workflows[wid] = workflow_entry(ASSIST, None, None, ACTOR)
+                done.append(f"{wid}=assist")
+            else:  # a higher floor: the record and model it was earned on stay
+                workflows[wid] = {
+                    **have,
+                    "floor": want["floor"],
+                    "by": ACTOR,
+                    "at": utcnow().isoformat(),
+                }
+                done.append(f"{wid}=act floor {want['floor']}")
+        return (
+            replace(current, workflows=MappingProxyType(workflows)),
+            f"INTENT.md revision {revision}: workflows {', '.join(done) or 'no change'}",
+        )
+
     _locked_update(change, ACTOR, gated=False)
 
 
@@ -231,12 +294,33 @@ def apply_once(directory: Path) -> None:
         if key not in previous or previous[key].get("declared") != value
     }
 
+    # Resolved before anything is written: a store error fails the poll whole.
+    skipped: List[Dict[str, Any]] = []
+    flows = [k for k in changed if is_workflow_key(k)]
+    if flows:
+        custom = CustomWorkflowService()
+        service = WorkflowsService(custom_workflows=custom)
+        for key in flows:
+            why = _skip_reason(service, custom, key.split(".", 1)[1])
+            if why:
+                skipped.append(
+                    {"id": key.split(".", 1)[1], "line": lines[key], "reason": why}
+                )
+    gone = {f"workflows.{s['id']}" for s in skipped}
+    pending -= gone
+
     applied_intent(fresh=True)
     effective = _effective()
     act: Dict[str, Any] = {}
     investigate: Dict[str, Any] = {}
+    flow_wants: Dict[str, Any] = {}
     for key, want in changed.items():
         group = key.split(".", 1)[0]
+        if key in gone:
+            continue
+        if is_workflow_key(key):
+            flow_wants[key] = want  # decided under the ceiling's row lock
+            continue
         if group == "act":
             act[key] = want  # decided under the ceiling's row lock
             continue
@@ -253,6 +337,8 @@ def apply_once(directory: Path) -> None:
         _apply_act(act, revision, pending)
     if investigate:
         _apply_investigate(investigate, revision, effective, pending)
+    if flow_wants:
+        _apply_workflows(flow_wants, revision, pending)
 
     keys = {
         key: {
@@ -263,11 +349,16 @@ def apply_once(directory: Path) -> None:
             "revision": revision if key in changed else previous[key].get("revision"),
         }
         for key, value in declared.items()
+        if key not in gone
     }
     # A key removed from the file is unmanaged; its value stays where it is.
     reason = f"revision {revision} applied"
     if pending:
         reason += f", {len(pending)} key(s) pending: {', '.join(sorted(pending))}"
+    if skipped:
+        reason += "; skipped " + ", ".join(
+            f"workflows.{s['id']} (line {s['line']}: {s['reason']})" for s in skipped
+        )
     logger.info("intent: %s (%d key(s) changed)", reason, len(changed))
     _write_row(
         {
@@ -280,6 +371,7 @@ def apply_once(directory: Path) -> None:
             "keys": keys,
             "values": values,
             "pending": sorted(pending),
+            "skipped": skipped,
             "rejected": None,
         },
         f"INTENT.md {reason}",
@@ -332,6 +424,32 @@ def accept_pending(
 
         _locked_update(change, user_id)
 
+    if "workflows" in groups:
+        flows = groups["workflows"]
+        # As a console raise stores it: the model in force and its record.
+        model = investigation_model()
+        entries = {}
+        for key, want in flows.items():
+            wid = key.split(".", 1)[1]
+            entries[wid] = (
+                workflow_entry(
+                    ACT, want["floor"], workflow_evidence(wid, model), user_id, model
+                )
+                if want.get("tier") == ACT
+                else workflow_entry(ASSIST, None, None, user_id)
+            )
+
+        def change_flows(current: Ceiling) -> tuple[Ceiling, str]:
+            if current.stopped:
+                raise CeilingRefusal(409, "Stopped: resume first")
+            workflows = {**current.workflows, **entries}
+            return (
+                replace(current, workflows=MappingProxyType(workflows)),
+                f"{reason}: {summary(flows)}",
+            )
+
+        _locked_update(change_flows, user_id)
+
     if "investigate" in groups:
         service = get_config_service(user_id)
         current = service.read_system_config(ORCHESTRATOR_KEY) or _seed_orchestrator(
@@ -350,7 +468,7 @@ def accept_pending(
     others = {
         k: v
         for k, v in declared.items()
-        if k.split(".", 1)[0] not in ("act", "investigate")
+        if k.split(".", 1)[0] not in ("act", "investigate", "workflows")
     }
     # Re-read just before writing, so a poll since the first read is kept.
     row = get_config_service(ACTOR).read_system_config(INTENT_APPLIED_KEY) or row

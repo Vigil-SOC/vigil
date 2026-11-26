@@ -26,7 +26,9 @@ from core.intent import (
     effective_values,
     format_rows,
     intent_file,
+    is_workflow_key,
     read_intent,
+    workflow_label,
 )
 from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
 from core.response.config import applied_intent
@@ -66,10 +68,12 @@ def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
         else origin("ceiling.act_irreversible")
     )
     sources["ceiling.four_eyes"] = origin("ceiling.four_eyes")
+    sources["ceiling.hold_crown_jewels"] = origin("ceiling.hold_crown_jewels")
     ceiling = CeilingConfig(
         act_reversible=False if locked else stored.act_reversible,
         act_irreversible=False if locked else stored.act_irreversible,
         four_eyes=stored.four_eyes,
+        hold_crown_jewels=stored.hold_crown_jewels,
     )
     return dataclasses.replace(config, ceiling=ceiling, sources=sources)
 
@@ -153,14 +157,64 @@ def _env_ignored(key: str, declared: Any) -> Optional[Any]:
 
     The act flags have no env value, only locks, which count as drift.
     """
-    if key.startswith("act."):
+    setting = FIELDS_BY_KEY[key].setting
+    if key.startswith("act.") or setting is None:
         return None
     settings = get_settings()
-    setting = FIELDS_BY_KEY[key].setting
     if setting not in settings.model_fields_set:
         return None
     env = getattr(settings, setting)
     return env if _normalize(env) != _normalize(declared) else None
+
+
+def _workflow_row(
+    key: str,
+    meta: Dict[str, Any],
+    loaded: Optional[tuple],
+    listed: set,
+) -> Dict[str, Any]:
+    """One managed ``workflows.<id>``: the declared entry beside the stored one."""
+    declared = meta.get("declared") or {}
+    stored = loaded[0].workflows.get(key.split(".", 1)[1]) if loaded else None
+    if loaded is None:  # ceiling unread: say nothing about it
+        effective: Any = None
+        verdict = "unknown"
+    elif stored is None:
+        effective, verdict = "fleet", workflow_label(declared, None)
+    else:
+        effective = {"tier": stored.get("tier")}
+        if stored.get("tier") == "act":
+            effective["floor"] = stored.get("floor")
+        verdict = workflow_label(declared, stored)
+    # Unread ceiling: a listed key stays pending, so the accept still offers it.
+    pending = key in listed and verdict != "same"
+    # Not as declared and not pending: Vigil's own lowering or a local change
+    # (a narrowing, or following the fleet, which the guard let through).
+    drift = verdict not in ("same", "unknown") and not pending
+    return {
+        "key": key,
+        "declared": declared,
+        "effective": effective,
+        "source": "db" if stored else "default",
+        "label": verdict,
+        "managed": True,
+        "file": meta.get("file"),
+        "line": meta.get("line"),
+        "revision": meta.get("revision"),
+        "drift": drift,
+        "drift_reason": (
+            (
+                "lowered by Vigil"
+                if (stored or {}).get("by") == "system"
+                else "narrowed locally"
+            )
+            if drift
+            else None
+        ),
+        "pending": pending,
+        "env_ignored": False,
+        "env_value": None,
+    }
 
 
 def intent_body() -> Dict[str, Any]:
@@ -170,8 +224,11 @@ def intent_body() -> Dict[str, Any]:
     rows = intent_report(include_same=True)
     keys: Dict[str, Any] = managed.get("keys") or {}
     listed = set(managed.get("pending") or [])
+    flows = {k: m for k, m in keys.items() if is_workflow_key(k)}
     loaded = (
-        try_read_stored_ceiling() if any(k.startswith("act.") for k in listed) else None
+        try_read_stored_ceiling()
+        if flows or any(k.startswith("act.") for k in listed)
+        else None
     )
 
     def still_pending(r: IntentDiff) -> bool:
@@ -186,7 +243,11 @@ def intent_body() -> Dict[str, Any]:
             return _normalize(have) != _normalize(r.declared)
         return r.label != "same"
 
-    pending = [r.key for r in rows or [] if still_pending(r)]
+    flow_rows = [_workflow_row(k, m, loaded, listed) for k, m in flows.items()]
+    flow_rows.sort(key=lambda r: r["line"] or 0)
+    pending = [r.key for r in rows or [] if still_pending(r)] + [
+        r["key"] for r in flow_rows if r["pending"]
+    ]
     state = managed.get("state")
     rejected = managed.get("rejected") or None
     if not managed:
@@ -221,11 +282,12 @@ def intent_body() -> Dict[str, Any]:
     return {
         "path": str(report_path()),
         "readable": rows is not None,
-        "rows": [row(r) for r in rows or []],
+        "rows": [row(r) for r in rows or []] + (flow_rows if rows is not None else []),
         "revision": managed.get("revision"),
         "state": state,
         "reason": managed.get("reason"),
         "pending": pending,
+        "skipped": managed.get("skipped") or [] if managed else [],
         "directory": managed.get("directory"),
         "revision_on_disk": on_disk,
         "in_sync": (state == "ok" and not pending) if managed else None,

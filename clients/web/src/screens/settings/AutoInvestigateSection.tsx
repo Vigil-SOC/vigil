@@ -9,7 +9,7 @@ import { ScrubField } from '../../shared/ScrubField'
 import { ConfirmDialog, Field, NumberInput, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { utcDayClock } from '../../shared/utc'
-import { agreementText, falseCloseText, workflowTier, type WorkflowTier } from '../../shared/autonomy'
+import { agreementText, dropWhy, falseCloseText, modelsInOrder, workflowTier, type WorkflowTier } from '../../shared/autonomy'
 import {
   matchesProfile,
   useCeiling,
@@ -28,9 +28,12 @@ import SiteContextCard from './SiteContextCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
 import EmulatorsBlock from './EmulatorsBlock'
 import {
+  aiConfigApi,
   approvalsApi,
+  configApi,
   detectionRulesApi,
   type Ceiling,
+  type InvestigationReplayResponse,
   type EffectClass,
   type OverlayOnlyRule,
   type ToolClass,
@@ -81,6 +84,89 @@ const splitTool = (name: string) => {
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
 type HeldRow = Ceiling['held'][number]
+const CAP_MAX = 1000
+
+/** The ceiling's hourly release cap. A lower saves for anyone who can lower; a raise needs
+ * ai_autonomy.write and no stop, and says so before it is tried. */
+function ReleaseCap({
+  ceil,
+  canRaise,
+  canLower,
+  save,
+  notify,
+}: {
+  ceil: Ceiling
+  canRaise: boolean
+  canLower: boolean
+  save: (patch: { released_per_hour: number }) => Promise<boolean>
+  notify: SectionProps['notify']
+}) {
+  const saved = ceil.released_per_hour
+  const [draft, setDraft] = useState(String(saved))
+  // Every read of the ceiling, a refused save's refresh included, resets the field.
+  useEffect(() => setDraft(String(saved)), [ceil, saved])
+  // Why a raise would be refused, said before anyone tries.
+  const raiseRefusal = !canRaise
+    ? 'Your role can lower this. Raising it needs permission to loosen autonomy.'
+    : ceil.stopped
+      ? `${STOPPED_LOOSEN}: a higher number is refused; a lower one saves.`
+      : null
+  const commit = () => {
+    const n = Number(draft)
+    if (draft.trim() === '' || !Number.isInteger(n) || n < 0 || n > CAP_MAX) {
+      setDraft(String(saved))
+      notify('err', `Enter a whole number from 0 to ${CAP_MAX}.`)
+      return
+    }
+    if (n === saved) return
+    if (n > saved && raiseRefusal) {
+      setDraft(String(saved))
+      notify('err', raiseRefusal)
+      return
+    }
+    // A refused save whose refresh also failed leaves ceil as it was: put the saved value back.
+    void save({ released_per_hour: n }).then((ok) => ok || setDraft(String(saved)))
+  }
+  return (
+    // Wraps so a narrow screen puts the field under the text, not beside it.
+    <div className="lim-switch mt-3 flex-wrap">
+      <div className="toggle-row-text">
+        <label className="toggle-row-label" htmlFor="lim-released-per-hour">
+          Actions released per hour
+        </label>
+        <span className="toggle-row-hint" id="lim-released-per-hour-hint">
+          The most proposals from runs no person started that the ceiling carries out in any 60 minutes. Past it, each
+          waits for a person and its case says why. 0 releases none.
+        </span>
+        {!canRaise && canLower && <span className="toggle-row-hint">{raiseRefusal}</span>}
+        {canRaise && raiseRefusal && (
+          <span className="lim-class-note">
+            <Icon name="alert" size={13} className="shrink-0" /> {raiseRefusal}
+          </span>
+        )}
+      </div>
+      {canLower ? (
+        <span className="flex items-center gap-2 shrink-0">
+          <NumberInput
+            id="lim-released-per-hour"
+            aria-describedby="lim-released-per-hour-hint"
+            style={{ width: 96 }}
+            min={0}
+            max={raiseRefusal ? saved : CAP_MAX}
+            step={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+          />
+          <span className="text-xs text-tx-3">per hour</span>
+        </span>
+      ) : (
+        <span className="text-sm text-tx-2">{saved} per hour</span>
+      )}
+    </div>
+  )
+}
 
 /** The ceiling stores a naive UTC stamp; without an offset a browser reads it as local. */
 function utcStamp(iso: string | null | undefined): string | null {
@@ -99,6 +185,8 @@ function stoppedBanner(ceil: Ceiling): string {
 }
 
 type WorkflowChoice = 'fleet' | 'act' | 'assist'
+/** A workflow INTENT.md manages: its declared entry and where it is declared. */
+type ManagedFlow = { declared: { tier: 'act' | 'assist'; floor?: number }; file: string; line: number; revision: string }
 const WORKFLOW_CHOICES: { to: WorkflowChoice; label: string }[] = [
   { to: 'fleet', label: 'Follows fleet' },
   { to: 'act', label: 'Act' },
@@ -112,6 +200,14 @@ function lastChange(entry: WorkflowTier | undefined): string {
   // the ceiling stores naive UTC stamps; without an offset a browser reads them as local time
   const at = utcDayClock(/(Z|[+-]\d\d:?\d\d)$/.test(entry.at) ? entry.at : `${entry.at}Z`) ?? ''
   const rate = entry.evidence?.agreement_rate
+  if (entry.by === 'system' && entry.from_model) {
+    // A model-change drop: the stored reason ends with why, in brackets; it names no floor shortfall.
+    const why = dropWhy(entry.reason)
+    return `Lowered by Vigil ${at} on a model change: ${entry.from_model} → ${entry.model ?? 'unknown model'}${why ? ` · ${why}` : ''}`
+  }
+  // The INTENT.md applier also writes as system: Act at a raised floor, or Assist with no record.
+  if (entry.by === 'system' && entry.tier === 'act') return `Floor set to ${entry.floor}% by INTENT.md ${at}`
+  if (entry.by === 'system' && !entry.evidence) return `Set to Assist by INTENT.md ${at}`
   if (entry.by === 'system') {
     // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
     const agree = rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`
@@ -125,6 +221,23 @@ function lastChange(entry: WorkflowTier | undefined): string {
   return `Raised by ${who} ${at} at ${rate == null ? 'Not measured' : `${pct(rate)} over ${over}`}`
 }
 const TOOLS_SHOWN = 8
+
+/** The latest replay's line for one workflow, marked as a replay with its model and start date. */
+function replayLine(replay: InvestigationReplayResponse | null, id: string): string | null {
+  const part = replay?.status === 'succeeded' ? replay.by_workflow?.[id] : undefined
+  if (!replay || !part) return null
+  const agree = agreementText({ agreed: part.agreed, disagreed: part.disagreed, agreement_rate: part.agreement_rate ?? null })
+  // falseCloseText reads answered / wilson_*; the replay names them replayed / false_close_wilson_*
+  const close = falseCloseText({
+    false_close_rate: part.false_close_rate ?? null,
+    answered: part.replayed,
+    wilson_low: part.false_close_wilson_low ?? null,
+    wilson_high: part.false_close_wilson_high ?? null,
+  })?.replace(/^30 days · /, '')
+  const when = utcStamp(replay.started_at)
+  const figures = [agree?.text ?? 'agreement not measured', close ?? 'false close not measured'].join(' · ')
+  return `Replay of ${replay.model_id}${when ? `, ${when}` : ''} · ${figures}`
+}
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {
@@ -206,6 +319,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
   const investigate = useInvestigateWorkflows()
+  // The latest replay, shown per workflow apart from live agreement; none or unreadable shows nothing.
+  const [replay, setReplay] = useState<InvestigationReplayResponse | null>(null)
+  useEffect(() => {
+    aiConfigApi.getInvestigationReplay().then((r) => setReplay(r.data), () => setReplay(null))
+  }, [])
   const [floor, setFloor] = useState('')
   const unverified = useUnverifiedTools()
   const emulation = useEmulation()
@@ -229,6 +347,59 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const [overlayOnly, setOverlayOnly] = useState<OverlayOnlyRule[]>([])
   const [deploying, setDeploying] = useState<number[] | 'all' | null>(null)
   const stopping = pending?.kind === 'stop'
+  // The declared directory's act.hold_crown_jewels, when it manages that key: the API refuses a turn-off below it.
+  const [holdManaged, setHoldManaged] = useState<{ declared: unknown; file?: string | null; line?: number | null } | null>(null)
+  // Workflows the declared directory manages, by id: the API refuses a raise past the declared entry.
+  const [flowManaged, setFlowManaged] = useState<Record<string, ManagedFlow>>({})
+  useEffect(() => {
+    let cancelled = false
+    configApi
+      .getIntent()
+      .then((r) => {
+        const row = r.data.rows?.find((x) => x.key === 'act.hold_crown_jewels' && x.managed)
+        const flows: Record<string, ManagedFlow> = {}
+        for (const x of r.data.rows ?? []) {
+          if (x.managed && x.key.startsWith('workflows.'))
+            flows[x.key.slice('workflows.'.length)] = {
+              declared: x.declared as ManagedFlow['declared'],
+              file: x.file ?? 'INTENT.md',
+              line: x.line ?? 1,
+              revision: x.revision ?? 'unknown',
+            }
+        }
+        if (cancelled) return
+        setHoldManaged(row ?? null)
+        setFlowManaged(flows)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setHoldManaged(null) // unread: the API still refuses
+        setFlowManaged({})
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [intentRevision])
+  // Opens Advanced, then scrolls once the site card has rendered.
+  const [toSite, setToSite] = useState(0)
+  const showSite = () => {
+    setAdvanced(true)
+    setToSite((n) => n + 1)
+  }
+  useEffect(() => {
+    const el = toSite ? document.getElementById('declared-site') : null
+    if (!el?.parentElement) return
+    const go = () => el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    go()
+    // The cards above it load after it opens; follow it while they settle.
+    const ro = new ResizeObserver(go)
+    ro.observe(el.parentElement)
+    const stop = setTimeout(() => ro.disconnect(), 1500)
+    return () => {
+      clearTimeout(stop)
+      ro.disconnect()
+    }
+  }, [toSite])
   const readOverlayOnly = () =>
     detectionRulesApi
       .getOverlayOnly()
@@ -348,8 +519,10 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await ceiling.save(patch)
       notify('ok', 'Limits saved.')
       setIntentRevision((n) => n + 1) // a narrowing shows as drift
+      return true
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
+      return false
     }
   }
 
@@ -386,13 +559,16 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     try {
       await ceiling.setWorkflow(w.id, { tier: to === 'fleet' ? null : to, floor: floorPct ?? null })
       notify('ok', `${w.name} ${to === 'fleet' ? 'follows the fleet' : to === 'act' ? 'acts on its own' : 'asks first'}.`)
+      setIntentRevision((n) => n + 1) // a managed workflow's narrowing shows as drift
     } catch (err) {
       notify('err', errorText(err, 'Failed to save the workflow’s autonomy.'))
     }
   }
 
   const floorValue = Number(floor)
-  const floorValid = /^\d+$/.test(floor) && floorValue >= 1 && floorValue <= 100
+  // A managed Act workflow may not be raised below its declared floor.
+  const floorMin = (pending?.kind === 'workflow' && flowManaged[pending.workflow.id]?.declared.floor) || 1
+  const floorValid = /^\d+$/.test(floor) && floorValue >= floorMin && floorValue <= 100
 
   const confirmPending = () => {
     if (!pending) return
@@ -576,12 +752,19 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const workflowRow = (w: InvestigateWorkflow, stopped: boolean) => {
     const entry = workflowTier(ceil, w.id)
     const current: WorkflowChoice = entry?.tier ?? 'fleet'
-    const raises = (to: WorkflowChoice) =>
-      to === 'act' || (to === 'fleet' && current === 'assist' && Boolean(ceil?.act_reversible || ceil?.act_irreversible))
+    const fleetActs = Boolean(ceil?.act_reversible || ceil?.act_irreversible)
+    const raises = (to: WorkflowChoice) => to === 'act' || (to === 'fleet' && current === 'assist' && fleetActs)
+    const managed = flowManaged[w.id]
+    const where = managed && `${managed.file}:${managed.line} @ ${managed.revision}`
+    // As the server judges it: past an Assist declaration, Act or a fleet that acts is a raise.
+    const pastDeclared = (to: WorkflowChoice) =>
+      managed?.declared.tier === 'assist' && (to === 'act' || (to === 'fleet' && fleetActs))
     const choices = WORKFLOW_CHOICES.filter((c) => c.to === current || (raises(c.to) ? canRaise : canLower))
     const shown = agreementText(w.agreement)
     const close = falseCloseText(w.agreement)
     const change = lastChange(entry)
+    const unattributed = w.agreement?.unattributed ?? 0
+    const replayed = replayLine(replay, w.id)
     return (
       <div className={`lim-row lim-wf${choices.length < 2 ? ' lim-wf-static' : ''}`} key={w.id}>
         <span className="lim-row-title">
@@ -591,10 +774,39 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {' · '}
             {close ?? <NotMeasured label="False close" />}
           </span>
+          {/* each model's own record, the tier's model first; the blended line above is the workflow's */}
+          {entry?.model && !w.agreement?.by_model.some((m) => m.model === entry.model) && (
+            <span className="lim-wf-model">
+              <b>{entry.model}</b> · no live record in 30 days
+            </span>
+          )}
+          {modelsInOrder(w.agreement, entry?.model).map((m) => (
+            <span className="lim-wf-model" key={m.model}>
+              <b>{m.model}</b>
+              {' · '}
+              {agreementText(m)?.text ?? 'agreement not measured'}
+              {' · '}
+              {falseCloseText(m)?.replace(/^30 days · /, '') ?? 'false close not measured'}
+            </span>
+          ))}
+          {unattributed > 0 && (
+            <span className="lim-wf-model">
+              {unattributed} {unattributed === 1 ? 'close' : 'closes'} not attributed to one model
+            </span>
+          )}
+          {replayed && <span className="lim-wf-model">{replayed}</span>}
         </span>
         <span className="lim-wf-tag">
-          <span>{entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}</span>
+          <span>
+            {entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}
+            {entry?.model && ` · on ${entry.model}`}
+          </span>
           {change && <span title={change}>{change}</span>}
+          {managed && (
+            <span title={`Declared ${managed.declared.tier === 'act' ? `Act · floor ${managed.declared.floor}` : 'Assist'}`}>
+              Managed by {where}
+            </span>
+          )}
         </span>
         <span className="lim-row-ctl">
           {choices.length < 2 ? (
@@ -603,18 +815,28 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           ) : (
             <div className="lim-seg" role="group" aria-label={`Autonomy of ${w.name}`}>
               {choices.map((c) => {
-                const blocked = c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked))
+                const declaredPast = c.to !== current && pastDeclared(c.to)
+                const blocked = declaredPast || (c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked)))
                 return (
                   <button
                     key={c.to}
                     type="button"
                     aria-pressed={c.to === current}
                     disabled={blocked}
-                    title={blocked ? (stopped ? STOPPED_LOOSEN : 'Locked by the environment') : undefined}
+                    title={
+                      declaredPast
+                        ? `Managed by ${where}, declared Assist. Change it in the declared directory.`
+                        : blocked
+                          ? stopped
+                            ? STOPPED_LOOSEN
+                            : 'Locked by the environment'
+                          : undefined
+                    }
                     onClick={() => {
                       if (c.to === current) return
                       if (c.to === 'act') {
-                        setFloor('')
+                        // A managed Act workflow is restored at its declared floor.
+                        setFloor(managed?.declared.floor ? String(managed.declared.floor) : '')
                         setPending({ kind: 'workflow', workflow: w })
                       } else setWorkflow(w, c.to)
                     }}
@@ -987,7 +1209,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 )}
               </div>
             </div>
-            <div className="lim-switch mt-3">
+            <ReleaseCap ceil={ceil} canRaise={canRaise} canLower={canLower} save={saveCeiling} notify={notify} />
+            <div className="lim-switch">
               <div className="toggle-row-text">
                 <span className="toggle-row-label">Four-eyes approval</span>
                 <span className="toggle-row-hint">
@@ -1011,6 +1234,55 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
               )}
             </div>
+            {(() => {
+              const on = ceil.hold_crown_jewels
+              const n = ceil.crown_jewels
+              const managedOn = holdManaged?.declared === true
+              // Why a turn-off would be refused, said before anyone tries.
+              const refusal = !on
+                ? null
+                : managedOn
+                  ? `Managed by ${holdManaged?.file ?? 'INTENT.md'}:${holdManaged?.line ?? 1}, declared on. Change it in the declared directory.`
+                  : ceil.stopped
+                    ? STOPPED_LOOSEN
+                    : null
+              return (
+                <div className="lim-switch">
+                  <div className="toggle-row-text">
+                    <span className="toggle-row-label">Hold crown jewels</span>
+                    <span className="toggle-row-hint">
+                      A model’s close, exception, dismissal or outside call on a declared crown jewel waits for a person.
+                    </span>
+                    <span className="toggle-row-hint">
+                      {n === 0 ? 'No crown jewels declared.' : n === 1 ? '1 crown jewel declared.' : `${n} crown jewels declared.`}{' '}
+                      {canReadSite && (
+                        <button type="button" className="stop-link" onClick={showSite}>
+                          View the declared site
+                        </button>
+                      )}
+                    </span>
+                    {refusal && canRaise && (
+                      <span className="lim-class-note">
+                        <Icon name={managedOn ? 'lock' : 'alert'} size={13} className="shrink-0" /> {refusal}
+                      </span>
+                    )}
+                  </div>
+                  {canRaise ? (
+                    <Toggle
+                      label="Hold crown jewels"
+                      checked={on}
+                      disabled={refusal != null}
+                      title={refusal ?? undefined}
+                      onChange={(v) => saveCeiling({ hold_crown_jewels: v })}
+                    />
+                  ) : canLower && !on ? (
+                    <Toggle label="Hold crown jewels" checked={false} onChange={() => saveCeiling({ hold_crown_jewels: true })} />
+                  ) : (
+                    <span className="text-sm text-tx-2">{on ? 'On' : 'Off'}</span>
+                  )}
+                </div>
+              )
+            })()}
             {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
@@ -1083,9 +1355,15 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               onAccepted={() => {
                 void ceiling.refresh()
                 reload()
+                setIntentRevision((n) => n + 1)
               }}
+              workflowNames={Object.fromEntries((investigate.workflows ?? []).map((w) => [w.id, w.name]))}
             />
-            {canReadSite && <SiteContextCard reloadKey={intentRevision} />}
+            {canReadSite && (
+              <div id="declared-site">
+                <SiteContextCard reloadKey={intentRevision} />
+              </div>
+            )}
           </div>
         ) : (
           <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage, the intent report and the declared site.</span>
@@ -1113,6 +1391,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 />
                 % agree, required
               </label>
+              {flowManaged[pending.workflow.id]?.declared.floor && (
+                <p className="text-xs text-tx-3 mt-2">
+                  Managed by INTENT.md: at least {flowManaged[pending.workflow.id].declared.floor}%, the declared floor.
+                </p>
+              )}
             </>
           ) : stopping && overlayOnly.length > 0 ? (
             <StopOverlayOnly rules={overlayOnly} deploying={deploying} onDeploy={deployOverlay} />

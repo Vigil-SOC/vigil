@@ -985,11 +985,46 @@ def _columns(session, table: str) -> set[str]:
     )
 
 
+# Rendered into the case shell's view; raw UPDATEs skip ORM onupdate.
+_CASE_VIEW_NAMES = (
+    ("cases", "assignee"),
+    ("case_tasks", "assignee"),
+    ("case_evidence", "collected_by"),
+    ("case_escalations", "escalated_from"),
+    ("case_escalations", "escalated_to"),
+)
+
+
+def _touch_named_cases(session, params: dict, have: dict[str, set[str]]) -> None:
+    """Bump updated_at on every case whose view shows the name, before it is
+    rewritten, so a held render of it is not served (#5243)."""
+    for table, _ in _CASE_VIEW_NAMES:
+        if table not in have:
+            have[table] = _columns(session, table)
+    if "updated_at" not in have["cases"]:
+        return
+    # {table} and {column} are fixed names from the list above.
+    named = [
+        f"SELECT case_id FROM public.{table} WHERE {column} = :old"
+        for table, column in _CASE_VIEW_NAMES
+        if column in have[table] and "case_id" in have[table]
+    ]
+    if named:
+        session.execute(
+            text(
+                "UPDATE public.cases SET updated_at = now() AT TIME ZONE 'UTC'"
+                f" WHERE case_id IN ({' UNION '.join(named)})"
+            ),
+            params,
+        )
+
+
 def _rename_records(session, username: str, erased: str) -> None:
     """Rewrite ``username`` to ``erased`` wherever a record keeps it as text.
     An upgrade step runs this on an older schema, so a missing column is skipped."""
     params = {"old": username, "new": erased}
     have: dict[str, set[str]] = {}
+    _touch_named_cases(session, params, have)
     for table, column in _USERNAME_COLUMNS:
         if table not in have:
             have[table] = _columns(session, table)

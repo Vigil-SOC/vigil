@@ -57,6 +57,7 @@ from core.platform.monitoring import (
     init_sentry,
     require_metrics_token,
 )
+from core.response.containment import register as register_ceiling_cap
 from core.storage.connection import MissingPostgresPasswordError
 from core.telemetry import configure_logging, init_telemetry
 from core.version import __version__
@@ -262,6 +263,7 @@ key_age.register()
 break_glass.register()
 register_medic_notices()
 register_indicator_notices()
+register_ceiling_cap()
 
 # The OAuth authorization server at the host root (#4787). Inside CSRF, which
 # exempts its unprefixed /token, /register and /revoke, and outside the app's

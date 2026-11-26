@@ -563,7 +563,9 @@ export interface paths {
          *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
          *     involved. The action returned is that row. The original records ``released``
          *     or ``enabled`` once the vendor reports it. 409 when the original is not
-         *     executed and contained or disabled, or a lift of it is still open.
+         *     executed and contained or disabled, or a lift of it is still open. An
+         *     optional ``reason`` goes on the row and into an analyst note on the target,
+         *     and the undo holds that act there for runs no person started (#5273).
          */
         post: operations["post_api_approvals_action_id_undo"];
         delete?: never;
@@ -1631,8 +1633,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-         *     four-eyes, is ``ai_autonomy.write``.
+         *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
+         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
+         *     or turning the hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_autonomy"];
         post?: never;
@@ -1841,7 +1844,8 @@ export interface paths {
          *     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
          *     while stopped, and stores the investigation model in force and that model's
          *     30-day agreement on the workflow beside its floor.
-         *     Anything else is ``ai_autonomy.stop``.
+         *     Anything else is ``ai_autonomy.stop``. A workflow a declared INTENT.md
+         *     manages is refused (409) anything looser than its declared entry.
          */
         put: operations["put_api_autonomy_workflows_workflow_id"];
         post?: never;
@@ -3813,11 +3817,74 @@ export interface paths {
         /**
          * Get Site Context
          * @description The applied site/ revision: state, any refusal with file and line, each
-         *     item with file, line and resolved owner, and the applied files' text.
+         *     item with file, line and resolved owner, and the applied files' text; the
+         *     open proposal and the site questions.
          */
         get: operations["get_api_config_site"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/site/proposal/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Site Proposal
+         * @description The proposed site/ folder as a .tar.gz, to unpack into the declared directory.
+         */
+        get: operations["get_api_config_site_proposal_archive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/site/proposal/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discard Site Proposal
+         * @description Discard the open proposal; the reason goes on its audit entry.
+         */
+        post: operations["post_api_config_site_proposal_discard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/site/proposal/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Site Proposal
+         * @description Queue the site agent to draft a refresh now, as this user. 200 when queued;
+         *     409 with the reason when refused (agent or workflow off, AutoOps off, a
+         *     refresh unfinished, or another start in progress).
+         */
+        post: operations["post_api_config_site_proposal_refresh"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7953,6 +8020,8 @@ export interface paths {
          * Undo Apply
          * @description Put the setting back to its value before an apply, when nothing has
          *     changed it since. Returns the new history entry.
+         *
+         *     The same change is not suggested again for 30 days.
          */
         post: operations["post_api_supervisory_history_history_id_undo"];
         delete?: never;
@@ -7995,8 +8064,7 @@ export interface paths {
          * Dismiss Suggestion
          * @description Dismiss a suggestion with one of the page's reasons. Returns its history entry.
          *
-         *     The same change is not suggested again: for good when too risky or the
-         *     evidence looks wrong, for 30 days otherwise.
+         *     The same change is not suggested again for 30 days, whatever the reason.
          */
         post: operations["post_api_supervisory_suggestions_suggestion_id_dismiss"];
         delete?: never;
@@ -9168,7 +9236,9 @@ export interface paths {
          *     the caller; a stop holds it. Four-eyes does not apply: no proposal is
          *     involved. The action returned is that row. The original records ``released``
          *     or ``enabled`` once the vendor reports it. 409 when the original is not
-         *     executed and contained or disabled, or a lift of it is still open.
+         *     executed and contained or disabled, or a lift of it is still open. An
+         *     optional ``reason`` goes on the row and into an analyst note on the target,
+         *     and the undo holds that act there for runs no person started (#5273).
          */
         post: operations["post_api_v1_approvals_action_id_undo"];
         delete?: never;
@@ -9270,8 +9340,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-         *     four-eyes, is ``ai_autonomy.write``.
+         *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
+         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
+         *     or turning the hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_v1_autonomy"];
         post?: never;
@@ -13117,6 +13188,10 @@ export interface components {
             act_reversible?: boolean | null;
             /** Four Eyes */
             four_eyes?: boolean | null;
+            /** Hold Crown Jewels */
+            hold_crown_jewels?: boolean | null;
+            /** Released Per Hour */
+            released_per_hour?: number | null;
         };
         /** CeilingResponse */
         CeilingResponse: {
@@ -13124,6 +13199,8 @@ export interface components {
             act_irreversible: boolean;
             /** Act Reversible */
             act_reversible: boolean;
+            /** Crown Jewels */
+            crown_jewels: number;
             /** Environment Locked */
             environment_locked: boolean;
             /** Four Eyes */
@@ -13133,10 +13210,14 @@ export interface components {
              * @default []
              */
             held: components["schemas"]["HeldAction"][];
+            /** Hold Crown Jewels */
+            hold_crown_jewels: boolean;
             /** Propose */
             propose: boolean;
             /** Read */
             read: boolean;
+            /** Released Per Hour */
+            released_per_hour: number;
             /** Stopped */
             stopped: boolean;
             /** Stopped At */
@@ -15303,6 +15384,8 @@ export interface components {
              * @default false
              */
             drift: boolean;
+            /** Drift Reason */
+            drift_reason?: string | null;
             /** Effective */
             effective: unknown;
             /**
@@ -15366,10 +15449,24 @@ export interface components {
             revision_on_disk?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
+            /** Skipped */
+            skipped?: components["schemas"]["IntentSkipped"][];
             /** State */
             state?: string | null;
             /** Verification */
             verification?: string | null;
+        };
+        /**
+         * IntentSkipped
+         * @description A declared ``workflows.<id>`` this install could not apply, and why.
+         */
+        IntentSkipped: {
+            /** Id */
+            id: string;
+            /** Line */
+            line?: number | null;
+            /** Reason */
+            reason: string;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {
@@ -18043,6 +18140,7 @@ export interface components {
             hash?: string | null;
             /** Owners */
             owners?: components["schemas"]["SiteOwner"][];
+            proposal?: components["schemas"]["SiteProposalResponse"] | null;
             /** Reason */
             reason: string;
             /** Rejected */
@@ -18055,6 +18153,8 @@ export interface components {
             } | null;
             /** Revision */
             revision?: string | null;
+            /** Site Questions */
+            site_questions?: components["schemas"]["SiteQuestion"][];
             /** State */
             state: string;
             /** Zones */
@@ -18085,6 +18185,18 @@ export interface components {
             file: string;
             /** Text */
             text: string;
+        };
+        /**
+         * SiteNotEvaluated
+         * @description An outside tool the site agent holds that cannot run on this deployment.
+         */
+        SiteNotEvaluated: {
+            /** Reason */
+            reason: string;
+            /** Tool */
+            tool: string;
+            /** Where */
+            where?: string | null;
         };
         /** SiteOwner */
         SiteOwner: {
@@ -18120,6 +18232,103 @@ export interface components {
             team_id?: string | null;
             /** Unassigned */
             unassigned?: string | null;
+        };
+        /** SiteProposalChange */
+        SiteProposalChange: {
+            /** Change */
+            change: string;
+            /** Item */
+            item: string;
+            /** Kind */
+            kind: string;
+        };
+        /** SiteProposalDiscardBody */
+        SiteProposalDiscardBody: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * SiteProposalProvenance
+         * @description A cited call on the saving run's ledger, or a person's answer, quoted.
+         */
+        SiteProposalProvenance: {
+            /** Answer */
+            answer?: string | null;
+            /** Arguments */
+            arguments?: unknown | null;
+            /** At */
+            at?: string | null;
+            /** Change */
+            change: string;
+            /** Person Id */
+            person_id?: string | null;
+            /** Ref */
+            ref?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Server */
+            server?: string | null;
+            /** Source */
+            source: string;
+            /** Tool */
+            tool?: string | null;
+        };
+        /** SiteProposalResponse */
+        SiteProposalResponse: {
+            /** Base Revision */
+            base_revision?: string | null;
+            /** Diff */
+            diff?: components["schemas"]["SiteProposalChange"][];
+            /** Discarded */
+            discarded?: {
+                [key: string]: unknown;
+            } | null;
+            /** Files */
+            files?: components["schemas"]["SiteFile"][];
+            /** Id */
+            id: string;
+            /** Not Evaluated */
+            not_evaluated?: components["schemas"]["SiteNotEvaluated"][];
+            /** Provenance */
+            provenance?: {
+                [key: string]: components["schemas"]["SiteProposalProvenance"];
+            };
+            /** Questions */
+            questions?: string[];
+            /** Refresh */
+            refresh?: {
+                [key: string]: unknown;
+            } | null;
+            /** Saved At */
+            saved_at: string;
+            /** Saved By */
+            saved_by: {
+                [key: string]: string | null;
+            };
+            /** Status */
+            status: string;
+        };
+        /**
+         * SiteQuestion
+         * @description Computed on read: unplaced, unowned or contradicted.
+         */
+        SiteQuestion: {
+            /** Entity Key */
+            entity_key?: string | null;
+            /** File */
+            file?: string | null;
+            /** Investigations */
+            investigations?: number | null;
+            /** Kind */
+            kind: string;
+            /** Latest */
+            latest?: string | null;
+            /** Line */
+            line?: number | null;
+            /** Name */
+            name?: string | null;
+            /** Question */
+            question: string;
         };
         /** SiteZone */
         SiteZone: {
@@ -19303,6 +19512,14 @@ export interface components {
             reason: string;
             /** Values */
             values: string[];
+        };
+        /** UndoRequest */
+        UndoRequest: {
+            /**
+             * Reason
+             * @description Why the containment is being undone; the next run reads it.
+             */
+            reason?: string | null;
         };
         /**
          * UnlockRequest
@@ -20817,7 +21034,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UndoRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -26579,6 +26800,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SiteContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_config_site_proposal_archive: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": unknown;
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_site_proposal_discard: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteProposalDiscardBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteProposalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_site_proposal_refresh: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -36318,7 +36637,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UndoRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

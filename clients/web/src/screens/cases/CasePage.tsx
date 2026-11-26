@@ -21,7 +21,7 @@ import { CallArgs } from '../../shared/CallArgs'
 import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
 import { ContainmentTargets } from '../../shared/containment'
-import { canApprove, chosenCandidate, containmentOf } from '../../shared/containmentRead'
+import { canApprove, chosenCandidate, containmentOf, undoable, type Containment } from '../../shared/containmentRead'
 import { CaseContainments } from './CaseContainments'
 import { Icon } from '../../shared/icons'
 import { useToast } from '../../shell/toast'
@@ -370,7 +370,7 @@ function CaseNeeds({
       {recommended.length > 0 && (
         <div className="needs-more">
           <h3>Recommended actions · {recommended.length}</h3>
-          <p className="needs-note">{recommended.length === 1 ? 'Vigil has no executor for this. Do it' : 'Vigil has no executor for these. Do them'} in your own tools, then close the case.</p>
+          <p className="needs-note">{recommended.length === 1 ? 'Vigil cannot carry this out. Do it' : 'Vigil cannot carry these out. Do them'} in your own tools, then close the case.</p>
           <ul aria-label="Recommended actions">
             {recommended.map((item) => (
               <li key={item.source_id}>
@@ -378,7 +378,11 @@ function CaseNeeds({
                   <span className="needs-row-title">{item.title}</span>
                 </div>
                 {item.reason && <p className="needs-row-reason">{item.reason}</p>}
-                {containmentOf(item.containment) && <ContainmentTargets containment={containmentOf(item.containment)!} picked={null} onPick={() => {}} group={item.source_id} />}
+                {containmentOf(item.containment) ? (
+                  <ContainmentTargets containment={containmentOf(item.containment)!} picked={null} onPick={() => {}} group={item.source_id} />
+                ) : (
+                  <p className="contain-missing">Vigil has no executor for this kind of action.</p>
+                )}
               </li>
             ))}
           </ul>
@@ -386,6 +390,18 @@ function CaseNeeds({
       )}
     </section>
   )
+}
+
+const UNDOABLE = 'Vigil can undo this'
+
+/** Whether Vigil can undo a containment: the picked carrier's undo, or every carrier's when they agree (#5234). */
+function undoFact(containment: Containment | null, picked: string | null): string | null {
+  const candidates = containment?.candidates ?? []
+  if (candidates.length === 0) return null
+  const chosen = candidates.filter((c) => (picked ? c.id === picked : true))
+  const can = new Set((chosen.length ? chosen : candidates).map(undoable))
+  if (can.size > 1) return 'Depends on the carrier: pick one'
+  return can.has(true) ? UNDOABLE : 'Vigil cannot undo this'
 }
 
 type NeedProps = {
@@ -477,7 +493,7 @@ function CaseNeed(props: NeedProps) {
           </>
         )}
         <dt>Reversibility</dt>
-        <dd>{item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone'}</dd>
+        <dd>{undoFact(containment, picked) ?? (item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone')}</dd>
       </dl>
       <div className="needs-actions">
         <ApproveButton {...props} picked={picked} />
@@ -542,14 +558,16 @@ function CaseNeedRow(props: NeedProps) {
   const { item, busy } = props
   const [rejecting, setRejecting] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
-  const reversible = item.reversibility === 'reversible'
   const containment = containmentOf(item.containment)
+  // A containment says whether its carrier can be undone; anything else reads its stored class.
+  const fact = undoFact(containment, picked)
+  const reversible = fact ? fact === UNDOABLE : item.reversibility === 'reversible'
   return (
     <li>
       <div className="needs-row">
         <span className="needs-row-title">{visibleText(item.title)}</span>
         <span className={reversible ? 'needs-row-rev' : 'needs-row-rev irreversible'}>
-          {reversible ? 'Reversible' : 'Cannot be undone'}
+          {fact ?? (reversible ? 'Reversible' : 'Cannot be undone')}
         </span>
         <div className="needs-actions">
           <ApproveButton {...props} label={`Approve ${item.title}`} picked={picked} />

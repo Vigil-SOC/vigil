@@ -15,7 +15,7 @@ import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
@@ -27,12 +27,14 @@ from core.response.approval_service import (
     NotHeld,
 )
 from core.response.ceiling import (
+    RELEASED_PER_HOUR_MAX,
     CeilingRefusal,
     CeilingWriteError,
     _raises,
     ceiling_read,
     loosens,
     own_tool_names,
+    raises_cap,
     read_ceiling,
     resume_ceiling,
     store_tool_class,
@@ -66,6 +68,12 @@ class CeilingBody(BaseModel):
     act_reversible: Optional[bool] = None
     act_irreversible: Optional[bool] = None
     four_eyes: Optional[bool] = None
+    # Declared crown jewels left for a person (#5227). Off is a loosening.
+    hold_crown_jewels: Optional[bool] = None
+    # Proposals the ceiling releases per hour (#5274). A higher number is a raise.
+    released_per_hour: Optional[int] = Field(
+        default=None, ge=0, le=RELEASED_PER_HOUR_MAX, strict=True
+    )
 
 
 class HeldAction(BaseModel):
@@ -98,6 +106,12 @@ class CeilingResponse(BaseModel):
     workflows: Dict[str, Dict[str, Any]] = {}
     # Approved outside actions a stop is holding, including after resume.
     held: List[HeldAction] = []
+    # On holds a model's act on a declared crown jewel for a person (#5227).
+    hold_crown_jewels: bool
+    # Crown jewels in the applied site revision; 0 when none is declared.
+    crown_jewels: int
+    # Proposals the ceiling releases in any 60 minutes; 0 releases none (#5274).
+    released_per_hour: int
 
 
 def _view() -> CeilingResponse:
@@ -126,8 +140,9 @@ def put_ceiling(
 ) -> CeilingResponse:
     """Edit the ceiling. The permission depends on the direction.
 
-    Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-    four-eyes, is ``ai_autonomy.write``.
+    Only lowering act flags or the hourly cap, or turning the crown-jewel hold
+    on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
+    or turning the hold off is ``ai_autonomy.write``.
     """
     try:
         current = read_ceiling()
@@ -139,6 +154,8 @@ def put_ceiling(
         not _raises(current.act_reversible, body.act_reversible)
         and not _raises(current.act_irreversible, body.act_irreversible)
         and body.four_eyes in (None, current.four_eyes)
+        and body.hold_crown_jewels in (None, True, current.hold_crown_jewels)
+        and not raises_cap(current.released_per_hour, body.released_per_hour)
     )
     perm = "ai_autonomy.stop" if lowers else "ai_autonomy.write"
     deny_unless(current_user.user_id, perm, session)
@@ -146,11 +163,22 @@ def put_ceiling(
     if lowers:
         # A restated "on" is dropped, so a flag switched off since the read
         # above is not turned back on under ai_autonomy.stop.
-        edit = {k: (None if v is True else v) for k, v in edit.items()}
+        # The hold is the other way round: on is the lower, a restated off drops.
+        # The cap passes as it is; update_ceiling drops it if a lower since
+        # the read above makes it a raise.
+        edit = {
+            k: (
+                (None if v is False else v)
+                if k == "hold_crown_jewels"
+                else v if k == "released_per_hour" else (None if v is True else v)
+            )
+            for k, v in edit.items()
+        }
     try:
         update_ceiling(
             user_id=str(current_user.user_id),
             caller_is_service=is_machine_request(current_user),
+            lowers_only=lowers,
             **edit,
         )
         return _view()

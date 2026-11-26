@@ -2,7 +2,7 @@
 
 Each built-in is a plugin manifest shipped in ``manifests/``, built into a
 profile by ``core.agents.manager.profile_from_manifest`` exactly as an operator
-agent's stored manifest is. Its ``system`` keeps the ``$auto_approve``,
+agent's stored manifest is. Its ``system`` may carry the ``$auto_approve``,
 ``$review``, ``$monitor``, ``$memory`` and ``$skills`` placeholders; they are
 filled by ``core.agents.prompts.render_system`` wherever the prompt reaches a
 model, so the agent is told the lines the approval gate enforces (#916).
@@ -38,6 +38,7 @@ class AgentId(str, Enum):
     MALWARE_ANALYST = "malware_analyst"
     NETWORK_ANALYST = "network_analyst"
     AUTO_RESPONDER = "auto_responder"
+    SITE_CONTEXT = "site_context"
 
 
 # The autonomous loop authors decisions of its own but is not an agent: it has

@@ -39,6 +39,7 @@ from core.response.config import (
     decision_rule,
     split_decision_rule,
 )
+from core.response.proposal_targets import CONTAINMENT_TOOLS
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
 from core.storage.models import Case, Finding, Investigation, WorkflowRun, case_findings
@@ -53,7 +54,7 @@ _pending_gauge: Any = None
 # Rollout acts on these once approved (rollout_approval).
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
 # Kinds the backend carries out on approval through a vendor's tool (#5059).
-CONTAINMENT_TYPES = frozenset({"isolate_host", "disable_user"})
+CONTAINMENT_TYPES = frozenset(CONTAINMENT_TOOLS)
 # execution_result.state while the call is out: claimed, so it runs once.
 RUNNING = "running"
 # A claim this old outlived its process: the row may be approved again.
@@ -184,6 +185,7 @@ class ActionType(Enum):
     BLOCK_DOMAIN = "block_domain"
     QUARANTINE_FILE = "quarantine_file"
     DISABLE_USER = "disable_user"
+    REVOKE_SESSION = "revoke_session"  # end an account's sessions (#5234)
     EXECUTE_SPL_QUERY = "execute_spl_query"
     WORKFLOW_PHASE = "workflow_phase"  # #128 — phase with approval_required=True
     PROMOTE_RULE = "promote_rule"  # shadow -> live under Assist (#4068)
@@ -789,6 +791,17 @@ class ApprovalService:
                         username=rejected_by,
                         operator_text=reason,
                     )
+                    if row.action_type in CONTAINMENT_TYPES:
+                        from core.response.reversals import write_reversal_note
+
+                        # A person's rejection is remembered and holds the target (#5273).
+                        write_reversal_note(
+                            session,
+                            row,
+                            by=rejected_by,
+                            principal_id=row.approved_by_principal_id,
+                            reason=reason,
+                        )
                     pending = _row_to_pending(row)
             if decided is not None:
                 logger.warning(
@@ -942,9 +955,10 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         execution_result: Optional[Dict] = None,
         held: Optional[bool] = None,
+        reversibility: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Merge into a row's parameters or execution result, or set its hold,
-        if it is still in ``status``. None when it is not (#5059)."""
+        """Merge into a row's parameters or execution result, or set its hold or
+        reversibility, if it is still in ``status``. None when it is not (#5059)."""
         db = get_db_manager()
         with db.session_scope() as session:
             row = session.get(ApprovalActionRow, action_id, with_for_update=True)
@@ -959,6 +973,8 @@ class ApprovalService:
                 }
             if held is not None:
                 row.held = held
+            if reversibility is not None:
+                row.reversibility = reversibility
             session.flush()
             return _row_to_pending(row)
 
@@ -968,9 +984,10 @@ class ApprovalService:
         build: Callable[[PendingAction], Union[str, tuple[str, Dict[str, Any]]]],
         approved_by: str,
         approved_by_principal_id: Optional[str],
+        reason: Optional[str] = None,
     ) -> PendingAction:
         """Insert the row that undoes an executed containment, approved by the
-        caller (#5060). ``build`` turns the original into the row's title and
+        caller (#5060), with their ``reason`` on it and in an analyst note (#5273). ``build`` turns the original into the row's title and
         parameters, or says why it can't. No proposal is involved, so four-eyes
         does not apply.
 
@@ -1000,7 +1017,7 @@ class ApprovalService:
             done = DONE_STATE.get(original.action_type)
             built = None
             if done is None or (original.parameters or {}).get("undoes"):
-                refusal = f"{action_id} is not an isolation or account disable"
+                refusal = f"{action_id} is not a containment Vigil can undo"
             elif original.status != ActionStatus.EXECUTED.value or state != done:
                 refusal = (
                     f"{action_id} is {state or original.status}, not {done}: "
@@ -1022,7 +1039,8 @@ class ApprovalService:
                     description=f"Undoes {action_id}: {original.title}",
                     target=original.target,
                     confidence=1.0,
-                    reason=f"{approved_by} undid {action_id}",
+                    reason=f"{approved_by} undid {action_id}"
+                    + (f": {reason.strip()}" if (reason or "").strip() else ""),
                     evidence=list(original.evidence or []),
                     created_at=now,
                     created_by=approved_by,
@@ -1050,6 +1068,17 @@ class ApprovalService:
                     principal_id=approved_by_principal_id,
                     action_id=undo.action_id,
                     username=approved_by,
+                )
+                from core.response.proposal_targets import UNDONE_STATE
+                from core.response.reversals import write_reversal_note
+
+                write_reversal_note(
+                    session,
+                    row,
+                    by=approved_by,
+                    principal_id=approved_by_principal_id,
+                    reason=reason,
+                    undo_verb=UNDONE_STATE.get(original.action_type, "undid"),
                 )
                 pending = _row_to_pending(undo)
         if refusal is not None or pending is None:
@@ -1934,6 +1963,7 @@ def reopen_settled(session, case_id: str) -> int:
     the same action and target covers it or it is past the expiry window. In the
     caller's transaction; returns how many."""
     from core.config import get_settings
+    from core.response.proposal_targets import undone
 
     ids = session.execute(
         select(ApprovalActionRow.action_id)
@@ -1950,13 +1980,21 @@ def reopen_settled(session, case_id: str) -> int:
         # The sweep would expire it on its next tick.
         if row.created_at < cutoff:
             continue
-        live = session.execute(
-            _same_ask(row.action_type, row.target)
-            .where(ApprovalActionRow.created_at > row.created_at)
-            .where(ApprovalActionRow.status.in_(_LIVE))
-            .order_by(ApprovalActionRow.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        # The newest live ask, passing over an executed act undone since.
+        live = next(
+            (
+                one
+                for one in session.execute(
+                    _same_ask(row.action_type, row.target)
+                    .where(ApprovalActionRow.created_at > row.created_at)
+                    .where(ApprovalActionRow.status.in_(_LIVE))
+                    .order_by(ApprovalActionRow.created_at.desc())
+                ).scalars()
+                if one.status != ActionStatus.EXECUTED.value
+                or not undone(one.action_type, one.execution_result)
+            ),
+            None,
+        )
         if live is not None:
             # A decided row takes no case; a pending one keeps this case asked.
             if live.status == ActionStatus.PENDING.value:
