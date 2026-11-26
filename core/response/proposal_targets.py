@@ -336,6 +336,21 @@ CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
             "undo": "cf_waf_unblock_ip",
             "undo_from": "rule_id",
         },
+        # No ``undo_from``: the unregister takes the address itself.
+        {
+            "vendor": "palo-alto",
+            "carrier": "Palo Alto",
+            "lookup": None,
+            "takes": lambda t: (
+                None if _is_ip(t) else "Palo Alto takes one address, not a network"
+            ),
+            "act": "pan_block_ip",
+            "id_arg": "ip",
+            "note_arg": "reason",
+            "act_state": _cf_state("blocked"),
+            "state_read": None,
+            "undo": "pan_unblock_ip",
+        },
     ),
     "block_domain": (
         {
