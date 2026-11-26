@@ -5436,6 +5436,11 @@
   "nullable": false,
   "type": "character varying(16)"
  },
+ "column workflow_runs.step_score": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
  "column workflow_runs.stop_cause": {
   "default": null,
   "nullable": true,

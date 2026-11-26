@@ -44,6 +44,8 @@ export interface TerminalResult {
   capped?: boolean;
   citation_count?: number;
   grounded?: boolean;
+  blind_spots?: number;
+  unserved_tools?: string[];
 }
 
 // Where a run stands while it is still open. paused is a run waiting on someone

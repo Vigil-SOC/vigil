@@ -521,6 +521,8 @@ async function settle(state: State, leases: Leases, job: RunJob, spec: RunSpec, 
         ...(terminal.capped === undefined ? {} : { capped: terminal.capped }),
         ...(terminal.citation_count === undefined ? {} : { citation_count: terminal.citation_count }),
         ...(terminal.grounded === undefined ? {} : { grounded: terminal.grounded }),
+        ...(terminal.blind_spots === undefined ? {} : { blind_spots: terminal.blind_spots }),
+        ...(terminal.unserved_tools === undefined ? {} : { unserved_tools: terminal.unserved_tools }),
       });
     }
     told.delete(job.run_id);

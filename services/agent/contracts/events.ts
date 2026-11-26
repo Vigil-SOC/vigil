@@ -220,6 +220,10 @@ export interface TerminalPayload {
   capped?: boolean;
   citation_count?: number;
   grounded?: boolean;
+  // Calls the estate failed to a required tool that no later call served, and
+  // those tools (#5275). Older ledgers carry neither.
+  blind_spots?: number;
+  unserved_tools?: string[];
 }
 
 // How sure a run may say it is of its verdict.

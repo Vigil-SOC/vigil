@@ -118,6 +118,24 @@ class TerminalUpdate(BaseModel):
     capped: Optional[Any] = None
     citation_count: Optional[Any] = None
     grounded: Optional[Any] = None
+    # Calls the estate failed to a required tool that no later call served, and
+    # those tools, for the step score (#5275). Loose like the three above.
+    blind_spots: Optional[Any] = None
+    unserved_tools: Optional[Any] = None
+
+    def standing(self) -> Dict[str, Any]:
+        """The three facts, the blind-spot count and the unserved tools; None where unsaid."""
+        count, tools = self.blind_spots, self.unserved_tools
+        readable = isinstance(count, int) and not isinstance(count, bool) and count >= 0
+        return {
+            **self.facts(),
+            "blind_spots": count if readable else None,
+            "unserved_tools": (
+                [t for t in tools if isinstance(t, str)][:20]
+                if readable and isinstance(tools, list)
+                else []
+            ),
+        }
 
     def facts(self) -> Dict[str, Any]:
         """The three facts as the row stores them; None where unsaid or unreadable."""
@@ -328,6 +346,7 @@ def record_terminal(
                 approvals,
                 registry,
                 _run_claims(run_id, x_vigil_run_principal),
+                update.standing(),
             )
         # Only a run that reached its conclusion can dismiss its case.
         if update.outcome == "completed":
@@ -617,11 +636,15 @@ def _propose_actions(
     approvals: Optional[ApprovalService],
     registry: Optional[MCPRegistry] = None,
     run_claims: Optional[Claims] = None,
+    standing: Optional[Dict[str, Any]] = None,
 ) -> None:
     from core.response.approval_service import ActionType
+    from core.response.step_confidence import CONTAINMENT, safe_score
 
     service = approvals or ApprovalService()
     proposer = proposer_principal_id(run_id) if proposals else None
+    # Once per terminal, on newly filed rows only (#5275).
+    step_score = safe_score(CONTAINMENT, case_id, standing) if proposals else None
     filed: List[str] = []
     created: List[Tuple[str, str]] = []  # (title, target) newly filed in this call
     for index, raw in enumerate(proposals):
@@ -661,7 +684,11 @@ def _propose_actions(
                 evidence=[run_id],
                 created_by="agent",
                 created_by_principal_id=proposer,
-                parameters={"case_ids": [case_id], "run_id": run_id},
+                parameters={
+                    "case_ids": [case_id],
+                    "run_id": run_id,
+                    "step_score": step_score,
+                },
                 idempotency_key=key,
                 # The confidence is the model's own claim, so it never releases
                 # the action: a person decides each one.
@@ -914,6 +941,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.case_workflow_service import CaseWorkflowService
     from core.cases.closure import DISMISSAL_CAUSES, ClosureCategory
     from core.response.ceiling import close_held, finding_keys
+    from core.response.step_confidence import DISMISSAL, quote, safe_score
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
@@ -924,14 +952,23 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     # with nothing said about leaving it open.
     if _already_closed(case_id):
         return
+    # Scored whatever the tier (#5275); nothing here reads it to decide.
+    step_score = safe_score(DISMISSAL, case_id, update.standing())
+    quoted = quote(step_score)
     # Closing is a reversible act; under Assist a person decides.
     if held := close_held(run_id, lambda: finding_keys(case_id=case_id)):
+        _store_step_score(run_id, step_score, {"check": "held", "reason": held})
         _add_activity(
             case_id,
             "agent_run_left_open",
             f"Left open for a person: the investigation concluded {disposition}, "
             f"and {held}",
-            {"run_id": run_id, "disposition": disposition, "reason": held},
+            {
+                "run_id": run_id,
+                "disposition": disposition,
+                "reason": held,
+                "step_score": quoted,
+            },
         )
         return
     try:
@@ -949,8 +986,10 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 closed_by=run_id,
                 closure_notes=update.summary or None,
                 by_model=True,
+                step_score=quoted,
                 **({"false_positive_cause": cause.value} if cause else {}),
             )
+        _store_step_score(run_id, step_score, {"check": "closed"})
         recorded = "expected activity" if cause else "a false positive"
         _add_activity(
             case_id,
@@ -961,12 +1000,26 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 "disposition": disposition,
                 "closure_category": ClosureCategory.FALSE_POSITIVE.value,
                 "false_positive_cause": cause.value if cause else None,
+                "step_score": quoted,
             },
         )
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception(
             "could not close case %s on the disposition of %s", case_id, run_id
         )
+
+
+# The dismissal's score and what the close check did, once on the run's row. A
+# score that could not be worked out is stored as null beside the check.
+def _store_step_score(
+    run_id: str, step_score: Optional[Dict[str, Any]], check: Dict[str, Any]
+) -> None:
+    try:
+        WorkflowRunService().set_step_score(
+            run_id, {**(step_score or {"value": None, "unscored": True}), **check}
+        )
+    except Exception:  # noqa: BLE001 — the close stands either way
+        logger.exception("could not store the step score of %s", run_id)
 
 
 # The Vigil case a handoff opens (see handoff_cases), so the run page can name it too.

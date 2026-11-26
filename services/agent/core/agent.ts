@@ -1620,7 +1620,7 @@ async function end(
     ...(disposition === undefined ? {} : { disposition }),
     ...(title === undefined ? {} : { title }),
     ...(confidence === undefined ? {} : { confidence }),
-    ...standing(ctx.options.plugin, events),
+    ...standing(ctx.options.plugin, events, ctx.options.spec.tools),
   };
   await ctx.harness.state.append(ctx.options.run_id, [event(ctx.options, "terminal", payload)]);
   await ctx.options.hooks?.ended?.(ctx, payload);
@@ -1630,18 +1630,31 @@ async function end(
 // What the report stands on, for the case to rank its runs by (#4962): the last
 // conclusion's cap, its cited refs the run holds (as reviewOf counts `real`), and the
 // last review's grounding. A fact the run never had is left out, not false; a run with
-// no conclusion was not capped.
+// no conclusion was not capped. blind_spots (#5275) counts the calls the estate
+// failed to a required tool that no later call to it served; an unbound need is
+// the deployment's, not the run's, and is not counted.
 export function standing(
   plugin: PluginManifest,
   events: readonly { kind: string; payload: unknown }[],
-): Pick<TerminalPayload, "capped" | "citation_count" | "grounded"> {
+  tools: readonly ToolSpec[],
+): Pick<TerminalPayload, "capped" | "citation_count" | "grounded" | "blind_spots" | "unserved_tools"> {
   const last = (kind: string) => events.findLast((one) => one.kind === kind)?.payload;
   const conclusion = last("conclusion") as ConclusionPayload | undefined;
   const review = last("review") as ReviewPayload | undefined;
   const field = isStructured(plugin.conclusion) ? plugin.conclusion.citations_field : undefined;
-  const held = new Set(callsIn(events).map((call) => call.ref));
+  const calls = callsIn(events);
+  const held = new Set(calls.map((call) => call.ref));
+  const optional = optionalTools(plugin, tools);
+  const unserved = calls.filter(
+    (call, at) =>
+      classOf(call) === "visibility_gap" &&
+      !optional.has(call.tool) &&
+      !calls.slice(at + 1).some((later) => later.tool === call.tool && classOf(later) === "served"),
+  );
   return {
     capped: conclusion?.capped === true,
+    blind_spots: unserved.length,
+    unserved_tools: [...new Set(unserved.map((call) => call.tool))],
     // No conclusion cited nothing it could be held to: unsaid, not zero.
     ...(field === undefined || conclusion === undefined ? {} : { citation_count: citedRefs(conclusion.value[field]).filter((ref) => held.has(ref)).length }),
     ...(typeof review?.grounded === "boolean" ? { grounded: review.grounded } : {}),
