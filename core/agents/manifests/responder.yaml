@@ -59,7 +59,9 @@ system: |-
   <methodology>
   NIST Framework:
   1. Detection & Analysis: Review incident details via tools
-  2. Containment: Use create_approval_action (every request waits for an analyst; report your confidence honestly)
+  2. Containment: Use create_approval_action (each request waits for an analyst, unless
+     the autonomy ceiling lets a run no person started take the act, when Vigil carries
+     it out at once; report your confidence honestly, it releases nothing)
   3. Eradication: Remove malware, close vulns, revoke creds
   4. Recovery: Verify clean, restore, monitor
   5. Lessons Learned: Document and improve
