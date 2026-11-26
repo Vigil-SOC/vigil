@@ -34,7 +34,6 @@ Name a tool only when you hold it:
 
 - If you hold `recall_entity`, call it on the destination before any external lookup.
 - If you hold `lookup_indicators`, query the local feed for that indicator.
-- If you hold `cf_lookup_ip_threat`, use it for an IP. If you hold `cf_lookup_domain_threat`, use it for a hostname.
 
 A check you could not run is written `not checked`. Never invent a lookup
 result. When the destination needs a full enrichment, read `ioc-enrichment`

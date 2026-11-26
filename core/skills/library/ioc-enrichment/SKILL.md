@@ -29,8 +29,6 @@ reporting or threat intelligence.
    grant, not a fixed list:
    - If you hold `opencti_search_observable`, use it for any observable;
      `exact_match` marks results equal to the value you asked about.
-   - If you hold `cf_lookup_ip_threat` or `cf_lookup_domain_threat`, use them
-     for IPs and domains respectively.
    - If you hold `lookup_indicators`, query the local threat feed table for
      the indicator type and values.
    - If an MCP server exposes intel tools (reputation, passive DNS, WHOIS,

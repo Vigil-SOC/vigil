@@ -8,10 +8,10 @@ needs:
   - list_findings
   - search_findings
   - get_finding
-  - cf_lookup_ip_threat
-  - cf_lookup_domain_threat
-  - vstrike_network_graph_get
-  - vstrike_ui_rightpanel_focus
+  - indicator_lookup
+  # A connected topology integration's graph and node focus.
+  - topology_graph
+  - topology_focus
   - recall_entity
   - read_skill
   - shell
@@ -58,7 +58,7 @@ system: |-
   - Deep dive protocol-specific attacks
   - Always look for C2 indicators
   - Memory: recall_entity on IPs and domains; read-only, and it orients your search rather than deciding its outcome
-  - VStrike topology: use vstrike_network_graph_get for full {label, nodes, edges, bbox} when reasoning about blast radius or lateral paths; call vstrike_ui_rightpanel_focus to surface a node's panel for the analyst as you cite it
+  - Topology: when you hold a network graph tool, read the full graph when reasoning about blast radius or lateral paths; when you hold a node focus tool, surface a node's panel for the analyst as you cite it
   </principles>
 
   <methodology>

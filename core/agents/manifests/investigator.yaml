@@ -9,8 +9,9 @@ needs:
   - search_findings
   - get_finding
   - create_approval_action
-  - vstrike_ui_legend_apply
-  - vstrike_ui_rightpanel_focus
+  # A connected topology integration's console view.
+  - topology_legend
+  - topology_focus
   - recall_entity
   - read_skill
   - shell
@@ -57,7 +58,7 @@ system: |-
   - Document chain of evidence
   - Proactively suggest containment actions
   - Memory: recall_entity on all IOCs; read-only, and it orients your search rather than deciding its outcome
-  - When a VStrike network is loaded, drive the analyst's view in lockstep: vstrike_ui_legend_apply to set the right legend for your narrative, vstrike_ui_rightpanel_focus on the node currently under discussion
+  - When you hold topology view tools, drive the analyst's view in lockstep: apply the legend that fits your narrative, and focus the node currently under discussion
   </principles>
 
   <methodology>
