@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from core.intent import FIELDS_BY_KEY, label
@@ -28,8 +28,7 @@ DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already hand
 FUNCTIONS = ("triage", "investigation", "response")
 COLUMN_KINDS = ("text", "mono", "case", "action")
 EFFECTS = ("better", "worse", "same")
-# A dismissal for these reasons stands for good; any other for RESUGGEST_AFTER.
-STANDING_REASONS = ("Too risky", "Evidence looks wrong")
+# A dismissal, whatever its reason, holds the same change back this long.
 RESUGGEST_AFTER = timedelta(days=30)
 LIVE = ("open", "held")
 HISTORY_LIMIT = 100
@@ -108,9 +107,9 @@ def propose(
 
     Returns None, storing nothing, when a person dismissed this same change
     (same setting, same from and to values, see ``same_value``) and the
-    dismissal still stands:
-    "Too risky" and "Evidence looks wrong" stand for good, the other reasons
-    for ``RESUGGEST_AFTER``. A malformed card or incident raises ``TypeError``.
+    dismissal still stands: any dismissal stands for ``RESUGGEST_AFTER``, after
+    which the change can be suggested again if the data still supports it. A
+    malformed card or incident raises ``TypeError``.
     """
     _check_card(card)
     _check_incident(held_incident)
@@ -272,10 +271,7 @@ def _still_dismissed(
         select(SupervisoryHistory.from_value, SupervisoryHistory.to_value).where(
             SupervisoryHistory.setting_key == key,
             SupervisoryHistory.outcome == "dismissed",
-            or_(
-                SupervisoryHistory.note.in_(STANDING_REASONS),
-                SupervisoryHistory.at >= since,
-            ),
+            SupervisoryHistory.at >= since,
         )
     )
     return any(

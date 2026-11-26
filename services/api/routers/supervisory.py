@@ -117,8 +117,7 @@ def dismiss_suggestion(
 ) -> HistoryEntryResponse:
     """Dismiss a suggestion with one of the page's reasons. Returns its history entry.
 
-    The same change is not suggested again: for good when too risky or the
-    evidence looks wrong, for 30 days otherwise.
+    The same change is not suggested again for 30 days, whatever the reason.
     """
     principal_id = getattr(current_user, "principal_id", None) or getattr(
         current_user, "user_id", None

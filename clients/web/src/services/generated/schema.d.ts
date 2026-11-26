@@ -8037,8 +8037,7 @@ export interface paths {
          * Dismiss Suggestion
          * @description Dismiss a suggestion with one of the page's reasons. Returns its history entry.
          *
-         *     The same change is not suggested again: for good when too risky or the
-         *     evidence looks wrong, for 30 days otherwise.
+         *     The same change is not suggested again for 30 days, whatever the reason.
          */
         post: operations["post_api_supervisory_suggestions_suggestion_id_dismiss"];
         delete?: never;
