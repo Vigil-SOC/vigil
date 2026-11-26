@@ -25,7 +25,6 @@ from sqlalchemy import func, select
 from core.agents.builtins import ORCHESTRATOR_ACTOR
 from core.agents.lost_runs import Cursor, end_lost_start_jobs
 from core.auth import sign_ins
-from core.auth.principals import agent_principal_id
 from core.cases.case_sla_service import case_title, open_case_holding
 from core.config import get_settings, is_integration_enabled
 from core.daemon_config import OrchestratorConfig
@@ -97,7 +96,6 @@ from core.agents.projections import (
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.findings.exclusions import cached_active_ips, excluded_ips_of
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
-from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.storage.connection import get_db_manager
 from core.storage.models import (
@@ -997,7 +995,6 @@ class Orchestrator:
     def __init__(
         self,
         config: OrchestratorConfig,
-        approvals: Optional[ApprovalService] = None,
         workflows: Optional[WorkflowsService] = None,
     ):
         self.config = config
@@ -1007,7 +1004,6 @@ class Orchestrator:
         self.watch_loop: Optional[Callable[..., None]] = None
         # Set by the daemon: counts one intake-loop pass on /health.
         self.note_pass: Optional[Callable[[], None]] = None
-        self._approvals = approvals or ApprovalService()
         # Read for the run_kind a definition declares; the file cache needs no DB.
         self._workflows = workflows or WorkflowsService()
 
@@ -2736,68 +2732,23 @@ class Orchestrator:
             return
 
         state = self.workdir.read_state(inv_id)
-        proposed_actions = state.get("proposed_actions", [])
 
         self.stats["investigations_completed"] += 1
         if _inv_completed is not None:
             _inv_completed.add(1)
         _reindex_case(state.get("case_id"))
 
-        self.workdir.append_log(
-            inv_id,
-            {
-                "event": "investigation_completed",
-                "proposed_actions_count": len(proposed_actions),
-            },
-        )
+        self.workdir.append_log(inv_id, {"event": "investigation_completed"})
 
-        logger.info(
-            f"Investigation {inv_id} COMPLETED ({len(proposed_actions)} actions)"
-        )
+        logger.info(f"Investigation {inv_id} COMPLETED")
 
         self._send_notification(
             inv_id,
             "investigation_complete",
             f"Investigation {inv_id} completed",
-            f"Investigation completed with {len(proposed_actions)} proposed actions.",
+            "Investigation completed.",
             priority="normal",
         )
-
-        if proposed_actions:
-            for action in proposed_actions:
-                if action.get("requires_approval"):
-                    await self._create_approval_action(inv_id, action)
-
-    async def _create_approval_action(self, inv_id: str, action: Dict):
-        """Create an approval action for proposed response."""
-        try:
-            from core.response.approval_service import ActionType
-
-            service = self._approvals
-
-            action_str = action.get("action", "unknown")
-            try:
-                action_type = ActionType(action_str)
-            except ValueError:
-                action_type = ActionType.CUSTOM
-
-            service.create_action(
-                action_type=action_type,
-                title=f"Auto-investigation action: {action_str}",
-                description=f"Investigation {inv_id} proposes: {action.get('reason', '')}",
-                target=action.get("target", "unknown"),
-                confidence=0.8,
-                reason=f"[Auto-investigation {inv_id}] {action.get('reason', '')}",
-                evidence=[inv_id],
-                created_by=ORCHESTRATOR_ACTOR,
-                # The id string only; no principal row is seeded or minted for it.
-                created_by_principal_id=agent_principal_id(ORCHESTRATOR_ACTOR),
-                # The 0.8 is a constant, and the proposal is the agent's.
-                human_only=True,
-            )
-            logger.info(f"Created approval action for {inv_id}: {action_str}")
-        except Exception as e:
-            logger.error(f"Failed to create approval action: {e}")
 
     # -------------------------------------------------------------------------
     # Related-Case links

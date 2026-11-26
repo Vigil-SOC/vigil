@@ -92,7 +92,6 @@ def generate_initial_state(
         "created_at": utcnow().isoformat(),
         "discovered_iocs": {},
         "discovered_entities": {},
-        "proposed_actions": [],
         "blockers": [],
     }
 

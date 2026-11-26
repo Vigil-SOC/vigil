@@ -94,7 +94,6 @@ class SOCDaemon:
             build_mcp_client,
             set_process_mcp_client,
         )
-        from core.response.approval_service import ApprovalService
         from core.storage.connection import get_db_manager
         from services.daemon.kafka_ingestor import KafkaIngestor
         from services.daemon.metrics import MetricsServer
@@ -113,14 +112,9 @@ class SOCDaemon:
         # The daemon owns its own copies: it is a separate process from the API, so
         # nothing on the API's app.state is reachable from here.
         set_process_mcp_client(build_mcp_client())
-        # No config: the band is read live, as on the backend.
-        approvals = ApprovalService()
 
         self._scheduler = TaskScheduler(self.config.scheduler)
-        self._orchestrator = Orchestrator(
-            self.config.orchestrator,
-            approvals=approvals,
-        )
+        self._orchestrator = Orchestrator(self.config.orchestrator)
 
         self._metrics_server = MetricsServer(self.config.metrics)
 
