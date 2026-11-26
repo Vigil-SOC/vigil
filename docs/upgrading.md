@@ -206,6 +206,10 @@ Also on the previous release:
 - a person without MFA whose password is under 15 characters is sent to a forced change at sign-in;
 - a password over 128 characters is a wrong password, and the way back is a reset link to a password of 128 or fewer.
 
+## BIFROST_URL and OLLAMA_URL in .env
+
+`env.example` no longer sets `BIFROST_URL` or `OLLAMA_URL` (#5200). Each install shape now uses its own default: host-run uses localhost, Compose uses `http://bifrost:8080` and `http://host.docker.internal:11434`, and Helm sets its own. An existing `.env` is not rewritten. On a full-stack Compose install, delete the shipped `BIFROST_URL="http://localhost:8080"` and `OLLAMA_URL="http://localhost:11434"` lines from `.env`: a value there overrides the Compose defaults, and inside a container localhost is the container itself, so model calls never reach the gateway or Ollama. A host-run install may keep them.
+
 ## Medic's gateway token on Compose
 
 Medic's gateway on Compose reads the backend with an API token now, in a `medic_gateway_token` file beside `viewer_password` (#4429, epic #4425). A site enabled before keeps reading on its password with no step on upgrade day: both files are optional, and `./start.sh` creates an empty placeholder for a missing one, which the gateway treats as absent (a `docker compose` command typed by hand doesn't; see `docs/medic/enable.md`). To move the site, re-run `scripts/medic/enable-compose.sh`; it mints the token and recreates the gateway, and the backend ends the account's password when it first accepts the token. Nothing moves a site on its own. The password path is kept through an announced window and is removed no earlier than the release that ends it. After restoring a database from before the mint, mint again: delete `medic_gateway_token` and re-run the script (see `docs/medic/enable.md`).
