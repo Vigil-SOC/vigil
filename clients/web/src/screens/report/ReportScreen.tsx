@@ -56,7 +56,7 @@ const MODULE_TITLE: Record<string, string> = {
   settings: "Vigil's own settings",
   coverage: 'Detection coverage',
   estate: 'What CrowdStrike, Defender and Wazuh still list',
-  site: 'The declared site against what Wazuh lists',
+  site: 'The declared site against what Wazuh, CrowdStrike and Defender list',
   'history.before': 'Your "before"',
   'history.recheck': 'Re-check list',
   'history.capped_recheck': 'Capped re-check',

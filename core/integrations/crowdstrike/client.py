@@ -16,6 +16,9 @@ DEFAULT_TIMEOUT = 30.0
 # Falcon caps: IDs per alerts-query page, and composite IDs per entities request.
 _ID_PAGE_MAX = 10000
 _ALERTS_MAX = 1000
+# Device ids per scroll page, and per POST to the device entities endpoint.
+DEVICE_PAGE = 5000
+_HOST_FIELDS = ("hostname", "local_ip", "last_seen")
 
 # requests followed redirects by default; httpx does not.
 _FOLLOW_REDIRECTS = True
@@ -242,6 +245,79 @@ class CrowdStrikeService:
             self.last_error = "devices query returned no total"
             return {"total": None, "status": response.status_code, "kind": "parse"}
         return {"total": total, "status": response.status_code, "kind": "ok"}
+
+    def device_hosts(self, offset: Optional[str] = None) -> Dict[str, Any]:
+        """One page of hosts: ids from ``/devices/queries/devices-scroll/v1``,
+        then ``hostname``, ``local_ip`` and ``last_seen`` from
+        ``/devices/entities/devices/v2``. Ids are dropped here.
+
+        Same ``kind``/``status`` as ``device_total``, plus ``hosts``, ``total``
+        and ``next`` (the scroll offset, ``None`` on the last page). Logs no
+        id, name, address or body. ``self.timeout`` bounds each request.
+        """
+        self.last_error = None
+        self.last_status = None
+        if not self._device_token():
+            kind = "http" if self.last_status is not None else "unreachable"
+            return {"hosts": None, "status": self.last_status, "kind": kind}
+        params: Dict[str, Any] = {"limit": DEVICE_PAGE}
+        if offset:
+            params["offset"] = offset
+        page = self._device_read(
+            "get", "/devices/queries/devices-scroll/v1", params=params
+        )
+        if page["kind"] != "ok":
+            return page
+        body = page.pop("body")
+        ids = [i for i in body.get("resources") or [] if isinstance(i, str)]
+        pagination = (body.get("meta") or {}).get("pagination") or {}
+        total = pagination.get("total") if isinstance(pagination, dict) else None
+        if isinstance(total, bool) or not isinstance(total, int):
+            self.last_error = "devices scroll returned no total"
+            return {"hosts": None, "status": page["status"], "kind": "parse"}
+        hosts: List[Dict[str, Any]] = []
+        if ids:
+            detail = self._device_read(
+                "post", "/devices/entities/devices/v2", json={"ids": ids}
+            )
+            if detail["kind"] != "ok":
+                return detail
+            for row in detail["body"].get("resources") or []:
+                if isinstance(row, dict):
+                    hosts.append({k: row.get(k) for k in _HOST_FIELDS})
+        nxt = pagination.get("offset") if ids else None
+        return {
+            "hosts": hosts,
+            "total": total,
+            "next": nxt if isinstance(nxt, str) and nxt else None,
+            "status": page["status"],
+            "kind": "ok",
+        }
+
+    def _device_read(self, method: str, path: str, **kwargs: Any) -> Dict[str, Any]:
+        """One device request: ``body`` and ``kind`` ``ok``, or the failure kind."""
+        try:
+            response = self.session.request(
+                method.upper(), f"{self.base_url}{path}", timeout=self.timeout, **kwargs
+            )
+        except httpx.TimeoutException:
+            self.last_error = "devices read timed out"
+            return {"hosts": None, "status": None, "kind": "timeout"}
+        except httpx.HTTPError:
+            self.last_error = "devices read failed"
+            return {"hosts": None, "status": None, "kind": "unreachable"}
+        self.last_status = response.status_code
+        if response.status_code != 200:
+            self.last_error = f"devices read: HTTP {response.status_code}"
+            return {"hosts": None, "status": response.status_code, "kind": "http"}
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            self.last_error = "devices read unreadable"
+            return {"hosts": None, "status": response.status_code, "kind": "parse"}
+        return {"body": body, "status": response.status_code, "kind": "ok"}
 
     def _device_token(self) -> bool:
         """Token for a host-total read. Logs nothing from the error.
