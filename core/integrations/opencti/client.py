@@ -6,7 +6,7 @@ go through ``OpenCTIService``. It only ever sends queries, never mutations.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import httpx
 
@@ -436,3 +436,21 @@ def configured_service(
         ),
         (),
     )
+
+
+def taxii_settings(
+    config: Dict[str, Any],
+) -> Tuple[str, Union[bool, str], Optional[Dict[str, str]]]:
+    """TAXII discovery URL, ``requests`` verify and proxies for a resolved config.
+
+    taxii2client is built on ``requests``, so verify is False, the CA bundle
+    path, or True, and the proxy is the integration's own (socks5 via pysocks).
+    """
+    verify: Union[bool, str] = True
+    if config.get("verify_ssl") is False:
+        verify = False
+    elif config.get("ca_cert_path"):
+        verify = str(config["ca_cert_path"])
+    proxy = integration_proxy("opencti")
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    return f"{str(config['url']).rstrip('/')}/taxii2/", verify, proxies

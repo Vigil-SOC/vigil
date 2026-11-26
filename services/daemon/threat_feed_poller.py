@@ -1,7 +1,8 @@
-"""Periodic poller for STIX/TAXII threat feeds (Cloudforce One et al).
+"""Periodic poller for STIX/TAXII threat feeds: Cloudforce One and OpenCTI.
 
-Always registered as a scheduled task by `daemon/scheduler.py`; each run is a
-no-op while the `cloudforce_one` integration is disabled.
+Always registered as a scheduled task by `daemon/scheduler.py`; each run polls
+whichever of `cloudforce_one` and `opencti` is enabled and configured, and is a
+no-op while neither is. OpenCTI is polled only when collection ids are saved.
 
 After the upsert loop it offers the poll's uncovered indicators to the Intake
 as one case-less `kind="schedule"` row carrying every key (#1009). It does not
@@ -10,6 +11,7 @@ open the hunt; the drain tick launches it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, NamedTuple, Optional, Set
@@ -17,8 +19,10 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set
 from sqlalchemy import and_, or_
 
 from core.config import get_integration_config, get_settings, is_integration_enabled
-from core.integrations._base.config import resolve
+from core.integrations._base.config import missing, resolve
 from core.integrations.cloudforce_one.descriptor import CLOUDFORCE_ONE
+from core.integrations.opencti.client import taxii_settings
+from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.memory.hunt_coverage import build_proposal
 from core.storage.connection import get_db_manager
 from core.storage.intake_queue import insert_intake_trigger
@@ -67,7 +71,9 @@ class ThreatFeedPoller:
 
     @staticmethod
     def is_enabled() -> bool:
-        return is_integration_enabled("cloudforce_one")
+        return is_integration_enabled("cloudforce_one") or is_integration_enabled(
+            "opencti"
+        )
 
     @staticmethod
     def poll_interval_seconds() -> int:
@@ -95,21 +101,44 @@ class ThreatFeedPoller:
             return 900
 
     async def run_once(self) -> Dict[str, Any]:
-        """Poll all configured collections; return per-source counters."""
-        global _last_skip_signature
-        if not self.is_enabled():
-            logger.debug("Cloudforce One integration disabled; skipping poll")
-            return {"skipped": "integration_disabled"}
+        """Poll every enabled source's collections; return per-source counters.
 
+        The blocking fetch, upserts and intake offer run in a worker thread:
+        the scheduler awaits this inline, and the daemon's /health shares the
+        loop, so a long first pull must not stall it.
+        """
+        if not self.is_enabled():
+            logger.debug("No threat feed integration enabled; skipping poll")
+            return {"skipped": "integration_disabled"}
+        return await asyncio.to_thread(self._poll)
+
+    def _poll(self) -> Dict[str, Any]:
+        sources: Dict[str, Any] = {}
+        if is_integration_enabled("cloudforce_one"):
+            sources["cloudforce_one"] = self._poll_cloudforce_one()
+        if is_integration_enabled("opencti"):
+            sources["opencti"] = self._poll_opencti()
+        summary: Dict[str, Any] = {"sources": sources}
+        polled = [r for r in sources.values() if "skipped" not in r]
+        if not polled:
+            return summary
+        # Once per poll, not per source, and every poll that ran, not only one
+        # whose counters moved: the producer reads `threat_indicators`, not
+        # this poll's results, so a poll that fetched nothing new can still be
+        # the one that offers a key an earlier poll wrote.
+        summary["intake"] = self.offer_uncovered_indicators_to_intake()
+        if any(r["totals"]["seen"] or r["totals"]["errors"] for r in polled):
+            logger.info("Threat feed poll: %s", summary)
+        return summary
+
+    def _poll_cloudforce_one(self) -> Dict[str, Any]:
+        global _last_skip_signature
         cfg = resolve(CLOUDFORCE_ONE)
         api_token = cfg.get("api_token")
         server_url = cfg.get("taxii_server_url")
         collection_ids_raw = cfg.get("collection_ids") or ""
-
-        collection_ids: List[str] = [
-            c.strip() for c in str(collection_ids_raw).split(",") if c.strip()
-        ]
-        missing = tuple(
+        collection_ids = feed.parse_collection_ids(collection_ids_raw)
+        absent = tuple(
             name
             for name, present in (
                 ("api_token", api_token),
@@ -118,74 +147,36 @@ class ThreatFeedPoller:
             )
             if not present
         )
-        if missing:
-            self._note_skipped_config(missing)
-            only_blank_ids = missing == ("collection_ids",) and collection_ids_raw
+        if absent:
+            self._note_skipped_config(absent)
+            only_blank_ids = absent == ("collection_ids",) and collection_ids_raw
             return {
                 "skipped": "no_collections" if only_blank_ids else "incomplete_config"
             }
         _last_skip_signature = None
+        return _poll_collections(
+            "cloudforce_one", "Cloudforce One", server_url, api_token, collection_ids
+        )
 
-        per_collection: Dict[str, Dict[str, int]] = {}
-        total_seen = 0
-        total_inserted = 0
-        total_updated = 0
-        total_skipped = 0
-        errors = 0
-
-        for cid in collection_ids:
-            key = f"cloudforce_one::{cid}"
-            since: Optional[datetime] = _last_polled.get(key)
-            try:
-                indicators = feed.fetch_taxii_collection(
-                    server_url=server_url,
-                    collection_id=cid,
-                    api_token=api_token,
-                    source="cloudforce_one",
-                    since=since,
-                )
-                counts = feed.upsert_indicators(indicators)
-                per_collection[cid] = {"seen": len(indicators), **counts}
-                total_seen += len(indicators)
-                total_inserted += counts.get("inserted", 0)
-                total_updated += counts.get("updated", 0)
-                skipped = counts.get("skipped", 0)
-                total_skipped += skipped
-                # Upserts are idempotent, so holding the watermark re-pulls the
-                # rejected indicators next poll instead of losing them.
-                if skipped == 0:
-                    _last_polled[key] = utcnow() - timedelta(seconds=60)
-                else:
-                    logger.warning(
-                        "Cloudforce One collection %s: %d indicator(s) not stored; "
-                        "keeping watermark so the next poll re-pulls them",
-                        cid,
-                        skipped,
-                    )
-            except Exception as e:  # noqa: BLE001
-                logger.error("Cloudforce One poll failed for %s: %s", cid, e)
-                errors += 1
-                per_collection[cid] = {"error": str(e)}
-
-        summary = {
-            "source": "cloudforce_one",
-            "collections": per_collection,
-            "totals": {
-                "seen": total_seen,
-                "inserted": total_inserted,
-                "updated": total_updated,
-                "skipped": total_skipped,
-                "errors": errors,
-            },
-        }
-        # Every poll that ran, not only one whose counters moved: the producer
-        # reads `threat_indicators`, not this poll's results, so a poll that
-        # fetched nothing new can still be the one that offers a key an earlier
-        # poll wrote and a refused insert left behind.
-        summary["intake"] = self.offer_uncovered_indicators_to_intake()
-        if total_seen or errors:
-            logger.info("Threat feed poll: %s", summary)
-        return summary
+    @staticmethod
+    def _poll_opencti() -> Dict[str, Any]:
+        cfg = resolve(OPENCTI)
+        collection_ids = feed.parse_collection_ids(cfg.get("collection_ids"))
+        # No ids is a lookups-only setup, not a fault: nothing is reported.
+        if not collection_ids:
+            return {"skipped": "no_collections"}
+        if missing(cfg, *OPENCTI_REQUIRED):
+            return {"skipped": "incomplete_config"}
+        server_url, verify, proxies = taxii_settings(cfg)
+        return _poll_collections(
+            "opencti",
+            "OpenCTI",
+            server_url,
+            str(cfg["api_token"]),
+            collection_ids,
+            verify=verify,
+            proxies=proxies,
+        )
 
     def _note_skipped_config(self, missing: tuple) -> None:
         """Warn once per distinct missing set when a poll skips for config."""
@@ -266,6 +257,52 @@ class ThreatFeedPoller:
         offered = {"inserted": 1, "keys": len(keys), "skipped_recent": skipped}
         logger.info("Uncovered feed indicators offered to intake: %s", offered)
         return offered
+
+
+def _poll_collections(
+    source: str,
+    label: str,
+    server_url: str,
+    api_token: str,
+    collection_ids: List[str],
+    **transport: Any,
+) -> Dict[str, Any]:
+    """Fetch and upsert each collection; one failing does not stop the rest."""
+    per_collection: Dict[str, Dict[str, Any]] = {}
+    totals = {"seen": 0, "inserted": 0, "updated": 0, "skipped": 0, "errors": 0}
+    for cid in collection_ids:
+        key = f"{source}::{cid}"
+        try:
+            indicators = feed.fetch_taxii_collection(
+                server_url=server_url,
+                collection_id=cid,
+                api_token=api_token,
+                source=source,
+                since=_last_polled.get(key),
+                **transport,
+            )
+            counts = feed.upsert_indicators(indicators)
+            per_collection[cid] = {"seen": len(indicators), **counts}
+            totals["seen"] += len(indicators)
+            for name in ("inserted", "updated", "skipped"):
+                totals[name] += counts.get(name, 0)
+            # Upserts are idempotent, so holding the watermark re-pulls the
+            # rejected indicators next poll instead of losing them.
+            if not counts.get("skipped"):
+                _last_polled[key] = utcnow() - timedelta(seconds=60)
+            else:
+                logger.warning(
+                    "%s collection %s: %d indicator(s) not stored; "
+                    "keeping watermark so the next poll re-pulls them",
+                    label,
+                    cid,
+                    counts["skipped"],
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error("%s poll failed for %s: %s", label, cid, e)
+            totals["errors"] += 1
+            per_collection[cid] = {"error": str(e)}
+    return {"source": source, "collections": per_collection, "totals": totals}
 
 
 def _intel_intake_state() -> _IntelIntake:

@@ -156,7 +156,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'opencti',
     name: 'OpenCTI',
     category: 'Threat Intelligence',
-    description: 'Read-only lookups in OpenCTI: observables and their indicators, threat actors, intrusion sets, malware, attack patterns and the relationships between them.',
+    description: 'Read-only lookups in OpenCTI: observables and their indicators, threat actors, intrusion sets, malware, attack patterns and the relationships between them. Optionally pulls TAXII collections into Vigil\'s indicator feed.',
     functionality_type: 'Data Enrichment',
     proxy_supported: true,
     fields: [
@@ -189,6 +189,14 @@ const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         placeholder: '/etc/vigil/certs/root-ca.pem',
         helpText: 'PEM trusted for this integration only, in place of the default store: the private CA that signed the server certificate. A path on the Vigil backend host; mount it into the container. Leave blank for the default store. Ignored when SSL verification is off.',
+      },
+      {
+        name: 'collection_ids',
+        label: 'TAXII Collection IDs',
+        type: 'text',
+        required: false,
+        placeholder: 'collection-uuid-1,collection-uuid-2',
+        helpText: 'Comma-separated TAXII 2.1 collection IDs to pull into Vigil\'s indicator table from /taxii2/ on the platform URL, on the threat feed poll interval. Leave blank for lookups only.',
       },
     ],
     docs_url: 'https://docs.opencti.io/latest/reference/api/',

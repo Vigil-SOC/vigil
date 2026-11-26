@@ -235,9 +235,43 @@ async def _opencti() -> Outcome:
     )
     try:
         # me { name } with the token: a bad token and a wrong URL differ.
-        return await service.test_connection()
+        outcome = await service.test_connection()
     finally:
         await service.close()
+    from core.integrations.opencti.client import taxii_settings
+    from core.threat_intel.threat_feed_service import parse_collection_ids
+
+    collection_ids = parse_collection_ids(config.get("collection_ids"))
+    if not outcome[0] or not collection_ids:
+        return outcome
+
+    # The poller's TAXII feed: same URL, token, verify and proxy as its poll.
+    server_url, verify, proxies = taxii_settings(config)
+    try:
+        found = await asyncio.to_thread(
+            _taxii_collections,
+            server_url,
+            str(config["api_token"]),
+            collection_ids,
+            verify=verify,
+            proxies=proxies,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Credential check for opencti TAXII failed (%s)", type(exc).__name__
+        )
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403):
+            return failed(
+                "OpenCTI refused the token on TAXII (/taxii2/)", status=status, exc=exc
+            )
+        return failed(
+            "OpenCTI TAXII (/taxii2/) could not be reached", status=status, exc=exc
+        )
+    unknown = [cid for cid in collection_ids if cid not in found]
+    if unknown:
+        return False, f"OpenCTI TAXII collection not found: {', '.join(unknown)}"
+    return True, f"{outcome[1]}; found {len(collection_ids)} TAXII collection(s)"
 
 
 async def _sentinel() -> Outcome:
@@ -509,6 +543,44 @@ async def _crowdstrike() -> Outcome:
         service.session.close()
 
 
+def _taxii_collections(
+    server_url: str,
+    api_token: str,
+    wanted: list,
+    verify: Union[bool, str] = True,
+    proxies: Optional[Dict[str, str]] = None,
+) -> set:
+    """The ``wanted`` collection ids a TAXII 2.1 server lists, by discovery only.
+
+    Fetching a collection pages every object. Stops at the first API root
+    that holds them all. Raises what taxii2client raises.
+    """
+    from taxii2client.v21 import Server
+
+    from core.threat_intel.threat_feed_service import _BearerAuth, pin_taxii_session
+
+    def pin(session: Any) -> None:
+        pin_taxii_session(session, verify, proxies, timeout=_REQUEST_TIMEOUT)
+
+    server = Server(server_url, auth=_BearerAuth(api_token))
+    roots: list = []
+    found: set = set()
+    try:
+        pin(server._conn.session)
+        roots = list(server.api_roots)
+        for root in roots:
+            # Each API root opens its own session.
+            pin(root._conn.session)
+            found.update(c.id for c in root.collections if c.id in wanted)
+            if found >= set(wanted):
+                break
+        return found
+    finally:
+        server.close()
+        for root in roots:
+            root.close()
+
+
 async def _cloudforce_one() -> Outcome:
     # Same descriptor the poller resolves, so Test and the poll see one config.
     config = resolve(CLOUDFORCE_ONE)
@@ -524,42 +596,14 @@ async def _cloudforce_one() -> Outcome:
         return _absent(absent)
 
     def discover() -> Outcome:
-        from taxii2client.v21 import Server
-
-        from core.threat_intel.threat_feed_service import _BearerAuth
-
-        # Discovery only. Fetching the collection pages every object.
-        # Each API root opens its own session, so the short timeout has to be
-        # put on that session before its collections are listed.
-        server = Server(
+        found = _taxii_collections(
             str(config["taxii_server_url"]),
-            auth=_BearerAuth(str(config["api_token"])),
+            str(config["api_token"]),
+            collection_ids[:1],
         )
-
-        def limit(session: Any) -> None:
-            request = session.request
-
-            def limited(method: str, url: str, **kwargs: Any) -> Any:
-                kwargs.setdefault("timeout", _REQUEST_TIMEOUT)
-                return request(method, url, **kwargs)
-
-            session.request = limited
-
-        roots: list = []
-        try:
-            limit(server._conn.session)
-            roots = list(server.api_roots)
-            wanted = collection_ids[0]
-            for root in roots:
-                limit(root._conn.session)
-                for collection in root.collections:
-                    if collection.id == wanted:
-                        return True, "Cloudforce One accepted the call"
-            return False, "Cloudforce One collection was not found"
-        finally:
-            server.close()
-            for root in roots:
-                root.close()
+        if found:
+            return True, "Cloudforce One accepted the call"
+        return False, "Cloudforce One collection was not found"
 
     try:
         return await asyncio.to_thread(discover)

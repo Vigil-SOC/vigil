@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import requests.auth
 
@@ -96,6 +96,13 @@ def parse_stix_indicator(
     labels = list(obj.get("labels") or [])
     valid_from = _parse_dt(obj.get("valid_from"))
     valid_until = _parse_dt(obj.get("valid_until"))
+    if obj.get("revoked"):
+        # Stored as expired so it stops matching; upsert overwrites
+        # valid_until, so a republished revocation expires an existing row.
+        revoked_at = min(
+            t for t in (utcnow(), _parse_dt(obj.get("modified"))) if t is not None
+        )
+        valid_until = min(valid_until, revoked_at) if valid_until else revoked_at
 
     for vigil_type, value in _extract_observables(pattern):
         value = normalize_indicator_value(vigil_type, value)
@@ -282,14 +289,55 @@ class _BearerAuth(requests.auth.AuthBase):
         return r
 
 
+def parse_collection_ids(raw: Any) -> List[str]:
+    """A saved comma-separated collection id list, blanks dropped."""
+    return [c.strip() for c in str(raw or "").split(",") if c.strip()]
+
+
+def pin_taxii_session(
+    session: Any,
+    verify: Union[bool, str] = True,
+    proxies: Optional[Dict[str, str]] = None,
+    timeout: Optional[float] = None,
+) -> None:
+    """Send verify, proxies and timeout with every request on a taxii2client session.
+
+    Per request, not on the session: ``requests`` lets ``REQUESTS_CA_BUNDLE``
+    and ``HTTPS_PROXY`` override a session's own verify and proxies, and the
+    Helm chart sets the CA bundle. ``verify=True`` is left to the environment.
+    """
+    pinned: Dict[str, Any] = {}
+    if verify is not True:
+        pinned["verify"] = verify
+    if proxies:
+        pinned["proxies"] = proxies
+    if timeout:
+        pinned["timeout"] = timeout
+    if not pinned:
+        return
+    request = session.request
+
+    def pinned_request(method: str, url: str, **kwargs: Any) -> Any:
+        for name, value in pinned.items():
+            kwargs.setdefault(name, value)
+        return request(method, url, **kwargs)
+
+    session.request = pinned_request
+
+
 def fetch_taxii_collection(
     server_url: str,
     collection_id: str,
     api_token: str,
     source: str,
     since: Optional[datetime] = None,
+    verify: Union[bool, str] = True,
+    proxies: Optional[Dict[str, str]] = None,
 ) -> List[NormalizedIndicator]:
     """Pull a single TAXII 2.1 collection and return normalized indicators.
+
+    ``verify`` and ``proxies`` go to ``requests`` as they are: ``verify`` is
+    True, False or a CA bundle path. The defaults are Cloudforce One's call.
 
     A transport, auth, discovery, or missing-collection failure raises. The
     poller already isolates each collection, and a raised error leaves that
@@ -300,8 +348,11 @@ def fetch_taxii_collection(
     from taxii2client.v21 import Server  # type: ignore[import-untyped]
 
     server = Server(server_url, auth=_BearerAuth(api_token))
+    pin_taxii_session(server._conn.session, verify=verify, proxies=proxies)
     collection = None
     for api_root in server.api_roots:
+        # Each API root opens its own session; its collections share it.
+        pin_taxii_session(api_root._conn.session, verify=verify, proxies=proxies)
         for c in api_root.collections:
             if c.id == collection_id:
                 collection = c

@@ -439,16 +439,15 @@ class FindingProcessor:
             except Exception as e:
                 logger.warning(f"Shodan not available: {e}")
 
-        # Cloudforce One — local threat_indicators lookup. The poller in
-        # daemon/threat_feed_poller.py keeps the table populated; this branch
-        # only flags the enrichment as available so _enrich_finding() will
-        # call into core.threat_intel.threat_feed_service.lookup_indicators().
-        if is_integration_enabled("cloudforce_one"):
-            try:
-                self._enrichment_services["cloudforce_one"] = {"enabled": True}
-                logger.info("Cloudforce One indicator enrichment enabled")
-            except Exception as e:
-                logger.warning(f"Cloudforce One enrichment unavailable: {e}")
+        # Local threat_indicators lookup, fed by Cloudforce One and/or OpenCTI
+        # TAXII collections. The poller in daemon/threat_feed_poller.py keeps
+        # the table populated; this only flags the enrichment as available so
+        # _enrich_finding() calls threat_feed_service.lookup_indicators().
+        if is_integration_enabled("cloudforce_one") or is_integration_enabled(
+            "opencti"
+        ):
+            self._enrichment_services["threat_feed"] = {"enabled": True}
+            logger.info("Threat feed indicator enrichment enabled")
 
         # Sandbox auto-submission (opt-in, disabled by default)
         try:
@@ -1290,7 +1289,7 @@ REASONING: one sentence summing up the verdict
         Returns the hits and the check's outcome; the outcome is None when the
         feed is not enabled, which is not a failed check.
         """
-        if not self._enrichment_services.get("cloudforce_one", {}).get("enabled"):
+        if not self._enrichment_services.get("threat_feed", {}).get("enabled"):
             return {}, None
 
         ips = list(
@@ -1313,6 +1312,9 @@ REASONING: one sentence summing up the verdict
             return {}, {"outcome": TI_NOTHING}
 
         # error text -> the lookups that hit it, so one outage reads as one line
+        feed_vendor = (
+            "cloudforce_one" if is_integration_enabled("cloudforce_one") else "opencti"
+        )
         failures: Dict[str, List[str]] = {}
 
         def failed(what: str, e: Exception) -> None:
@@ -1321,7 +1323,7 @@ REASONING: one sentence summing up the verdict
             text = str(getattr(e, "orig", None) or e) or type(e).__name__
             text = text.splitlines()[0][:160]
             failures.setdefault(text, []).append(what)
-            record_vendor_error("cloudforce_one", "error", detail=f"{what}: {text}")
+            record_vendor_error(feed_vendor, "error", detail=f"{what}: {text}")
 
         def detail() -> str:
             return "; ".join(f"{', '.join(w)}: {t}" for t, w in failures.items())
@@ -1469,7 +1471,7 @@ REASONING: one sentence summing up the verdict
         # a feed that is off or not configured is not a failed check.
         feed_on = bool(
             self.auto_enrich
-            and self._enrichment_services.get("cloudforce_one", {}).get("enabled")
+            and self._enrichment_services.get("threat_feed", {}).get("enabled")
         )
         if (
             recommended_action == "dismiss"

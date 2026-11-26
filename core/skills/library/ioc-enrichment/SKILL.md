@@ -32,7 +32,9 @@ reporting or threat intelligence.
    - If you hold `cf_lookup_ip_threat` or `cf_lookup_domain_threat`, use them
      for IPs and domains respectively.
    - If you hold `lookup_indicators`, query the local threat feed table for
-     the indicator type and values.
+     the indicator type and values. It holds the STIX indicators pulled from
+     Cloudforce One and from OpenCTI TAXII collections; each row names its
+     `source` and `collection_id`.
    - If an MCP server exposes intel tools (reputation, passive DNS, WHOIS,
      sandbox, geolocation), use those too.
    - If none of these is callable in this turn, say so once and complete the
@@ -56,11 +58,14 @@ reporting or threat intelligence.
    across the environment, each with its type, source and confidence, plus the
    recommended next step (hunt, block, monitor, or dismiss).
 
-## Cloudflare provenance rule
+## Feed provenance rule
 
-When `finding.enrichment.threat_indicators` contains Cloudforce One hits,
-treat them as ground-truth indicators observed at the edge: cite them with
-`source='cloudforce_one'` and the STIX `confidence` they carry. When
+`finding.enrichment.threat_indicators` holds hits from two feeds. Cloudforce
+One hits are ground-truth indicators observed at the edge: cite them with
+`source='cloudforce_one'` and the STIX `confidence` they carry. OpenCTI hits
+come from the operator's own TAXII collections: cite them with
+`source='opencti'`, their `collection_id` and the STIX `confidence` they
+carry, and weigh them as that collection's curation deserves. When
 `finding.evidence.cloudy_summary` is present, it is premium per-event
 context: quote it with its provenance, do not paraphrase it as your own
 analysis.

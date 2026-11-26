@@ -444,7 +444,7 @@ class TaskScheduler:
         return stats
 
     async def _run_threat_feed_poll(self):
-        """Pull Cloudforce One STIX/TAXII indicators into threat_indicators."""
+        """Pull Cloudforce One and OpenCTI TAXII indicators into threat_indicators."""
         return await ThreatFeedPoller().run_once()
 
     async def _run_detection_rules_sync(self):
