@@ -307,29 +307,36 @@ def parse_site(files: Sequence[Tuple[str, str]]) -> Dict[str, List[Dict[str, Any
 # --- The applied row ---------------------------------------------------------
 
 _APPLIED_TTL_SECONDS = 10.0
-_applied_cache: Tuple[float, Dict[str, Any]] = (float("-inf"), {})
+# (read at, value, whether any read in this process has succeeded)
+_applied_cache: Tuple[float, Dict[str, Any], bool] = (float("-inf"), {}, False)
 
 
-def applied_site(*, fresh: bool = False) -> Dict[str, Any]:
+class SiteUnreadable(Exception):
+    """``site.applied`` could not be read and no earlier read is kept."""
+
+
+def applied_site(*, fresh: bool = False, strict: bool = False) -> Dict[str, Any]:
     """The ``site.applied`` row through a short cache; ``{}`` when absent.
 
     Every process re-reads it at most every 10 s, so an applied revision
     reaches each backend replica without a restart. A failed read keeps the
-    last value read.
+    last value read. ``strict`` raises :class:`SiteUnreadable` when no read has
+    succeeded yet, so a hold can tell "unread" from "no row".
     """
     global _applied_cache
     now = time.monotonic()
-    at, value = _applied_cache
-    if not fresh and now - at < _APPLIED_TTL_SECONDS:
-        return value
-    try:
-        from core.storage.config_service import get_config_service
+    at, value, ok = _applied_cache
+    if fresh or now - at >= _APPLIED_TTL_SECONDS:
+        try:
+            from core.storage.config_service import get_config_service
 
-        row = get_config_service().read_system_config(SITE_APPLIED_KEY)
-        value = row if isinstance(row, dict) else {}
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("site.applied not read; keeping last: %s", exc)
-    _applied_cache = (now, value)
+            row = get_config_service().read_system_config(SITE_APPLIED_KEY)
+            value, ok = (row if isinstance(row, dict) else {}), True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("site.applied not read; keeping last: %s", exc)
+        _applied_cache = (now, value, ok)
+    if strict and not ok:
+        raise SiteUnreadable("site.applied could not be read")
     return value
 
 
@@ -377,6 +384,61 @@ def match(
                         }
                     )
     return found
+
+
+# --- Crown jewels a value names (#5227) --------------------------------------
+
+
+def _value_keys(value: str) -> Tuple[List[str], Optional[str]]:
+    """The Entity Keys a bare value is tried as, and its ``cidr:`` form if a range."""
+    value = value.strip()
+    if not value:
+        return [], None
+    kind = value.partition(":")[0].lower()
+    keys = [normalise_key(value)] if kind in ENTITY_KEY_TYPES else []
+    keys += [normalise_key(f"host:{value}"), normalise_key(f"user:{value}")]
+    try:
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return keys, None
+    if net.num_addresses == 1:
+        return keys + [normalise_key(f"ip:{net.network_address}")], None
+    return keys, f"cidr:{net}"
+
+
+def crown_jewel(
+    values: Iterable[str],
+    row: Optional[Dict[str, Any]] = None,
+    *,
+    exact: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """The first declared crown jewel one of ``values`` names, with its revision.
+
+    A value is an Entity Key or a bare string, tried as a host, a user and,
+    when it parses, an address; a range names a crown jewel whose ``ip:`` or
+    ``cidr:`` selector it overlaps. ``exact`` skips selectors holding ``*``,
+    so a name chosen to fit a pattern does not count (outside calls).
+    """
+    row = applied_site() if row is None else row
+    if not declared(row):
+        return None
+    jewels = (row.get("items") or {}).get("crown_jewels") or []
+    for value in dict.fromkeys(str(v) for v in values if isinstance(v, str)):
+        keys, cidr = _value_keys(value)
+        for jewel in jewels:
+            selectors = [
+                s for s in jewel.get("selectors") or [] if not (exact and "*" in s)
+            ]
+            if any(selector_matches(s, k) for s in selectors for k in keys if k) or (
+                cidr
+                and any(
+                    selectors_overlap(s, cidr)
+                    for s in selectors
+                    if s.startswith(("cidr:", "ip:"))
+                )
+            ):
+                return {**jewel, "value": value, "revision": row.get("revision")}
+    return None
 
 
 # --- Owners, resolved when read ----------------------------------------------

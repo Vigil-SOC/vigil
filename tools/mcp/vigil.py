@@ -1442,8 +1442,8 @@ def close_case(
         # After the arguments are checked, before anything is written. A
         # re-close of a closed case is held too, with no "left open" activity.
         stored = get_data_service().get_case(case_id) or {}
-        open_id = None if stored.get("status") == "closed" else case_id
-        if (held := tool_registry.held_close(open_id)) is not None:
+        left_open = stored.get("status") != "closed"
+        if (held := tool_registry.held_close(case_id, left_open=left_open)) is not None:
             return jdump(held)
 
         with service_session() as session:

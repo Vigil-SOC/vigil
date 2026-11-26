@@ -562,23 +562,33 @@ def _status_refusal(status: str) -> Optional[Args]:
     }
 
 
-def held_close(case_id: Optional[str] = None) -> Optional[Args]:
+def held_close(
+    case_id: Optional[str] = None,
+    *,
+    finding_ids: Optional[list] = None,
+    left_open: bool = True,
+) -> Optional[Args]:
     """The refusal when autonomy holds a model's close (#4819), else None.
 
     The run is the bound one, never an argument; none (an /mcp caller) or one
-    with no workflow (chat) follows the fleet. A held close of an existing case
-    leaves a "Left open for a person" activity and writes nothing else.
+    with no workflow (chat) follows the fleet. The case's findings, or for a
+    case not yet opened those ``finding_ids`` names, are checked for a declared
+    crown jewel (#5227). A held close of an existing case leaves a "Left open
+    for a person" activity, unless ``left_open`` is False, and writes nothing else.
     """
     from core.cases import case_journal_service
-    from core.response.ceiling import close_held
+    from core.response.ceiling import close_held, finding_keys
 
     claims = current_claims()
     run_id = claims.run_id if claims else None
-    held = close_held(run_id)
+    held = close_held(
+        run_id,
+        lambda: finding_keys(case_id=case_id, finding_ids=finding_ids or ()),
+    )
     if not held:
         return None
     message = f"Left open for a person: {held}"
-    if case_id:
+    if case_id and left_open:
         details = {"reason": held, **({"run_id": run_id} if run_id else {})}
         case_journal_service.append_activity(
             _data(), case_id, "case_left_open", message, details
@@ -619,7 +629,7 @@ def create_case(
         return refusal
     # Before the case is opened, so a held close leaves no case behind.
     closing = status == CLOSED
-    if closing and (refusal := held_close()):
+    if closing and (refusal := held_close(finding_ids=finding_ids)):
         return refusal
     # A stated owner, including a clear, stands over the closer (#4983).
     named_owner = assignee is not None
