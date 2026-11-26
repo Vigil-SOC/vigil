@@ -208,6 +208,10 @@ const OVERRIDES = {
   max_cost_usd: positive("max-cost-usd"),
   max_wall_ms: ((s) => (s === undefined ? undefined : Math.round(s * 1000)))(positive("max-wall-seconds")),
 };
+if (OVERRIDES.max_wall_ms !== undefined && OVERRIDES.max_wall_ms < 1) {
+  console.error("--max-wall-seconds must be at least a millisecond");
+  process.exit(2);
+}
 if (OVERRIDES.max_calls !== undefined && !Number.isInteger(OVERRIDES.max_calls)) {
   console.error(`--max-calls must be a whole number, got ${OVERRIDES.max_calls}`);
   process.exit(2);
