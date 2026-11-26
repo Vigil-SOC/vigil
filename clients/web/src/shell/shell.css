@@ -175,6 +175,7 @@
   padding: 0 10px 0 14px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--ln0);
+  container: chathead / inline-size;
 }
 
 .chat .chat-head .ch-ico {
@@ -195,6 +196,36 @@
   font-weight: 700;
   color: var(--tx0);
   white-space: nowrap;
+}
+
+/* the agent the conversation runs under: a label, not a control. A narrow header
+   gives the agent the room the conversation title would leave a sliver of. */
+.chat .chat-head .ch-agent {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  height: 22px;
+  line-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill-sm);
+  background: var(--ac-bg);
+  color: var(--ac);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container chathead (max-width: 560px) {
+  .chat .chat-head .ch-agent {
+    max-width: none;
+    margin-right: auto;
+  }
+
+  .chat .chat-head .ch-agent + .ch-convo {
+    display: none;
+  }
 }
 
 .chat .chat-head .ch-convo {

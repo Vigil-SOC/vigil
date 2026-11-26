@@ -17,6 +17,7 @@ import { Icon } from '../shared/icons'
 import { VigilMark } from '../shared/VigilLogo'
 import { TITLES } from '../data/data'
 import api, {
+  agentsApi,
   casesApi,
   conversationsApi,
   streamFetch,
@@ -44,8 +45,9 @@ import {
 import { CaseRunBlock } from './ChatRun'
 import { useToast } from './toast'
 import { useNavigate } from 'react-router-dom'
-import type { ChatSeed, SeedDocument } from '../shared/types'
+import type { ChatAgent, ChatSeed, SeedDocument } from '../shared/types'
 import { caseLabel } from '../shared/caseLabel'
+import { prettyHandle } from '../data/appData'
 
 type Role = 'user' | 'vigil' | 'error'
 interface ChatMsg {
@@ -75,6 +77,8 @@ interface Conversation {
   /** the seed prompt, when opened from an "Investigate with Vigil" affordance;
    *  re-opening the same finding restores the thread instead of duplicating it */
   key?: string
+  /** the agent it runs under, so an offline reopen keeps it */
+  agent?: ChatAgent
 }
 
 interface HistRow {
@@ -379,6 +383,22 @@ export default function Chat({
   }
   // true once this session id has a conversation row, so an @ attach can PATCH
   const persistedRef = useRef(false)
+  // The agent this conversation runs under: set only as a conversation starts, sent on every turn.
+  const [agent, setAgent] = useState<ChatAgent | null>(null)
+  const agentRef = useRef<ChatAgent | null>(null)
+  const rememberAgent = (next: ChatAgent | null) => {
+    agentRef.current = next
+    setAgent(next)
+  }
+  // A stored conversation keeps only the id: its name is read back, and the handle stands in until then.
+  const restoreAgent = (id: string | null | undefined) => {
+    if (!id) return rememberAgent(null)
+    rememberAgent({ id, name: prettyHandle(id) })
+    agentsApi.getAgent(id).then((res) => {
+      const name = (res.data as { name?: string } | undefined)?.name
+      if (name && agentRef.current?.id === id) rememberAgent({ id, name })
+    }).catch(() => { /* the handle stays */ })
+  }
 
   // Drop every other user's copy as soon as this dock knows who is signed in.
   // A new id without an unmount (session replaced in place) must not keep the
@@ -394,6 +414,7 @@ export default function Chat({
       sessionRef.current = newSessionId()
       currentKeyRef.current = null
       persistedRef.current = false
+      rememberAgent(null)
       setHistoryOpen(false)
       dropFile()
     }
@@ -645,8 +666,24 @@ export default function Chat({
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(id)
+    rememberAgent(null)
     dropFile()
     void send(text, { fresh: true })
+  }
+
+  /** Opened from an agent: a new conversation under it, with a first question when one came along. */
+  const startUnder = (under: ChatAgent, text: string, document?: SeedDocument) => {
+    if (loading) return
+    setHistoryOpen(false)
+    archiveCurrent()
+    putMessages([])
+    sessionRef.current = newSessionId()
+    currentKeyRef.current = null
+    persistedRef.current = false
+    rememberCase(null)
+    rememberAgent(under)
+    dropFile()
+    if (text) void send(text, { fresh: true, document })
   }
 
   // `document` is a file the command bar already read: it rides on this turn, whatever the dock holds
@@ -704,6 +741,7 @@ export default function Chat({
         page_context?: string
         page_snapshot?: string
         case_id?: string
+        agent_id?: string
         document?: { name: string; text: string }
       } = {
         messages: askedOf(next).map((m) => ({ role: m.role === 'vigil' ? 'assistant' : 'user', content: m.text })),
@@ -713,6 +751,7 @@ export default function Chat({
       const snapshot = getPageSnapshot(pageKey)
       if (snapshot) payload.page_snapshot = snapshot
       if (sentCase !== null) payload.case_id = sentCase
+      if (agentRef.current) payload.agent_id = agentRef.current.id
       if (sentFile) payload.document = { name: sentFile.name, text: sentFile.text }
       const res = await streamFetch('/claude/chat/stream', {
         method: 'POST',
@@ -828,6 +867,7 @@ export default function Chat({
       // the cache keeps what the server keeps: no reasoning
       messages: messages.map(({ role, text }) => ({ role, text })),
       key: currentKeyRef.current || undefined,
+      agent: agentRef.current ?? undefined,
     }
     setHistory((h) => {
       const next = [convo, ...h.filter((c) => c.id !== convo.id)].slice(0, CHAT_HISTORY_MAX)
@@ -845,6 +885,7 @@ export default function Chat({
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(null)
+    rememberAgent(null)
     dropFile()
     reloadHistory()
   }
@@ -867,6 +908,7 @@ export default function Chat({
       currentKeyRef.current = key ?? null
       persistedRef.current = true
       rememberCase(lockedCaseId ?? detail.case_id ?? null)
+      restoreAgent(detail.agent_id)
       dropFile()
       return true
     } catch (error) {
@@ -881,6 +923,7 @@ export default function Chat({
         currentKeyRef.current = cached.key || key || null
         persistedRef.current = false
         rememberCase(lockedCaseId ?? null)
+        rememberAgent(cached.agent ?? null)
         dropFile()
         return true
       }
@@ -923,6 +966,7 @@ export default function Chat({
     currentKeyRef.current = prompt
     persistedRef.current = false
     rememberCase(null)
+    rememberAgent(null)
     dropFile()
     setKeymapEntry(userId, prompt, sessionRef.current) // so re-opening this finding restores it
     send(prompt, { fresh: true, document })
@@ -952,6 +996,7 @@ export default function Chat({
       currentKeyRef.current = null
       persistedRef.current = false
       if (!lockedCaseId) rememberCase(null)
+      rememberAgent(null)
       dropFile()
     }
   }
@@ -1003,6 +1048,7 @@ export default function Chat({
     currentKeyRef.current = null
     persistedRef.current = false
     rememberCase(lockedCaseId)
+    rememberAgent(null)
     let live = true
     const settle = () => {
       if (!live || gen !== loadGen.current) return
@@ -1056,6 +1102,8 @@ export default function Chat({
     seedRef.current = seed
     if (seed.caseId && !pinned) {
       followCase(seed.caseId, seed.text)
+    } else if (seed.agent && !pinned) {
+      startUnder(seed.agent, seed.text, seed.document)
     } else if (!seed.text) {
       // a file with no question waits on the dock's chip for one
       if (seed.document && !pinned) {
@@ -1465,6 +1513,7 @@ export default function Chat({
       <div className="chat-head">
         <span className="ch-ico"><VigilMark /></span>
         <h3 className="ch-title">Ask Vigil</h3>
+        {agent && <span className="ch-agent" title={`Runs under the ${agent.name} agent`}>{agent.name}</span>}
         <span className="ch-convo" title={convoTitle}>{convoTitle}</span>
         <div className="hbtns">
           <button

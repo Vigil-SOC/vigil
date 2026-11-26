@@ -33,7 +33,7 @@ import SignInWatch from './SignInWatch'
 import { useDesktopNotifications } from './useDesktopNotifications'
 import { useNavPrefs, writeNavPrefs } from './navPrefs'
 import { SCREEN_PERMS, splitNav, useConsoleNav, type NavItem } from './consoleNav'
-import type { ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
+import type { ChatAgent, ChatSeed, ConsoleScreenGoOptions, ConsoleScreenProps, SeedDocument, SettingsSectionKey } from '../shared/types'
 import type { Schema } from '../services/apiTypes'
 import DashboardScreen from '../screens/dashboard/DashboardScreen'
 import DetectionsScreen from '../screens/detections/DetectionsScreen'
@@ -212,9 +212,10 @@ function SocConsoleInner() {
   const [needsYou, setNeedsYou] = useState(0)
   const [openCases, setOpenCases] = useState(0)
 
-  const openChat = useCallback((prompt?: string, document?: SeedDocument) => {
+  const openChat = useCallback((prompt?: string, options?: { document?: SeedDocument; agent?: ChatAgent }) => {
     setChatOpen(true)
-    if (prompt || document) setChatSeed({ text: prompt ?? '', document })
+    const { document, agent } = options ?? {}
+    if (prompt || document || agent) setChatSeed({ text: prompt ?? '', document, agent })
   }, [])
   const closeChat = useCallback(() => {
     setChatOpen(false)
@@ -226,7 +227,7 @@ function SocConsoleInner() {
   // with a case open the text goes to its own composer, not the dock
   const askVigil = useCallback((text?: string, document?: SeedDocument) => {
     if (openCaseId && text) setCaseSeed({ text, document })
-    else openChat(text, document)
+    else openChat(text, { document })
   }, [openCaseId, openChat])
   const clearCaseSeed = useCallback(() => setCaseSeed(null), [])
   // a run the command bar started: the dock opens on its case

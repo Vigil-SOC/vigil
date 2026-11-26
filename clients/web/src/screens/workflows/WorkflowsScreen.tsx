@@ -78,7 +78,7 @@ function useOpenItem(key: 'workflow' | 'agent' | 'skill', tab: WfTab): [string |
   return [params.get(key), set]
 }
 
-export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
+export default function WorkflowsScreen({ goSettings, openChat }: ConsoleScreenProps) {
   // ?tab= picks the opening tab, e.g. Home's "Add a custom skill" step
   const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState<WfTab>(() => tabFrom(searchParams.get('tab')))
@@ -133,7 +133,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
       </div>
       {tab === 'workflows' && drafted && <WorkflowReaderPane draft={drafted.draft} grants={agents.grants} onBack={() => setDrafted(null)} onSave={saveDraft} onChangeDescription={() => setDescribing(drafted.description)} />}
       {tab === 'workflows' && !drafted && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog feed={workflows} onCreate={() => setDescribing('')} goSettings={goSettings} />)}
-      {tab === 'agents' && <AgentsTab feed={agents} onToggled={workflows.reload} />}
+      {tab === 'agents' && <AgentsTab feed={agents} onToggled={workflows.reload} openChat={openChat} />}
       {tab === 'skills' && <SkillsTab feed={skills} workflows={workflows} agents={agents} />}
       {tab === 'commands' && <CommandsTab />}
       {describing !== null && <DescribeDialog initial={describing} onClose={() => setDescribing(null)} onDrafted={(description, draft) => { setDescribing(null); setTab('workflows'); setDrafted({ description, draft }) }} />}
@@ -4090,7 +4090,7 @@ const SUCCESS_TIP = {
 const ASSIGNMENT_NOTE = 'Workflow runs use the investigation assignment in Settings › AI models.'
 
 /** `onToggled` runs after an agent is switched, so the workflow cards (which say when an agent they need is off) read the new state. */
-function AgentsTab({ feed, onToggled }: { feed: Feed<AgentTemplate>; onToggled: () => void }) {
+function AgentsTab({ feed, onToggled, openChat }: { feed: Feed<AgentTemplate>; onToggled: () => void; openChat: ConsoleScreenProps['openChat'] }) {
   const { rows, phase, error, reload } = feed
   const [editId, setEditId] = useOpenItem('agent', 'agents')
   const [creating, setCreating] = useState<false | 'blank' | 'describe'>(false)
@@ -4108,6 +4108,7 @@ function AgentsTab({ feed, onToggled }: { feed: Feed<AgentTemplate>; onToggled: 
   const ordered = [...builtins, ...rows.filter((a) => a.custom)]
   // by id, not by row: a fresh copy is open before the reloaded list has it
   const builtinOpen = !!editId && !editId.startsWith('custom-')
+  const editOpen = editId ? rows.find((a) => a.handle === editId) : undefined
 
   const setEnabled = (a: AgentTemplate, on: boolean) => {
     setToggleErr(null)
@@ -4166,6 +4167,11 @@ function AgentsTab({ feed, onToggled }: { feed: Feed<AgentTemplate>; onToggled: 
           describe={creating === 'describe'}
           seedFrom={editId ? null : copyOf}
           toolChanges={rows.find((a) => a.handle === editId)?.toolChanges}
+          // offered while the agent is on: chat refuses one that is off
+          onAsk={editOpen && (enabledNow[editOpen.handle] ?? editOpen.enabled) ? () => {
+            setEditId(null)
+            openChat(undefined, { agent: { id: editOpen.handle, name: editOpen.name } })
+          } : undefined}
           onClose={() => { setEditId(null); setCreating(false); setCopyOf(null) }}
           onSaved={(saved) => {
             // a built-in's fork reopens on the new agent; any other save closes

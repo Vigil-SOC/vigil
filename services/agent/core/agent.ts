@@ -49,6 +49,8 @@ export { SKILL_TOOL };
 export const CONCLUDE_TOOL = "conclude";
 // Results are cited as r1, r2, ...: position alone, so a resume numbers them the same.
 export const CALL_REF = "r";
+// A conversation's tool results open with their ledger ref, so an answer can name the call behind it.
+const CONVERSATION_REFS = `Each tool result opens with a ref, such as ${CALL_REF}3, naming that call. When you state what a call found, you may cite its ref.`;
 
 // The domain-free kinds, plus the one blind-spot event every workflow also writes.
 export type AgentKinds = { unbound: UnboundPayload };
@@ -686,7 +688,7 @@ function turnFor(
     run_kind: options.run_kind,
     role: AGENT_ROLE,
     ...(options.agent_id === undefined ? {} : { agent_id: options.agent_id }),
-    system: [systemOf(plugin), directivesOf(spec)].filter((part) => part !== "").join("\n\n"),
+    system: [systemOf(plugin), directivesOf(spec), options.conversation === undefined ? "" : CONVERSATION_REFS].filter((part) => part !== "").join("\n\n"),
     task,
     schema: structured?.schema ?? null,
     // The plugin's own conclude tool is the answer's tool, so the kernel offers no second one.
@@ -710,8 +712,9 @@ function turnFor(
     ...(options.conversation === undefined ? {} : { live: true }),
     // A conversation stops whenever the person's question is answered.
     ...(plugin.min_results === undefined || options.conversation !== undefined ? {} : { persist: { min_results: plugin.min_results } }),
-    // Numbered only when the answer can cite them.
-    ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
+    // Numbered when the answer can cite them, and in a conversation, whose answer may name the call
+    // behind a claim; offset by the run's whole ledger, so a later turn continues the count.
+    ...(structured?.citations_field === undefined && options.conversation === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),
   };
 }
@@ -873,7 +876,7 @@ function earlierReads(calls: readonly CallPayload[]): string {
   const lines = calls.map((call) => {
     const shown = room === 0 ? "[not repeated here]" : flat(resultBody(call.shown ?? call.result), Math.min(READ_RESULT_CAP, room));
     room = Math.max(0, room - shown.length);
-    return `- ${call.tool} ${flat(call.arguments, READ_ARGS_CAP)} -> ${shown}`;
+    return `- ${call.ref} ${call.tool} ${flat(call.arguments, READ_ARGS_CAP)} -> ${shown}`;
   });
   return [
     "<vigil:earlier_reads>",
