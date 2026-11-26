@@ -346,6 +346,33 @@ exception, and what ranks an entity up is accumulation of them across
 investigations, never being one.
 _Avoid_: visibility gap (that is a tool that could not answer), unknown, null result
 
+**Declared Site**:
+What the operator states about the site as files under change control:
+`site/*.md` in the declared directory (`VIGIL_INTENT_DIR`), beside `INTENT.md`.
+Four lists, each item by **Selector**: zones, crown jewels with the mission they
+serve, owners naming a Vigil team, and **Site Blind Spots**. The daemon applies
+each revision on its own verdict (`site.applied`), refuses a broken one whole
+with file and line and keeps the last good one. It ranks and informs; it never
+closes, permits or acts. One module holds it: `core/site.py`.
+_Avoid_: inventory, asset list, CMDB (Vigil keeps no list of hosts)
+
+**Selector**:
+A plain string naming entities in the **Declared Site**: `cidr:<range>`, which
+matches `ip:` keys, or an **Entity Key** of a kind in `ENTITY_KEY_TYPES`,
+normalised as `normalise_key` mints it, where `*` in the value matches any run
+of characters. No other wildcard, no regex, and no group, tag or cloud
+selectors: a revision's validity never depends on a source being connected.
+Matched only in Python, by `core.site.match`.
+_Avoid_: filter, query, pattern
+
+**Site Blind Spot**:
+A place the operator states Vigil cannot see, declared in `site/*.md` with its
+selectors and what is not seen there. It reaches a hunt as an operator gap.
+Not a coverage blind spot (a data source no rule reads), not a **Visibility
+Gap** (a tool a run could not use) and not a **Declared Gap** (a question an
+investigation left open): those are found by Vigil, this is stated by a person.
+_Avoid_: blind spot (alone), visibility gap, declared gap
+
 **Episodic Memory** (`memory`):
 What earlier investigations saw and concluded, so a later run stops re-deriving
 a settled answer. A hunt's is derived from its **Ledger** at the terminal; a

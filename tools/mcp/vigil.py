@@ -1717,6 +1717,23 @@ def get_intent_report() -> str:
         return jdump({"error": "Could not read the intent report"})
 
 
+@tool("Declared site context", reads=True)
+@requires("platform.read")
+def get_site_context() -> str:
+    """Read the declared site (site/*.md beside INTENT.md), as GET
+    /api/config/site does: the applied revision, its state (ok, rejected,
+    degraded or none), any refusal with file and line, each zone, crown jewel,
+    owner and blind spot with its selectors, file, line and resolved owner, and
+    the applied files' text. Read only; a change is a commit."""
+    from core.site import site_view
+
+    try:
+        return jdump(site_view())
+    except Exception as e:
+        logger.error("get_site_context failed: %s", e)
+        return jdump({"error": "Could not read the declared site"})
+
+
 @tool("Entity facts held", reads=True)
 @requires("findings.read")
 def get_entity_facts(limit: Annotated[int, Field(ge=1, le=500)] = 100) -> str:
