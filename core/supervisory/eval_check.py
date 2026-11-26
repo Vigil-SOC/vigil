@@ -64,6 +64,11 @@ def read_run(path: Path) -> Run:
         raise CheckRefusal(f"{path}: {e}") from None
     if not rows:
         raise CheckRefusal(f"{path} has no results")
+    if not all(isinstance(r, dict) for r in rows):
+        raise CheckRefusal(f"{path} has a line that is not a result")
+    errored = [r.get("case_id") for r in rows if r.get("error")]
+    if errored:
+        raise CheckRefusal(f"{path}: {len(errored)} cases errored, e.g. {errored[0]}")
     if not all(
         isinstance(r, dict)
         and isinstance(r.get("case_id"), str)
@@ -77,9 +82,6 @@ def read_run(path: Path) -> Run:
         raise CheckRefusal(
             f"{path} has a line that is not a graded result with a case, a model and a truth"
         )
-    errored = [r.get("case_id") for r in rows if r.get("error")]
-    if errored:
-        raise CheckRefusal(f"{path}: {len(errored)} cases errored, e.g. {errored[0]}")
     budgets = {json.dumps(r.get("budgets"), sort_keys=True) for r in rows}
     if len(budgets) != 1 or not _numbers(rows[0].get("budgets")):
         raise CheckRefusal(f"{path} does not record one set of budgets for every case")
