@@ -27,6 +27,7 @@ import {
   quietEvidence,
   tuningEvidence,
 } from './ProductionSections'
+import { SiteItems } from './SiteItems'
 import { TimeSection } from './TimeSection'
 import { reportStamp } from './stamp'
 import { residencyLabel, type ResidencyClass } from '../../shared/residency'
@@ -55,6 +56,7 @@ const MODULE_TITLE: Record<string, string> = {
   settings: "Vigil's own settings",
   coverage: 'Detection coverage',
   estate: 'What CrowdStrike, Defender and Wazuh still list',
+  site: 'The declared site against what Wazuh lists',
   'history.before': 'Your "before"',
   'history.recheck': 'Re-check list',
   'history.capped_recheck': 'Capped re-check',
@@ -76,6 +78,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   settings: 'platform.read',
   coverage: 'detections.read',
   estate: 'integrations.read',
+  site: 'platform.read',
   'history.before': 'findings.read',
   'history.recheck': 'findings.read',
   'history.capped_recheck': 'findings.read',
@@ -136,6 +139,14 @@ const ESTATE_TIP = {
     'A host last heard 7 days or more ago needs a person. Degraded protection the tool itself states fails. Zero of either passes. A tool that lists nothing is not checked.',
   limit:
     "Hidden without integrations.read. A read that cannot cover the list is not checked, and no partial count is kept. Not checked is never a pass.",
+}
+
+const SITE_TIP = {
+  source: "The declared site (site/*.md), team names, and the Wazuh manager's agent list, with the credential already saved",
+  calculation:
+    'A crown jewel passes when a matching agent was heard from within 7 days, and sits in its zone. Every zone and crown jewel needs an owner naming an active team. Every listed agent outside every zone is counted. References are shown and not scored.',
+  limit:
+    'An item whose selectors no read source lists, or that a declared blind spot covers, is not evaluated. A Wazuh read that fails, runs past 60 seconds or stops at its cap is not checked. CrowdStrike and Defender are not read yet. No host name, address or id is kept. Not checked is never a pass.',
 }
 
 const COVERAGE_TIP = {
@@ -306,6 +317,11 @@ const ESTATE_COUNTS: { key: keyof Evidence; label: string }[] = [
   { key: 'over_30_days', label: 'over 30 days' },
   { key: 'never_connected', label: 'never connected' },
   { key: 'degraded', label: 'degraded' },
+  { key: 'checked', label: 'checked' },
+  { key: 'unseen', label: 'not heard from within 7 days' },
+  { key: 'outside', label: 'outside their zone' },
+  { key: 'unowned', label: 'with no active team' },
+  { key: 'undeclared', label: 'in no zone' },
 ]
 
 function countParts(evidence: Evidence): string[] {
@@ -776,10 +792,12 @@ function CheckRow({
   check,
   comparedAt,
   note,
+  cited,
 }: {
   check: Check
   comparedAt: string | null
   note?: string
+  cited?: boolean
 }) {
   const tone = outcomeTone(check.outcome)
   const line = facts(check)
@@ -790,6 +808,7 @@ function CheckRow({
         {outcomeWord(check.outcome)}
       </span>
       <p>{check.reason}</p>
+      {cited && <Citation check={check} />}
       {note && (
         <p className="d1-facts">
           <span className="chip int-exp">Experimental</span> {note}
@@ -1363,6 +1382,7 @@ export default function ReportScreen() {
   const settings = checks.filter((check) => check.module === 'settings')
   const coverageChecks = checks.filter((check) => check.module === 'coverage')
   const estateChecks = checks.filter((check) => check.module === 'estate')
+  const siteChecks = checks.filter((check) => check.module === 'site')
   const problems = visibilityChecks.filter((check) => check.outcome !== 'pass')
   const settled = visibilityChecks.filter(
     (check) => check.outcome === 'pass' && !check.id.startsWith('visibility.source.'),
@@ -1379,6 +1399,8 @@ export default function ReportScreen() {
   const showCoverage = coverageRan && !withheld.includes('coverage')
   const estateRan = (report?.modules ?? []).includes('estate')
   const showEstate = estateRan && !withheld.includes('estate')
+  const siteRan = (report?.modules ?? []).includes('site')
+  const showSite = siteRan && !withheld.includes('site')
   const coverageGrouped = COVERAGE_GROUPS.map((group) => ({
     ...group,
     checks: ofGroup(coverageChecks, group.id),
@@ -1728,6 +1750,25 @@ export default function ReportScreen() {
             ) : (
               <p className="d1-quiet">Nothing to report in this section.</p>
             )}
+          </section>
+        )}
+        {siteRan && withheld.includes('site') && <Withheld id="site" />}
+        {showSite && (
+          <section className="d1-card" aria-label={MODULE_TITLE.site}>
+            <div className="d1-card-head">
+              <h2>{MODULE_TITLE.site}</h2>
+              <InfoTip label="How the declared site is judged" align="start" {...SITE_TIP} />
+            </div>
+            {siteChecks.length > 0 ? (
+              <div className="d1-rows">
+                {siteChecks.map((check) => (
+                  <CheckRow key={check.id} check={check} comparedAt={comparedAt} cited />
+                ))}
+              </div>
+            ) : (
+              <p className="d1-quiet">Nothing to report in this section.</p>
+            )}
+            {day1 && <SiteItems evidence={day1.evidence?.site} />}
           </section>
         )}
         {day1?.forecast && (day1.modules ?? []).includes('history.forecast') && (

@@ -1,4 +1,5 @@
 import type { RunKind, RunPayload } from "../../contracts/events.js";
+import { DECLARED, isFactsRead, type FactsPayload } from "../../contracts/facts.js";
 import type { State } from "../../core/seams.js";
 import { unboundCapabilities } from "../../core/spec.js";
 import { AUTO_ACTOR, DEFAULT_CHECKPOINTS, raiseCheckpoint, resolveCheckpoint } from "./checkpoints.js";
@@ -6,8 +7,8 @@ import type { HuntSpec } from "./config.js";
 import { newId } from "./ids.js";
 import { Journal, type HuntKinds } from "./journal.js";
 import type { DirectiveQueue } from "./ports.js";
-import { narrativeOf } from "./render.js";
-import { DEPLOYMENT_GAP_PROVENANCE, unboundInWords } from "./strength.js";
+import { narrativeOf, operatorLine } from "./render.js";
+import { DEPLOYMENT_GAP_PROVENANCE, OPERATOR_GAP_PROVENANCE, unboundInWords } from "./strength.js";
 import type { HuntState } from "./types.js";
 
 // How a hunt opens and is picked back up, and the names its record is written in, so
@@ -96,6 +97,42 @@ export function standingOf(hunt: HuntState): string {
   );
 }
 
+// A declared Site Blind Spot (#5212): a place the operator states Vigil cannot see.
+export interface SiteBlindSpot {
+  what: string;
+  selectors: readonly string[];
+  file: string;
+  line: number;
+  revision: string;
+}
+
+// Each distinct blind spot the opening read matched or the zone overlaps, once: keyed
+// by file, line and revision, so one matched both ways, or by two keys, counts once.
+export function blindSpotsOf(facts: FactsPayload | null, spec: HuntSpec): SiteBlindSpot[] {
+  const read = facts !== null && isFactsRead(facts) ? facts.facts : [];
+  const matched = read
+    .filter((row) => row.source === DECLARED && row.fields["declared"] === "blind spot")
+    .map((row) => ({
+      what: String(row.fields["what"] ?? ""),
+      selectors: typeof row.fields["selector"] === "string" ? [row.fields["selector"]] : [],
+      file: String(row.fields["file"] ?? ""),
+      line: Number(row.fields["line"]) || 0,
+      revision: String(row.fields["revision"] ?? ""),
+    }));
+  const held = new Map<string, SiteBlindSpot>();
+  for (const spot of [...matched, ...(spec.zone?.blind_spots ?? [])]) {
+    const at = `${spot.file}\0${spot.line}\0${spot.revision}`;
+    const seen = held.get(at);
+    held.set(at, seen === undefined ? spot : { ...seen, selectors: [...new Set([...seen.selectors, ...spot.selectors])] });
+  }
+  return [...held.values()];
+}
+
+// Named by place and words, so two blind spots are two gaps in openGaps.
+export function blindSpotInWords(spot: SiteBlindSpot): string {
+  return `Declared blind spot (${spot.file}:${spot.line}, revision ${spot.revision}): ${operatorLine(spot.what)}`;
+}
+
 export async function startHunt(
   state: State<HuntKinds>,
   queue: DirectiveQueue,
@@ -110,6 +147,8 @@ export async function startHunt(
   needs: readonly string[] = [],
   principal?: string,
   origin?: RunPayload["origin"],
+  // The open hook's declared-only read (#5212), journaled once as the run's facts event.
+  facts: FactsPayload | null = null,
 ): Promise<Journal> {
   const now = new Date().toISOString();
   const huntId = newId("hunt");
@@ -126,7 +165,7 @@ export async function startHunt(
     iteration: 0,
     cost_usd: 0,
     budgets: spec.budgets,
-    scope: spec.scope,
+    scope: scopeOf(spec),
     // Journalled once, so a replay shows exactly what the lead was told and the
     // critic argues the null against the same context.
     narrative: narrativeOf(spec),
@@ -223,6 +262,34 @@ export async function startHunt(
     });
   }
 
+  // The declared rows the hunt opens on, before the approval, so the model's prefix
+  // renders them from this event and a resume or replay reads them back, never again.
+  if (facts !== null) ledger.append({ kind: "facts", payload: facts });
+
+  // Each declared blind spot it touches, journalled once as an operator gap carrying no
+  // hypothesis, so it floors open_gaps for every claim. resumeHunt seeds nothing.
+  const blind = blindSpotsOf(facts, spec);
+  for (const spot of blind) {
+    ledger.append({
+      kind: "evidence",
+      payload: {
+        evidence_id: newId("ev"),
+        dispatch_id: null,
+        iteration: 0,
+        source_system: "operator",
+        summary: blindSpotInWords(spot),
+        payload: { hypothesis_id: null, what: spot.what, selectors: [...spot.selectors], file: spot.file, line: spot.line, revision: spot.revision },
+        salience: "notable",
+        why_notable: "the operator declares Vigil blind here, and no query will tell the hunt so",
+        provenance: OPERATOR_GAP_PROVENANCE,
+        attacker_influenceable: false,
+        instruction_like: false,
+        entities: [],
+        captured_at: now,
+      },
+    });
+  }
+
   // Raised whichever way the policy falls, so the approval is a ledger fact
   // rather than something a caller remembers. An ask with nothing pending deadlocks.
   //
@@ -246,9 +313,10 @@ export async function startHunt(
         provenance: hypothesis.provenance,
       })),
       budgets: spec.budgets,
-      scope: spec.scope,
+      scope: scopeOf(spec),
       // What the operator is approving a hunt to run without.
       unbound_capabilities: unbound,
+      blind_spots: blind.map(({ what, file, line, revision }) => ({ what, file, line, revision })),
     },
   );
   ledger.append({ kind: "checkpoint", payload: checkpoint });
@@ -258,6 +326,14 @@ export async function startHunt(
   }
   await ledger.flush();
   return ledger;
+}
+
+// A zone hunt's scope carries the zone under scope.zone, never scope.entities: its
+// selectors are patterns and ranges, not entities.
+function scopeOf(spec: HuntSpec): Record<string, unknown> {
+  if (spec.zone === undefined) return spec.scope;
+  const { name, selectors, file, line, revision } = spec.zone;
+  return { ...spec.scope, zone: { name, selectors, file, line, revision } };
 }
 
 // The ledger is the resume point: the spec came with it, so nothing is re-read

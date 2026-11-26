@@ -802,9 +802,12 @@ export function briefOf(spec: RunSpec): string {
 
 // An investigation opened on findings reads its trigger entities' facts (#4742): the
 // keys the orchestrator minted from those findings, and the case it was started on.
-// Gated on the kind, never on keys being present: a hunt carries keys too, and reads none.
-function factsAsk(options: Pick<AgentOptions, "spec" | "run_kind" | "conversation">): { facts: { keys: readonly string[]; case_id: string | null } } | null {
-  if (options.run_kind !== "investigate" || options.conversation !== undefined) return null;
+// Gated on the kind, never on keys being present. A hunt's read is its open hook's,
+// declared-only (#5212): the turn only renders that journaled event, and never reads.
+function factsAsk(options: Pick<AgentOptions, "spec" | "run_kind" | "conversation">): { facts: { keys: readonly string[]; case_id: string | null; held?: true } } | null {
+  if (options.conversation !== undefined) return null;
+  if (options.run_kind === "hunt" || options.run_kind === "adjudicate") return { facts: { keys: [], case_id: null, held: true } };
+  if (options.run_kind !== "investigate") return null;
   const refs = options.spec.sections["refs"] as { case_id?: unknown } | undefined;
   return { facts: { keys: openingKeys(options.spec), case_id: typeof refs?.case_id === "string" && refs.case_id !== "" ? refs.case_id : null } };
 }

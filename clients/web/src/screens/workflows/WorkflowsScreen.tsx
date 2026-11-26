@@ -9,7 +9,7 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate, type Skill, prettyHandle, skillUsageText } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, AgentRowsProvider, useSkills, workflowsOffered, modelSource, type Phase } from './useWorkflowsData'
 import { TITLES } from '../../data/data'
-import { approvalsApi, workflowApi, type InsiderLeads, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
+import { approvalsApi, configApi, workflowApi, type InsiderLeads, agentsApi, findingsApi, casesApi, detectionEngineeringApi, type GeneratedDraft, type HuntDetections as HuntDetectionsRead, type ReplayReport } from '../../services/api'
 import { HuntDetections } from './HuntDetections'
 import DescribeDialog from './DescribeDialog'
 import WorkflowReaderPane from './WorkflowReaderPane'
@@ -469,6 +469,29 @@ function Field({ label, value, onChange, placeholder, textarea, mono, hint, rows
         <input className={cls} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       )}
       {hint && <span className="text-[11px] text-tx-3">{hint}</span>}
+    </label>
+  )
+}
+
+/** A declared zone to hunt on, or the whole estate. Shown only when the site declares one. */
+function ZoneField({ zones, value, onChange }: {
+  zones: { name: string; selectors: string[]; description?: string | null }[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  const picked = zones.find((z) => z.name === value)
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Zone</span>
+      <select className={INPUT_CLS} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">No zone: the hunt scopes itself from its hypotheses</option>
+        {zones.map((z) => <option key={z.name} value={z.name}>{z.name}</option>)}
+      </select>
+      <span className="text-[11px] text-tx-3 leading-[1.5] break-words">
+        {picked
+          ? <>Scoped to <span className="font-mono break-all">{picked.selectors.join(', ')}</span>{picked.description ? ` — ${picked.description}` : ''}. Declared blind spots there open as gaps.</>
+          : 'A zone from the site files. The hunt queries what its selectors name.'}
+      </span>
     </label>
   )
 }
@@ -978,9 +1001,17 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
   const [limits, setLimits] = useState<WfLimits | null>(null)
   const [findingOpts, setFindingOpts] = useState<{ id: string; label: string }[]>([])
   const [caseOpts, setCaseOpts] = useState<{ id: string; label: string }[]>([])
+  // The applied site's zones (#5212): a hunt may take one's selectors as its scope.
+  const [zones, setZones] = useState<{ name: string; selectors: string[]; description?: string | null }[]>([])
+  const [zone, setZone] = useState('')
 
   useEffect(() => {
     let cancelled = false
+    if (wf.runKind === 'hunt') {
+      configApi.getSite().then((r) => {
+        if (!cancelled && r.data.declared) setZones(r.data.zones ?? [])
+      }).catch(() => {})
+    }
     findingsApi.getAll({ limit: 50 }).then((r) => {
       if (cancelled) return
       const list = (r.data?.findings || []) as { finding_id: string; title?: string; severity?: string }[]
@@ -1029,6 +1060,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
     ...(!wallBad && maxWall.trim() && { max_wall_minutes: wall }),
     ...(isHuntLike && approve && { approve_hypotheses: true }),
     ...(isHuntLike && restricted && { restricted: true }),
+    ...(zones.length > 0 && zone && { zone }),
   }
   // Checked on Run, not per keystroke: a button dead through a sentence reads as an argument.
   const needsHypothesis = isHuntLike && hypothesis.trim() === ''
@@ -1155,6 +1187,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
         {isHuntLike && (
           <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
         )}
+        {zones.length > 0 && <ZoneField zones={zones} value={zone} onChange={setZone} />}
         {!agent && <Field
           label="Hypothesis"
           value={hypothesis}

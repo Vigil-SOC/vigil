@@ -510,12 +510,13 @@ def _with_alerts(
     return checks
 
 
-async def _wazuh_counts() -> dict[str, int]:
+def _wazuh_service() -> WazuhService:
+    """The saved Wazuh credential, with the read budget as its timeout."""
     config = resolve(WAZUH)
     if missing(config, *WAZUH_REQUIRED):
         raise _Stop("not checked: Wazuh could not be read")
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
-    service = WazuhService(
+    return WazuhService(
         api_url=config["api_url"],
         username=config["username"],
         password=config["password"],
@@ -523,6 +524,10 @@ async def _wazuh_counts() -> dict[str, int]:
         ca_cert_path=config.get("ca_cert_path"),
         timeout=_BUDGET_S,
     )
+
+
+async def _wazuh_counts() -> dict[str, int]:
+    service = _wazuh_service()
     deadline = time.monotonic() + _BUDGET_S
     try:
         await _full_access(service, deadline)

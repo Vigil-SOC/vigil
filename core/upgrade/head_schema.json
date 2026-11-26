@@ -3506,6 +3506,11 @@
   "nullable": true,
   "type": "double precision"
  },
+ "column investigation_replay.by_workflow": {
+  "default": "'{}'::jsonb",
+  "nullable": false,
+  "type": "jsonb"
+ },
  "column investigation_replay.cost_usd": {
   "default": null,
   "nullable": false,

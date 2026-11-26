@@ -1816,7 +1816,8 @@ export interface paths {
          *     Act is always a raise: it holds after the fleet is lowered. Anything else that
          *     lets the workflow act where it could not, such as clearing Assist under a fleet
          *     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
-         *     while stopped, and stores the workflow's 30-day agreement beside its floor.
+         *     while stopped, and stores the investigation model in force and that model's
+         *     30-day agreement on the workflow beside its floor.
          *     Anything else is ``ai_autonomy.stop``.
          */
         put: operations["put_api_autonomy_workflows_workflow_id"];
@@ -13619,6 +13620,8 @@ export interface components {
         Day1Evidence: {
             /** Brings */
             brings?: string | null;
+            /** Checked */
+            checked?: number | null;
             /** Checked At */
             checked_at?: string | null;
             /** Comparison */
@@ -13641,6 +13644,8 @@ export interface components {
             listed?: number | null;
             /** Never Connected */
             never_connected?: number | null;
+            /** Outside */
+            outside?: number | null;
             /** Over 30 Days */
             over_30_days?: number | null;
             /** Prerequisites */
@@ -13653,6 +13658,12 @@ export interface components {
             source_id?: string | null;
             /** State */
             state?: string | null;
+            /** Undeclared */
+            undeclared?: number | null;
+            /** Unowned */
+            unowned?: number | null;
+            /** Unseen */
+            unseen?: number | null;
         };
         /** Day1Forecast */
         Day1Forecast: {
@@ -15421,6 +15432,13 @@ export interface components {
             agreement_wilson_high?: number | null;
             /** Agreement Wilson Low */
             agreement_wilson_low?: number | null;
+            /**
+             * By Workflow
+             * @default {}
+             */
+            by_workflow: {
+                [key: string]: components["schemas"]["WorkflowReplayTally"];
+            };
             /** Cost Usd */
             cost_usd: number;
             /** Disagreed */
@@ -17968,6 +17986,10 @@ export interface components {
             rejected?: {
                 [key: string]: unknown;
             } | null;
+            /** Report */
+            report?: {
+                [key: string]: unknown;
+            } | null;
             /** Revision */
             revision?: string | null;
             /** State */
@@ -19613,6 +19635,8 @@ export interface components {
             max_wall_minutes?: number | null;
             /** Restricted */
             restricted?: boolean | null;
+            /** Zone */
+            zone?: string | null;
         };
         /** WorkflowGenerateRequest */
         WorkflowGenerateRequest: {
@@ -19655,6 +19679,35 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
+        };
+        /** WorkflowReplayTally */
+        WorkflowReplayTally: {
+            /** Abstained */
+            abstained: number;
+            /** Agreed */
+            agreed: number;
+            /** Agreement Rate */
+            agreement_rate?: number | null;
+            /** Agreement Wilson High */
+            agreement_wilson_high?: number | null;
+            /** Agreement Wilson Low */
+            agreement_wilson_low?: number | null;
+            /** Disagreed */
+            disagreed: number;
+            /** False Close Rate */
+            false_close_rate?: number | null;
+            /** False Close Wilson High */
+            false_close_wilson_high?: number | null;
+            /** False Close Wilson Low */
+            false_close_wilson_low?: number | null;
+            /** False Closes */
+            false_closes: number;
+            /** Replayed */
+            replayed: number;
+            /** Skipped */
+            skipped: number;
+            /** Total */
+            total: number;
         };
         /**
          * WorkflowRunCancelRequest

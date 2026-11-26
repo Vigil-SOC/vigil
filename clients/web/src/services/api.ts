@@ -800,7 +800,7 @@ export const configApi = {
 
   getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
   getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
-  // The applied site/ revision, read-only (#5214)
+  // The applied site/ revision, read-only (#5214); a hunt may start on one of its zones (#5212).
   getSite: () => api.get<Schema<'SiteContextResponse'>>('/config/site'),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
@@ -1071,9 +1071,18 @@ export interface AgreementTally {
   wilson_high: number | null
 }
 
+/** One model's tally within a workflow: the model its investigate runs' spend recorded. */
+export interface ModelAgreement extends AgreementTally {
+  model: string
+}
+
 /** One workflow's tally. `overall` is the same shape without a workflow id. */
 export interface WorkflowAgreement extends AgreementTally {
   workflow_id: string
+  /** The same tally split by the model that ran each investigation. */
+  by_model: ModelAgreement[]
+  /** Closes and draws whose run used more than one model, or recorded none. */
+  unattributed: number
 }
 
 export interface AgentAgreement {
@@ -1833,6 +1842,8 @@ export const workflowApi = {
     approve_hypotheses?: boolean
     /** Run on a restricted case: the named one, or a new one only the starter reads. */
     restricted?: boolean
+    /** A zone the applied site revision declares: the hunt's scope is its selectors. */
+    zone?: string
   }) => api.post<{ run_id?: string; case_id?: string }>(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   /** Reads an attached file on the server and keeps nothing. Over 64 KB it is condensed, and says so on line one. */
   readHuntDocument: (file: File) => {

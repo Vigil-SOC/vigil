@@ -522,7 +522,8 @@ def _false_close_above(tally: dict, floor: int) -> bool:
 
 
 def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
-    """Each workflow's 30-day agreement tally, and the window's end."""
+    """Each workflow's 30-day agreement tally, with its ``by_model`` split, and
+    the window's end."""
     from core.reporting.analytics_service import agent_agreement
 
     end = utcnow()
@@ -531,23 +532,56 @@ def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
     return tallies, end.isoformat()
 
 
-def workflow_evidence(workflow_id: str) -> dict[str, Any]:
-    """The workflow's 30-day agreement, computed here and never taken from a client."""
+def model_tally(tally: Optional[dict], model: Optional[str]) -> Optional[dict]:
+    """The workflow's tally under ``model``; the blended one when no model is named.
+
+    None when the model has no record on the workflow."""
+    if not model:
+        return tally
+    return next(
+        (m for m in (tally or {}).get("by_model", ()) if m.get("model") == model),
+        None,
+    )
+
+
+def investigation_model() -> Optional[str]:
+    """The model an investigation is handed now, or None when it cannot be resolved."""
+    from core.llm import target
+
+    try:
+        resolved = target.resolve_component("investigation")
+    except Exception:  # noqa: BLE001 - unresolved is judged on the blended tally
+        logger.exception("investigation model not resolved")
+        return None
+    return resolved[1] if resolved else None
+
+
+def workflow_evidence(workflow_id: str, model: Optional[str] = None) -> dict[str, Any]:
+    """The workflow's 30-day agreement under ``model`` (blended when None),
+    computed here and never taken from a client."""
     with unit_of_work() as session:
         tallies, window_end = agreement_by_workflow(session)
-    return _evidence(tallies.get(workflow_id), window_end)
+    return _evidence(model_tally(tallies.get(workflow_id), model), window_end)
 
 
 def workflow_entry(
-    tier: str, floor: Optional[int], evidence: Optional[dict], by: str
+    tier: str,
+    floor: Optional[int],
+    evidence: Optional[dict],
+    by: str,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
-    return {
+    entry = {
         "tier": tier,
         "floor": floor,
         "evidence": evidence,
         "by": by,
         "at": utcnow().isoformat(),
     }
+    # The model the tier was earned (or lost) on; absent when it was not resolved.
+    if model:
+        entry["model"] = model
+    return entry
 
 
 def _locked_update(
@@ -643,14 +677,27 @@ def set_workflow_tier(
 def drop_below_floor() -> None:
     """Drop Act workflows that missed a floor or whose false-close interval is too high.
 
+    Each entry is judged on the record of the model it names. An Act entry that
+    names none (written before #5222) is stamped with the investigation model in
+    force and judged on that model's record; when that cannot be resolved it
+    stays unstamped and is judged on the workflow's blended tally.
+
     Written as the system, under the row lock, so a concurrent edit is not
     lost. Never raises. A person's raise is still ``put_workflow_autonomy``.
     """
     try:
         with unit_of_work() as session:
             tallies, window_end = agreement_by_workflow(session)
+        # Resolved only when an Act entry still lacks a model, and outside the lock.
+        read = try_read_stored_ceiling()
+        unstamped = read is None or any(
+            e.get("tier") == ACT and not e.get("model")
+            for e in read[0].workflows.values()
+        )
+        in_force = investigation_model() if unstamped else None
         below: list[str] = []
         false_close: list[str] = []
+        stamped: list[str] = []
 
         def change(current: Ceiling) -> tuple[Ceiling, str]:
             workflows = dict(current.workflows)
@@ -658,14 +705,19 @@ def drop_below_floor() -> None:
                 floor = entry.get("floor")
                 if entry.get("tier") != ACT or not isinstance(floor, int):
                     continue
-                tally = tallies.get(wid) or {}
+                model = entry.get("model")
+                if not model and in_force:
+                    model = in_force
+                    workflows[wid] = {**entry, "model": model}
+                    stamped.append(wid)
+                tally = model_tally(tallies.get(wid), model) or {}
                 evidence = _evidence(tally, window_end)
                 rate = evidence["agreement_rate"]
                 missed = rate is not None and rate < floor / 100
                 sampled = _false_close_above(tally, floor)
                 if not missed and not sampled:
                     continue
-                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM)
+                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM, model)
                 if missed:
                     below.append(wid)
                 if sampled:
@@ -679,6 +731,10 @@ def drop_below_floor() -> None:
                 parts.append(
                     "False-close interval above the complement of the floor: "
                     + ", ".join(sorted(false_close))
+                )
+            if stamped:
+                parts.append(
+                    "Model stamped on Act workflows: " + ", ".join(sorted(stamped))
                 )
             reason = "; ".join(parts) if parts else "Agreement fell below the floor"
             return replace(current, workflows=MappingProxyType(workflows)), reason

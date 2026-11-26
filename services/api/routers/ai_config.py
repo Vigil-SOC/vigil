@@ -276,6 +276,22 @@ class FalseCloseRow(BaseModel):
     evidence_opened: Optional[bool] = None
 
 
+class WorkflowReplayTally(BaseModel):
+    total: int
+    replayed: int
+    skipped: int
+    false_closes: int
+    false_close_rate: Optional[float] = None
+    false_close_wilson_low: Optional[float] = None
+    false_close_wilson_high: Optional[float] = None
+    agreed: int
+    disagreed: int
+    abstained: int
+    agreement_rate: Optional[float] = None
+    agreement_wilson_low: Optional[float] = None
+    agreement_wilson_high: Optional[float] = None
+
+
 class InvestigationReplayResponse(BaseModel):
     status: str
     reason: Optional[str] = None
@@ -298,6 +314,7 @@ class InvestigationReplayResponse(BaseModel):
     agreement_wilson_high: Optional[float] = None
     cost_usd: float
     false_close: List[FalseCloseRow]
+    by_workflow: Dict[str, WorkflowReplayTally] = {}
 
 
 @router.post(

@@ -2,6 +2,7 @@ import { DEFAULT_BUDGETS, HUNT_ALLOWANCE, type Budgets, type Entity } from "./ty
 import { fromText, key, parseKey } from "./entities.js";
 import { SpecError, type Allowance, type Counts, type RunSpec } from "../../core/spec.js";
 import { checkpointsFrom, DEFAULT_CHECKPOINTS, type Checkpoints } from "./checkpoints.js";
+import type { ZoneScope } from "../../contracts/job.js";
 
 // The core spec carries domain config as untyped numeric bags, so what a
 // threshold means is stated here rather than in a harness the hunt shares.
@@ -148,6 +149,8 @@ export interface HuntSpec extends RunSpec {
   enrichment: EnrichmentPolicy;
   checkpoints: Checkpoints;
   termination: Termination;
+  // The declared zone the hunt started on (#5212), as Python resolved it.
+  zone?: ZoneScope;
 }
 
 // A ceiling under the budget it caps would clamp every extension to less than
@@ -205,7 +208,19 @@ export function huntSpec(spec: RunSpec): HuntSpec {
     enrichment: { ...DEFAULT_ENRICHMENT, ...(held["enrichment"] as object | undefined) },
     checkpoints: { ...DEFAULT_CHECKPOINTS, ...checkpointsFrom(held["checkpoints"]) },
     termination: terminationOf(spec),
+    ...(typeof held["zone"] === "object" && held["zone"] !== null ? { zone: held["zone"] as ZoneScope } : {}),
   };
+}
+
+// The keys a hunt names, for its declared-only opening read (#5212): what its statements
+// are about, what its scope lists, and the zone's selectors that name one entity. Keys
+// only; the matching is core/site.py's, and a range's or pattern's blind spots ride the
+// zone itself, as Python's overlap found them.
+export function declaredKeysOf(spec: HuntSpec): readonly string[] {
+  const listed = spec.scope["entities"];
+  const scoped = Array.isArray(listed) ? listed.filter((one): one is string => typeof one === "string") : [];
+  const zoned = (spec.zone?.selectors ?? []).filter((selector) => !selector.startsWith("cidr:") && !selector.includes("*"));
+  return [...new Set([...recallKeysOf(spec), ...scoped, ...zoned])].sort();
 }
 
 // What the run's episodic read is keyed on, deduped and sorted so the same hunt
