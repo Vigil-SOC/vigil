@@ -46,7 +46,7 @@ function UndoButton({ entry, onUndo }: { entry: HistoryEntry; onUndo: (h: Histor
     <>
       {' · '}
       <button type="button" className="spv-link" disabled={busy} onClick={run}>{busy ? 'Undoing…' : 'Undo'}</button>
-      {failed && <span className="spv-outcome poor"> · couldn't undo</span>}
+      {failed && <span className="spv-outcome poor" role="alert"> · couldn't undo</span>}
     </>
   )
 }
@@ -58,10 +58,10 @@ export function HistoryPanel({ items, canUndo, onUndo }: { items: HistoryEntry[]
     <section className="spv-card spv-side" aria-label="History">
       <h3>History</h3>
       {items.length === 0 && <p className="spv-quiet">Nothing applied or dismissed yet.</p>}
-      {shown.map((h, i) => {
+      {shown.map((h) => {
         const o = outcomeLine(h)
         return (
-          <div key={`${h.at}-${h.key}-${i}`} className="spv-hist">
+          <div key={h.id} className="spv-hist">
             <span><span className="spv-quiet" title={h.at}>{SHORT_DAY.format(new Date(h.at))}</span> · <code>{h.key} {h.from} → {h.to}</code></span>
             <span className={`spv-outcome ${o.tone}`}>
               {o.text}

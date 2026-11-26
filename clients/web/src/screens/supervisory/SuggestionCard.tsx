@@ -64,7 +64,7 @@ export function SuggestionCard({
   s,
   expanded,
   onToggle,
-  canApply,
+  canWrite,
   applied,
   onApply,
   onUndo,
@@ -74,8 +74,8 @@ export function SuggestionCard({
   s: Suggestion
   expanded: boolean
   onToggle: () => void
-  /** the viewer holds ai_autonomy.write; without it only Dismiss shows */
-  canApply: boolean
+  /** the viewer holds ai_autonomy.write, which Apply and Dismiss both need; without it the card only shows its evidence */
+  canWrite: boolean
   /** set for a short window after an apply, while the card offers Undo */
   applied: HistoryEntry | null
   onApply: () => Promise<void>
@@ -140,13 +140,13 @@ export function SuggestionCard({
             )}
             <span className="spv-applied" role="status">
               {failed === 'undo'
-                ? <span className="spv-failed">Couldn't undo it; <code>{s.key}</code> is still {applied.to}</span>
+                ? <span className="spv-failed" role="alert">Couldn't undo it; <code>{s.key}</code> is still {applied.to}</span>
                 : <><Icon name="check" size={13} />Applied · <code>{s.key}</code> is now {applied.to}</>}
             </span>
           </div>
         ) : (
           <div className="spv-actions">
-            {canApply && (
+            {canWrite && (
               <button
                 type="button"
                 className="btn primary"
@@ -157,7 +157,9 @@ export function SuggestionCard({
                 {applying ? 'Applying…' : applyLabel(s)}
               </button>
             )}
-            <button type="button" className="btn ghost" disabled={applying} onClick={() => setDismissing(true)}>{busy === 'dismiss' ? 'Dismissing…' : 'Dismiss…'}</button>
+            {canWrite && (
+              <button type="button" className="btn ghost" disabled={applying} onClick={() => setDismissing(true)}>{busy === 'dismiss' ? 'Dismissing…' : 'Dismiss…'}</button>
+            )}
             <button
               type="button"
               className={`spv-toggle${expanded ? ' open' : ''}`}
@@ -168,9 +170,9 @@ export function SuggestionCard({
               {expanded ? 'Hide evidence' : 'Show evidence'}<Icon name="chevD" size={13} />
             </button>
             {failed === 'dismiss' ? (
-              <p className="spv-why-not failed">Couldn't dismiss it; try again.</p>
-            ) : canApply && (blocked || failed === 'apply') && (
-              <p className={`spv-why-not${failed === 'apply' ? ' failed' : ''}`} id={`spv-why-not-${s.id}`}>
+              <p className="spv-why-not failed" role="alert">Couldn't dismiss it; try again.</p>
+            ) : canWrite && (blocked || failed === 'apply') && (
+              <p className={`spv-why-not${failed === 'apply' ? ' failed' : ''}`} id={`spv-why-not-${s.id}`} role={failed === 'apply' ? 'alert' : undefined}>
                 {failed === 'apply' ? "Couldn't apply it. The card shows the setting as it is now." : s.apply.reason}
               </p>
             )}

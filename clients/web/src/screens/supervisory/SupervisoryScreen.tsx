@@ -87,7 +87,7 @@ function FunctionTile({ f }: { f: FunctionEvidence }) {
 
 export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) {
   const { hasPermission } = useAuth()
-  const canApply = hasPermission('ai_autonomy.write')
+  const canWrite = hasPermission('ai_autonomy.write')
   const { data, error, reload, dismiss, apply, settle, undo } = useSupervisory()
   // suggestion id → its apply, while the card still offers Undo
   const [applied, setApplied] = useState<Record<string, HistoryEntry>>({})
@@ -174,7 +174,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
               <FilterChip list label="Held" count={held.length} active={filter === 'held'} onClick={() => setFilter('held')} />
               <FilterChip list label="Widens autonomy" count={widens.length} active={filter === 'widens'} onClick={() => setFilter('widens')} />
             </div>
-            <span className="spv-quiet">Sorted by expected impact</span>
+            <span className="spv-quiet">Newest first</span>
           </div>
 
           <div className="spv-list" tabIndex={0} aria-label="Suggestion list, scrolls on its own">
@@ -184,7 +184,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
                 s={s}
                 expanded={expanded === s.id}
                 onToggle={() => setExpanded(expanded === s.id ? null : s.id)}
-                canApply={canApply}
+                canWrite={canWrite}
                 applied={applied[s.id] ?? null}
                 onApply={() => applyIt(s)}
                 onUndo={() => undoIt(applied[s.id])}
@@ -205,7 +205,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
 
         <aside className="spv-aside">
           <FailuresPanel failures={data.failures} />
-          <HistoryPanel items={data.history} canUndo={canApply} onUndo={undoIt} />
+          <HistoryPanel items={data.history} canUndo={canWrite} onUndo={undoIt} />
           <SettingsPanel items={data.settings} />
           <LearnsPanel days={data.learns_from.days} items={data.learns_from.items} />
         </aside>
