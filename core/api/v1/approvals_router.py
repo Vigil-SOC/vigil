@@ -11,7 +11,7 @@ import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core.auth.current_user import get_current_user
@@ -83,6 +83,14 @@ class RejectRequest(BaseModel):
     rejected_by: Optional[str] = Field(
         default=None,
         description="Identity of the rejecting analyst. Defaults to 'analyst'.",
+    )
+
+
+class UndoRequest(BaseModel):
+    reason: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Why the containment is being undone; the next run reads it.",
     )
 
 
@@ -422,6 +430,7 @@ async def approve_action(
 )
 async def undo_action(
     action_id: str,
+    request: Optional[UndoRequest] = Body(default=None),
     service: ApprovalService = Depends(provide_approvals),
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
@@ -433,13 +442,20 @@ async def undo_action(
     the caller; a stop holds it. Four-eyes does not apply: no proposal is
     involved. The action returned is that row. The original records ``released``
     or ``enabled`` once the vendor reports it. 409 when the original is not
-    executed and contained or disabled, or a lift of it is still open.
+    executed and contained or disabled, or a lift of it is still open. An
+    optional ``reason`` goes on the row and into an analyst note on the target,
+    and the undo holds that act there for runs no person started (#5273).
     """
     action = service.get_action(action_id)
     if action is None or screen_action(action).restricted:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
     try:
-        undone = await containment.undo(action_id, _person(current_user), registry)
+        undone = await containment.undo(
+            action_id,
+            _person(current_user),
+            registry,
+            request.reason if request else None,
+        )
     except NotUndoable as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ActionNotFound:

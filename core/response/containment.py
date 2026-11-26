@@ -662,9 +662,12 @@ def _lift(original: PendingAction, offered: set) -> Any:
     }
 
 
-async def undo(action_id: str, claims, registry) -> PendingAction:
+async def undo(
+    action_id: str, claims, registry, reason: Optional[str] = None
+) -> PendingAction:
     """Release, enable or unblock what ``action_id`` contained, as ``claims``' person: the
-    approved undo row, run at once (held when stopped). Raises ``NotUndoable``."""
+    approved undo row, run at once (held when stopped), with their ``reason``.
+    Raises ``NotUndoable``."""
     registry = await live_registry(registry)
     offered = set(registry.get_tool_names())
     person = getattr(claims, "person_id", None)
@@ -674,6 +677,7 @@ async def undo(action_id: str, claims, registry) -> PendingAction:
         lambda original: _lift(original, offered),
         claims.username,
         person,
+        reason,
     )
     if row.held:
         return row
@@ -725,6 +729,7 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
     from core.auth.principals import SYSTEM_PRINCIPAL_ID
     from core.auth.tool_principal import bound_claims
     from core.response.ceiling import read_ceiling, unattended_refusal
+    from core.response.reversals import PersonHold
 
     registry = await live_registry(registry)
     action = await resolve(action, registry)
@@ -754,6 +759,8 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
         )
         if why:
             logger.info("%s waits for a person: %s", action.action_id, why)
+            if isinstance(why, PersonHold):
+                await asyncio.to_thread(_note_held, action, why, claims.run_id)
             return action
         # Last, so the case names the cap only when nothing else held the act.
         released = await asyncio.to_thread(released_last_hour)
@@ -779,6 +786,24 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
         return action
     await asyncio.to_thread(_note_released, approved, claims.run_id)
     return await carry_out(approved, claims, registry)
+
+
+def _note_held(action: PendingAction, why: str, run_id: str) -> None:
+    """Say on the case which person's decision keeps the row pending (#5273).
+    Never raises: the row waits for a person either way."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_held",
+                f"{action.title} waits for a person: {why}",
+                {"action_id": action.action_id, "run_id": run_id, "held_by": why},
+            )
+    except Exception:  # noqa: BLE001 — the row waits either way
+        logger.exception("hold of %s not noted on its case", action.action_id)
 
 
 def _note_released(action: PendingAction, run_id: str) -> None:
