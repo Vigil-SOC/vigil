@@ -271,6 +271,8 @@ SETTINGS = ReportModule("settings", "platform.read")
 COVERAGE = ReportModule("coverage", "detections.read")
 # Hosts CrowdStrike, Defender and Wazuh still list. Counts only.
 ESTATE = ReportModule("estate", "integrations.read")
+# The declared site against what a sensor lists. Counts and item states only.
+SITE = ReportModule("site", "platform.read")
 # Report Sections: figures and lists, no checks. Stored under evidence.
 HISTORY_BEFORE = ReportModule("history.before", "findings.read")
 HISTORY_RECHECK = ReportModule("history.recheck", "findings.read")
@@ -781,6 +783,30 @@ CHECKS: tuple[ReportCheck, ...] = (
         "Wazuh agents last heard 7 days or more before the read, and never-connected agents once registration is 7 days old. The manager is not counted.",
     ),
     ReportCheck(
+        "site.crown_jewel_seen",
+        SITE.id,
+        SITE.permission,
+        "Every crown jewel a read source can see was heard from within 7 days of the read. A never-connected agent is listed, not heard.",
+    ),
+    ReportCheck(
+        "site.crown_jewel_place",
+        SITE.id,
+        SITE.permission,
+        "Every host of a seen crown jewel sits in the zone it names. An unseen crown jewel is not checked for place.",
+    ),
+    ReportCheck(
+        "site.owner",
+        SITE.id,
+        SITE.permission,
+        "Every zone and crown jewel has an owner naming an active team.",
+    ),
+    ReportCheck(
+        "site.undeclared",
+        SITE.id,
+        SITE.permission,
+        "Every host a read source lists falls in some zone. A fail gives a count per source, never a host.",
+    ),
+    ReportCheck(
         "production.running.service",
         RUNNING.id,
         RUNNING.permission,
@@ -811,6 +837,7 @@ MODULES = {
     SETTINGS.id: SETTINGS,
     COVERAGE.id: COVERAGE,
     ESTATE.id: ESTATE,
+    SITE.id: SITE,
     HISTORY_BEFORE.id: HISTORY_BEFORE,
     HISTORY_RECHECK.id: HISTORY_RECHECK,
     HISTORY_CAPPED.id: HISTORY_CAPPED,

@@ -13619,6 +13619,8 @@ export interface components {
         Day1Evidence: {
             /** Brings */
             brings?: string | null;
+            /** Checked */
+            checked?: number | null;
             /** Checked At */
             checked_at?: string | null;
             /** Comparison */
@@ -13641,6 +13643,8 @@ export interface components {
             listed?: number | null;
             /** Never Connected */
             never_connected?: number | null;
+            /** Outside */
+            outside?: number | null;
             /** Over 30 Days */
             over_30_days?: number | null;
             /** Prerequisites */
@@ -13653,6 +13657,12 @@ export interface components {
             source_id?: string | null;
             /** State */
             state?: string | null;
+            /** Undeclared */
+            undeclared?: number | null;
+            /** Unowned */
+            unowned?: number | null;
+            /** Unseen */
+            unseen?: number | null;
         };
         /** Day1Forecast */
         Day1Forecast: {
@@ -17966,6 +17976,10 @@ export interface components {
             reason: string;
             /** Rejected */
             rejected?: {
+                [key: string]: unknown;
+            } | null;
+            /** Report */
+            report?: {
                 [key: string]: unknown;
             } | null;
             /** Revision */

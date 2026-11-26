@@ -1723,8 +1723,9 @@ def get_site_context() -> str:
     """Read the declared site (site/*.md beside INTENT.md), as GET
     /api/config/site does: the applied revision, its state (ok, rejected,
     degraded or none), any refusal with file and line, each zone, crown jewel,
-    owner and blind spot with its selectors, file, line and resolved owner, and
-    the applied files' text. Read only; a change is a commit."""
+    owner and blind spot with its selectors, file, line and resolved owner, the
+    applied files' text, and the latest Day 1 Report's site checks and item
+    states. Read only; a change is a commit."""
     from core.site import site_view
 
     try:

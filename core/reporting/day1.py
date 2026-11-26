@@ -51,6 +51,7 @@ from core.reporting.checks import (
     LEGACY_CITATIONS,
     MODULES,
     SETTINGS,
+    SITE,
     VISIBILITY,
     ScopedValue,
     applicable,
@@ -71,6 +72,8 @@ from core.reporting.forecast import produce as produce_forecast
 from core.reporting.history_sections import present as present_history
 from core.reporting.history_sections import produce as produce_history
 from core.reporting.selection import SelectionError, SelectionView, read_view
+from core.reporting.site_report import CHECK_IDS as SITE_CHECKS
+from core.reporting.site_report import produce as produce_site
 from core.storage.models import ReportRecord, ReportRun, SystemConfig, User
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
@@ -277,7 +280,7 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
     modules: list[str] = []
     sources: Optional[list] = None
     health_failed = False
-    if VISIBILITY.id not in disabled or ESTATE.id not in disabled:
+    if {VISIBILITY.id, ESTATE.id, SITE.id} - disabled:
         try:
             sources = health.collect()
         except Exception as exc:  # noqa: BLE001 - the report still completes
@@ -305,6 +308,9 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
     if ESTATE.id not in disabled:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
+    if SITE.id not in disabled:
+        modules.append(SITE.id)
+        checks.extend(_site(sources, health_failed, evidence))
     _append_history(modules, evidence, disabled)
     _append_capped(modules, evidence, disabled)
     if FORECAST.id not in disabled:
@@ -317,6 +323,22 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
         "evidence": evidence,
         "preface": preface,
     }
+
+
+def _site(
+    sources: Optional[list], health_failed: bool, evidence: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The declared site against what Wazuh lists. A failure is not checked."""
+    try:
+        checks, evidence[SITE.id] = produce_site(sources, health_failed)
+        return checks
+    except Exception as exc:  # noqa: BLE001 - the report still completes
+        logger.error("Day 1 Report could not read the site: %s", type(exc).__name__)
+        evidence[SITE.id] = {"not_checked": "not checked: could not read the site."}
+        return [
+            _check(check_id, NOT_CHECKED, "not checked: could not read the site.")
+            for check_id in SITE_CHECKS
+        ]
 
 
 def _visibility_checks(

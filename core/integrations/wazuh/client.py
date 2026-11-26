@@ -23,6 +23,11 @@ PAGE_LIMIT = 500
 # Agent ids are digits ("000" is the manager); anything else could steer the path.
 _AGENT_ID = re.compile(r"^\d{3,}$")
 
+_AGENT_SELECT = (
+    "id,name,status,group,os.name,os.version,os.platform,ip,version,"
+    "lastKeepAlive,dateAdd"
+)
+
 
 class WazuhError(Exception):
     """A failed manager call, with a message safe to show (never a secret)."""
@@ -247,22 +252,40 @@ class WazuhService:
         return rules, total or 0
 
     async def list_agents(self) -> List[Dict[str, Any]]:
-        params = {
-            "limit": PAGE_LIMIT,
-            "select": "id,name,status,group,os.name,os.version,os.platform,ip,version",
-        }
+        agents, _capped = await self.read_agents()
+        return agents
+
+    async def read_agents(
+        self, max_agents: Optional[int] = None, query: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """``(agents, capped)``: paged until the total, or until ``max_agents``.
+
+        ``capped`` is True whenever fewer were read than the manager listed: the
+        cap, a short page, or no total. A caller never takes a truncated list
+        for the whole of it.
+        """
+        params: Dict[str, Any] = {"limit": PAGE_LIMIT, "select": _AGENT_SELECT}
+        if query:
+            params["q"] = query
         agents: List[Dict[str, Any]] = []
-        total = None
+        total: Optional[int] = None
         while total is None or len(agents) < total:
+            if max_agents is not None and len(agents) >= max_agents:
+                break
             data = await self._request(
                 "GET", "/agents", params={**params, "offset": len(agents)}
             )
             items = data.get("affected_items") or []
-            total = data.get("total_affected_items", 0)
+            raw_total = data.get("total_affected_items")
+            if isinstance(raw_total, bool) or not isinstance(raw_total, int):
+                return agents + items, True
+            total = raw_total
             if not items:
                 break
             agents.extend(items)
-        return agents
+        if max_agents is not None and len(agents) > max_agents:
+            return agents[:max_agents], True
+        return agents, len(agents) < (total or 0)
 
     async def current_user_access(self) -> Tuple[Optional[int], List[int]]:
         """``(user id, role ids)`` from ``GET /security/users/me``.
