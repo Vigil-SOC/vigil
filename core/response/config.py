@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # The row the daemon writes when it applies a declared INTENT.md revision
 # (VIGIL_INTENT_DIR). ``values`` holds the applied triage/enrich/respond keys,
-# which have no other store; act.* and investigate.* live in their own rows.
+# which have no other store; act.*, confidence.* and investigate.* live in their own rows.
 INTENT_APPLIED_KEY = "intent.applied"
 # Every process re-reads the row at most this often, so an applied revision
 # reaches the daemon and each backend replica without a restart.

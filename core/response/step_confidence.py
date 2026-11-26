@@ -26,8 +26,17 @@ The rule, version 1. Three factors, each a number from 0 to 1 or unknown:
   ``grounded``: 0 when the run was capped, cited nothing it holds, or its review
   was not grounded; 1 when all three were said and none flags; else unknown.
 
-The score is the lowest factor in force. It is unknown when a factor is unknown,
-unless a known factor is already 0. The band is display only. The line on what
+Which factors are in force is read from the autonomy ceiling (#5277): the
+``confidence.*`` switches in INTENT.md or on Settings › Limits & autonomy, each
+on unless switched off. An off factor's inputs are still worked out and stored
+for display; it never enters the score.
+
+The score is the lowest factor in force. It is unknown when a factor in force is
+unknown, unless a known one is already 0. With no factor in force nothing is left
+to lower it: the value is 1, the band is ``none`` ("no factors in force"), and
+there is no lowest factor and no raise line. That is a person's choice to count
+nothing, not an unknown, so switching factors off never lowers a score or makes
+a known one unknown. The band is display only. The line on what
 would raise the score is built from the lowest factor's inputs, never from text
 the model wrote. Each score records the rule version, the factors in force and
 the applied INTENT.md revision, so it can be worked again from the same records.
@@ -46,6 +55,8 @@ CONTAINMENT = "containment"
 FACTORS = ("precedent", "blind_spots", "run_quality")
 # Display only: nothing reads the band to decide.
 BANDS = ((0.8, "high"), (0.5, "medium"), (0.0, "low"))
+# The band when every factor is switched off: "no factors in force", not unknown.
+NONE_IN_FORCE = "none"
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +64,7 @@ logger = logging.getLogger(__name__)
 def score(step: str, case_id: str, facts: Dict[str, Any]) -> Dict[str, Any]:
     """The step's score. ``facts`` is ``TerminalUpdate.standing()``: the run's
     three facts, its ``blind_spots`` count and ``unserved_tools``, None where unsaid."""
+    from core.response.ceiling import factors_in_force, read_ceiling
     from core.response.config import applied_intent
 
     blind_spots = facts.get("blind_spots")
@@ -65,12 +77,15 @@ def score(step: str, case_id: str, facts: Dict[str, Any]) -> Dict[str, Any]:
         },
         "run_quality": run_quality(facts),
     }
-    in_force = list(FACTORS)
-    value, lowest = combine({name: factors[name]["value"] for name in in_force})
+    in_force = factors_in_force(read_ceiling())
+    if in_force:
+        value, lowest = combine({name: factors[name]["value"] for name in in_force})
+    else:
+        value, lowest = 1.0, None  # nothing in force: see the module docstring
     return {
         "step": step,
         "value": value,
-        "band": band(value),
+        "band": band(value) if in_force else NONE_IN_FORCE,
         "lowest": lowest,
         "raise": raise_line(lowest, factors[lowest]) if lowest else None,
         "factors": factors,
@@ -99,10 +114,14 @@ def band(value: Optional[float]) -> str:
 
 
 def quote(step_score: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """What an activity or the trail quotes: value, band and lowest factor."""
+    """What an activity or the trail quotes: value, band, lowest factor and the
+    factors in force, so a score with none in force reads as that."""
     if not step_score:
         return None
-    return {k: step_score.get(k) for k in ("value", "band", "lowest", "rule_version")}
+    return {
+        k: step_score.get(k)
+        for k in ("value", "band", "lowest", "factors_in_force", "rule_version")
+    }
 
 
 def run_quality(facts: Dict[str, Any]) -> Dict[str, Any]:

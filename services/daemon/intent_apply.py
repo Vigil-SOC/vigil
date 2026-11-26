@@ -8,7 +8,7 @@ their content hash changes it applies the revision:
 - only keys whose declared value changed since the last applied revision
   are considered, each labeled against the current effective value;
   ``tighten``/``same`` are written, ``loosen`` is recorded as pending;
-- ``act.*`` and ``workflows.<id>`` go to ``autonomy.ceiling``, ``investigate.*`` to
+- ``act.*``, ``confidence.*`` and ``workflows.<id>`` go to ``autonomy.ceiling``, ``investigate.*`` to
   ``orchestrator.settings``, the rest to the ``intent.applied`` row, which
   also records revision, per-key file/line, pending keys and state;
 - a ``workflows.<id>`` this install lacks, or that is not investigate-kind,
@@ -49,6 +49,7 @@ from core.intent_report import effective_daemon_config
 from core.response.ceiling import (
     ACT,
     ASSIST,
+    CONFIDENCE_SWITCHES,
     Ceiling,
     CeilingRefusal,
     _locked_update,
@@ -81,9 +82,10 @@ _CEILING_ATTR = {
     "act.irreversible": "act_irreversible",
     "act.four_eyes": "four_eyes",
     "act.hold_crown_jewels": "hold_crown_jewels",
+    **{key: attr for attr, key in CONFIDENCE_SWITCHES.items()},
 }
 # On is tighter for these; the environment lock does not force them off.
-_UNLOCKED = ("four_eyes", "hold_crown_jewels")
+_UNLOCKED = ("four_eyes", "hold_crown_jewels", *CONFIDENCE_SWITCHES)
 
 
 class StoreWriteFailed(Exception):
@@ -119,7 +121,7 @@ def _effective() -> Dict[str, Any]:
 
 
 def _apply_act(wants: Dict[str, Any], revision: str, pending: Set[str]) -> None:
-    """Write the act keys that do not loosen, decided under the row lock."""
+    """Write the act and confidence keys that do not loosen, decided under the row lock."""
     locked = environment_locks_act()
 
     def change(current: Ceiling) -> tuple[Ceiling, str]:
@@ -321,7 +323,7 @@ def apply_once(directory: Path) -> None:
         if is_workflow_key(key):
             flow_wants[key] = want  # decided under the ceiling's row lock
             continue
-        if group == "act":
+        if key in _CEILING_ATTR:
             act[key] = want  # decided under the ceiling's row lock
             continue
         if label(FIELDS_BY_KEY[key].rule, want, effective[key]) == "loosen":
@@ -408,7 +410,9 @@ def accept_pending(
     reason = f"INTENT.md revision {revision}: pending accepted by {who}"
     groups: Dict[str, Dict[str, Any]] = {}
     for key, value in declared.items():
-        groups.setdefault(key.split(".", 1)[0], {})[key] = value
+        # act.* and confidence.* both store on the ceiling row.
+        group = "act" if key in _CEILING_ATTR else key.split(".", 1)[0]
+        groups.setdefault(group, {})[key] = value
 
     def summary(items: Dict[str, Any]) -> str:
         return ", ".join(f"{k}={v}" for k, v in sorted(items.items()))
@@ -468,7 +472,8 @@ def accept_pending(
     others = {
         k: v
         for k, v in declared.items()
-        if k.split(".", 1)[0] not in ("act", "investigate", "workflows")
+        if k not in _CEILING_ATTR
+        and k.split(".", 1)[0] not in ("investigate", "workflows")
     }
     # Re-read just before writing, so a poll since the first read is kept.
     row = get_config_service(ACTOR).read_system_config(INTENT_APPLIED_KEY) or row

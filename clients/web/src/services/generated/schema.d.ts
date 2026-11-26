@@ -1634,8 +1634,9 @@ export interface paths {
          * @description Edit the ceiling. The permission depends on the direction.
          *
          *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
-         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
-         *     or turning the hold off is ``ai_autonomy.write``.
+         *     or a step-score factor on, is ``ai_autonomy.stop``. Raising a flag or the
+         *     cap, changing four-eyes, or turning the hold or a factor off is
+         *     ``ai_autonomy.write``.
          */
         put: operations["put_api_autonomy"];
         post?: never;
@@ -9341,8 +9342,9 @@ export interface paths {
          * @description Edit the ceiling. The permission depends on the direction.
          *
          *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
-         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
-         *     or turning the hold off is ``ai_autonomy.write``.
+         *     or a step-score factor on, is ``ai_autonomy.stop``. Raising a flag or the
+         *     cap, changing four-eyes, or turning the hold or a factor off is
+         *     ``ai_autonomy.write``.
          */
         put: operations["put_api_v1_autonomy"];
         post?: never;
@@ -13186,6 +13188,12 @@ export interface components {
             act_irreversible?: boolean | null;
             /** Act Reversible */
             act_reversible?: boolean | null;
+            /** Confidence Blind Spots */
+            confidence_blind_spots?: boolean | null;
+            /** Confidence Precedent */
+            confidence_precedent?: boolean | null;
+            /** Confidence Run Quality */
+            confidence_run_quality?: boolean | null;
             /** Four Eyes */
             four_eyes?: boolean | null;
             /** Hold Crown Jewels */
@@ -13199,6 +13207,12 @@ export interface components {
             act_irreversible: boolean;
             /** Act Reversible */
             act_reversible: boolean;
+            /** Confidence Blind Spots */
+            confidence_blind_spots: boolean;
+            /** Confidence Precedent */
+            confidence_precedent: boolean;
+            /** Confidence Run Quality */
+            confidence_run_quality: boolean;
             /** Crown Jewels */
             crown_jewels: number;
             /** Environment Locked */

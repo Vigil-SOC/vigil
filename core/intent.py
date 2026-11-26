@@ -34,7 +34,9 @@ DEFAULT_INTENT_FILE = REPO_ROOT / "INTENT.md"
 
 # Tightening rules, one per field type. The label describes what applying the
 # declared value over the effective one would do to the daemon's autonomy.
-HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, four_eyes, hold_crown_jewels
+HIGHER_TIGHTER = (
+    "higher_tighter"  # thresholds, four_eyes, hold_crown_jewels, confidence.*
+)
 LOWER_TIGHTER = "lower_tighter"  # budgets, auto_* / enabled booleans
 
 
@@ -111,6 +113,14 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         "ceiling.hold_crown_jewels",
         None,
         HIGHER_TIGHTER,
+    ),
+    # Step-score factors in force (#5277): on is tighter, no env setting, and
+    # exempt from the environment locks, as the crown-jewel hold is.
+    *(
+        IntentField(
+            f"confidence.{name}", f"ceiling.confidence_{name}", None, HIGHER_TIGHTER
+        )
+        for name in ("precedent", "blind_spots", "run_quality")
     ),
     IntentField(
         "investigate.enabled",

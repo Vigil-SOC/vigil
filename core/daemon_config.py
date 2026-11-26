@@ -81,6 +81,9 @@ class CeilingConfig:
     act_irreversible: bool = False
     four_eyes: bool = False
     hold_crown_jewels: bool = True
+    confidence_precedent: bool = True
+    confidence_blind_spots: bool = True
+    confidence_run_quality: bool = True
 
 
 @dataclass

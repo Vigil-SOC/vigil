@@ -3207,6 +3207,39 @@
             ],
             "title": "Act Reversible"
           },
+          "confidence_blind_spots": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Blind Spots"
+          },
+          "confidence_precedent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Precedent"
+          },
+          "confidence_run_quality": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Run Quality"
+          },
           "four_eyes": {
             "anyOf": [
               {
@@ -3254,6 +3287,18 @@
           },
           "act_reversible": {
             "title": "Act Reversible",
+            "type": "boolean"
+          },
+          "confidence_blind_spots": {
+            "title": "Confidence Blind Spots",
+            "type": "boolean"
+          },
+          "confidence_precedent": {
+            "title": "Confidence Precedent",
+            "type": "boolean"
+          },
+          "confidence_run_quality": {
+            "title": "Confidence Run Quality",
             "type": "boolean"
           },
           "crown_jewels": {
@@ -3354,6 +3399,9 @@
           "four_eyes",
           "hold_crown_jewels",
           "crown_jewels",
+          "confidence_precedent",
+          "confidence_blind_spots",
+          "confidence_run_quality",
           "released_per_hour"
         ],
         "title": "CeilingResponse",

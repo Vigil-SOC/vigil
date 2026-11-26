@@ -83,6 +83,30 @@ const splitTool = (name: string) => {
   return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
+
+type ManagedSwitch = { declared: unknown; file?: string | null; line?: number | null }
+// The step-score factors (#5277): each on counts in a dismissal's and a containment's score.
+const SCORE_FACTORS = [
+  {
+    key: 'confidence.precedent',
+    attr: 'confidence_precedent',
+    label: 'Score: precedent',
+    hint: 'How people judged earlier alerts of the same kind.',
+  },
+  {
+    key: 'confidence.blind_spots',
+    attr: 'confidence_blind_spots',
+    label: 'Score: blind spots',
+    hint: 'Tool calls the run’s estate failed and never served.',
+  },
+  {
+    key: 'confidence.run_quality',
+    attr: 'confidence_run_quality',
+    label: 'Score: run quality',
+    hint: 'The run hit its turn cap, cited nothing, or was not grounded.',
+  },
+] as const
+const ON_TIGHTER_KEYS: string[] = ['act.hold_crown_jewels', ...SCORE_FACTORS.map((f) => f.key)]
 type HeldRow = Ceiling['held'][number]
 const CAP_MAX = 1000
 
@@ -347,8 +371,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   const [overlayOnly, setOverlayOnly] = useState<OverlayOnlyRule[]>([])
   const [deploying, setDeploying] = useState<number[] | 'all' | null>(null)
   const stopping = pending?.kind === 'stop'
-  // The declared directory's act.hold_crown_jewels, when it manages that key: the API refuses a turn-off below it.
-  const [holdManaged, setHoldManaged] = useState<{ declared: unknown; file?: string | null; line?: number | null } | null>(null)
+  // The declared directory's on-is-tighter keys it manages (the crown-jewel hold, the score factors), by key: the API refuses a turn-off below a declared on.
+  const [onManaged, setOnManaged] = useState<Record<string, ManagedSwitch>>({})
   // Workflows the declared directory manages, by id: the API refuses a raise past the declared entry.
   const [flowManaged, setFlowManaged] = useState<Record<string, ManagedFlow>>({})
   useEffect(() => {
@@ -356,7 +380,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     configApi
       .getIntent()
       .then((r) => {
-        const row = r.data.rows?.find((x) => x.key === 'act.hold_crown_jewels' && x.managed)
+        const switches: Record<string, ManagedSwitch> = {}
+        for (const x of r.data.rows ?? []) if (x.managed && ON_TIGHTER_KEYS.includes(x.key)) switches[x.key] = x
         const flows: Record<string, ManagedFlow> = {}
         for (const x of r.data.rows ?? []) {
           if (x.managed && x.key.startsWith('workflows.'))
@@ -368,12 +393,12 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             }
         }
         if (cancelled) return
-        setHoldManaged(row ?? null)
+        setOnManaged(switches)
         setFlowManaged(flows)
       })
       .catch(() => {
         if (cancelled) return
-        setHoldManaged(null) // unread: the API still refuses
+        setOnManaged({}) // unread: the API still refuses
         setFlowManaged({})
       })
     return () => {
@@ -512,6 +537,15 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
 
   const persistIfChanged = () => {
     if (JSON.stringify(config) !== JSON.stringify(lastSaved.current)) commitConfig(config)
+  }
+
+  // Why switching an on-is-tighter key off would be refused, said before anyone tries.
+  const offRefusal = (key: string, on: boolean, stopped: boolean): string | null => {
+    if (!on) return null
+    const m = onManaged[key]
+    if (m?.declared === true)
+      return `Managed by ${m.file ?? 'INTENT.md'}:${m.line ?? 1}, declared on. Change it in the declared directory.`
+    return stopped ? STOPPED_LOOSEN : null
   }
 
   const saveCeiling = async (patch: Parameters<typeof ceiling.save>[0]) => {
@@ -1237,15 +1271,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             {(() => {
               const on = ceil.hold_crown_jewels
               const n = ceil.crown_jewels
-              const managedOn = holdManaged?.declared === true
-              // Why a turn-off would be refused, said before anyone tries.
-              const refusal = !on
-                ? null
-                : managedOn
-                  ? `Managed by ${holdManaged?.file ?? 'INTENT.md'}:${holdManaged?.line ?? 1}, declared on. Change it in the declared directory.`
-                  : ceil.stopped
-                    ? STOPPED_LOOSEN
-                    : null
+              const managedOn = onManaged['act.hold_crown_jewels']?.declared === true
+              const refusal = offRefusal('act.hold_crown_jewels', on, ceil.stopped)
               return (
                 <div className="lim-switch">
                   <div className="toggle-row-text">
@@ -1283,6 +1310,40 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
                 </div>
               )
             })()}
+            {SCORE_FACTORS.map((f) => {
+              const on = ceil[f.attr]
+              const managedOn = onManaged[f.key]?.declared === true
+              const refusal = offRefusal(f.key, on, ceil.stopped)
+              return (
+                <div className="lim-switch" key={f.key}>
+                  <div className="toggle-row-text">
+                    <span className="toggle-row-label">{f.label}</span>
+                    <span className="toggle-row-hint">{f.hint}</span>
+                    {refusal && canRaise && (
+                      <span className="lim-class-note">
+                        <Icon name={managedOn ? 'lock' : 'alert'} size={13} className="shrink-0" /> {refusal}
+                      </span>
+                    )}
+                  </div>
+                  {canRaise ? (
+                    <Toggle
+                      label={f.label}
+                      checked={on}
+                      disabled={refusal != null}
+                      title={refusal ?? undefined}
+                      onChange={(v) => saveCeiling({ [f.attr]: v })}
+                    />
+                  ) : canLower && !on ? (
+                    <Toggle label={f.label} checked={false} onChange={() => saveCeiling({ [f.attr]: true })} />
+                  ) : (
+                    <span className="text-sm text-tx-2">{on ? 'On' : 'Off'}</span>
+                  )}
+                </div>
+              )
+            })}
+            {SCORE_FACTORS.every((f) => !ceil[f.attr]) && (
+              <span className="toggle-row-hint">No factors in force: every step score reads “no factors in force” and holds nothing.</span>
+            )}
             {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}

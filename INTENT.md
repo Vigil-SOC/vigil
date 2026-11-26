@@ -51,6 +51,17 @@ investigate:
   max_total_hourly_cost: 20.0       # USD (ORCHESTRATOR_MAX_HOURLY_COST)
   max_runtime_per_investigation: 3600  # seconds (ORCHESTRATOR_MAX_RUNTIME)
 
+# Which factors a dismissal's or containment's step score counts
+# (core/response/step_confidence.py). On is tighter; a declared false waits for
+# a person's accept. No env setting moves them. (autonomy.ceiling)
+confidence:
+  # How people judged earlier alerts of the same kind.
+  precedent: true
+  # Tool calls the run's estate failed and never served.
+  blind_spots: true
+  # The run hit its turn cap, cited nothing, or was not grounded.
+  run_quality: true
+
 # Each investigate workflow's own tier, keyed by workflow id. Applied only from
 # a declared directory (VIGIL_INTENT_DIR); observe mode ignores this section.
 # tier is act or assist; floor is a whole number 1..100, required with act and
@@ -202,6 +213,13 @@ An admin turns the hold off with `act.hold_crown_jewels: false`, the Settings
 switch beside Four-eyes, or `PUT /api/v1/autonomy`. Turning it off needs
 `ai_autonomy.write` and a person, and is refused while stopped or while the
 declared directory declares it on; turning it on needs only `ai_autonomy.stop`.
+
+A step score counts only the `confidence.*` factors switched on; with all three
+off it reads "no factors in force" and holds nothing. Switching a factor off is a
+loosening, with the same rule as the hold: `ai_autonomy.write` and a person, not
+while stopped or while the declared directory declares it on; switching it on
+needs only `ai_autonomy.stop`. The switches sit beside the hold on Settings ›
+Limits & autonomy.
 
 ## Editing
 
