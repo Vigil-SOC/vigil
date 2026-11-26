@@ -1,8 +1,8 @@
-import { CURRENT, useOwnAccount, vendorName, type Containment } from './containmentRead'
+import { CURRENT, undoable, useOwnAccount, vendorName, type Containment } from './containmentRead'
 import './kit.css'
 import './containment.css'
 
-/** What a pending isolation or disable would act on: the vendor records it resolved to, or the missing tool. */
+/** What a pending containment would act on: the vendor records or carriers it resolved to, or why none can carry it. */
 export function ContainmentTargets({ containment, picked, onPick, group }: {
   containment: Containment
   picked: string | null
@@ -23,7 +23,10 @@ export function ContainmentTargets({ containment, picked, onPick, group }: {
             <>
               <span className="contain-name">{c.name}</span>
               <span className="contain-meta">
-                {vendorName(c.vendor)} · <code>{String(c.vendor_id)}</code> · {CURRENT[c.state] ?? c.state.replace(/_/g, ' ')}
+                {c.carrier ?? vendorName(c.vendor)}
+                {String(c.vendor_id) !== String(c.name) && <> · <code>{String(c.vendor_id)}</code></>}
+                {c.state && ` · ${CURRENT[c.state] ?? c.state.replace(/_/g, ' ')}`}
+                {` · ${undoable(c) ? 'Vigil can undo this' : 'Vigil cannot undo this'}`}
               </span>
             </>
           )
@@ -55,6 +58,9 @@ const STATE: Record<string, { tone: string; word: string }> = {
   disabled: { tone: 'good', word: 'Disabled' },
   released: { tone: 'idle', word: 'Released' },
   enabled: { tone: 'idle', word: 'Enabled' },
+  blocked: { tone: 'good', word: 'Blocked' },
+  unblocked: { tone: 'idle', word: 'Unblocked' },
+  revoked: { tone: 'good', word: 'Revoked' },
   failed: { tone: 'needs', word: 'Failed' },
 }
 

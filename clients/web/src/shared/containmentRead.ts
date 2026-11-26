@@ -1,13 +1,18 @@
 import { useAuth } from '../contexts/AuthContext'
 
-/** One vendor record an isolation or account disable resolved to (#5059). */
+/** One vendor record a containment resolved to (#5059), or a keyless carrier of its target (#5234). */
 export interface ContainmentCandidate {
   id: string
   vendor: string
+  /** The carrier's name, e.g. Cloudflare WAF; absent on a looked-up record. */
+  carrier?: string | null
   tool?: string
   vendor_id: string | number
   name: string
-  state: string
+  /** The vendor's state at lookup; null for a keyless carrier, which reads nothing first. */
+  state: string | null
+  /** Whether Vigil can undo the act; absent on rows resolved before #5234, whose carriers all could. */
+  undoable?: boolean
 }
 
 export interface Containment {
@@ -27,6 +32,7 @@ const VENDOR: Record<string, string> = {
   'microsoft-defender': 'Microsoft Defender',
   'carbon-black': 'Carbon Black',
   'azure-ad': 'Entra ID',
+  cloudflare: 'Cloudflare',
 }
 export const vendorName = (vendor: string | null | undefined) => (vendor ? VENDOR[vendor] ?? vendor : 'The vendor')
 
@@ -38,6 +44,9 @@ export const CURRENT: Record<string, string> = {
   disabled: 'already disabled',
   enabled: 'enabled',
 }
+
+/** Whether Vigil can undo a candidate's act. */
+export const undoable = (c: ContainmentCandidate) => c.undoable !== false
 
 /** An account's states are enabled or disabled; a host's are not. */
 const isAccount = (c: ContainmentCandidate) => c.state === 'enabled' || c.state === 'disabled'
