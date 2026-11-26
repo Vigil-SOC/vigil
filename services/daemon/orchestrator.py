@@ -265,14 +265,48 @@ def intake_age_seconds(row: Dict, now: datetime) -> float:
     return (now - created).total_seconds()
 
 
+def intake_raised_by(row: Dict) -> Optional[Dict[str, Any]]:
+    """What raises a detection row ahead of older ones in its band, or None.
+
+    A crown jewel the applied site declares over one of the finding's Entity
+    Keys, else vStrike enrichment that says ``criticality: critical``. Schedule
+    and ask rows, and a row with no finding loaded, are never raised.
+    """
+    finding = row.get("_finding")
+    if row.get("kind") != "detection" or not isinstance(finding, dict):
+        return None
+    from core.memory.entity_keys import entity_context_candidates, entity_key
+    from core.site import match
+
+    keys = [
+        entity_key(kind, value) for kind, value in entity_context_candidates(finding)
+    ]
+    jewel = next((m for m in match(keys) if m["kind"] == "crown_jewels"), None)
+    if jewel is not None:
+        return {
+            "source": "crown_jewel",
+            "name": jewel.get("name"),
+            "file": jewel.get("file"),
+            "line": jewel.get("line"),
+            "revision": jewel.get("revision"),
+            "selector": jewel.get("selector"),
+            "key": jewel.get("key"),
+        }
+    context = finding.get("entity_context")
+    vstrike = context.get("vstrike") if isinstance(context, dict) else None
+    if isinstance(vstrike, dict) and vstrike.get("criticality") == "critical":
+        return {"source": "enrichment", "criticality": "critical"}
+    return None
+
+
 def intake_rank_inputs(
     row: Dict,
     *,
     now: datetime,
     ttl_seconds: int,
     promote_fraction: float,
-) -> tuple[str, bool, float]:
-    """``(band, promoted, age_seconds)`` of a row: what ``rank_intake_row`` sorts on.
+) -> tuple[str, bool, float, Optional[Dict[str, Any]]]:
+    """``(band, promoted, age_seconds, raised_by)``: what ``rank_intake_row`` sorts on.
 
     Detection rows read current finding severity from ``_finding``;
     ``schedule`` and ``human_ask`` read the row's ``priority``.
@@ -287,7 +321,7 @@ def intake_rank_inputs(
         finding_severity=finding_severity,
         priority=row.get("priority"),
     )
-    return band, promoted, age
+    return band, promoted, age, intake_raised_by(row)
 
 
 def rank_intake_row(
@@ -297,18 +331,20 @@ def rank_intake_row(
     ttl_seconds: int,
     promote_fraction: float,
 ) -> tuple:
-    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+    """Sort key: last-quarter TTL promotion, then severity band, then raised
+    (crown jewel or critical enrichment), then oldest.
 
     Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
     ``low`` precedes ``medium``.
     """
-    band, promoted, _ = intake_rank_inputs(
+    band, promoted, _, raised = intake_rank_inputs(
         row, now=now, ttl_seconds=ttl_seconds, promote_fraction=promote_fraction
     )
     created = _as_naive_utc(row.get("created_at"))
     return (
         0 if promoted else 1,
         _BAND_RANK[band],
+        0 if raised else 1,
         created if created is not None else now,
     )
 
