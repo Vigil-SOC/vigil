@@ -369,7 +369,7 @@ def _place(
 def _owner_view(row: dict) -> Optional[dict]:
     """``site_view``'s owner resolution, or None when teams could not be read."""
     try:
-        return site.site_view(row, report=False)
+        return site.site_view(row, report=False, proposal=False)
     except Exception as exc:  # noqa: BLE001 - this check only
         logger.error("day1 site check %s: %s", OWNER, type(exc).__name__)
         return None

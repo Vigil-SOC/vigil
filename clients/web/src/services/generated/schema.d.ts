@@ -3813,11 +3813,52 @@ export interface paths {
         /**
          * Get Site Context
          * @description The applied site/ revision: state, any refusal with file and line, each
-         *     item with file, line and resolved owner, and the applied files' text.
+         *     item with file, line and resolved owner, and the applied files' text; the
+         *     open proposal and the site questions.
          */
         get: operations["get_api_config_site"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/site/proposal/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Site Proposal
+         * @description The proposed site/ folder as a .tar.gz, to unpack into the declared directory.
+         */
+        get: operations["get_api_config_site_proposal_archive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/site/proposal/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discard Site Proposal
+         * @description Discard the open proposal; the reason goes on its audit entry.
+         */
+        post: operations["post_api_config_site_proposal_discard"];
         delete?: never;
         options?: never;
         head?: never;
@@ -18043,6 +18084,7 @@ export interface components {
             hash?: string | null;
             /** Owners */
             owners?: components["schemas"]["SiteOwner"][];
+            proposal?: components["schemas"]["SiteProposalResponse"] | null;
             /** Reason */
             reason: string;
             /** Rejected */
@@ -18055,6 +18097,8 @@ export interface components {
             } | null;
             /** Revision */
             revision?: string | null;
+            /** Site Questions */
+            site_questions?: components["schemas"]["SiteQuestion"][];
             /** State */
             state: string;
             /** Zones */
@@ -18120,6 +18164,101 @@ export interface components {
             team_id?: string | null;
             /** Unassigned */
             unassigned?: string | null;
+        };
+        /** SiteProposalChange */
+        SiteProposalChange: {
+            /** Change */
+            change: string;
+            /** Item */
+            item: string;
+            /** Kind */
+            kind: string;
+        };
+        /** SiteProposalDiscardBody */
+        SiteProposalDiscardBody: {
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * SiteProposalProvenance
+         * @description A cited call on the saving run's ledger, or a person's answer, quoted.
+         */
+        SiteProposalProvenance: {
+            /** Answer */
+            answer?: string | null;
+            /** Arguments */
+            arguments?: unknown | null;
+            /** At */
+            at?: string | null;
+            /** Change */
+            change: string;
+            /** Person Id */
+            person_id?: string | null;
+            /** Ref */
+            ref?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Server */
+            server?: string | null;
+            /** Source */
+            source: string;
+            /** Tool */
+            tool?: string | null;
+        };
+        /** SiteProposalResponse */
+        SiteProposalResponse: {
+            /** Base Revision */
+            base_revision?: string | null;
+            /** Diff */
+            diff?: components["schemas"]["SiteProposalChange"][];
+            /** Discarded */
+            discarded?: {
+                [key: string]: unknown;
+            } | null;
+            /** Files */
+            files?: components["schemas"]["SiteFile"][];
+            /** Id */
+            id: string;
+            /** Provenance */
+            provenance?: {
+                [key: string]: components["schemas"]["SiteProposalProvenance"];
+            };
+            /** Questions */
+            questions?: string[];
+            /** Refresh */
+            refresh?: {
+                [key: string]: unknown;
+            } | null;
+            /** Saved At */
+            saved_at: string;
+            /** Saved By */
+            saved_by: {
+                [key: string]: string | null;
+            };
+            /** Status */
+            status: string;
+        };
+        /**
+         * SiteQuestion
+         * @description Computed on read: unplaced, unowned or contradicted.
+         */
+        SiteQuestion: {
+            /** Entity Key */
+            entity_key?: string | null;
+            /** File */
+            file?: string | null;
+            /** Investigations */
+            investigations?: number | null;
+            /** Kind */
+            kind: string;
+            /** Latest */
+            latest?: string | null;
+            /** Line */
+            line?: number | null;
+            /** Name */
+            name?: string | null;
+            /** Question */
+            question: string;
         };
         /** SiteZone */
         SiteZone: {
@@ -26579,6 +26718,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SiteContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_config_site_proposal_archive: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": unknown;
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_site_proposal_discard: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteProposalDiscardBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteProposalResponse"];
                 };
             };
             /** @description Validation Error */

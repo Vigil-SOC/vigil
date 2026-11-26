@@ -9,10 +9,11 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy import exists, select, text
 
+from core import site_proposal
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth.current_user import is_machine_request
@@ -62,7 +63,7 @@ from core.secrets import (
     set_secret,
 )
 from core.secrets_manager import get_secrets_manager
-from core.site import site_view
+from core.site import applied_site, site_view
 from core.skills.skill_library import (
     is_bundled,
     load_skills,
@@ -2021,6 +2022,59 @@ class SiteFile(BaseModel):
     text: str
 
 
+class SiteProposalChange(BaseModel):
+    kind: str
+    item: str
+    # added | changed | removed, against the revision applied now
+    change: str
+
+
+class SiteProposalProvenance(BaseModel):
+    """A cited call on the saving run's ledger, or a person's answer, quoted."""
+
+    # citation | answer
+    source: str
+    change: str
+    run_id: Optional[str] = None
+    at: Optional[str] = None
+    ref: Optional[str] = None
+    tool: Optional[str] = None
+    server: Optional[str] = None
+    arguments: Optional[Any] = None
+    person_id: Optional[str] = None
+    answer: Optional[str] = None
+
+
+class SiteProposalResponse(BaseModel):
+    id: str
+    # open | applied | outdated | discarded
+    status: str
+    saved_at: str
+    saved_by: Dict[str, Optional[str]]
+    base_revision: Optional[str] = None
+    files: list[SiteFile] = Field(default_factory=list)
+    # "<list>/<item>" -> what it rests on
+    provenance: Dict[str, SiteProposalProvenance] = Field(default_factory=dict)
+    questions: list[str] = Field(default_factory=list)
+    refresh: Optional[Dict[str, Any]] = None
+    discarded: Optional[Dict[str, Any]] = None
+    diff: list[SiteProposalChange] = Field(default_factory=list)
+
+
+class SiteQuestion(BaseModel):
+    """Computed on read: unplaced, unowned or contradicted."""
+
+    question: str
+    # host | ip for an entity; zone | crown_jewel for an unowned item
+    kind: str
+    entity_key: Optional[str] = None
+    investigations: Optional[int] = None
+    latest: Optional[str] = None
+    name: Optional[str] = None
+    file: Optional[str] = None
+    line: Optional[int] = None
+
+
 class SiteContextResponse(BaseModel):
     """The declared site (site/*.md) the daemon applied. Read-only; not /api/v1."""
 
@@ -2040,13 +2094,67 @@ class SiteContextResponse(BaseModel):
     files: list[SiteFile] = Field(default_factory=list)
     # The latest Day 1 Report's site checks and evidence; None before one ran.
     report: Optional[Dict[str, Any]] = None
+    # The open site proposal (#5229), with its status and diff; None when none.
+    proposal: Optional[SiteProposalResponse] = None
+    site_questions: list[SiteQuestion] = Field(default_factory=list)
 
 
 @router.get("/site", response_model=SiteContextResponse, dependencies=_PLATFORM_READ)
 def get_site_context() -> Dict[str, Any]:
     """The applied site/ revision: state, any refusal with file and line, each
-    item with file, line and resolved owner, and the applied files' text."""
+    item with file, line and resolved owner, and the applied files' text; the
+    open proposal and the site questions."""
     return site_view()
+
+
+@router.get(
+    "/site/proposal/archive",
+    dependencies=_PLATFORM_READ,
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+def download_site_proposal() -> Response:
+    """The proposed site/ folder as a .tar.gz, to unpack into the declared directory."""
+    value = site_proposal.read_proposal()
+    if not value:
+        raise HTTPException(status_code=404, detail="There is no site proposal")
+    if value.get("discarded"):
+        raise HTTPException(status_code=409, detail="The site proposal was discarded")
+    return Response(
+        content=site_proposal.archive(value),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{site_proposal.archive_name(value)}"'
+            )
+        },
+    )
+
+
+class SiteProposalDiscardBody(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+@router.post(
+    "/site/proposal/discard",
+    response_model=SiteProposalResponse,
+    dependencies=[permission_gate("ai_chat.use")],
+)
+def discard_site_proposal(
+    body: SiteProposalDiscardBody,
+    session: UnitOfWorkSession,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """Discard the open proposal; the reason goes on its audit entry."""
+    if not body.reason.strip():
+        raise HTTPException(status_code=422, detail="A discard needs a reason")
+    try:
+        site_proposal.discard(session, body.reason, current_user.username)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except site_proposal.ProposalRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    session.flush()
+    return site_proposal.proposal_view(applied_site(fresh=True), session=session)
 
 
 class IntentAcceptBody(BaseModel):
