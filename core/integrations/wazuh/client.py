@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # The manager caps ``limit`` at 500 on older 4.x releases, so pages stay there.
 PAGE_LIMIT = 500
 
+# What ``list_agents`` returns per agent unless a caller asks for less.
+AGENT_FIELDS = "id,name,status,group,os.name,os.version,os.platform,ip,version"
+
 # Agent ids are digits ("000" is the manager); anything else could steer the path.
 _AGENT_ID = re.compile(r"^\d{3,}$")
 
@@ -251,9 +254,41 @@ class WazuhService:
             rules.extend(items)
         return rules, total or 0
 
-    async def list_agents(self) -> List[Dict[str, Any]]:
-        agents, _capped = await self.read_agents()
-        return agents
+    async def list_agents(
+        self,
+        group: Optional[str] = None,
+        name: Optional[str] = None,
+        search: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        select: str = AGENT_FIELDS,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """``(agents, total_affected_items)``. Filters go to the manager as its own
+        parameters. ``limit`` None pages through every match from ``offset``."""
+        params: Dict[str, Any] = {"select": select}
+        for key, value in (("group", group), ("name", name), ("search", search)):
+            if value not in (None, ""):
+                params[key] = value
+        offset = max(int(offset or 0), 0)
+        if limit is not None:
+            params["limit"] = min(max(int(limit), 1), PAGE_LIMIT)
+            data = await self._request(
+                "GET", "/agents", params={**params, "offset": offset}
+            )
+            return data.get("affected_items") or [], data.get("total_affected_items", 0)
+        params["limit"] = PAGE_LIMIT
+        agents: List[Dict[str, Any]] = []
+        total = None
+        while total is None or offset + len(agents) < total:
+            data = await self._request(
+                "GET", "/agents", params={**params, "offset": offset + len(agents)}
+            )
+            items = data.get("affected_items") or []
+            total = data.get("total_affected_items", 0)
+            if not items:
+                break
+            agents.extend(items)
+        return agents, total or 0
 
     async def read_agents(
         self, max_agents: Optional[int] = None, query: Optional[str] = None
@@ -286,6 +321,35 @@ class WazuhService:
         if max_agents is not None and len(agents) > max_agents:
             return agents[:max_agents], True
         return agents, len(agents) < (total or 0)
+
+    async def group_counts(self) -> Dict[str, Any]:
+        """Agents per group from ``GET /agents`` alone (``agent:read``), never
+        ``GET /groups`` (``group:read``), so a group with no agents is absent.
+        An agent in two groups counts in both; ``000`` is reported apart."""
+        agents, _ = await self.list_agents(select="id,name,group")
+        counts: Dict[str, int] = {}
+        manager = None
+        ungrouped = several = 0
+        for agent in agents:
+            if agent.get("id") == "000":
+                manager = agent
+                continue
+            groups = agent.get("group") or []
+            if not groups:
+                ungrouped += 1
+            several += len(groups) > 1
+            for g in groups:
+                counts[g] = counts.get(g, 0) + 1
+        return {
+            "groups": [
+                {"name": g, "agents": n}
+                for g, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            ],
+            "no_group": ungrouped,
+            "in_several_groups": several,
+            "agents_counted": len(agents) - (manager is not None),
+            "manager": manager,
+        }
 
     async def current_user_access(self) -> Tuple[Optional[int], List[int]]:
         """``(user id, role ids)`` from ``GET /security/users/me``.
@@ -326,7 +390,7 @@ class WazuhService:
     async def agent_total(self, query: str) -> int:
         """``total_affected_items`` for ``query``, with ``limit`` 1 and ``select`` id.
 
-        The id is discarded here. ``list_agents`` is unchanged.
+        The id is discarded here.
         """
         data = await self._request(
             "GET",
