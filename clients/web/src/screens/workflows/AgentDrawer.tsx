@@ -353,7 +353,7 @@ export function AgentDrawer({
                 title={dirty ? 'Save or discard your changes first' : 'Start a conversation that runs under this agent'}
                 onClick={onAsk}
               >
-                <Icon name="sparkle" /> Ask Vigil
+                <Icon name="sparkle" size={14} /> Ask Vigil
               </button>
             )}
             <button type="button" className="vg-side-close" aria-label="Close" onClick={close}>
