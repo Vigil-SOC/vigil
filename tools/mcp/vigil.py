@@ -1508,7 +1508,8 @@ def create_approval_action(
     """Submit action to approval queue.
 
     ``action_type`` is one of isolate_host, block_ip, block_domain,
-    quarantine_file, disable_user, custom.
+    quarantine_file, disable_user, revoke_session (end an account's sessions;
+    the account stays usable), custom.
 
     The caller's ``confidence`` is its own claim, so it never releases the
     action: the row waits in the queue for a person.
@@ -1519,7 +1520,7 @@ def create_approval_action(
         check_target,
     )
 
-    # Only the six kinds a run may propose; the target must fit the kind and the
+    # Only the kinds a run may propose; the target must fit the kind and the
     # confidence be above zero.
     checked, code = check_target(action_type, target)
     code = code or check_confidence({"confidence": confidence})

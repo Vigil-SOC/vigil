@@ -1,15 +1,19 @@
-"""An approved isolation or account disable, carried out on the vendor's own ID (#5059).
+"""An approved containment, carried out on the vendor's own ID (#5059, #5234).
 
-A pending ``isolate_host`` or ``disable_user`` row is resolved when it is read:
-each connected server in ``CONTAINMENT_TOOLS`` looks the target up, and what it
-finds is stored on ``parameters.containment`` as candidates. Approving names one;
+A pending row of a kind in ``CONTAINMENT_TOOLS`` is resolved when it is read:
+each connected server looks the target up, and what it finds is stored on
+``parameters.containment`` as candidates. A keyless entry (the target is the
+vendor's key: an address, a domain, an email) needs no lookup, only a target it
+takes. The row's ``reversibility`` becomes the strictest stored class of the
+candidates' acts. Approving names one;
 its tool and arguments become ``parameters.tool``/``args`` and the call runs at
 once through ``_run``, as the approver. The row records what the vendor answered
 in ``execution_result.state``; a ``requested`` state is read again on read.
 
 The way back (#5060): Release or Enable on an executed one inserts a row linked
 by ``parameters.undoes``, approved by the person, carrying the table's undo tool
-on the same vendor ID. It runs through ``carry_out`` like any approval; once the
+on the same vendor ID, or on a field of the act's answer (a Cloudflare rule id).
+A carrier with no undo (an Access revoke) has no way back. It runs through ``carry_out`` like any approval; once the
 vendor reports it, the original records ``released`` or ``enabled`` too.
 """
 
@@ -29,11 +33,13 @@ from core.response.approval_service import (
     PendingAction,
     runs_here,
     screen_actions,
+    stored_reversibility,
 )
-from core.response.ceiling import STOPPED
+from core.response.ceiling import IRREVERSIBLE, REVERSIBLE, STOPPED, tool_classes
 from core.response.proposal_targets import (
     CONTAINMENT_TOOLS,
     DONE_STATE,
+    UNDO_VERBS,
     UNDONE_LOOKUP,
     UNDONE_STATE,
 )
@@ -181,12 +187,44 @@ async def _call(
 
 
 def _offered(kind: str, registry) -> List[Dict[str, Any]]:
+    """Entries whose tools are connected: a keyless one needs only its act."""
     names = set(registry.get_tool_names())
     return [
         e
         for e in CONTAINMENT_TOOLS.get(kind, ())
-        if _flat(e, "lookup") in names and _flat(e, "act") in names
+        if (not e["lookup"] or _flat(e, "lookup") in names) and _flat(e, "act") in names
     ]
+
+
+def _candidate(
+    entry: Dict[str, Any], action: PendingAction, vendor_id: Any, name: Any, state
+) -> Dict[str, Any]:
+    return {
+        "id": f"{entry['vendor']}:{vendor_id}",
+        "vendor": entry["vendor"],
+        "carrier": entry.get("carrier"),
+        "tool": _flat(entry, "act"),
+        "args": {entry["id_arg"]: vendor_id, entry["note_arg"]: _note(action)},
+        "vendor_id": vendor_id,
+        "name": name,
+        "state": state,
+        # Whether Vigil can undo the act: the carrier has an undo (#5234).
+        "undoable": bool(entry.get("undo")),
+    }
+
+
+def _reversibility(candidates: List[Dict[str, Any]]) -> Optional[str]:
+    """The strictest stored class of the candidates' acts; unclassified counts
+    as irreversible. None when nothing resolved."""
+    tools = {c["tool"] for c in candidates}
+    if not tools:
+        return None
+    classes = tool_classes(tools)
+    return (
+        IRREVERSIBLE
+        if any(stored_reversibility(classes.get(t)) == IRREVERSIBLE for t in tools)
+        else REVERSIBLE
+    )
 
 
 def _due(action: PendingAction, offered: List[Dict[str, Any]]) -> bool:
@@ -235,7 +273,18 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
         return action
     candidates: List[Dict[str, Any]] = []
     problems: List[str] = []
+    refusals: List[str] = []
     for entry in offered:
+        if not entry["lookup"]:
+            # The target is the vendor's key: one candidate, if the act takes it.
+            refusal = entry.get("takes") and entry["takes"](action.target)
+            if refusal:
+                refusals.append(refusal)
+            else:
+                candidates.append(
+                    _candidate(entry, action, action.target, action.target, None)
+                )
+            continue
         lookup = _flat(entry, "lookup")
         answer, error = await _call(
             registry, lookup, entry["lookup_args"](action.target)
@@ -251,27 +300,28 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
             if not isinstance(vendor_id, (str, int)):
                 continue
             candidates.append(
-                {
-                    "id": f"{entry['vendor']}:{vendor_id}",
-                    "vendor": entry["vendor"],
-                    "tool": _flat(entry, "act"),
-                    "args": {
-                        entry["id_arg"]: vendor_id,
-                        entry["note_arg"]: _note(action),
-                    },
-                    "vendor_id": vendor_id,
-                    "name": record.get(entry["name"]) or action.target,
-                    "state": entry["state"](record),
-                }
+                _candidate(
+                    entry,
+                    action,
+                    vendor_id,
+                    record.get(entry["name"]) or action.target,
+                    entry["state"](record),
+                )
             )
     missing = None
     if not offered:
-        tools = [_flat(e, "lookup") for e in CONTAINMENT_TOOLS[action.action_type]]
-        missing = f"No connected server offers {' or '.join(tools)}"
-    elif not candidates:
-        found_nothing = " or ".join(_flat(e, "lookup") for e in offered)
+        tools = [
+            _flat(e, "lookup" if e["lookup"] else "act")
+            for e in CONTAINMENT_TOOLS[action.action_type]
+        ]
         missing = (
-            "; ".join(problems) or f"{found_nothing} found no match for {action.target}"
+            "No connected integration can carry this: none offers "
+            f"{' or '.join(tools)}"
+        )
+    elif not candidates:
+        found_nothing = " or ".join(_flat(e, "lookup") for e in offered if e["lookup"])
+        missing = "; ".join(refusals + problems) or (
+            f"{found_nothing} found no match for {action.target}"
         )
     stored = {
         "candidates": candidates,
@@ -279,11 +329,13 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
         "missing": missing,
         "resolved_at": utcnow().isoformat(),
     }
+    reversibility = await asyncio.to_thread(_reversibility, candidates)
     updated = await asyncio.to_thread(
         ApprovalService().update_row,
         action.action_id,
         ActionStatus.PENDING.value,
         {"containment": stored},
+        reversibility=reversibility,
     )
     return updated or action
 
@@ -440,7 +492,8 @@ async def read_state(action: PendingAction, registry) -> PendingAction:
     if action.status != ActionStatus.EXECUTED.value or result.get("state") != REQUESTED:
         return action
     entry = _entry(action.action_type, result.get("vendor"))
-    if entry is None:
+    # A keyless act with no state read has nothing to read again: its answer is final.
+    if entry is None or not (entry["state_read"] or entry["lookup"]):
         return action
     now = time.monotonic()
     if now - _last_read.get(action.action_id, 0.0) < _REREAD_SECONDS:
@@ -562,15 +615,25 @@ def _lift(original: PendingAction, offered: set) -> Any:
     entry = _entry(original.action_type, vendor)
     if entry is None or vendor_id in (None, ""):
         return f"{original.action_id} records no vendor ID to undo"
+    if not entry.get("undo"):
+        return f"{entry.get('carrier') or vendor} has no undo: Vigil cannot undo this"
     tool = _flat(entry, "undo")
     if tool not in offered:
         return f"No connected server offers {tool}"
-    verb = "Release" if original.action_type == "isolate_host" else "Enable"
-    args = {
-        entry["id_arg"]: vendor_id,
-        entry["note_arg"]: f"Vigil: {verb} {original.target}, undoing "
-        f"{original.action_id}"[:500],
-    }
+    verb = UNDO_VERBS[original.action_type]
+    if entry.get("undo_from"):
+        # The undo acts on what the act returned (Cloudflare's rule id).
+        field = entry["undo_from"]
+        key = (result.get("answer") or {}).get(field)
+        if key in (None, ""):
+            return f"{original.action_id} records no {field} to undo"
+        args = {field: key}
+    else:
+        args = {
+            entry["id_arg"]: vendor_id,
+            entry["note_arg"]: f"Vigil: {verb} {original.target}, undoing "
+            f"{original.action_id}"[:500],
+        }
     stored = (original.parameters or {}).get("containment") or {}
     name = next(
         (
@@ -587,6 +650,7 @@ def _lift(original: PendingAction, offered: set) -> Any:
         "args": args,
         "vendor_id": vendor_id,
         "name": name,
+        "carrier": entry.get("carrier"),
         "state": DONE_STATE[original.action_type],
     }
     return f"{verb} {name}", {
@@ -597,7 +661,7 @@ def _lift(original: PendingAction, offered: set) -> Any:
 
 
 async def undo(action_id: str, claims, registry) -> PendingAction:
-    """Release or enable what ``action_id`` contained, as ``claims``' person: the
+    """Release, enable or unblock what ``action_id`` contained, as ``claims``' person: the
     approved undo row, run at once (held when stopped). Raises ``NotUndoable``."""
     registry = await live_registry(registry)
     offered = set(registry.get_tool_names())

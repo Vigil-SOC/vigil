@@ -145,7 +145,7 @@ conclusion:
           properties:
             action_type:
               type: string
-              enum: [isolate_host, block_ip, block_domain, quarantine_file, disable_user, custom]
+              enum: [isolate_host, block_ip, block_domain, quarantine_file, disable_user, revoke_session, custom]
             target: { type: string, description: "The host, IP, domain, file or account the action acts on: a bare value, no URL scheme or placeholder." }
             reason: { type: string, description: Why the evidence calls for it. }
             # Above zero: the backend refuses 0 as no claim (#4963). No exclusiveMinimum,

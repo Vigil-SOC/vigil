@@ -559,6 +559,7 @@ PROPOSAL_TITLES = {
     "block_domain": "Block domain",
     "quarantine_file": "Quarantine file",
     "disable_user": "Disable user",
+    "revoke_session": "Revoke sessions of",
     "custom": "Act on",
 }
 

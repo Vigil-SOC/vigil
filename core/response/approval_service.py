@@ -39,6 +39,7 @@ from core.response.config import (
     decision_rule,
     split_decision_rule,
 )
+from core.response.proposal_targets import CONTAINMENT_TOOLS
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
 from core.storage.models import Case, Finding, Investigation, WorkflowRun, case_findings
@@ -53,7 +54,7 @@ _pending_gauge: Any = None
 # Rollout acts on these once approved (rollout_approval).
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
 # Kinds the backend carries out on approval through a vendor's tool (#5059).
-CONTAINMENT_TYPES = frozenset({"isolate_host", "disable_user"})
+CONTAINMENT_TYPES = frozenset(CONTAINMENT_TOOLS)
 # execution_result.state while the call is out: claimed, so it runs once.
 RUNNING = "running"
 # A claim this old outlived its process: the row may be approved again.
@@ -184,6 +185,7 @@ class ActionType(Enum):
     BLOCK_DOMAIN = "block_domain"
     QUARANTINE_FILE = "quarantine_file"
     DISABLE_USER = "disable_user"
+    REVOKE_SESSION = "revoke_session"  # end an account's sessions (#5234)
     EXECUTE_SPL_QUERY = "execute_spl_query"
     WORKFLOW_PHASE = "workflow_phase"  # #128 — phase with approval_required=True
     PROMOTE_RULE = "promote_rule"  # shadow -> live under Assist (#4068)
@@ -942,9 +944,10 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         execution_result: Optional[Dict] = None,
         held: Optional[bool] = None,
+        reversibility: Optional[str] = None,
     ) -> Optional[PendingAction]:
-        """Merge into a row's parameters or execution result, or set its hold,
-        if it is still in ``status``. None when it is not (#5059)."""
+        """Merge into a row's parameters or execution result, or set its hold or
+        reversibility, if it is still in ``status``. None when it is not (#5059)."""
         db = get_db_manager()
         with db.session_scope() as session:
             row = session.get(ApprovalActionRow, action_id, with_for_update=True)
@@ -959,6 +962,8 @@ class ApprovalService:
                 }
             if held is not None:
                 row.held = held
+            if reversibility is not None:
+                row.reversibility = reversibility
             session.flush()
             return _row_to_pending(row)
 
@@ -1000,7 +1005,7 @@ class ApprovalService:
             done = DONE_STATE.get(original.action_type)
             built = None
             if done is None or (original.parameters or {}).get("undoes"):
-                refusal = f"{action_id} is not an isolation or account disable"
+                refusal = f"{action_id} is not a containment Vigil can undo"
             elif original.status != ActionStatus.EXECUTED.value or state != done:
                 refusal = (
                     f"{action_id} is {state or original.status}, not {done}: "

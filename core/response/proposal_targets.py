@@ -1,6 +1,6 @@
 """Does a proposed action's target fit its action type (#4963).
 
-One table, keyed on the six kinds a run may propose (run_bridge_router's
+One table, keyed on the kinds a run may propose (run_bridge_router's
 PROPOSAL_TITLES). The rest of ActionType is not a proposal surface and keeps the
 service's own checks. Each entry returns None when the target fits or a reason
 code when it does not; the caller files the stripped target unchanged.
@@ -40,6 +40,7 @@ ACTION_PHRASES = {
     "block_domain": "block a domain",
     "quarantine_file": "quarantine a file",
     "disable_user": "disable an account",
+    "revoke_session": "end an account's sessions",
     "custom": "take an action",
 }
 
@@ -138,6 +139,7 @@ TARGET_RULES: Dict[str, Tuple[int, Callable[[str], Optional[str]]]] = {
     "block_domain": (253, _domain),
     "quarantine_file": (4096, _file),
     "disable_user": (256, _user),
+    "revoke_session": (256, _user),
     "custom": (1000, _custom),
 }
 
@@ -223,7 +225,7 @@ def target_kind(target: Any) -> str:
     )
 
 
-# ---- Containment: who carries out an approved isolation or disable (#5059) ----
+# ---- Containment: who carries out an approved containment (#5059, #5234) ----
 # Per kind, each in-repo server that can: the lookup that turns the target into
 # the vendor's ID, the act, the state read and the undo (#5060 builds the way
 # back). Tool names are bare; the server prefixes them as the registry does.
@@ -247,6 +249,13 @@ _MDE_ACTION_STATES = {
     "InProgress": "requested",
     "Succeeded": "contained",
 }
+
+
+def _cf_state(done: str) -> Callable[[Dict[str, Any]], str]:
+    # Cloudflare answers a refusal with success false and no error key, which
+    # _call does not read as a failure: only success true is done.
+    return lambda answer: done if answer.get("success") is True else "failed"
+
 
 CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
     "isolate_host": (
@@ -305,11 +314,89 @@ CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
             "undo": "aad_enable_user",
         },
     ),
+    # Keyless (#5234): the target is the vendor's key, so there is no lookup and
+    # one candidate. ``takes`` refuses a target the act can't carry, with the
+    # sentence the row shows; ``undo_from`` names the field of the act's answer
+    # the undo is called with (under the same name).
+    "block_ip": (
+        {
+            "vendor": "cloudflare",
+            "carrier": "Cloudflare WAF",
+            "lookup": None,
+            "takes": lambda t: (
+                None
+                if _is_ip(t)
+                else "Cloudflare's WAF takes one address, not a network"
+            ),
+            "act": "cf_waf_block_ip",
+            "id_arg": "ip",
+            "note_arg": "reason",
+            "act_state": _cf_state("blocked"),
+            "state_read": None,
+            "undo": "cf_waf_unblock_ip",
+            "undo_from": "rule_id",
+        },
+    ),
+    "block_domain": (
+        {
+            "vendor": "cloudflare",
+            "carrier": "Cloudflare Gateway",
+            "lookup": None,
+            # The domain goes into the rule's expression: only a bare name passes.
+            "takes": lambda t: (
+                None if _domain(t) is None else "Cloudflare Gateway takes a domain name"
+            ),
+            "act": "cf_gateway_block_domain",
+            "id_arg": "domain",
+            "note_arg": "reason",
+            "act_state": _cf_state("blocked"),
+            "state_read": None,
+            "undo": "cf_gateway_unblock_domain",
+            "undo_from": "rule_id",
+        },
+    ),
+    "revoke_session": (
+        {
+            "vendor": "cloudflare",
+            "carrier": "Cloudflare Access",
+            "lookup": None,
+            "takes": lambda t: (
+                None
+                if _UPN.fullmatch(t)
+                else "Cloudflare Access takes an email address, not another account name"
+            ),
+            "act": "cf_access_revoke_session",
+            "id_arg": "email",
+            "note_arg": "reason",
+            "act_state": _cf_state("revoked"),
+            "state_read": None,
+            "undo": None,
+        },
+    ),
 }
 
 # What the act is for, in the state words above.
-DONE_STATE = {"isolate_host": "contained", "disable_user": "disabled"}
+DONE_STATE = {
+    "isolate_host": "contained",
+    "disable_user": "disabled",
+    "block_ip": "blocked",
+    "block_domain": "blocked",
+    "revoke_session": "revoked",
+}
 # The way back (#5060): what a row carrying ``undoes`` records once the vendor
-# reports it, and the lookup's word (``state`` above) for that state.
-UNDONE_STATE = {"isolate_host": "released", "disable_user": "enabled"}
+# reports it, and the lookup's word (``state`` above) for that state. A kind
+# with no entry here has no undo.
+UNDONE_STATE = {
+    "isolate_host": "released",
+    "disable_user": "enabled",
+    "block_ip": "unblocked",
+    "block_domain": "unblocked",
+}
 UNDONE_LOOKUP = {"isolate_host": "not_contained", "disable_user": "enabled"}
+# The undo's verb on the case and in its row's title.
+UNDO_VERBS = {
+    "isolate_host": "Release",
+    "disable_user": "Enable",
+    "block_ip": "Unblock",
+    "block_domain": "Unblock",
+}
