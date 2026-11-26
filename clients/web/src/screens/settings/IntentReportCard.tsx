@@ -11,6 +11,17 @@ import type { SectionProps } from './types'
 type IntentReport = Schema<'IntentReportResponse'>
 type IntentRow = Schema<'IntentDiffRow'>
 
+const isFlow = (row: IntentRow) => row.key.startsWith('workflows.')
+
+/** A workflow entry as the console says it: "Act · floor 85", "Assist", "Follows fleet". */
+function showFlow(value: unknown): string {
+  if (value === 'fleet') return 'Follows fleet'
+  if (value == null || typeof value !== 'object') return '—'
+  const entry = value as { tier?: string; floor?: number | null }
+  if (entry.tier === 'act') return `Act · floor ${entry.floor ?? '?'}`
+  return entry.tier === 'assist' ? 'Assist' : JSON.stringify(value)
+}
+
 function show(value: unknown): string {
   if (typeof value === 'boolean' || typeof value === 'number') return String(value)
   if (typeof value === 'string') return value
@@ -21,7 +32,12 @@ function show(value: unknown): string {
 function Status({ row }: { row: IntentRow }) {
   const chips: [string, string, string][] = []
   if (row.pending) chips.push(['Pending', 'var(--fair)', 'A loosening waits for a person to accept it'])
-  if (row.drift) chips.push(['Drift', 'var(--fair)', 'Narrower than declared, here or by an env lock'])
+  if (row.drift)
+    chips.push(
+      row.drift_reason
+        ? [`Drift · ${row.drift_reason}`, 'var(--fair)', 'Narrower than declared; a raise to the declared value resets it']
+        : ['Drift', 'var(--fair)', 'Narrower than declared, here or by an env lock'],
+    )
   if (row.env_ignored)
     chips.push([`Env ${show(row.env_value)} ignored`, 'var(--tx2)', 'The declared value outranks the environment'])
   if (!chips.length) return <span className="text-tx-3">{row.managed ? 'Managed' : '—'}</span>
@@ -40,10 +56,13 @@ export default function IntentReportCard({
   reloadKey = 0,
   notify,
   onAccepted,
+  workflowNames = {},
 }: {
   reloadKey?: number
   notify?: SectionProps['notify']
   onAccepted?: () => void
+  /** Workflow id → name, for the workflows.<id> rows. */
+  workflowNames?: Record<string, string>
 }) {
   const [report, setReport] = useState<IntentReport | null>(null)
   const [failed, setFailed] = useState(false)
@@ -100,6 +119,8 @@ export default function IntentReportCard({
   const managed = !!report.directory
   const pending = report.pending ?? []
   const pendingRows = report.rows?.filter((r) => r.pending) ?? []
+  const skipped = report.skipped ?? []
+  const value = (row: IntentRow, v: unknown) => (isFlow(row) ? showFlow(v) : show(v))
   const onDisk = report.revision_on_disk
   const accept = () => {
     if (!report.revision) return
@@ -155,6 +176,18 @@ export default function IntentReportCard({
           )}
         </div>
       )}
+      {skipped.length > 0 && (
+        <div className="text-xs text-tx-2 mb-3 [overflow-wrap:anywhere]">
+          <span style={{ color: 'var(--fair)' }}>Not applied here:</span>
+          <ul className="mt-1">
+            {skipped.map((s) => (
+              <li key={s.id}>
+                <span className="mono">workflows.{s.id}</span> (line {s.line ?? '?'}): {s.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="table-wrap">
         <table className="tbl">
           <thead>
@@ -171,6 +204,9 @@ export default function IntentReportCard({
             {report.rows?.map((row) => (
               <tr key={row.key}>
                 <td>
+                  {isFlow(row) && workflowNames[row.key.slice('workflows.'.length)] && (
+                    <span className="block">{workflowNames[row.key.slice('workflows.'.length)]}</span>
+                  )}
                   <span className="mono">{row.key}</span>
                   {row.managed && (
                     <span className="block text-xs text-tx-3 mono">
@@ -178,8 +214,8 @@ export default function IntentReportCard({
                     </span>
                   )}
                 </td>
-                <td className="mono">{show(row.declared)}</td>
-                <td className="mono">{show(row.effective)}</td>
+                <td className="mono">{value(row, row.declared)}</td>
+                <td className="mono">{value(row, row.effective)}</td>
                 <td>{row.source}</td>
                 <td>{row.label}</td>
                 {managed && (
@@ -201,10 +237,13 @@ export default function IntentReportCard({
             <ul className="mono text-xs mb-2">
               {pendingRows.map((r) => (
                 <li key={r.key}>
-                  {r.key}: {show(r.effective)} → {show(r.declared)}
+                  {r.key}: {value(r, r.effective)} → {value(r, r.declared)}
                 </li>
               ))}
             </ul>
+            {pendingRows.some(isFlow) && (
+              <p className="mb-2">A workflow put on Act stores the investigation model in force and its 30-day record.</p>
+            )}
             <p>Your name and the revision go on the audit trail.</p>
           </>
         }

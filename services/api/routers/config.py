@@ -1939,9 +1939,19 @@ class IntentDiffRow(BaseModel):
     line: Optional[int] = None
     revision: Optional[str] = None
     drift: bool = False
+    # For a ``workflows.<id>`` row: "lowered by Vigil" or "narrowed locally".
+    drift_reason: Optional[str] = None
     pending: bool = False
     env_ignored: bool = False
     env_value: Any = None
+
+
+class IntentSkipped(BaseModel):
+    """A declared ``workflows.<id>`` this install could not apply, and why."""
+
+    id: str
+    line: Optional[int] = None
+    reason: str
 
 
 class IntentReportResponse(BaseModel):
@@ -1956,6 +1966,8 @@ class IntentReportResponse(BaseModel):
     state: Optional[str] = None
     reason: Optional[str] = None
     pending: list[str] = Field(default_factory=list)
+    # Declared workflow ids missing here or not investigate-kind; the rest applied.
+    skipped: list[IntentSkipped] = Field(default_factory=list)
     directory: Optional[str] = None
     # The newest revision the daemon read; "unknown" while degraded.
     revision_on_disk: Optional[str] = None

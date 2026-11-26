@@ -1842,7 +1842,8 @@ export interface paths {
          *     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
          *     while stopped, and stores the investigation model in force and that model's
          *     30-day agreement on the workflow beside its floor.
-         *     Anything else is ``ai_autonomy.stop``.
+         *     Anything else is ``ai_autonomy.stop``. A workflow a declared INTENT.md
+         *     manages is refused (409) anything looser than its declared entry.
          */
         put: operations["put_api_autonomy_workflows_workflow_id"];
         post?: never;
@@ -15378,6 +15379,8 @@ export interface components {
              * @default false
              */
             drift: boolean;
+            /** Drift Reason */
+            drift_reason?: string | null;
             /** Effective */
             effective: unknown;
             /**
@@ -15441,10 +15444,24 @@ export interface components {
             revision_on_disk?: string | null;
             /** Rows */
             rows?: components["schemas"]["IntentDiffRow"][];
+            /** Skipped */
+            skipped?: components["schemas"]["IntentSkipped"][];
             /** State */
             state?: string | null;
             /** Verification */
             verification?: string | null;
+        };
+        /**
+         * IntentSkipped
+         * @description A declared ``workflows.<id>`` this install could not apply, and why.
+         */
+        IntentSkipped: {
+            /** Id */
+            id: string;
+            /** Line */
+            line?: number | null;
+            /** Reason */
+            reason: string;
         };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {

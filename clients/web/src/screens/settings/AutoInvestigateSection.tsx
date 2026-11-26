@@ -185,6 +185,8 @@ function stoppedBanner(ceil: Ceiling): string {
 }
 
 type WorkflowChoice = 'fleet' | 'act' | 'assist'
+/** A workflow INTENT.md manages: its declared entry and where it is declared. */
+type ManagedFlow = { declared: { tier: 'act' | 'assist'; floor?: number }; file: string; line: number; revision: string }
 const WORKFLOW_CHOICES: { to: WorkflowChoice; label: string }[] = [
   { to: 'fleet', label: 'Follows fleet' },
   { to: 'act', label: 'Act' },
@@ -203,6 +205,9 @@ function lastChange(entry: WorkflowTier | undefined): string {
     const why = dropWhy(entry.reason)
     return `Lowered by Vigil ${at} on a model change: ${entry.from_model} → ${entry.model ?? 'unknown model'}${why ? ` · ${why}` : ''}`
   }
+  // The INTENT.md applier also writes as system: Act at a raised floor, or Assist with no record.
+  if (entry.by === 'system' && entry.tier === 'act') return `Floor set to ${entry.floor}% by INTENT.md ${at}`
+  if (entry.by === 'system' && !entry.evidence) return `Set to Assist by INTENT.md ${at}`
   if (entry.by === 'system') {
     // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
     const agree = rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`
@@ -344,15 +349,33 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const stopping = pending?.kind === 'stop'
   // The declared directory's act.hold_crown_jewels, when it manages that key: the API refuses a turn-off below it.
   const [holdManaged, setHoldManaged] = useState<{ declared: unknown; file?: string | null; line?: number | null } | null>(null)
+  // Workflows the declared directory manages, by id: the API refuses a raise past the declared entry.
+  const [flowManaged, setFlowManaged] = useState<Record<string, ManagedFlow>>({})
   useEffect(() => {
     let cancelled = false
     configApi
       .getIntent()
       .then((r) => {
         const row = r.data.rows?.find((x) => x.key === 'act.hold_crown_jewels' && x.managed)
-        if (!cancelled) setHoldManaged(row ?? null)
+        const flows: Record<string, ManagedFlow> = {}
+        for (const x of r.data.rows ?? []) {
+          if (x.managed && x.key.startsWith('workflows.'))
+            flows[x.key.slice('workflows.'.length)] = {
+              declared: x.declared as ManagedFlow['declared'],
+              file: x.file ?? 'INTENT.md',
+              line: x.line ?? 1,
+              revision: x.revision ?? 'unknown',
+            }
+        }
+        if (cancelled) return
+        setHoldManaged(row ?? null)
+        setFlowManaged(flows)
       })
-      .catch(() => !cancelled && setHoldManaged(null)) // unread: the API still refuses
+      .catch(() => {
+        if (cancelled) return
+        setHoldManaged(null) // unread: the API still refuses
+        setFlowManaged({})
+      })
     return () => {
       cancelled = true
     }
@@ -536,13 +559,16 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     try {
       await ceiling.setWorkflow(w.id, { tier: to === 'fleet' ? null : to, floor: floorPct ?? null })
       notify('ok', `${w.name} ${to === 'fleet' ? 'follows the fleet' : to === 'act' ? 'acts on its own' : 'asks first'}.`)
+      setIntentRevision((n) => n + 1) // a managed workflow's narrowing shows as drift
     } catch (err) {
       notify('err', errorText(err, 'Failed to save the workflow’s autonomy.'))
     }
   }
 
   const floorValue = Number(floor)
-  const floorValid = /^\d+$/.test(floor) && floorValue >= 1 && floorValue <= 100
+  // A managed Act workflow may not be raised below its declared floor.
+  const floorMin = (pending?.kind === 'workflow' && flowManaged[pending.workflow.id]?.declared.floor) || 1
+  const floorValid = /^\d+$/.test(floor) && floorValue >= floorMin && floorValue <= 100
 
   const confirmPending = () => {
     if (!pending) return
@@ -726,8 +752,13 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const workflowRow = (w: InvestigateWorkflow, stopped: boolean) => {
     const entry = workflowTier(ceil, w.id)
     const current: WorkflowChoice = entry?.tier ?? 'fleet'
-    const raises = (to: WorkflowChoice) =>
-      to === 'act' || (to === 'fleet' && current === 'assist' && Boolean(ceil?.act_reversible || ceil?.act_irreversible))
+    const fleetActs = Boolean(ceil?.act_reversible || ceil?.act_irreversible)
+    const raises = (to: WorkflowChoice) => to === 'act' || (to === 'fleet' && current === 'assist' && fleetActs)
+    const managed = flowManaged[w.id]
+    const where = managed && `${managed.file}:${managed.line} @ ${managed.revision}`
+    // As the server judges it: past an Assist declaration, Act or a fleet that acts is a raise.
+    const pastDeclared = (to: WorkflowChoice) =>
+      managed?.declared.tier === 'assist' && (to === 'act' || (to === 'fleet' && fleetActs))
     const choices = WORKFLOW_CHOICES.filter((c) => c.to === current || (raises(c.to) ? canRaise : canLower))
     const shown = agreementText(w.agreement)
     const close = falseCloseText(w.agreement)
@@ -771,6 +802,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {entry?.model && ` · on ${entry.model}`}
           </span>
           {change && <span title={change}>{change}</span>}
+          {managed && (
+            <span title={`Declared ${managed.declared.tier === 'act' ? `Act · floor ${managed.declared.floor}` : 'Assist'}`}>
+              Managed by {where}
+            </span>
+          )}
         </span>
         <span className="lim-row-ctl">
           {choices.length < 2 ? (
@@ -779,18 +815,28 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           ) : (
             <div className="lim-seg" role="group" aria-label={`Autonomy of ${w.name}`}>
               {choices.map((c) => {
-                const blocked = c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked))
+                const declaredPast = c.to !== current && pastDeclared(c.to)
+                const blocked = declaredPast || (c.to !== current && raises(c.to) && (stopped || (c.to === 'act' && locked)))
                 return (
                   <button
                     key={c.to}
                     type="button"
                     aria-pressed={c.to === current}
                     disabled={blocked}
-                    title={blocked ? (stopped ? STOPPED_LOOSEN : 'Locked by the environment') : undefined}
+                    title={
+                      declaredPast
+                        ? `Managed by ${where}, declared Assist. Change it in the declared directory.`
+                        : blocked
+                          ? stopped
+                            ? STOPPED_LOOSEN
+                            : 'Locked by the environment'
+                          : undefined
+                    }
                     onClick={() => {
                       if (c.to === current) return
                       if (c.to === 'act') {
-                        setFloor('')
+                        // A managed Act workflow is restored at its declared floor.
+                        setFloor(managed?.declared.floor ? String(managed.declared.floor) : '')
                         setPending({ kind: 'workflow', workflow: w })
                       } else setWorkflow(w, c.to)
                     }}
@@ -1309,7 +1355,9 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               onAccepted={() => {
                 void ceiling.refresh()
                 reload()
+                setIntentRevision((n) => n + 1)
               }}
+              workflowNames={Object.fromEntries((investigate.workflows ?? []).map((w) => [w.id, w.name]))}
             />
             {canReadSite && (
               <div id="declared-site">
@@ -1343,6 +1391,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 />
                 % agree, required
               </label>
+              {flowManaged[pending.workflow.id]?.declared.floor && (
+                <p className="text-xs text-tx-3 mt-2">
+                  Managed by INTENT.md: at least {flowManaged[pending.workflow.id].declared.floor}%, the declared floor.
+                </p>
+              )}
             </>
           ) : stopping && overlayOnly.length > 0 ? (
             <StopOverlayOnly rules={overlayOnly} deploying={deploying} onDeploy={deployOverlay} />
