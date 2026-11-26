@@ -2,7 +2,8 @@
 
 A person runs the engine eval (``services/agent/eval``) twice on the same model:
 once at today's limit and once at the limit the suggestion proposes, with the
-eval's budget flags. This reads both result files and records on the live
+eval's budget flags (``--max-cost-usd``, ``--max-wall-seconds``, ``--max-calls``),
+which also stamp each result line with the budgets it ran under. This reads both result files and records on the live
 suggestion whether the proposed limit misses no more attacks than today's
 (passed), with both counts and the proposed run's cost a case.
 
@@ -69,10 +70,12 @@ def read_run(path: Path) -> Run:
         and r["case_id"]
         and isinstance(r.get("model"), str)
         and r.get("truth") in ("attack", "benign")
+        # The eval's own score counts a case with no verdict as an error.
+        and r.get("verdict") in ("attack", "benign", "undetermined")
         for r in rows
     ):
         raise CheckRefusal(
-            f"{path} has a line that is not a result with a case, a model and a truth"
+            f"{path} has a line that is not a graded result with a case, a model and a truth"
         )
     errored = [r.get("case_id") for r in rows if r.get("error")]
     if errored:
@@ -119,6 +122,16 @@ def compare(
         )
     if not now.attacks:
         raise CheckRefusal("The runs have no attack cases to miss")
+    try:
+        values = float(from_value), float(to_value)
+    except (TypeError, ValueError):
+        raise CheckRefusal(
+            f"The suggestion's values are not numbers: {from_value}, {to_value}"
+        ) from None
+    if not all(math.isfinite(v) for v in values):
+        raise CheckRefusal(
+            f"The suggestion's values are not numbers: {from_value}, {to_value}"
+        )
     field, as_budget = _BUDGET[key]
     others = {k for k in now.budgets.keys() | proposed.budgets.keys() if k != field}
     if any(now.budgets.get(k) != proposed.budgets.get(k) for k in others):
@@ -126,10 +139,10 @@ def compare(
             f"The runs differ in more than {field}: {now.budgets} and {proposed.budgets}"
         )
     for run, value, which in (
-        (now, from_value, "today's"),
-        (proposed, to_value, "the proposed"),
+        (now, values[0], "today's"),
+        (proposed, values[1], "the proposed"),
     ):
-        want = as_budget(float(value))
+        want = as_budget(value)
         got = float(run.budgets.get(field, math.nan))
         if not math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-6):
             raise CheckRefusal(
@@ -138,8 +151,8 @@ def compare(
     limit = _limit(key)
     passed = proposed.missed <= now.missed
     text = (
-        f"At {limit.say(float(to_value))}: {proposed.missed} of {proposed.attacks} "
-        f"attacks missed · at {limit.say(float(from_value))}: {now.missed} missed · "
+        f"At {limit.say(values[1])}: {proposed.missed} of {proposed.attacks} "
+        f"attacks missed · at {limit.say(values[0])}: {now.missed} missed · "
         f"${proposed.cost_per_case:.2f} a case"
     )
     return {"passed": passed, "text": text}
