@@ -632,6 +632,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     + (f" of {_word(p['action_type'])}" if p.get("action_type") else ""),
     trail.ACTION_FINDING_NOISE_MARK: _noise_mark,
     trail.ACTION_FINDING_NOISE_CLEAR: _noise_clear,
+    # The site proposal (core/site_proposal.py)
+    "site.proposal.save": "Saved a site proposal",
+    "site.proposal.discard": "Discarded a site proposal",
     # Analyst notes on an entity (core/memory/notes.py)
     "memory.note.written": _note("Wrote"),
     "memory.note.withdrawn": _note("Withdrew"),

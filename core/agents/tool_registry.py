@@ -69,6 +69,8 @@ Args = Dict[str, Any]
 
 # The run-start fact read (#4742): a backend tool in no catalogue, see _entity_facts.
 FACTS_TOOL = "read_entity_facts"
+# The site proposal's save (#5229): core/site_proposal.py; not on /mcp.
+SITE_PROPOSAL_TOOL = "save_site_proposal"
 
 # Every chat tool names the permission execute_backend_tool checks, except
 # call_integration_tool: it is checked as the tool it names. A run no
@@ -88,6 +90,7 @@ TOOL_PERMISSIONS: Dict[str, str] = {
     "detection_rule_exception": "detections.write",
     "reconstruct_run": "detections.read",
     "link_detection_rule": "detections.write",
+    SITE_PROPOSAL_TOOL: "ai_chat.use",
     "list_findings": "findings.read",
     "search_findings": "findings.read",
     "get_findings_stats": "findings.read",
@@ -1422,6 +1425,12 @@ async def execute_backend_tool(
 
     if tool_name == "read_case_shell":
         return await _read_case_shell(args), True
+
+    if tool_name == SITE_PROPOSAL_TOOL:
+        from core.site_proposal import save_site_proposal
+
+        fields = ("files", "provenance", "questions")
+        return await save_site_proposal(**{k: args.get(k) for k in fields}), True
 
     if tool_name in _OWNED:
         result = globals()[tool_name](**args)
