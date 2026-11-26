@@ -62,6 +62,8 @@ _last_read: Dict[str, float] = {}
 _DIAL_SECONDS = 60.0
 _DIAL_TIMEOUT_S = 10.0
 _dialled: Dict[str, float] = {}
+# Who approves and runs a row the ceiling released: the trail names it, not a person.
+CEILING_APPROVER = "autonomy ceiling"
 
 
 class Unapprovable(ValueError):
@@ -391,7 +393,7 @@ async def carry_out(action: PendingAction, claims, registry) -> PendingAction:
         return action
     service = ApprovalService()
     claimed = await asyncio.to_thread(
-        service.claim_run, action.action_id, claims.username
+        service.claim_run, action.action_id, claims.username or CEILING_APPROVER
     )
     if claimed is None:
         return action
@@ -426,12 +428,9 @@ async def _carry_out(
         answer, error = await _call(
             registry, tool, args, action.action_id, _ACT_TIMEOUT_MS
         )
-    base = {
-        "tool": tool,
-        "vendor": vendor,
-        "vendor_id": vendor_id,
-        "run_by": claims.username,
-    }
+    # A run no person started acts under the ceiling, and the trail says so.
+    by = claims.username or CEILING_APPROVER
+    base = {"tool": tool, "vendor": vendor, "vendor_id": vendor_id, "run_by": by}
     if error == STOPPED:
         # Stopped after the approval: held until a person releases it.
         held = await asyncio.to_thread(service.unclaim_run, action.action_id, True)
@@ -459,7 +458,7 @@ async def _carry_out(
             )
     if updated is None or updated.status not in ("executed", "failed"):
         return updated or action
-    record_execution(updated, claims.username)
+    record_execution(updated, by)
     await _mark_undone(updated)
     return await read_state(updated, registry)
 
@@ -676,3 +675,113 @@ async def undo(action_id: str, claims, registry) -> PendingAction:
     if row.held:
         return row
     return await carry_out(row, claims, registry)
+
+
+# ---- Under the autonomy ceiling (#5235) ------------------------------------
+
+
+def unattended(claims) -> Optional[Any]:
+    """The run's own claims with no person on them, when ``claims`` are a run's
+    that no person started; None otherwise (a chat turn, a person's run, none)."""
+    from core.auth.tool_principal import Claims
+
+    if claims is None or not claims.run_id:
+        return None
+    if claims.username or claims.person_id or claims.origin == "person":
+        return None
+    return Claims(
+        username=None,
+        person_id=None,
+        agent_id=claims.agent_id,
+        run_id=claims.run_id,
+        origin=claims.origin,
+    )
+
+
+async def release_under_ceiling(
+    action: PendingAction, claims, registry=None
+) -> PendingAction:
+    """Carry out a containment newly proposed by a run no person started, when
+    its row resolves to one candidate, four-eyes is off and the ceiling lets that
+    run take the act. Otherwise, or on any failure, the row stays pending."""
+    if (
+        claims is None
+        or claims.username
+        or action.status != ActionStatus.PENDING.value
+        or action.action_type not in CONTAINMENT_TYPES
+    ):
+        return action
+    try:
+        return await _release(action, claims, registry)
+    except Exception:  # noqa: BLE001 — the proposal stands for a person
+        logger.exception("%s not released under the ceiling", action.action_id)
+        return action
+
+
+async def _release(action: PendingAction, claims, registry) -> PendingAction:
+    from core.auth.principals import SYSTEM_PRINCIPAL_ID
+    from core.auth.tool_principal import bound_claims
+    from core.response.ceiling import read_ceiling, unattended_refusal
+
+    registry = await live_registry(registry)
+    action = await resolve(action, registry)
+    candidates = ((action.parameters or {}).get("containment") or {}).get(
+        "candidates"
+    ) or []
+    why = None
+    if len(candidates) != 1:
+        why = f"{len(candidates)} candidates"
+    elif await asyncio.to_thread(lambda: read_ceiling().four_eyes):
+        why = "four-eyes is on"
+    if why:
+        logger.info("%s waits for a person: %s", action.action_id, why)
+        return action
+    call = choose(action, None)
+    # The vendor's ID alone names no crown jewel: the target and name go too.
+    args = {
+        **candidates[0]["args"],
+        "target": action.target,
+        "name": candidates[0].get("name"),
+    }
+    with bound_claims(claims):
+        # The rule _run applies to the act, asked first so a refused row stays pending.
+        why = await asyncio.to_thread(
+            unattended_refusal, call[0], writes=True, run_id=claims.run_id, args=args
+        )
+        if why:
+            logger.info("%s waits for a person: %s", action.action_id, why)
+            return action
+        approved = await asyncio.to_thread(
+            ApprovalService().approve_action,
+            action.action_id,
+            CEILING_APPROVER,
+            SYSTEM_PRINCIPAL_ID,
+            call,
+        )
+    if approved is None:
+        return action
+    await asyncio.to_thread(_note_released, approved, claims.run_id)
+    return await carry_out(approved, claims, registry)
+
+
+def _note_released(action: PendingAction, run_id: str) -> None:
+    """Never raises: the row is approved, and carry_out must still run it."""
+    from core.response.approval_service import case_ids_for
+    from core.workflows.run_bridge_router import _add_activity
+
+    try:
+        for case_id in case_ids_for(action):
+            _add_activity(
+                case_id,
+                "approval_approved",
+                f"{action.title} released by the autonomy ceiling for run {run_id},"
+                " which no person started",
+                {
+                    "action_id": action.action_id,
+                    "decided_by": CEILING_APPROVER,
+                    "run_id": run_id,
+                    "status": action.status,
+                },
+            )
+    except Exception:  # noqa: BLE001 — the act runs either way
+        logger.exception("release of %s not noted on its case", action.action_id)

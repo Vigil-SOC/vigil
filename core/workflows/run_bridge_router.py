@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from core.agents.attribution import note_child, note_terminal
 from core.agents.internal_auth import authorise_run
+from core.auth import tool_principal
 from core.auth.permissions import builtin_reader_request
+from core.auth.tool_principal import Claims
 from core.cases.agent_closure import TITLE_EDITED, activity_actor
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
@@ -319,7 +321,14 @@ def record_terminal(
         # After the withdrawal above, and never linked to the run, so nothing that
         # cleans up after the run takes them back: they are what it leaves to decide.
         if update.outcome == "completed" and update.proposed_actions:
-            _propose_actions(origin, run_id, update.proposed_actions, approvals)
+            _propose_actions(
+                origin,
+                run_id,
+                update.proposed_actions,
+                approvals,
+                registry,
+                _run_claims(run_id, x_vigil_run_principal),
+            )
         # Only a run that reached its conclusion can dismiss its case.
         if update.outcome == "completed":
             _retitle_case(origin, run_id, update.title)
@@ -606,6 +615,8 @@ def _propose_actions(
     run_id: str,
     proposals: List[Any],
     approvals: Optional[ApprovalService],
+    registry: Optional[MCPRegistry] = None,
+    run_claims: Optional[Claims] = None,
 ) -> None:
     from core.response.approval_service import ActionType
 
@@ -637,7 +648,10 @@ def _propose_actions(
                 service, match, case_id, run_id, title
             ):
                 continue
-            action = service.create_action(
+            # This run's own ask failed before: a re-sent terminal files it again
+            # for a person, not for the ceiling.
+            resent = match is not None and match.idempotency_key == key
+            action, inserted = service._put_action(
                 action_type=ActionType(action_type),
                 title=title,
                 description=proposal["reason"],
@@ -659,7 +673,11 @@ def _propose_actions(
             )
             continue
         filed.append(action.action_id)
-        created.append((title, target))
+        if inserted and not resent and run_claims is not None:
+            action = _release_under_ceiling(action, run_claims, registry)
+        # One the ceiling carried out is no one's to decide: nobody is paged.
+        if action.status == "pending":
+            created.append((title, target))
 
     if filed:
         _record_proposals(case_id, run_id, filed)
@@ -669,9 +687,50 @@ def _propose_actions(
         page_proposed_containment(case_id, run_id, created)
 
 
+# The run's own claims when no person started it (#5235), else None: read from
+# the token authorise_run already verified, and checked against the run's start
+# entry so a run a person started, at any remove, always waits.
+def _run_claims(run_id: str, principal: Optional[str]) -> Optional[Claims]:
+    from core.agents.attribution import originating_person
+    from core.response.containment import unattended
+    from core.storage.connection import get_db_manager
+
+    try:
+        claims = unattended(tool_principal.read(principal or ""))
+        if claims is None or claims.run_id != run_id:
+            return None
+        with get_db_manager().session_scope() as session:
+            return None if originating_person(session, run_id) else claims
+    except Exception:  # noqa: BLE001 — unreadable is a person's to decide
+        logger.exception("could not read who started %s", run_id)
+        return None
+
+
+# Run on the app's loop, where the vendor servers' connections live: this route
+# runs in a worker thread. Any failure leaves the row pending.
+def _release_under_ceiling(
+    action: Any, claims: Claims, registry: Optional[MCPRegistry]
+) -> Any:
+    from anyio import from_thread
+
+    from core.auth.tool_principal import bound_claims
+    from core.response.containment import release_under_ceiling
+
+    async def release() -> Any:
+        with bound_claims(claims):
+            return await release_under_ceiling(action, claims, registry)
+
+    try:
+        return from_thread.run(release)
+    except Exception:  # noqa: BLE001 — filed either way
+        logger.exception("%s not released under the ceiling", action.action_id)
+        return action
+
+
 # True when another run's proposal already covers this one: a pending ask now
 # lists this case too, and an approved or executed one is noted here. A rejected
-# or failed one is not an answer to this run's evidence, so it is asked again.
+# or failed one is not an answer to this run's evidence, so it is asked again;
+# nor is an executed one undone since (a released host, an enabled user).
 def _already_asked(
     service: ApprovalService, match: Any, case_id: str, run_id: str, title: str
 ) -> bool:
@@ -687,6 +746,10 @@ def _already_asked(
                 {"action_id": match.action_id, "run_id": run_id, "case_id": first},
             )
             return True
+    from core.response.proposal_targets import undone
+
+    if match.status == "executed" and undone(match.action_type, match.execution_result):
+        return False
     if match.status in ("approved", "executed"):
         when = (match.executed_at or match.approved_at or "")[:10]
         _note_shared(

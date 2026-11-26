@@ -1,11 +1,14 @@
-"""The site module (#5213): the declared site against what Wazuh lists.
+"""The site module (#5213): the declared site against what Wazuh, CrowdStrike
+and Defender list.
 
 Four checks: crown jewels heard from, crown jewels in their zone, owners that
 resolve to a team, and how many listed hosts no zone covers. Each declared
 item is stored with its state (matched, declared but not observed, not
 evaluated), its file and line, and the source and time behind it. No agent
-name, address or id is stored, logged or put in a reason: agents are turned
-into Entity Keys, matched through ``core.site.match``, and dropped.
+name, address or id is stored, logged or put in a reason: hosts are turned
+into Entity Keys, matched through ``core.site.match``, and dropped. Each
+switched-on source is read on its own; the checks are not checked only when
+none could be read.
 """
 
 from __future__ import annotations
@@ -18,13 +21,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from core import site
+from core.integrations._base.config import missing, resolve
+from core.integrations.crowdstrike.client import CrowdStrikeService
+from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
+from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 from core.memory.entity_keys import normalise_key
 from core.reporting.estate import (
     _BUDGET_S,
+    ONBOARDED,
+    _def_pages,
     _full_access,
     _on,
+    _past,
     _stamp,
     _Stop,
+    _stop_for,
     _stored,
     _timeout,
     _wazuh_call,
@@ -48,10 +59,10 @@ MATCHED = "matched"
 NOT_OBSERVED = "declared_not_observed"
 NOT_EVALUATED = "not_evaluated"
 
-# Past this many agents the read stops and is not checked, never a pass.
+# Past this many hosts in one source its read stops and is not checked.
 MAX_AGENTS = 10_000
 _HEARD_WITHIN = timedelta(days=7)
-# Selector kinds Wazuh's agent list can match: names and addresses.
+# Selector kinds the sources' host lists can match: names and addresses.
 _READ_KINDS = frozenset({"host", "ip", "cidr"})
 _NAMED = 10  # items a reason names before "and N more"
 
@@ -85,15 +96,23 @@ CITATIONS = {
     UNDECLARED: _cite((_CSF_NAME, "ID.AM-01", _CSF), (_SP53_NAME, "CM-8(3)", _SP53)),
 }
 
-# Switched on, and not read by this module yet.
-_UNREAD_SOURCES = (("crowdstrike", "CrowdStrike"), ("microsoft-defender", "Defender"))
+# (source id, name, the noun its estate checks use for a host), in read order.
+_SOURCES = (
+    ("wazuh", "Wazuh", "agents"),
+    ("crowdstrike", "CrowdStrike", "endpoints"),
+    ("microsoft-defender", "Defender", "endpoints"),
+)
+_NOUN = {name: noun for _sid, name, noun in _SOURCES}
 _NOT_DECLARED = "not checked: no site is declared"
 _UNKNOWN_SOURCES = "not checked: could not read which sources are set up"
-_WAZUH_OFF = "not checked: Wazuh is not switched on"
-_CAPPED = (
-    f"not checked: Wazuh lists more than {MAX_AGENTS} agents, "
-    "more than this read will page"
-)
+_NONE_ON = "not checked: none of Wazuh, CrowdStrike or Defender is switched on"
+
+
+def _capped(name: str) -> str:
+    return (
+        f"not checked: {name} lists more than {MAX_AGENTS} {_NOUN[name]}, "
+        "more than this read will page"
+    )
 
 
 def _check(
@@ -115,40 +134,60 @@ def produce(sources: Optional[list], health_failed: bool) -> tuple[list, dict]:
             {"not_checked": _NOT_DECLARED, "checked_at": stamp},
         )
     read_sources: list[dict[str, Any]] = []
+    hosts: list[dict] = []
     if health_failed or sources is None:
-        agents, why = None, _UNKNOWN_SOURCES
+        why: Optional[str] = _UNKNOWN_SOURCES
     else:
-        read_sources = [
-            {"source": name, "state": "not_read_yet"}
-            for source_id, name in _UNREAD_SOURCES
-            if _on(sources, source_id)
-        ]
-        if _on(sources, "wazuh"):
-            agents, why = _read_wazuh()
-        else:
-            agents, why = None, _WAZUH_OFF
-    if why:
+        # Each source is read on its own; one failing does not stop the others.
+        for source_id, name, _noun in _SOURCES:
+            if not _on(sources, source_id):
+                continue
+            listed, reason = _READS[name]()
+            entry: dict[str, Any] = {"source": name, "checked_at": stamp}
+            if listed is None:
+                logger.error("day1 site read %s: %s", name, reason)
+                entry.update(state=NOT_CHECKED, reason=reason)
+            else:
+                entry.update(state="read", listed=len(listed))
+                hosts.extend({**h, "source": name} for h in listed)
+            read_sources.append(entry)
+        why = _no_source(read_sources)
+    if why == _UNKNOWN_SOURCES or why == _NONE_ON:
         logger.error("day1 site read: %s", why)
-    wazuh: dict[str, Any] = {"source": "Wazuh", "checked_at": stamp}
-    if agents is None:
-        wazuh.update(state=NOT_CHECKED, reason=why)
-    else:
-        wazuh.update(state="read", listed=len(agents))
-    read_sources.insert(0, wazuh)
-    return _evaluate(row, agents, why, stamp, read_sources)
+    return _evaluate(row, hosts, why, stamp, read_sources)
 
 
-# --- The read ----------------------------------------------------------------
+def _no_source(read_sources: list[dict]) -> Optional[str]:
+    """The checks' not-checked reason when no switched-on source was read."""
+    if not read_sources:
+        return _NONE_ON
+    if any(s["state"] == "read" for s in read_sources):
+        return None
+    if len(read_sources) == 1:
+        return read_sources[0]["reason"]
+    reasons = "; ".join(
+        f"{s['source']}: {s['reason'].removeprefix('not checked: ')}"
+        for s in read_sources
+    )
+    return f"not checked: no switched-on source could be read. {reasons}"
 
 
-def _read_wazuh() -> tuple[Optional[list[dict]], Optional[str]]:
-    """Each agent as ``{keys, heard}``, or ``None`` and the not-checked reason."""
+# --- The reads ---------------------------------------------------------------
+# Each returns hosts as ``{keys, heard}``, or ``None`` and the not-checked
+# reason. Names and addresses become Entity Keys at once and are not kept.
+
+
+def _guarded(name: str, read) -> tuple[Optional[list[dict]], Optional[str]]:
     try:
-        return asyncio.run(_wazuh_agents()), None
+        return read(), None
     except _Stop as stop:
         return None, stop.reason
     except Exception:  # noqa: BLE001 - the report still completes
-        return None, "not checked: Wazuh could not be read"
+        return None, f"not checked: {name} could not be read"
+
+
+def _read_wazuh() -> tuple[Optional[list[dict]], Optional[str]]:
+    return _guarded("Wazuh", lambda: asyncio.run(_wazuh_agents()))
 
 
 async def _wazuh_agents() -> list[dict]:
@@ -168,32 +207,108 @@ async def _wazuh_agents() -> list[dict]:
     finally:
         await service.close()
     if capped:
-        raise _Stop(_CAPPED)
+        raise _Stop(_capped("Wazuh"))
     # The manager is not a host; the query already leaves it out.
     return [_agent(a) for a in raw if str(a.get("id")) != "000"]
 
 
 def _agent(raw: dict) -> dict:
-    keys = []
-    if raw.get("name"):
-        keys.append(normalise_key(f"host:{raw['name']}"))
-    ip = str(raw.get("ip") or "")
+    heard = None if raw.get("status") == "never_connected" else raw.get("lastKeepAlive")
+    return _host([raw.get("name")], raw.get("ip"), heard)
+
+
+def _read_crowdstrike() -> tuple[Optional[list[dict]], Optional[str]]:
+    return _guarded("CrowdStrike", _falcon_hosts)
+
+
+def _falcon_hosts() -> list[dict]:
+    config = resolve(CROWDSTRIKE)
+    if missing(config, "client_id", "client_secret"):
+        raise _Stop("not checked: CrowdStrike could not be read")
+    service = CrowdStrikeService(
+        client_id=config["client_id"],
+        client_secret=config["client_secret"],
+        base_url=config.get("base_url") or "https://api.crowdstrike.com",
+        timeout=_BUDGET_S,
+    )
+    deadline = time.monotonic() + _BUDGET_S
+    hosts: list[dict] = []
+    offset: Optional[str] = None
     try:
-        if not ipaddress.ip_address(ip).is_unspecified:
+        while True:
+            _past(deadline, "CrowdStrike")
+            service.timeout = max(deadline - time.monotonic(), 0.1)
+            page = service.device_hosts(offset)
+            if page["kind"] != "ok":
+                if time.monotonic() >= deadline:
+                    raise _timeout("CrowdStrike")
+                raise _stop_for("CrowdStrike", page["kind"], page["status"])
+            if page["total"] > MAX_AGENTS:
+                raise _Stop(_capped("CrowdStrike"))
+            hosts.extend(
+                _host([h["hostname"]], h["local_ip"], h["last_seen"])
+                for h in page["hosts"]
+            )
+            offset = page["next"]
+            if not offset or not page["hosts"] or len(hosts) >= page["total"]:
+                return hosts
+    finally:
+        service.session.close()
+
+
+def _read_defender() -> tuple[Optional[list[dict]], Optional[str]]:
+    return _guarded("Defender", _defender_hosts)
+
+
+def _defender_hosts() -> list[dict]:
+    ingestion = MicrosoftDefenderIngestion()
+    hosts: list[dict] = []
+
+    def page(odata_filter: str, skip: int, timeout: float) -> tuple[int, int]:
+        rows = ingestion.host_machine_page(odata_filter, skip, timeout)
+        hosts.extend(_machine(r) for r in rows if isinstance(r, dict))
+        if len(hosts) > MAX_AGENTS:
+            raise _Stop(_capped("Defender"))
+        return len(rows), len(rows)
+
+    deadline = time.monotonic() + _BUDGET_S
+    _def_pages(page, ONBOARDED, deadline, [0], first=True)
+    return hosts
+
+
+def _machine(raw: dict) -> dict:
+    """``computerDnsName`` is fully qualified; the first label is minted too so a
+    declared short ``host:`` name matches, as it does for Wazuh and Falcon."""
+    name = str(raw.get("computerDnsName") or "")
+    return _host(
+        [name, name.partition(".")[0]], raw.get("lastIpAddress"), raw.get("lastSeen")
+    )
+
+
+_READS = {
+    "Wazuh": _read_wazuh,
+    "CrowdStrike": _read_crowdstrike,
+    "Defender": _read_defender,
+}
+
+
+def _host(names: list, ip: Any, heard: Any) -> dict:
+    """One host as Entity Keys and a last-heard time; nothing else is kept."""
+    keys = [normalise_key(f"host:{n}") for n in names if n]
+    try:
+        if not ipaddress.ip_address(str(ip or "")).is_unspecified:
             keys.append(normalise_key(f"ip:{ip}"))
     except ValueError:
-        pass  # "any" until the agent connects
-    return {"keys": [k for k in keys if k], "heard": _heard(raw)}
+        pass  # Wazuh's "any" until the agent connects, or no address
+    return {"keys": list(dict.fromkeys(k for k in keys if k)), "heard": _at(heard)}
 
 
-def _heard(raw: dict) -> Optional[datetime]:
-    """Last keep-alive, or None for an agent that never connected."""
-    if raw.get("status") == "never_connected":
+def _at(value: Any) -> Optional[datetime]:
+    """A last-seen time, or None for never heard or unreadable."""
+    if not value:
         return None
     try:
-        at = datetime.fromisoformat(
-            str(raw.get("lastKeepAlive")).replace("Z", "+00:00")
-        )
+        at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
     at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
@@ -239,30 +354,34 @@ def _unread_reason(item: dict, blind_spots: list[dict]) -> Optional[str]:
 
 def _evaluate(
     row: dict,
-    agents: Optional[list[dict]],
+    hosts: list[dict],
     why: Optional[str],
     stamp: str,
     read_sources: list[dict],
 ) -> tuple[list, dict]:
+    """Hosts are ``{source, keys, heard}`` from every source read, matched
+    through the one matcher; ``why`` is set only when no source was read."""
     items = row.get("items") or {}
     zones = items.get("zones") or []
     jewels = items.get("crown_jewels") or []
     spots = items.get("blind_spots") or []
     now = datetime.now(timezone.utc)
+    read = [s["source"] for s in read_sources if s["state"] == "read"]
+    unread = [s["source"] for s in read_sources if s["state"] != "read"]
+    sources_line = f" Sources read: {', '.join(read)}." + (
+        f" Not read: {', '.join(unread)}." if unread else ""
+    )
 
-    # Which agents (by index) each declared item matches, through the one matcher.
+    # Which hosts (by index) each declared item matches.
     hits: dict[tuple[str, int], list[int]] = {}
-    for index, agent in enumerate(agents or []):
-        for found in site.match(agent["keys"], row):
-            hits.setdefault(_id(found), [])
-            if index not in hits[_id(found)]:
-                hits[_id(found)].append(index)
-
-    def heard(index: int) -> Optional[datetime]:
-        return agents[index]["heard"] if agents is not None else None
+    for index, host in enumerate(hosts):
+        for found in site.match(host["keys"], row):
+            mine = hits.setdefault(_id(found), [])
+            if index not in mine:
+                mine.append(index)
 
     def seen(index: int) -> bool:
-        at = heard(index)
+        at = hosts[index]["heard"]
         return at is not None and now - at <= _HEARD_WITHIN
 
     def state(item: dict, *, spots_apply: bool = True) -> dict[str, Any]:
@@ -270,12 +389,13 @@ def _evaluate(
         if reason:
             return {"state": NOT_EVALUATED, "reason": reason}
         mine = hits.get(_id(item), [])
+        behind = list(dict.fromkeys(hosts[i]["source"] for i in mine)) or read
         body: dict[str, Any] = {
             "state": MATCHED if mine else NOT_OBSERVED,
-            "source": "Wazuh",
+            "source": ", ".join(behind),
             "checked_at": stamp,
         }
-        times = [t for t in (heard(i) for i in mine) if t is not None]
+        times = [t for t in (hosts[i]["heard"] for i in mine) if t is not None]
         if times:
             body["heard_at"] = _stamp(max(times))
         return body
@@ -310,24 +430,29 @@ def _evaluate(
                 body["place"] = "not checked: not heard from within 7 days"
             else:
                 seen_count += 1
-                body["place"] = _place(
-                    jewel, mine, zone_by_name, hits, agents or [], spots
-                )
+                body["place"] = _place(jewel, mine, zone_by_name, hits, hosts, spots)
                 if body["place"] == "outside":
                     outside.append(f"{label}, zone {jewel['zone']}")
                 if body["place"] in ("inside", "outside"):
                     place_count += 1
         listed.append(_item("crown_jewel", jewel["name"], jewel, body, view))
 
+    # Per source: hosts it lists that no declared zone matches.
+    zoned = {i for z in zones for i in hits.get(_id(z), [])}
+    for entry in read_sources:
+        if entry["state"] == "read":
+            entry["undeclared"] = sum(
+                1
+                for i, h in enumerate(hosts)
+                if h["source"] == entry["source"] and i not in zoned
+            )
+
     checks = [
-        _seen_check(jewels, unseen, seen_count, skipped, why, stamp),
-        _place_check(jewels, outside, place_count, why, stamp),
+        _seen_check(jewels, unseen, seen_count, skipped, why, stamp, sources_line),
+        _place_check(jewels, outside, place_count, why, stamp, sources_line),
         _owner_check(view),
-        _undeclared_check(agents, zones, hits, why, stamp),
+        _undeclared_check(read_sources, why, stamp),
     ]
-    undeclared = checks[-1]["evidence"].get("undeclared")
-    if undeclared is not None:
-        read_sources[0]["undeclared"] = undeclared
     evidence = {
         "revision": row.get("revision"),
         "checked_at": stamp,
@@ -339,13 +464,14 @@ def _evaluate(
 
 def _place(
     jewel: dict,
-    seen_agents: list[int],
+    seen_hosts: list[int],
     zones: dict[str, dict],
     hits: dict[tuple[str, int], list[int]],
-    agents: list[dict],
+    hosts: list[dict],
     spots: list[dict],
 ) -> str:
-    """``inside``/``outside``, or the reason place is not checked."""
+    """``inside``/``outside`` from whichever sources heard the jewel's host,
+    or the reason place is not checked."""
     zone = zones.get(jewel.get("zone") or "")
     if zone is None:
         return "not checked: names no zone"
@@ -356,9 +482,7 @@ def _place(
         for s in zone.get("selectors") or []
     }
     placeable = [
-        i
-        for i in seen_agents
-        if kinds & {k.partition(":")[0] for k in agents[i]["keys"]}
+        i for i in seen_hosts if kinds & {k.partition(":")[0] for k in hosts[i]["keys"]}
     ]
     if not placeable:
         return "not checked: the zone's selectors are of a kind its host does not list"
@@ -400,7 +524,7 @@ def _item(
     return out
 
 
-def _seen_check(jewels, unseen, seen_count, skipped, why, stamp) -> dict:
+def _seen_check(jewels, unseen, seen_count, skipped, why, stamp, sources) -> dict:
     if not jewels:
         return _check(SEEN, NOT_CHECKED, "not checked: no crown jewel is declared", {})
     if why:
@@ -416,7 +540,7 @@ def _seen_check(jewels, unseen, seen_count, skipped, why, stamp) -> dict:
             SEEN,
             FAIL,
             f"Crown jewels not heard from within 7 days: {len(unseen)} of "
-            f"{evidence['checked']}: {_named(unseen)}. Sources read: Wazuh.{tail}",
+            f"{evidence['checked']}: {_named(unseen)}.{sources}{tail}",
             evidence,
         )
     if not seen_count:
@@ -424,13 +548,13 @@ def _seen_check(jewels, unseen, seen_count, skipped, why, stamp) -> dict:
     return _check(
         SEEN,
         PASS,
-        f"Crown jewels heard from within 7 days: {seen_count} of {seen_count}. "
-        f"Sources read: Wazuh.{tail}",
+        f"Crown jewels heard from within 7 days: {seen_count} of {seen_count}."
+        f"{sources}{tail}",
         evidence,
     )
 
 
-def _place_check(jewels, outside, place_count, why, stamp) -> dict:
+def _place_check(jewels, outside, place_count, why, stamp, sources) -> dict:
     if not jewels:
         return _check(PLACE, NOT_CHECKED, "not checked: no crown jewel is declared", {})
     if why:
@@ -441,7 +565,7 @@ def _place_check(jewels, outside, place_count, why, stamp) -> dict:
             PLACE,
             FAIL,
             f"Seen crown jewels with a host outside their zone: {len(outside)} of "
-            f"{place_count}: {_named(outside)}.",
+            f"{place_count}: {_named(outside)}.{sources}",
             evidence,
         )
     if not place_count:
@@ -455,7 +579,8 @@ def _place_check(jewels, outside, place_count, why, stamp) -> dict:
     return _check(
         PLACE,
         PASS,
-        f"Seen crown jewels in the zone they name: {place_count} of {place_count}.",
+        f"Seen crown jewels in the zone they name: {place_count} of {place_count}."
+        f"{sources}",
         evidence,
     )
 
@@ -496,32 +621,44 @@ def _owner_check(view: Optional[dict]) -> dict:
     )
 
 
-def _undeclared_check(agents, zones, hits, why, stamp) -> dict:
+def _undeclared_check(read_sources: list[dict], why, stamp) -> dict:
+    """Counts per source read, never the hosts."""
     if why:
         return _check(UNDECLARED, NOT_CHECKED, why, {"checked_at": stamp})
-    if not agents:
+    read = [s for s in read_sources if s["state"] == "read"]
+    listed = sum(s["listed"] for s in read)
+    if not listed:
+        names = " and ".join(s["source"] for s in read)
+        nouns = " or ".join(dict.fromkeys(_NOUN[s["source"]] for s in read))
         return _check(
             UNDECLARED,
             NOT_CHECKED,
-            "not checked: Wazuh lists no agents",
+            f"not checked: {names} list{'s' if len(read) == 1 else ''} no {nouns}",
             {"listed": 0, "checked_at": stamp},
         )
-    zoned = {i for z in zones for i in hits.get(_id(z), [])}
-    count = sum(1 for i in range(len(agents)) if i not in zoned)
-    evidence = {"listed": len(agents), "undeclared": count, "checked_at": stamp}
-    if count:
-        return _check(
-            UNDECLARED,
-            FAIL,
-            f"Wazuh agents in no declared zone: {count} of {len(agents)}. "
-            "The manager is not counted.",
-            evidence,
-        )
+    count = sum(s["undeclared"] for s in read)
+    evidence = {
+        "listed": listed,
+        "undeclared": count,
+        "by_source": {
+            s["source"]: {"listed": s["listed"], "undeclared": s["undeclared"]}
+            for s in read
+        },
+        "checked_at": stamp,
+    }
+    counts = "; ".join(
+        f"{s['source']}: {s['undeclared']} of {s['listed']} {_NOUN[s['source']]}"
+        for s in read
+    )
+    manager = (
+        " The Wazuh manager is not counted."
+        if any(s["source"] == "Wazuh" for s in read)
+        else ""
+    )
     return _check(
         UNDECLARED,
-        PASS,
-        f"Wazuh agents in no declared zone: 0 of {len(agents)}. "
-        "The manager is not counted.",
+        FAIL if count else PASS,
+        f"Hosts in no declared zone: {counts}.{manager}",
         evidence,
     )
 

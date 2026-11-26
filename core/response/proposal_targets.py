@@ -400,3 +400,13 @@ UNDO_VERBS = {
     "block_ip": "Unblock",
     "block_domain": "Unblock",
 }
+
+
+def undone(action_type: str, execution_result: Optional[Dict[str, Any]]) -> bool:
+    """An executed act undone since, so no longer in force: it answers no new
+    ask of the same act on the same target."""
+    result = execution_result or {}
+    state = UNDONE_STATE.get(action_type)
+    return bool(result.get("undone_by")) or (
+        state is not None and result.get("state") == state
+    )

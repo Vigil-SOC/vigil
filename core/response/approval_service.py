@@ -1939,6 +1939,7 @@ def reopen_settled(session, case_id: str) -> int:
     the same action and target covers it or it is past the expiry window. In the
     caller's transaction; returns how many."""
     from core.config import get_settings
+    from core.response.proposal_targets import undone
 
     ids = session.execute(
         select(ApprovalActionRow.action_id)
@@ -1955,13 +1956,21 @@ def reopen_settled(session, case_id: str) -> int:
         # The sweep would expire it on its next tick.
         if row.created_at < cutoff:
             continue
-        live = session.execute(
-            _same_ask(row.action_type, row.target)
-            .where(ApprovalActionRow.created_at > row.created_at)
-            .where(ApprovalActionRow.status.in_(_LIVE))
-            .order_by(ApprovalActionRow.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        # The newest live ask, passing over an executed act undone since.
+        live = next(
+            (
+                one
+                for one in session.execute(
+                    _same_ask(row.action_type, row.target)
+                    .where(ApprovalActionRow.created_at > row.created_at)
+                    .where(ApprovalActionRow.status.in_(_LIVE))
+                    .order_by(ApprovalActionRow.created_at.desc())
+                ).scalars()
+                if one.status != ActionStatus.EXECUTED.value
+                or not undone(one.action_type, one.execution_result)
+            ),
+            None,
+        )
         if live is not None:
             # A decided row takes no case; a pending one keeps this case asked.
             if live.status == ActionStatus.PENDING.value:
