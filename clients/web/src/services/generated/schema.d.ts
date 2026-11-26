@@ -19627,6 +19627,8 @@ export interface components {
             max_wall_minutes?: number | null;
             /** Restricted */
             restricted?: boolean | null;
+            /** Zone */
+            zone?: string | null;
         };
         /** WorkflowGenerateRequest */
         WorkflowGenerateRequest: {

@@ -2139,12 +2139,15 @@ async def start_run(
     hypothesis_subjects: Optional[dict[str, list[str]]] = None,
     restricted: bool = False,
     approve_hypotheses: bool = False,
+    zone: Optional[str] = None,
 ) -> str:
     """Start a workflow or operator agent (``agent-run-<id>``) on a case. With
     ``restricted``, the case must be a restricted one, or omit ``case_id`` to open
     a new case only you can read. ``hypothesis_subjects`` maps each hypothesis
     line to the Entity Keys it is about; ``approve_hypotheses`` holds a hunt for
-    a person to approve its board. A ``propose_lead_hunt`` proposal passes as-is.
+    a person to approve its board. ``zone`` starts a hunt on a zone the applied
+    site declares (``get_site_context``), its selectors as the scope; an unknown
+    zone, or no site declared, is refused. A ``propose_lead_hunt`` proposal passes as-is.
     Returns ``run_id``, ``case_id`` and ``status``; re-read the run with
     ``get_run``."""
     from core.agents.tool_registry import _restricter
@@ -2185,6 +2188,7 @@ async def start_run(
                     origin="person",
                     ttl=tool_principal.RUN_TTL,
                 ),
+                zone=zone,
             )
 
         try:

@@ -128,6 +128,9 @@ class WorkflowExecuteRequest(BaseModel):
     # Run on a restricted case: the named one, which must be restricted, or a new
     # one restricted to the starter -- never the open case holding the finding.
     restricted: Optional[bool] = None
+    # A zone the applied site revision declares (#5212): the hunt's scope is its
+    # selectors. Resolved by execute_workflow, which refuses one not declared.
+    zone: Optional[str] = Field(default=None, max_length=200)
 
 
 class HuntCoverageRequest(BaseModel):
@@ -497,6 +500,8 @@ async def execute_workflow(
         )
 
     parameters = {k: v for k, v in request.model_dump().items() if v is not None}
+    # Not a run parameter: execute_workflow resolves it and journals the zone itself.
+    zone = parameters.pop("zone", None)
 
     if not TARGET_PARAMS & parameters.keys():
         raise HTTPException(
@@ -523,6 +528,7 @@ async def execute_workflow(
                 ttl=tool_principal.RUN_TTL,
                 sid=tool_principal.sid_of(http_request),
             ),
+            zone=zone,
         )
 
     def restricter(session: Any) -> Any:
