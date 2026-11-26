@@ -98,7 +98,7 @@ function ReleaseCap({
   ceil: Ceiling
   canRaise: boolean
   canLower: boolean
-  save: (patch: { released_per_hour: number }) => Promise<void>
+  save: (patch: { released_per_hour: number }) => Promise<boolean>
   notify: SectionProps['notify']
 }) {
   const saved = ceil.released_per_hour
@@ -124,7 +124,8 @@ function ReleaseCap({
       notify('err', raiseRefusal)
       return
     }
-    void save({ released_per_hour: n })
+    // A refused save whose refresh also failed leaves ceil as it was: put the saved value back.
+    void save({ released_per_hour: n }).then((ok) => ok || setDraft(String(saved)))
   }
   return (
     // Wraps so a narrow screen puts the field under the text, not beside it.
@@ -495,8 +496,10 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await ceiling.save(patch)
       notify('ok', 'Limits saved.')
       setIntentRevision((n) => n + 1) // a narrowing shows as drift
+      return true
     } catch (err) {
       notify('err', errorText(err, 'Failed to save limits.'))
+      return false
     }
   }
 

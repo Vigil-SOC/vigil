@@ -737,13 +737,6 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
         why = f"{len(candidates)} candidates"
     elif ceiling.four_eyes:
         why = "four-eyes is on"
-    else:
-        released = await asyncio.to_thread(released_last_hour)
-        if released >= ceiling.released_per_hour:
-            why = f"hourly cap: {released} of {ceiling.released_per_hour} released"
-            await asyncio.to_thread(
-                _note_capped, action, released, ceiling.released_per_hour
-            )
     if why:
         logger.info("%s waits for a person: %s", action.action_id, why)
         return action
@@ -761,6 +754,19 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
         )
         if why:
             logger.info("%s waits for a person: %s", action.action_id, why)
+            return action
+        # Last, so the case names the cap only when nothing else held the act.
+        released = await asyncio.to_thread(released_last_hour)
+        if released >= ceiling.released_per_hour:
+            logger.info(
+                "%s waits for a person: hourly cap: %d of %d released",
+                action.action_id,
+                released,
+                ceiling.released_per_hour,
+            )
+            await asyncio.to_thread(
+                _note_capped, action, released, ceiling.released_per_hour
+            )
             return action
         approved = await asyncio.to_thread(
             ApprovalService().approve_action,

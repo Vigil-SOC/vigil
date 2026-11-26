@@ -164,7 +164,7 @@ def put_ceiling(
         # A restated "on" is dropped, so a flag switched off since the read
         # above is not turned back on under ai_autonomy.stop.
         # The hold is the other way round: on is the lower, a restated off drops.
-        # The cap passes as it is; update_ceiling refuses it if a lower since
+        # The cap passes as it is; update_ceiling drops it if a lower since
         # the read above makes it a raise.
         edit = {
             k: (

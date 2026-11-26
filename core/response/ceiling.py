@@ -488,6 +488,13 @@ def update_ceiling(
     }
 
     def change(current: Ceiling) -> tuple[Ceiling, str]:
+        # A lower-only caller whose number is above a cap lowered since it read
+        # leaves the cap as it is; the rest of its edit still stores.
+        cap = (
+            None
+            if lowers_only and raises_cap(current.released_per_hour, released_per_hour)
+            else released_per_hour
+        )
         wants_act_on = act_reversible is True or act_irreversible is True
         if locked and wants_act_on:
             raise CeilingRefusal(409, "The environment wins; Act was not saved.")
@@ -506,18 +513,15 @@ def update_ceiling(
             if (
                 _raises(current.act_reversible, act_reversible)
                 or _raises(current.act_irreversible, act_irreversible)
-                or raises_cap(current.released_per_hour, released_per_hour)
+                or raises_cap(current.released_per_hour, cap)
             ):
                 raise CeilingRefusal(403, "A service account cannot raise the ceiling")
-        if lowers_only and raises_cap(current.released_per_hour, released_per_hour):
-            # The caller may only lower, and the cap fell since it read it.
-            raise CeilingRefusal(409, "The hourly cap changed; reload and try again")
         if current.stopped and (
             _raises(current.act_reversible, act_reversible)
             or _raises(current.act_irreversible, act_irreversible)
             or (four_eyes is False and current.four_eyes)
             or (hold_crown_jewels is False and current.hold_crown_jewels)
-            or raises_cap(current.released_per_hour, released_per_hour)
+            or raises_cap(current.released_per_hour, cap)
         ):
             raise CeilingRefusal(409, "Stopped: resume first")
         edit = {
@@ -527,7 +531,7 @@ def update_ceiling(
                 ("act_irreversible", act_irreversible),
                 ("four_eyes", four_eyes),
                 ("hold_crown_jewels", hold_crown_jewels),
-                ("released_per_hour", released_per_hour),
+                ("released_per_hour", cap),
             )
             if value is not None
         }
