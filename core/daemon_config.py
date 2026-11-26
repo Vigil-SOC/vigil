@@ -80,6 +80,7 @@ class CeilingConfig:
     act_reversible: bool = False
     act_irreversible: bool = False
     four_eyes: bool = False
+    hold_crown_jewels: bool = True
 
 
 @dataclass
@@ -149,7 +150,8 @@ class DaemonConfig:
         for intent_field in INTENT_FIELDS:
             config.sources[intent_field.path] = (
                 "env"
-                if intent_field.setting in settings.model_fields_set
+                if intent_field.setting
+                and intent_field.setting in settings.model_fields_set
                 else "default"
             )
 

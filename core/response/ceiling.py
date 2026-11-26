@@ -386,7 +386,23 @@ def ceiling_read() -> dict[str, Any]:
             for wid, entry in stored.workflows.items()
         },
         "held": held_for_ceiling(),
+        "hold_crown_jewels": stored.hold_crown_jewels,
+        "crown_jewels": _crown_jewel_count(),
     }
+
+
+def _crown_jewel_count() -> int:
+    """Crown jewels in the applied site revision; 0 when none or unreadable."""
+    from core import site
+
+    try:
+        row = site.applied_site()
+        if not site.declared(row):
+            return 0
+        return len((row.get("items") or {}).get("crown_jewels") or [])
+    except Exception as exc:  # noqa: BLE001 — a count, never a refusal
+        logger.warning("crown jewels not counted: %s", exc)
+        return 0
 
 
 def execution_held() -> bool:
@@ -423,14 +439,16 @@ def update_ceiling(
     act_reversible: Optional[bool] = None,
     act_irreversible: Optional[bool] = None,
     four_eyes: Optional[bool] = None,
+    hold_crown_jewels: Optional[bool] = None,
     locked: Optional[bool] = None,
 ) -> Ceiling:
     """Store a person's edit of the ceiling. Does not execute anything.
 
     A service account may lower an act flag. It may not raise one, resume,
-    or switch four-eyes. An act flag is not stored on while the environment
+    switch four-eyes, or turn the crown-jewel hold off. An act flag is not stored on while the environment
     has locked them off. While stopped, raising an act flag or turning
-    four-eyes off is refused; a lower, and turning four-eyes on, still store.
+    four-eyes or the crown-jewel hold off is refused; a lower, and turning
+    either on, still store.
     The refusal is decided on the locked row, so a stop that lands during
     the write is not stored past.
     """
@@ -443,6 +461,7 @@ def update_ceiling(
             ("act.reversible", act_reversible),
             ("act.irreversible", act_irreversible),
             ("act.four_eyes", four_eyes),
+            ("act.hold_crown_jewels", hold_crown_jewels),
         )
         if value is not None
     }
@@ -459,6 +478,10 @@ def update_ceiling(
         if caller_is_service:
             if four_eyes is not None and four_eyes != current.four_eyes:
                 raise CeilingRefusal(403, "A service account cannot switch four-eyes")
+            if hold_crown_jewels is False and current.hold_crown_jewels:
+                raise CeilingRefusal(
+                    403, "A service account cannot turn the crown-jewel hold off"
+                )
             if _raises(current.act_reversible, act_reversible) or _raises(
                 current.act_irreversible, act_irreversible
             ):
@@ -467,6 +490,7 @@ def update_ceiling(
             _raises(current.act_reversible, act_reversible)
             or _raises(current.act_irreversible, act_irreversible)
             or (four_eyes is False and current.four_eyes)
+            or (hold_crown_jewels is False and current.hold_crown_jewels)
         ):
             raise CeilingRefusal(409, "Stopped: resume first")
         edit = {
@@ -475,6 +499,7 @@ def update_ceiling(
                 ("act_reversible", act_reversible),
                 ("act_irreversible", act_irreversible),
                 ("four_eyes", four_eyes),
+                ("hold_crown_jewels", hold_crown_jewels),
             )
             if value is not None
         }

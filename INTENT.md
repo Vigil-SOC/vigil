@@ -38,6 +38,9 @@ act:
   irreversible: false
   # Two-person rule. Stored on the ceiling and not enforced.
   four_eyes: false
+  # Hold a model's act on a declared crown jewel for a person. On is tighter; no
+  # env setting moves it, and a declared false waits for a person's accept.
+  hold_crown_jewels: true
 
 investigate:
   # Autonomous investigation orchestrator. (ORCHESTRATOR_ENABLED, or the
@@ -170,6 +173,11 @@ unchanged. The limits: a vendor device id is not read; a crown jewel declared
 only by name does not match a range, so declare its addresses too; a case whose
 findings name no crown jewel is not held; an exception keyed on no host,
 address or account is not read.
+
+An admin turns the hold off with `act.hold_crown_jewels: false`, the Settings
+switch beside Four-eyes, or `PUT /api/v1/autonomy`. Turning it off needs
+`ai_autonomy.write` and a person, and is refused while stopped or while the
+declared directory declares it on; turning it on needs only `ai_autonomy.stop`.
 
 ## Editing
 

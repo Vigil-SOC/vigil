@@ -66,6 +66,8 @@ class CeilingBody(BaseModel):
     act_reversible: Optional[bool] = None
     act_irreversible: Optional[bool] = None
     four_eyes: Optional[bool] = None
+    # Declared crown jewels left for a person (#5227). Off is a loosening.
+    hold_crown_jewels: Optional[bool] = None
 
 
 class HeldAction(BaseModel):
@@ -98,6 +100,10 @@ class CeilingResponse(BaseModel):
     workflows: Dict[str, Dict[str, Any]] = {}
     # Approved outside actions a stop is holding, including after resume.
     held: List[HeldAction] = []
+    # On holds a model's act on a declared crown jewel for a person (#5227).
+    hold_crown_jewels: bool
+    # Crown jewels in the applied site revision; 0 when none is declared.
+    crown_jewels: int
 
 
 def _view() -> CeilingResponse:
@@ -126,8 +132,9 @@ def put_ceiling(
 ) -> CeilingResponse:
     """Edit the ceiling. The permission depends on the direction.
 
-    Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-    four-eyes, is ``ai_autonomy.write``.
+    Only lowering act flags, or turning the crown-jewel hold on, is
+    ``ai_autonomy.stop``. Raising a flag, changing four-eyes, or turning the
+    hold off is ``ai_autonomy.write``.
     """
     try:
         current = read_ceiling()
@@ -139,6 +146,7 @@ def put_ceiling(
         not _raises(current.act_reversible, body.act_reversible)
         and not _raises(current.act_irreversible, body.act_irreversible)
         and body.four_eyes in (None, current.four_eyes)
+        and body.hold_crown_jewels in (None, True, current.hold_crown_jewels)
     )
     perm = "ai_autonomy.stop" if lowers else "ai_autonomy.write"
     deny_unless(current_user.user_id, perm, session)
@@ -146,7 +154,15 @@ def put_ceiling(
     if lowers:
         # A restated "on" is dropped, so a flag switched off since the read
         # above is not turned back on under ai_autonomy.stop.
-        edit = {k: (None if v is True else v) for k, v in edit.items()}
+        # The hold is the other way round: on is the lower, a restated off drops.
+        edit = {
+            k: (
+                (None if v is False else v)
+                if k == "hold_crown_jewels"
+                else (None if v is True else v)
+            )
+            for k, v in edit.items()
+        }
     try:
         update_ceiling(
             user_id=str(current_user.user_id),

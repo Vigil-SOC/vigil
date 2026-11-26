@@ -30,6 +30,7 @@ import EmulatorsBlock from './EmulatorsBlock'
 import {
   aiConfigApi,
   approvalsApi,
+  configApi,
   detectionRulesApi,
   type Ceiling,
   type InvestigationReplayResponse,
@@ -258,6 +259,41 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const [overlayOnly, setOverlayOnly] = useState<OverlayOnlyRule[]>([])
   const [deploying, setDeploying] = useState<number[] | 'all' | null>(null)
   const stopping = pending?.kind === 'stop'
+  // The declared directory's act.hold_crown_jewels, when it manages that key: the API refuses a turn-off below it.
+  const [holdManaged, setHoldManaged] = useState<{ declared: unknown; file?: string | null; line?: number | null } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    configApi
+      .getIntent()
+      .then((r) => {
+        const row = r.data.rows?.find((x) => x.key === 'act.hold_crown_jewels' && x.managed)
+        if (!cancelled) setHoldManaged(row ?? null)
+      })
+      .catch(() => !cancelled && setHoldManaged(null)) // unread: the API still refuses
+    return () => {
+      cancelled = true
+    }
+  }, [intentRevision])
+  // Opens Advanced, then scrolls once the site card has rendered.
+  const [toSite, setToSite] = useState(0)
+  const showSite = () => {
+    setAdvanced(true)
+    setToSite((n) => n + 1)
+  }
+  useEffect(() => {
+    const el = toSite ? document.getElementById('declared-site') : null
+    if (!el?.parentElement) return
+    const go = () => el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    go()
+    // The cards above it load after it opens; follow it while they settle.
+    const ro = new ResizeObserver(go)
+    ro.observe(el.parentElement)
+    const stop = setTimeout(() => ro.disconnect(), 1500)
+    return () => {
+      clearTimeout(stop)
+      ro.disconnect()
+    }
+  }, [toSite])
   const readOverlayOnly = () =>
     detectionRulesApi
       .getOverlayOnly()
@@ -1066,6 +1102,55 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 <span className="text-sm text-tx-2">{ceil.four_eyes ? 'On' : 'Off'}</span>
               )}
             </div>
+            {(() => {
+              const on = ceil.hold_crown_jewels
+              const n = ceil.crown_jewels
+              const managedOn = holdManaged?.declared === true
+              // Why a turn-off would be refused, said before anyone tries.
+              const refusal = !on
+                ? null
+                : managedOn
+                  ? `Managed by ${holdManaged?.file ?? 'INTENT.md'}:${holdManaged?.line ?? 1}, declared on. Change it in the declared directory.`
+                  : ceil.stopped
+                    ? STOPPED_LOOSEN
+                    : null
+              return (
+                <div className="lim-switch">
+                  <div className="toggle-row-text">
+                    <span className="toggle-row-label">Hold crown jewels</span>
+                    <span className="toggle-row-hint">
+                      A model’s close, exception, dismissal or outside call on a declared crown jewel waits for a person.
+                    </span>
+                    <span className="toggle-row-hint">
+                      {n === 0 ? 'No crown jewels declared.' : n === 1 ? '1 crown jewel declared.' : `${n} crown jewels declared.`}{' '}
+                      {canReadSite && (
+                        <button type="button" className="stop-link" onClick={showSite}>
+                          View the declared site
+                        </button>
+                      )}
+                    </span>
+                    {refusal && canRaise && (
+                      <span className="lim-class-note">
+                        <Icon name={managedOn ? 'lock' : 'alert'} size={13} className="shrink-0" /> {refusal}
+                      </span>
+                    )}
+                  </div>
+                  {canRaise ? (
+                    <Toggle
+                      label="Hold crown jewels"
+                      checked={on}
+                      disabled={refusal != null}
+                      title={refusal ?? undefined}
+                      onChange={(v) => saveCeiling({ hold_crown_jewels: v })}
+                    />
+                  ) : canLower && !on ? (
+                    <Toggle label="Hold crown jewels" checked={false} onChange={() => saveCeiling({ hold_crown_jewels: true })} />
+                  ) : (
+                    <span className="text-sm text-tx-2">{on ? 'On' : 'Off'}</span>
+                  )}
+                </div>
+              )
+            })()}
             {heldList(ceil)}
             {workflowList(ceil.stopped)}
             {toolList(ceil.stopped)}
@@ -1140,7 +1225,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 reload()
               }}
             />
-            {canReadSite && <SiteContextCard reloadKey={intentRevision} />}
+            {canReadSite && (
+              <div id="declared-site">
+                <SiteContextCard reloadKey={intentRevision} />
+              </div>
+            )}
           </div>
         ) : (
           <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage, the intent report and the declared site.</span>

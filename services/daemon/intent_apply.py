@@ -68,7 +68,10 @@ _CEILING_ATTR = {
     "act.reversible": "act_reversible",
     "act.irreversible": "act_irreversible",
     "act.four_eyes": "four_eyes",
+    "act.hold_crown_jewels": "hold_crown_jewels",
 }
+# On is tighter for these; the environment lock does not force them off.
+_UNLOCKED = ("four_eyes", "hold_crown_jewels")
 
 
 class StoreWriteFailed(Exception):
@@ -112,7 +115,7 @@ def _apply_act(wants: Dict[str, Any], revision: str, pending: Set[str]) -> None:
         for key, want in wants.items():
             attr = _CEILING_ATTR[key]
             have = getattr(current, attr)
-            if locked and attr != "four_eyes":
+            if locked and attr not in _UNLOCKED:
                 have = False  # the effective flag; the lock still wins
             if label(FIELDS_BY_KEY[key].rule, want, have) == "loosen":
                 pending.add(key)
