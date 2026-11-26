@@ -1071,9 +1071,18 @@ export interface AgreementTally {
   wilson_high: number | null
 }
 
+/** One model's tally within a workflow: the model its investigate runs' spend recorded. */
+export interface ModelAgreement extends AgreementTally {
+  model: string
+}
+
 /** One workflow's tally. `overall` is the same shape without a workflow id. */
 export interface WorkflowAgreement extends AgreementTally {
   workflow_id: string
+  /** The same tally split by the model that ran each investigation. */
+  by_model: ModelAgreement[]
+  /** Closes and draws whose run used more than one model, or recorded none. */
+  unattributed: number
 }
 
 export interface AgentAgreement {

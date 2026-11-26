@@ -26,6 +26,7 @@ from core.response.ceiling import (
     ASSIST,
     CeilingRefusal,
     CeilingWriteError,
+    investigation_model,
     own_tool_names,
     raises_workflow,
     read_ceiling,
@@ -75,7 +76,8 @@ def put_workflow_autonomy(
     Act is always a raise: it holds after the fleet is lowered. Anything else that
     lets the workflow act where it could not, such as clearing Assist under a fleet
     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
-    while stopped, and stores the workflow's 30-day agreement beside its floor.
+    while stopped, and stores the investigation model in force and that model's
+    30-day agreement on the workflow beside its floor.
     Anything else is ``ai_autonomy.stop``.
     """
     workflow = workflows.get_workflow(workflow_id)
@@ -116,7 +118,12 @@ def put_workflow_autonomy(
                 raise HTTPException(
                     status_code=422, detail="A raise needs a floor from 1 to 100"
                 )
-            entry = workflow_entry(ACT, body.floor, workflow_evidence(workflow_id), by)
+            # Act names the model it is raised on, and stores that model's record
+            # (blended, with no model, when the model cannot be resolved).
+            model = investigation_model()
+            entry = workflow_entry(
+                ACT, body.floor, workflow_evidence(workflow_id, model), by, model
+            )
         elif body.tier == ASSIST:
             entry = workflow_entry(ASSIST, None, None, by)
         else:
