@@ -1430,7 +1430,10 @@ async def execute_backend_tool(
         from core.site_proposal import save_site_proposal
 
         fields = ("files", "provenance", "questions")
-        return await save_site_proposal(**{k: args.get(k) for k in fields}), True
+        saved = await save_site_proposal(
+            **{k: args.get(k) for k in fields}, registry=registry
+        )
+        return saved, True
 
     if tool_name in _OWNED:
         result = globals()[tool_name](**args)

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Each sync reads every repo in full; hourly sees a deleted rule soon enough.
 DETECTION_RULES_SYNC_INTERVAL = 3600
 DETECTION_GAPS_INTERVAL = 86400
+SITE_REFRESH_INTERVAL = 86400
 
 
 def _sandbox_poll_enabled() -> bool:
@@ -109,6 +110,16 @@ class TaskScheduler:
                 name="detection_gaps",
                 func=self._run_detection_gaps,
                 interval=DETECTION_GAPS_INTERVAL,
+            )
+        )
+
+        # Not in run()'s restored clocks: it runs at startup, and the row's
+        # "seen" state keeps a restart from queueing it twice.
+        self._tasks.append(
+            ScheduledTask(
+                name="site_refresh",
+                func=self._run_site_refresh,
+                interval=SITE_REFRESH_INTERVAL,
             )
         )
 
@@ -306,6 +317,20 @@ class TaskScheduler:
             logger.info("Queued the daily detection gaps run: %s", outcome.message)
         else:
             logger.info("Daily detection gaps run: %s", outcome.message)
+
+    async def _run_site_refresh(self):
+        """The daily site refresh (``core.site_proposal.start_refresh``)."""
+        from core.site_proposal import NOT_QUEUED, QUEUED, start_refresh
+
+        outcome = await start_refresh()
+        if outcome["status"] == NOT_QUEUED:
+            logger.error("Daily site refresh: %s", outcome["message"])
+        elif outcome["status"] == QUEUED:
+            logger.info(
+                "Queued the daily site refresh (intake row %s)", outcome["intake_id"]
+            )
+        else:
+            logger.info("Daily site refresh: %s", outcome["message"])
 
     # What this hunt is out to test, read off the techniques the estate is showing, so
     # a nightly hunt follows it rather than repeating one fixed question.

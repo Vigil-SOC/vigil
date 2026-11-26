@@ -3866,6 +3866,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/site/proposal/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Site Proposal
+         * @description Queue the site agent to draft a refresh now, as this user. 200 when queued;
+         *     409 with the reason when refused (agent or workflow off, AutoOps off, a
+         *     refresh unfinished, or another start in progress).
+         */
+        post: operations["post_api_config_site_proposal_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/theme": {
         parameters: {
             query?: never;
@@ -18138,6 +18160,18 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * SiteNotEvaluated
+         * @description An outside tool the site agent holds that cannot run on this deployment.
+         */
+        SiteNotEvaluated: {
+            /** Reason */
+            reason: string;
+            /** Tool */
+            tool: string;
+            /** Where */
+            where?: string | null;
+        };
         /** SiteOwner */
         SiteOwner: {
             /** File */
@@ -18227,6 +18261,8 @@ export interface components {
             files?: components["schemas"]["SiteFile"][];
             /** Id */
             id: string;
+            /** Not Evaluated */
+            not_evaluated?: components["schemas"]["SiteNotEvaluated"][];
             /** Provenance */
             provenance?: {
                 [key: string]: components["schemas"]["SiteProposalProvenance"];
@@ -26793,6 +26829,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SiteProposalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_site_proposal_refresh: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
