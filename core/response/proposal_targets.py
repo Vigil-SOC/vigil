@@ -313,3 +313,13 @@ DONE_STATE = {"isolate_host": "contained", "disable_user": "disabled"}
 # reports it, and the lookup's word (``state`` above) for that state.
 UNDONE_STATE = {"isolate_host": "released", "disable_user": "enabled"}
 UNDONE_LOOKUP = {"isolate_host": "not_contained", "disable_user": "enabled"}
+
+
+def undone(action_type: str, execution_result: Optional[Dict[str, Any]]) -> bool:
+    """An executed act undone since, so no longer in force: it answers no new
+    ask of the same act on the same target."""
+    result = execution_result or {}
+    state = UNDONE_STATE.get(action_type)
+    return bool(result.get("undone_by")) or (
+        state is not None and result.get("state") == state
+    )
