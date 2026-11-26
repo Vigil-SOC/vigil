@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _BUDGET_S = 60.0
 _DEFENDER_CALLS = 30
+ONBOARDED = "onboardingStatus eq 'onboarded'"
 
 _CS = "crowdstrike"
 _DEFENDER = "microsoft-defender"
@@ -375,47 +376,49 @@ def _defender_counts() -> dict[str, int]:
     now = datetime.now(timezone.utc).replace(microsecond=0)
     seven = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     thirty = (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    onboarded = "onboardingStatus eq 'onboarded'"
+    onboarded = ONBOARDED
     degraded = (
         f"{onboarded} and ("
         "healthStatus eq 'ImpairedCommunication' or "
         "healthStatus eq 'NoSensorData' or "
         "healthStatus eq 'NoSensorDataImpairedCommunication')"
     )
-    ingestion = MicrosoftDefenderIngestion()
+    page = MicrosoftDefenderIngestion().count_machine_page
     deadline = time.monotonic() + _BUDGET_S
     calls = [0]
-    listed = _def_pages(ingestion, onboarded, deadline, calls, first=True)
+    listed = _def_pages(page, onboarded, deadline, calls, first=True)
     if listed == 0:
         return {"listed": 0}
     return {
         "listed": listed,
         "days_7_to_30": _def_pages(
-            ingestion,
+            page,
             f"{onboarded} and lastSeen lt {seven} and lastSeen ge {thirty}",
             deadline,
             calls,
             first=False,
         ),
         "over_30_days": _def_pages(
-            ingestion,
+            page,
             f"{onboarded} and lastSeen lt {thirty}",
             deadline,
             calls,
             first=False,
         ),
-        "degraded": _def_pages(ingestion, degraded, deadline, calls, first=False),
+        "degraded": _def_pages(page, degraded, deadline, calls, first=False),
     }
 
 
 def _def_pages(
-    ingestion: MicrosoftDefenderIngestion,
+    page: Callable[[str, int, float], tuple[int, int]],
     odata_filter: str,
     deadline: float,
     calls: list[int],
     *,
     first: bool,
 ) -> int:
+    """Pages of machines through ``page``, which returns ``(counted, rows)``:
+    ``count_machine_page``, or the site module's list read."""
     total = 0
     skip = 0
     while True:
@@ -424,11 +427,11 @@ def _def_pages(
         _past(deadline, "Defender")
         timeout = max(deadline - time.monotonic(), 0.1)
         try:
-            ids, rows = ingestion.count_machine_page(odata_filter, skip, timeout)
+            counted, rows = page(odata_filter, skip, timeout)
         except MachineReadError as exc:
             raise _machine_stop(exc, first=first) from None
         calls[0] += 1
-        total += ids
+        total += counted
         if rows < MACHINE_PAGE:
             return total
         skip += MACHINE_PAGE

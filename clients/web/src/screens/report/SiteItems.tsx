@@ -3,7 +3,7 @@ import { reportStamp } from './stamp'
 /** The site module's stored body: sources read and each declared item's state. No host is kept. */
 type Source = {
   source: string
-  state: 'read' | 'not_checked' | 'not_read_yet'
+  state: 'read' | 'not_checked'
   reason?: string
   listed?: number
   undeclared?: number
@@ -36,12 +36,23 @@ const STATE_WORD: Record<Item['state'], string> = {
   not_evaluated: 'Not evaluated',
 }
 
+/** Each source's word for a host and its caveat, as its estate checks put them. */
+const SOURCE_WORDS: Record<string, { noun: string; note?: string }> = {
+  Wazuh: { noun: 'agents', note: 'The manager is not counted.' },
+  CrowdStrike: { noun: 'endpoints' },
+  Defender: {
+    noun: 'endpoints',
+    note: "Defender's last seen is its last full report, and can be a day behind the console.",
+  },
+}
+
 function sourceLine(source: Source): string {
-  if (source.state === 'not_read_yet') return `${source.source}: switched on, not read yet.`
-  if (source.state === 'not_checked') return `${source.source}: ${source.reason ?? 'not checked'}.`
-  const parts = [`agents listed ${source.listed ?? 0}`]
+  // A record stored before a source was read carries another state: never shown as read.
+  if (source.state !== 'read') return `${source.source}: ${(source.reason ?? 'not read').replace(/\.$/, '')}.`
+  const words = SOURCE_WORDS[source.source] ?? { noun: 'hosts' }
+  const parts = [`${words.noun} listed ${source.listed ?? 0}`]
   if (typeof source.undeclared === 'number') parts.push(`in no zone ${source.undeclared}`)
-  return `${source.source}: read; ${parts.join(', ')}. The manager is not counted.`
+  return `${source.source}: read; ${parts.join(', ')}.${words.note ? ` ${words.note}` : ''}`
 }
 
 function itemFacts(item: Item): string {

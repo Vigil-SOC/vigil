@@ -35,7 +35,7 @@ _FOLLOW_REDIRECTS = True
 # The /api/alerts maximum page size.
 _HISTORY_PAGE = 10000
 
-# Machines are counted a page at a time. The id is not kept.
+# Machines are read a page at a time. Nothing from a row is kept here.
 MACHINE_PAGE = 10000
 _MACHINES_URL = "https://api.securitycenter.microsoft.com/api/machines"
 _MACHINES_SCOPE = "https://api.securitycenter.microsoft.com/.default"
@@ -166,6 +166,24 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         ``rows`` is the page length, which decides whether another page exists.
         ``$top`` is 10,000 and ``$select`` is id.
         """
+        rows = self._machine_page(odata_filter, skip, timeout, "id")
+        ids = sum(1 for row in rows if isinstance(row, dict) and row.get("id"))
+        return ids, len(rows)
+
+    def host_machine_page(
+        self, odata_filter: str, skip: int, timeout: float
+    ) -> List[Dict[str, Any]]:
+        """One machines page of ``computerDnsName``, ``lastIpAddress`` and
+        ``lastSeen``. The caller turns each row into Entity Keys and drops it.
+        """
+        return self._machine_page(
+            odata_filter, skip, timeout, "computerDnsName,lastIpAddress,lastSeen"
+        )
+
+    def _machine_page(
+        self, odata_filter: str, skip: int, timeout: float, select: str
+    ) -> List[Any]:
+        """The rows of one machines page. Logs nothing from the body."""
         token = self._machines_token(timeout)
         try:
             response = httpx.get(
@@ -175,7 +193,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
                     "$filter": odata_filter,
                     "$top": MACHINE_PAGE,
                     "$skip": skip,
-                    "$select": "id",
+                    "$select": select,
                 },
                 timeout=timeout,
                 follow_redirects=_FOLLOW_REDIRECTS,
@@ -195,8 +213,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         rows = body.get("value") if isinstance(body, dict) else None
         if not isinstance(rows, list):
             raise MachineReadError("parse")
-        ids = sum(1 for row in rows if isinstance(row, dict) and row.get("id"))
-        return ids, len(rows)
+        return rows
 
     async def fetch_alerts(
         self,
