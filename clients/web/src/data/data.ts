@@ -12,6 +12,7 @@ export type ConsoleScreenKey =
   | 'workflows'
   | 'health'
   | 'medic'
+  | 'supervisory'
   | 'report'
   | 'review'
   | 'settings'
@@ -33,6 +34,7 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['bars', 'Case Metrics', 'metrics'],
   ['flow', 'Agents & workflows', 'workflows'],
   ['eye', 'Medic', 'medic'],
+  ['brain', 'Supervisory model', 'supervisory'],
   ['doc', 'Day 1 Report', 'report'],
   ['check', 'Review', 'review'],
   ['gear', 'Settings', 'settings'],
@@ -144,6 +146,7 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   workflows: ['Agents & workflows', 'How Vigil works a case. Workflows are the plays, agents do the work, skills are what agents know how to do, and tool permissions decide what they may change on their own.'],
   health: ['Health', 'Operational health — approvals waiting, recent workflow runs, probe scores'],
   medic: ['Medic', 'What Medic watches in this install, and the incidents it records'],
+  supervisory: ['Supervisory model', 'Setting changes it suggests, and the evidence behind each. Nothing changes until a person acts.'],
   report: ['Day 1 Report', 'What this install can see, and what to fix first'],
   review: ['Review', 'Confirm a re-decision before a Case can open'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],

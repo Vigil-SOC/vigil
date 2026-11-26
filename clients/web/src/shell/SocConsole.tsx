@@ -41,6 +41,7 @@ import CasesScreen from '../screens/cases/CasesScreen'
 import MetricsScreen from '../screens/metrics/MetricsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
 import MedicScreen from '../screens/medic/MedicScreen'
+import SupervisoryScreen from '../screens/supervisory/SupervisoryScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import ReportScreen from '../screens/report/ReportScreen'
@@ -81,6 +82,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   workflows: WorkflowsScreen,
   health: HealthScreen,
   medic: MedicScreen,
+  supervisory: SupervisoryScreen,
   report: ReportScreen,
   review: ReviewScreen,
   settings: SettingsScreen,
