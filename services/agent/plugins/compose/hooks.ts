@@ -53,6 +53,8 @@ export function composeHooks(mirror: Mirror): PluginHooks {
           schema: PHASE_SCHEMA,
           tools: phase.tools,
           park_on_denial: true,
+          // Each result opens with its ledger ref, as the run's ledger numbers it.
+          cite: true,
           // A step resumed after an approval runs the approved call, then goes on from its own calls.
           resume: true,
         });

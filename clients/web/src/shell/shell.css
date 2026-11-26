@@ -197,6 +197,24 @@
   white-space: nowrap;
 }
 
+/* the agent the conversation runs under: a label, not a control */
+.chat .chat-head .ch-agent {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  height: 22px;
+  line-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill-sm);
+  background: var(--ac-bg);
+  color: var(--ac);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chat .chat-head .ch-convo {
   flex: 1;
   min-width: 0;
