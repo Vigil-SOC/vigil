@@ -252,7 +252,18 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     setToSite((n) => n + 1)
   }
   useEffect(() => {
-    if (toSite) document.getElementById('declared-site')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const el = toSite ? document.getElementById('declared-site') : null
+    if (!el?.parentElement) return
+    const go = () => el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    go()
+    // The cards above it load after it opens; follow it while they settle.
+    const ro = new ResizeObserver(go)
+    ro.observe(el.parentElement)
+    const stop = setTimeout(() => ro.disconnect(), 1500)
+    return () => {
+      clearTimeout(stop)
+      ro.disconnect()
+    }
   }, [toSite])
   const readOverlayOnly = () =>
     detectionRulesApi
@@ -1065,7 +1076,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                     </span>
                     {refusal && canRaise && (
                       <span className="lim-class-note">
-                        <Icon name={managedOn ? 'lock' : 'alert'} size={13} /> {refusal}
+                        <Icon name={managedOn ? 'lock' : 'alert'} size={13} className="shrink-0" /> {refusal}
                       </span>
                     )}
                   </div>
