@@ -287,7 +287,43 @@ def _tar(files: Dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
-_renders: "OrderedDict[Tuple[str, str, str], Tuple[float, bytes]]" = OrderedDict()
+_renders: "OrderedDict[Tuple[str, str, str], Tuple[float, Any, bytes]]" = (
+    OrderedDict()
+)
+
+# Everything the tar renders from the database, as of now: a held render is
+# served only while this is unchanged (#5243). Counts catch a removed row a
+# max(updated_at) would miss; escalations have no updated_at, so their times.
+_STAMP_SQL = """
+SELECT (SELECT updated_at FROM cases WHERE case_id = :c), f.*, t.*, e.*, x.*
+FROM (SELECT count(*), max(fi.updated_at) FROM case_findings cf
+        JOIN findings fi ON fi.finding_id = cf.finding_id
+        WHERE cf.case_id = :c) f,
+     (SELECT count(*), max(updated_at) FROM case_tasks WHERE case_id = :c) t,
+     (SELECT count(*), max(updated_at) FROM case_evidence WHERE case_id = :c) e,
+     (SELECT count(*), max(greatest(escalated_at, acknowledged_at, resolved_at))
+        FROM case_escalations WHERE case_id = :c) x
+"""
+
+
+def _stamp(case_id: str) -> Optional[Tuple[Any, ...]]:
+    """The case's freshness stamp in one round trip; None when it can't be read."""
+    from sqlalchemy import text
+
+    from core.storage.unit_of_work import unit_of_work
+
+    try:
+        with unit_of_work() as session:
+            return tuple(session.execute(text(_STAMP_SQL), {"c": case_id}).one())
+    except Exception:  # noqa: BLE001 - no stamp: render afresh, never serve held
+        return None
+
+
+def _held_still_good(case_id: str) -> Tuple[bool, Any]:
+    """Whether the caller may still read the case, and its stamp now."""
+    from core.cases.case_access import readable
+
+    return readable(case_id), _stamp(case_id)
 
 
 # Person and agent both: recall logs its read against the agent it ran for.
@@ -302,17 +338,21 @@ def _caller() -> Tuple[str, str]:
 
 async def render_case_view(case_id: str) -> Optional[bytes]:
     """The case as a tar, or None when there is no such case."""
-    from core.cases.case_access import readable
-
     key = (case_id, *_caller())
     held = _renders.get(key)
+    stamp = None
     if held and held[0] > time.monotonic():
         # Asked again on every hit, so a reader removed inside the TTL is not
         # served what they could read a moment ago (#4358).
-        if await asyncio.to_thread(readable, case_id):
-            return held[1]
-        _renders.pop(key, None)
-        return None
+        may_read, stamp = await asyncio.to_thread(_held_still_good, case_id)
+        if not may_read:
+            _renders.pop(key, None)
+            return None
+        if stamp is not None and stamp == held[1]:
+            return held[2]
+    else:
+        # Taken before the render, so a write during it re-renders next time.
+        stamp = await asyncio.to_thread(_stamp, case_id)
 
     case, records, findings, evidence = await asyncio.to_thread(_records, case_id)
     if case is None:
@@ -341,7 +381,10 @@ async def render_case_view(case_id: str) -> Optional[bytes]:
         files["entities/history.json"] = _json(history)
 
     view = _tar(files)
-    _renders[key] = (time.monotonic() + RENDER_TTL_S, view)
+    if stamp is None:
+        _renders.pop(key, None)
+        return view
+    _renders[key] = (time.monotonic() + RENDER_TTL_S, stamp, view)
     _renders.move_to_end(key)
     while len(_renders) > RENDERS_KEPT:
         _renders.popitem(last=False)
