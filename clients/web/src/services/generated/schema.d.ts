@@ -19316,6 +19316,8 @@ export interface components {
         };
         /** TerminalUpdate */
         TerminalUpdate: {
+            /** Blind Spots */
+            blind_spots?: unknown | null;
             /** Capped */
             capped?: unknown | null;
             /** Citation Count */
@@ -19348,6 +19350,8 @@ export interface components {
             summary: string;
             /** Title */
             title?: string | null;
+            /** Unserved Tools */
+            unserved_tools?: unknown | null;
         };
         /**
          * ThemeConfig
