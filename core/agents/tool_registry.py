@@ -1243,8 +1243,11 @@ async def _entity_facts(args: Args) -> Any:
     if not isinstance(keys, list):
         raise MCPFailure("invalid_args", "entity_keys must be a list of Entity Keys")
     case_id = args.get("case_id") or None
+    # declared_only (#5211): the applied site revision's rows alone; no source asked.
     try:
-        held = await entity_facts.read_keys([str(k) for k in keys], case_id)
+        held = await entity_facts.read_keys(
+            [str(k) for k in keys], case_id, args.get("declared_only") is True
+        )
     except entity_facts.CaseUnreadable as exc:
         raise MCPFailure("denied", str(exc)) from None
     return held.journaled()

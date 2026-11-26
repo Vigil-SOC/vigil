@@ -9,7 +9,9 @@ import type { LedgerRecord } from "./memory.js";
 export const FACTS_TOOL = "read_entity_facts";
 
 // One row as read: the Entity Key, the entity as the key spells it, the source's
-// label, when the source answered (UTC), and the projected fields.
+// label, when the source answered (UTC), and the projected fields. A "Declared" row
+// (#5211) is an item of the applied site revision instead: fetched_at is when that
+// revision was applied, and its fields carry kind, name, file, line and revision.
 export interface FactRow {
   readonly entity: string;
   readonly value: string;
@@ -39,6 +41,9 @@ export interface FactsUnavailable {
 }
 
 export type FactsPayload = EntityFacts | FactsUnavailable;
+
+// The source of a row from the operator's site files rather than from a source.
+export const DECLARED = "Declared";
 
 const RESULT_KEYS = ["keys", "facts", "sources_unavailable", "dropped_keys"] as const;
 
@@ -84,7 +89,7 @@ export function factLines(payload: FactsPayload): readonly string[] {
   if (payload.keys.length === 0) return [];
   const lines = payload.facts.map(
     (fact) =>
-      `${fact.source} on ${fact.entity} (fetched ${fact.fetched_at}): ` +
+      `${fact.source} on ${fact.entity} (${fact.source === DECLARED ? "applied" : "fetched"} ${fact.fetched_at}): ` +
       sorted(fact.fields)
         .map(([name, value]) => `${name}: ${shown(value)}`)
         .join("; "),

@@ -800,6 +800,8 @@ export const configApi = {
 
   getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
   getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
+  // The applied site/ revision, read-only (#5214)
+  getSite: () => api.get<Schema<'SiteContextResponse'>>('/config/site'),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
     api.post<Schema<'IntentReportResponse'>>('/config/intent/accept', data),
@@ -2370,6 +2372,18 @@ export const overviewApi = {
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
+export type TriageRaisedBy =
+  | {
+      source: 'crown_jewel'
+      name: string
+      file: string
+      line: number
+      revision: string | null
+      selector: string
+      key: string
+    }
+  | { source: 'enrichment'; criticality: 'critical' }
+
 export interface TriageRow {
   id: number
   kind: string
@@ -2383,6 +2397,8 @@ export interface TriageRow {
   age_seconds: number
   ttl_seconds: number
   last_quarter: boolean
+  /** What launches it ahead of older rows in its band; null when nothing does. */
+  raised_by: TriageRaisedBy | null
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null

@@ -6,6 +6,7 @@ this function, not a copy of it in the client.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import object_session
 
 from core.agents.projections import run_id_for
 from core.cases.case_record import headline
-from core.cases.closure import trust_word
+from core.cases.closure import CHANNEL_AGENT, trust_word
 from core.cases.combined_state import budget_health as _budget_health
 from core.cases.combined_state import combined_state as _combined_state
 from core.storage.models import (
@@ -82,6 +83,14 @@ def _verdict(closure: CaseClosureInfo) -> str:
     return ""
 
 
+def _is_uuid(text: str) -> bool:
+    try:
+        uuid.UUID(text)
+        return True
+    except ValueError:
+        return False
+
+
 def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     if closure is None:
         return None
@@ -92,6 +101,26 @@ def closure_view(closure: Optional[CaseClosureInfo]) -> Optional[dict]:
     if session is not None and closure.closed_by and shown == closure.closed_by:
         principal = session.get(Principal, closure.closed_by)
         shown = (principal.label if principal else None) or shown
+        # A run's dismissal stores its run id: name the workflow that closed it.
+        if principal is None and closure.close_channel == CHANNEL_AGENT:
+            run = session.get(WorkflowRun, closure.closed_by)
+            if run is not None:
+                shown = run.workflow_name or run.workflow_id
+            else:
+                investigation = next(
+                    (
+                        row
+                        for row in session.query(Investigation).filter(
+                            Investigation.case_id == closure.case_id
+                        )
+                        if run_id_for(row.investigation_id) == closure.closed_by
+                    ),
+                    None,
+                )
+                if investigation is not None:
+                    shown = investigation.workflow_id
+                elif _is_uuid(closure.closed_by):
+                    shown = "agent"  # a run we no longer have; never the raw id
     kind = trust_word(getattr(closure, "close_channel", None))
     verdict = _verdict(closure)
     return {

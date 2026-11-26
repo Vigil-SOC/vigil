@@ -69,10 +69,15 @@ function linkedRefs(projection: Projection): string[] {
 // Nothing proven, and either a blind claim or the kernel's own test (#3248): the ledger
 // could not look, and no served estate result is linked as evidence. `events` is the
 // whole run ledger, kernel calls included; without it only the gap lock can tell.
-export function huntStarved(projection: Projection, events: readonly { kind: string; payload: unknown }[], verdicts: Verdicts = DEFAULT_VERDICTS): boolean {
+export function huntStarved(
+  projection: Projection,
+  events: readonly { kind: string; payload: unknown }[],
+  verdicts: Verdicts = DEFAULT_VERDICTS,
+  optional: ReadonlySet<string> = new Set(),
+): boolean {
   const hypotheses = [...projection.hypotheses.values()];
   if (hypotheses.some((hypothesis) => hypothesis.status === "proven")) return false;
-  return hypotheses.some((hypothesis) => gapLocked(projection, hypothesis, verdicts)) || starved(events, linkedRefs(projection));
+  return hypotheses.some((hypothesis) => gapLocked(projection, hypothesis, verdicts)) || starved(events, linkedRefs(projection), optional);
 }
 
 // The controller's own answer to "may this hunt stop?", computed from the
@@ -83,6 +88,7 @@ export function terminationVerdict(
   config: Termination,
   verdicts: Verdicts = DEFAULT_VERDICTS,
   events: readonly { kind: string; payload: unknown }[] = [],
+  optional: ReadonlySet<string> = new Set(),
 ): TerminationVerdict {
   const hypotheses = [...projection.hypotheses.values()];
 
@@ -110,5 +116,5 @@ export function terminationVerdict(
 
   // Outranks completed when both match: a hunt that could not see is not a hunt
   // that finished, and reporting it as finished is how a blind spot becomes a
-  return huntStarved(projection, events, verdicts) ? { outcome: "data_starved", park } : { outcome: "completed", park };
+  return huntStarved(projection, events, verdicts, optional) ? { outcome: "data_starved", park } : { outcome: "completed", park };
 }

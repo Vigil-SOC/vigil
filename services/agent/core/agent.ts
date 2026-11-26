@@ -35,7 +35,7 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { bridgeHeaders } from "./principal.js";
-import { claimCount, classify, classOf, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
+import { claimCount, classify, classOf, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, optionalTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { CONFIDENCES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
@@ -387,7 +387,7 @@ export async function* streamAgent(harness: Harness<Kinds>, given: AgentOptions)
   // look, is data_starved: the report still goes out, but nothing acts on it (#3248).
   const structured = isStructured(options.plugin.conclusion) ? options.plugin.conclusion : null;
   const cited = structured?.citations_field === undefined ? [] : citedRefs(conclusion.value[structured.citations_field]);
-  const blind = recordModeOf(options.plugin) === "required" && starved(held, cited);
+  const blind = recordModeOf(options.plugin) === "required" && starved(held, cited, optionalTools(options.plugin, options.spec.tools));
   return end(ctx, blind ? "data_starved" : "completed", summaryOf(options.plugin, conclusion, review), {
     proposed: proposalsOf(options.plugin, conclusion, review),
     disposition: dispositionOf(options.plugin, conclusion, review),

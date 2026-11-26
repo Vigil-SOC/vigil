@@ -16,7 +16,7 @@ from core.response.ceiling import asks_first, gated_tools
 from core.workflows.playbook_resolver import (
     CAPABILITIES,
     HUNT_CAPABILITIES,
-    OPTIONAL_HUNT_CAPABILITIES,
+    OPTIONAL_CAPABILITIES,
     UnknownPlaybook,
     lead_needs,
     phases_needs,
@@ -123,7 +123,7 @@ def _helper(phase: Dict[str, Any], tools: List[str]) -> Dict[str, Any]:
 def _hunt_needs(kind: str) -> Tuple[str, ...]:
     if kind == HUNT_RUN_KIND:
         return HUNT_CAPABILITIES
-    return tuple(c for c in HUNT_CAPABILITIES if c not in OPTIONAL_HUNT_CAPABILITIES)
+    return tuple(c for c in HUNT_CAPABILITIES if c not in OPTIONAL_CAPABILITIES)
 
 
 def _roles(definition: WorkflowDefinition) -> Tuple[Dict[str, Any], Optional[str]]:

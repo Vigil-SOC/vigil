@@ -62,6 +62,8 @@ A user or host the source does not know is stored as `found: false`.
 
 **Never stored**, because no projection names them: passwords and their hashes, MFA factors and seeds, recovery codes, keys and other credentials, custom profile attributes and extension attributes, and HR, health or compensation data.
 
+**Declared** rows come from no source. When a site is declared (`site/*.md` in the declared directory), each read also carries one row for every zone, crown jewel, owner or blind spot whose selector matches a key the finding or run names, `ip:` keys included: its kind, name, mission or what is unseen, zone, owner (resolved against active teams, or `unassigned: no team named …`), selector, file, line and revision. They are read from the applied revision each time, never stored in `entity_facts`, never counted against a source or the key limit, and a key the read would otherwise leave out joins it only when a declared item matched. A hunt reads these rows only (`read_entity_facts` with `declared_only`), and asks no source.
+
 ## Recommended read-only scopes
 
 Vigil only reads. Give each source a credential that can do nothing else.

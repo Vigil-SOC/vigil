@@ -90,6 +90,11 @@ INVESTIGATE_CAPABILITIES = (
     "telemetry_search",
     "findings_search",
     "indicator_lookup",
+    # OpenCTI's graph, held when it is connected (OPTIONAL_CAPABILITIES).
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
 )
 
 
@@ -192,8 +197,8 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "detection_coverage": (Candidate(None, ("analyze_coverage",)),),
     # A threat-intel platform's own graph, one tool each: an observable's indicators,
     # one indicator, named actors and malware, and what an entity links to. OpenCTI is
-    # opt-in, so a hunt holds these when it is connected and misses nothing when not
-    # (OPTIONAL_HUNT_CAPABILITIES).
+    # opt-in, so a hunt or investigation holds these when it is connected and misses
+    # nothing when not (OPTIONAL_CAPABILITIES).
     "intel_observable": (Candidate("opencti", ("opencti_search_observable",)),),
     "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
     "intel_entities": (Candidate("opencti", ("opencti_search_entities",)),),
@@ -205,6 +210,24 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("azure-ad", ("aad_get_user",)),
         Candidate("okta", ("get_okta_user", "list_okta_users")),
     ),
+    # A sandbox's prior analysis of a hash, and its report, from whichever sandbox is
+    # connected. Split by question: one tool binds per server per capability. Reads
+    # only -- no submit tool is a candidate.
+    "sandbox_hash_lookup": (
+        Candidate("cape-sandbox", ("cape_search_hash",)),
+        Candidate("hybrid-analysis", ("ha_search_hash",)),
+        Candidate("anyrun", ("anyrun_search_hash",)),
+    ),
+    "sandbox_report": (
+        Candidate("cape-sandbox", ("cape_get_report",)),
+        Candidate("hybrid-analysis", ("ha_get_report",)),
+        Candidate("anyrun", ("anyrun_get_report",)),
+    ),
+    # A topology integration's graph, and the console view it drives: one tool each,
+    # since the two view tools cannot share one capability.
+    "topology_graph": (Candidate("vstrike", ("vstrike_network_graph_get",)),),
+    "topology_focus": (Candidate("vstrike", ("vstrike_ui_rightpanel_focus",)),),
+    "topology_legend": (Candidate("vstrike", ("vstrike_ui_legend_apply",)),),
     # Every outside tool the stored emulation record marks, read when resolve
     # runs (_candidates): no tool is named here, so a person's mark is the binding.
     EMULATION: (),
@@ -262,6 +285,14 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     },
     # One account from an external API; the row cap allows a short user search.
     "identity_lookup": {"timeout_ms": 30_000, "max_rows": 20},
+    # A sandbox API read of one hash or one report; the row cap is the bounds
+    # model's shape.
+    "sandbox_hash_lookup": {"timeout_ms": 60_000, "max_rows": 50},
+    "sandbox_report": {"timeout_ms": 60_000, "max_rows": 200},
+    # A topology read, and a console nudge that answers with an acknowledgement.
+    "topology_graph": {"timeout_ms": 60_000, "max_rows": 200},
+    "topology_focus": {"timeout_ms": 30_000, "max_rows": 20},
+    "topology_legend": {"timeout_ms": 30_000, "max_rows": 20},
     # An emulator runs one technique on one host; a runner's own limit is 180s.
     # Its answer is a step or a few; the row cap is the bounds model's shape.
     EMULATION: {"timeout_ms": 240_000, "max_rows": 200},
@@ -302,11 +333,7 @@ def _bound_capabilities(
             )
         if not found:
             # An opt-in integration that is not connected is the expected case.
-            (
-                logger.debug
-                if capability in OPTIONAL_HUNT_CAPABILITIES
-                else logger.warning
-            )(
+            (logger.debug if capability in OPTIONAL_CAPABILITIES else logger.warning)(
                 "no tool in this deployment provides %s; roles needing it lose it",
                 capability,
             )
@@ -417,7 +444,8 @@ def _instructions_of(phase: Dict[str, Any]) -> str:
 
 # Every phase holds its agent's needs as this deployment binds them; without a
 # catalogue (a preflight read) the needs themselves. A need that binds nothing is
-# returned beside them, so the run journals a blind spot rather than a log line.
+# returned beside them, so the run journals a blind spot rather than a log line; an
+# optional capability nothing answers is an opt-in not connected, and records none.
 def _phase_tools(
     profile: Any, catalogue: Optional[Dict[str, Dict[str, Any]]]
 ) -> Tuple[List[str], List[Dict[str, str]]]:
@@ -428,7 +456,7 @@ def _phase_tools(
     unavailable: List[Dict[str, str]] = []
     for need in needs:
         bound = [t["id"] for t in _bound_capabilities([need], catalogue)]
-        if not bound:
+        if not bound and NEED_ALIASES.get(need, need) not in OPTIONAL_CAPABILITIES:
             unavailable.append(
                 {"tool": need, "reason": f"no tool in this deployment answers {need}"}
             )
@@ -686,11 +714,11 @@ HUNT_CAPABILITIES = (
     "identity_lookup",
 )
 
-# Needs a hunt holds when the deployment answers them and goes without otherwise,
-# with no blind spot journalled: an opt-in integration that is not connected, or a
-# coverage read, says nothing about this estate's visibility. Mirrors `optional`
-# in the hunt plugin.yaml.
-OPTIONAL_HUNT_CAPABILITIES = (
+# Needs a run of any kind holds when the deployment answers them and goes without
+# otherwise, with no blind spot journalled: an opt-in integration that is not
+# connected, or a coverage read, says nothing about this estate's visibility.
+# Mirrors `optional` in the hunt and investigate plugin.yaml.
+OPTIONAL_CAPABILITIES = (
     "detection_coverage",
     "intel_observable",
     "intel_indicator",
@@ -699,6 +727,12 @@ OPTIONAL_HUNT_CAPABILITIES = (
     # No identity provider is no blind spot on the estate: the account's existence
     # goes to open questions instead (the insider-threat skill).
     "identity_lookup",
+    # Sandboxes and a topology integration are opt-in.
+    "sandbox_hash_lookup",
+    "sandbox_report",
+    "topology_graph",
+    "topology_focus",
+    "topology_legend",
 )
 
 # A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls
@@ -756,8 +790,8 @@ def capability_report(
     missing = [name for name in needs if name not in bound]
     return {
         "bound": [name for name in needs if name in bound],
-        "unbound": [n for n in missing if n not in OPTIONAL_HUNT_CAPABILITIES],
-        "absent": [n for n in missing if n in OPTIONAL_HUNT_CAPABILITIES],
+        "unbound": [n for n in missing if n not in OPTIONAL_CAPABILITIES],
+        "absent": [n for n in missing if n in OPTIONAL_CAPABILITIES],
     }
 
 

@@ -202,7 +202,7 @@ def _document_line(kind: str, payload: dict) -> Optional[str]:
 
 def _ranking(row: dict, now: datetime, config: OrchestratorConfig) -> dict:
     ttl = config.intake_ttl_seconds
-    band, promoted, age = intake_rank_inputs(
+    band, promoted, age, raised = intake_rank_inputs(
         row,
         now=now,
         ttl_seconds=ttl,
@@ -213,6 +213,8 @@ def _ranking(row: dict, now: datetime, config: OrchestratorConfig) -> dict:
         "age_seconds": age,
         "ttl_seconds": ttl,
         "last_quarter": promoted,
+        # what launches it ahead of older rows in its band; null when nothing does
+        "raised_by": raised,
     }
 
 
@@ -392,6 +394,17 @@ def _page_keys(
         if finding_id is not None:
             row["_finding"] = {"severity": severity}
         queued.append(row)
+    # The entity context the daemon's raised term reads, so both orders agree.
+    contexts = dict(
+        session.query(Finding.finding_id, Finding.entity_context).filter(
+            Finding.finding_id.in_(
+                {row["finding_id"] for row in queued if "_finding" in row}
+            )
+        )
+    )
+    for row in queued:
+        if "_finding" in row:
+            row["_finding"]["entity_context"] = contexts.get(row["finding_id"])
     queued.sort(
         key=lambda row: rank_intake_row(
             row,
