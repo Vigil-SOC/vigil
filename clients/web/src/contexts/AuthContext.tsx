@@ -43,6 +43,8 @@ interface User {
   last_login: string | null;
   login_count: number;
   permissions?: Record<string, boolean>;
+  /** A service account: the API refuses it anything that loosens autonomy. */
+  service_account?: boolean;
 }
 
 /** A key's answer to the sign-in challenge, sent beside the password on the second call. */

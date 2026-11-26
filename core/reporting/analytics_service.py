@@ -809,7 +809,78 @@ async def get_agent_agreement(
     db: Session, start_time: datetime, end_time: datetime
 ) -> Dict[str, Any]:
     # Shown to a person: closures of cases they may not read are not scored.
-    return agent_agreement(db, start_time, end_time, readable=case_read_clause())
+    readable = case_read_clause()
+    return {
+        **agent_agreement(db, start_time, end_time, readable=readable),
+        "step_scores": step_score_tally(db, start_time, end_time, readable),
+    }
+
+
+def _after_hold() -> Dict[str, int]:
+    return {"open": 0, "not_real": 0, "real": 0, "no_determination": 0, "by_agent": 0}
+
+
+def step_score_tally(
+    db: Session, start_time: datetime, end_time: datetime, readable=None
+) -> Dict[str, Dict[str, Any]]:
+    """Each workflow's dismissals in the window, from ``workflow_runs.step_score`` (#5276).
+
+    ``bands``: scored dismissals by band, unscored as unknown. ``held_by_bar``
+    and ``passed_bar``: those a bar held, and those that closed past one.
+    ``held_by_autonomy``: held by the tier, stop, the lock or a crown jewel.
+    ``after_hold``: how each kind of hold's cases stand now: still open, or
+    closed by a person as not real, real or neither, or closed by an agent.
+    """
+    query = (
+        select(
+            WorkflowRun.workflow_id,
+            WorkflowRun.step_score,
+            Case.status,
+            CaseClosureInfo.closure_category,
+            CaseClosureInfo.close_channel,
+        )
+        .join(Case, Case.case_id == WorkflowRun.trigger_context["case_id"].astext)
+        .outerjoin(CaseClosureInfo, CaseClosureInfo.case_id == Case.case_id)
+        .where(
+            WorkflowRun.step_score.isnot(None),
+            WorkflowRun.deleted_at.is_(None),
+            WorkflowRun.started_at >= start_time,
+            WorkflowRun.started_at <= end_time,
+        )
+    )
+    if readable is not None:
+        query = query.where(readable)
+    out: Dict[str, Dict[str, Any]] = {}
+    for workflow_id, score, status, category, channel in db.execute(query):
+        tally = out.setdefault(
+            workflow_id,
+            {
+                "bands": {"high": 0, "medium": 0, "low": 0, "unknown": 0},
+                "held_by_bar": 0,
+                "passed_bar": 0,
+                "held_by_autonomy": 0,
+                "after_hold": {"bar": _after_hold(), "autonomy": _after_hold()},
+            },
+        )
+        band = score.get("band") if score.get("band") in tally["bands"] else "unknown"
+        tally["bands"][band] += 1
+        check = score.get("check")
+        if check == "closed":
+            tally["passed_bar"] += score.get("bar") is not None
+            continue
+        kind = "bar" if check == "held_by_bar" else "autonomy"
+        tally[f"held_by_{kind}"] += 1
+        if status != "closed":
+            key = "open"
+        elif not closed_by_person(channel):
+            key = "by_agent"
+        else:
+            real = closure_says_real(category)
+            key = (
+                "no_determination" if real is None else ("real" if real else "not_real")
+            )
+        tally["after_hold"][kind][key] += 1
+    return out
 
 
 def agent_agreement(

@@ -101,7 +101,7 @@ class CeilingResponse(BaseModel):
     stopped_by: Optional[str] = None
     stopped_at: Optional[str] = None
     stopped_by_label: Optional[str] = None
-    # Workflow id to its own entry: tier, floor, evidence, by, at (#3624),
+    # Workflow id to its own entry: tier, floor, bar (#5276), evidence, by, at (#3624),
     # plus by_label, the principal's name read now (#3642).
     workflows: Dict[str, Dict[str, Any]] = {}
     # Approved outside actions a stop is holding, including after resume.

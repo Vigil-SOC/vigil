@@ -1846,6 +1846,11 @@ export interface paths {
          *     30-day agreement on the workflow beside its floor.
          *     Anything else is ``ai_autonomy.stop``. A workflow a declared INTENT.md
          *     manages is refused (409) anything looser than its declared entry.
+         *
+         *     The bar (#5276) follows the same split: setting or raising it is
+         *     ``ai_autonomy.stop``; lowering or clearing it, clearing the tier under it
+         *     included, is a loosening as a raise is. A bar-only change keeps the rest of
+         *     the entry as it is.
          */
         put: operations["put_api_autonomy_workflows_workflow_id"];
         post?: never;
@@ -19837,6 +19842,8 @@ export interface components {
          *     workflow to Assist. There is no evidence field: the server computes it.
          */
         WorkflowAutonomyBody: {
+            /** Bar */
+            bar?: number | null;
             /** Floor */
             floor?: number | null;
             /** Tier */

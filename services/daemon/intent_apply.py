@@ -174,7 +174,9 @@ def _apply_workflows(wants: Dict[str, Any], revision: str, pending: Set[str]) ->
             if verdict == "same":
                 continue
             if want["tier"] == ASSIST:
-                workflows[wid] = workflow_entry(ASSIST, None, None, ACTOR)
+                # The bar is not declared here: the stored one stays (#5276).
+                bar = (have or {}).get("bar")
+                workflows[wid] = workflow_entry(ASSIST, None, None, ACTOR, bar=bar)
                 done.append(f"{wid}=assist")
             else:  # a higher floor: the record and model it was earned on stay
                 workflows[wid] = {
@@ -442,7 +444,14 @@ def accept_pending(
         def change_flows(current: Ceiling) -> tuple[Ceiling, str]:
             if current.stopped:
                 raise CeilingRefusal(409, "Stopped: resume first")
-            workflows = {**current.workflows, **entries}
+            # The bar is not declared in INTENT.md: each keeps the stored one (#5276).
+            workflows = {
+                **current.workflows,
+                **{
+                    wid: {**e, "bar": (current.workflows.get(wid) or {}).get("bar")}
+                    for wid, e in entries.items()
+                },
+            }
             return (
                 replace(current, workflows=MappingProxyType(workflows)),
                 f"{reason}: {summary(flows)}",

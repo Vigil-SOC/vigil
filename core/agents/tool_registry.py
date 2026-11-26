@@ -576,11 +576,13 @@ def held_close(
     The run is the bound one, never an argument; none (an /mcp caller) or one
     with no workflow (chat) follows the fleet. The case's findings, or for a
     case not yet opened those ``finding_ids`` names, are checked for a declared
-    crown jewel (#5227). A held close of an existing case leaves a "Left open
-    for a person" activity, unless ``left_open`` is False, and writes nothing else.
+    crown jewel (#5227). A close here has no step score, so a workflow with a
+    bar holds it as unknown (#5276), with one trail entry. A held close of an
+    existing case leaves a "Left open for a person" activity, unless
+    ``left_open`` is False, and writes nothing else.
     """
     from core.cases import case_journal_service
-    from core.response.ceiling import close_held, finding_keys
+    from core.response.ceiling import BarHeld, close_held, finding_keys, record_bar_hold
 
     claims = current_claims()
     run_id = claims.run_id if claims else None
@@ -592,6 +594,9 @@ def held_close(
         return None
     message = f"Left open for a person: {held}"
     if case_id and left_open:
+        # Once per hold, where the case says so; not on each retried call.
+        if isinstance(held, BarHeld):
+            record_bar_hold(held, "close", case_id, run_id)
         details = {"reason": held, **({"run_id": run_id} if run_id else {})}
         case_journal_service.append_activity(
             _data(), case_id, "case_left_open", message, details

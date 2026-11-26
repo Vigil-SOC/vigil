@@ -4,6 +4,8 @@ import type { AgreementTally, Ceiling, ModelAgreement, WorkflowAgreement } from 
 export interface WorkflowTier {
   tier: 'act' | 'assist'
   floor: number | null
+  /** 0–1: a dismissal or containment scoring under it, or unscored, waits for a person. Absent or null: no bar. */
+  bar?: number | null
   evidence: {
     agreed: number
     disagreed: number

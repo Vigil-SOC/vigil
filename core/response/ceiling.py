@@ -73,7 +73,7 @@ class Ceiling:
     stopped_by: Optional[str] = None
     stopped_at: Optional[str] = None
     four_eyes: bool = False
-    # workflow id -> {tier, floor, evidence, by, at}. Absent follows the fleet.
+    # workflow id -> {tier, floor, bar, evidence, by, at}. Absent follows the fleet.
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
     # Declared crown jewels are left for a person (#5227). On unless stored off.
     hold_crown_jewels: bool = True
@@ -321,19 +321,85 @@ def finding_keys(
 CLOSE_HELD = "autonomy does not let a model close cases on its own"
 
 
-def close_held(run_id: Optional[str], keys: Values = ()) -> Optional[str]:
+def workflow_bar(stored: Ceiling, workflow_id: Optional[str]) -> Optional[float]:
+    """The workflow's bar (#5276): a step scoring under it waits for a person."""
+    entry = stored.workflows.get(workflow_id) if workflow_id else None
+    bar = (entry or {}).get("bar")
+    if isinstance(bar, (int, float)) and not isinstance(bar, bool) and 0 <= bar <= 1:
+        return float(bar)
+    return None
+
+
+class BarHeld(str):
+    """The reason a step is held by its workflow's bar, carrying what was compared."""
+
+    workflow_id: str
+    bar: float
+    score: Optional[float]
+
+
+def bar_held(
+    stored: Ceiling, workflow_id: Optional[str], score: Optional[float]
+) -> Optional[BarHeld]:
+    """Why a step scoring ``score`` (None: unknown) is held by the bar, or None."""
+    bar = workflow_bar(stored, workflow_id)
+    if bar is None:
+        return None
+    known = isinstance(score, (int, float)) and not isinstance(score, bool)
+    if known and score >= bar:
+        return None
+    said = f"scores {score:.2f}" if known else "has no known score"
+    why = BarHeld(f"the step {said}, under the bar of {bar:.2f} on {workflow_id}")
+    why.workflow_id, why.bar, why.score = workflow_id, bar, score if known else None
+    return why
+
+
+def record_bar_hold(
+    why: BarHeld, step: str, case_id: Optional[str], run_id: Optional[str]
+) -> None:
+    """One trail entry for a step the bar held. Never raises: the hold stands."""
+    from core.audit import trail
+    from core.response.step_confidence import RULE_VERSION
+
+    try:
+        trail.append_or_hold(
+            {
+                trail.ACTION: "autonomy.bar.hold",
+                trail.ACTOR: trail.SYSTEM,
+                trail.OUTCOME: trail.OUTCOME_DONE,
+                "step": step,
+                "case_id": case_id,
+                "run_id": run_id,
+                "workflow_id": why.workflow_id,
+                "score": why.score,
+                "bar": why.bar,
+                "rule_version": RULE_VERSION,
+            },
+            actor_text=trail.SYSTEM,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("bar hold on run %s not recorded", run_id)
+
+
+def close_held(
+    run_id: Optional[str], keys: Values = (), score: Optional[float] = None
+) -> Optional[str]:
     """Why a model's close of a case is held, or None when it may close (#4819).
 
     Closing is a reversible act: it passes only where the run's workflow, or
     with no workflow (chat, an /mcp caller) the fleet, may act on its own, and
     then only when the case's ``keys`` name no declared crown jewel (#5227).
-    A ceiling that can't be read holds the close.
+    Last, a workflow with a bar holds a close whose step ``score`` is under it
+    or unknown (#5276); that reason is a :class:`BarHeld`. With no run there is
+    no workflow and so no bar. A ceiling that can't be read holds the close.
     """
     try:
         stored = read_ceiling()
-        if effective_act(stored, REVERSIBLE, workflow_of(run_id)):
+        workflow_id = workflow_of(run_id)
+        if effective_act(stored, REVERSIBLE, workflow_id):
             # No keys (the production report's status read) never reads the site.
-            return crown_jewel_held(keys, stored) if keys else None
+            jewel = crown_jewel_held(keys, stored) if keys else None
+            return jewel or bar_held(stored, workflow_id, score)
         return CLOSE_HELD
     except Exception as exc:  # noqa: BLE001 — no answer is not permission
         logger.exception("autonomy not read; close for run %s held", run_id)
@@ -700,10 +766,13 @@ def workflow_entry(
     evidence: Optional[dict],
     by: str,
     model: Optional[str] = None,
+    bar: Optional[float] = None,
 ) -> dict[str, Any]:
     entry = {
         "tier": tier,
         "floor": floor,
+        # A step scoring under it waits for a person (#5276). Only clearing the entry drops it.
+        "bar": bar,
         "evidence": evidence,
         "by": by,
         "at": utcnow().isoformat(),
@@ -783,16 +852,30 @@ def _write_locked(
 
 
 def set_workflow_tier(
-    workflow_id: str, entry: Optional[dict], user_id: str, *, raises: bool
+    workflow_id: str,
+    entry: Optional[dict],
+    user_id: str,
+    *,
+    raises: bool,
+    keep_bar: bool = False,
 ) -> Ceiling:
     """Store one workflow's entry; None returns it to the fleet flags.
 
-    A raise is refused if a stop landed since the caller looked.
+    A raise is refused if a stop landed since the caller looked. ``keep_bar``
+    takes the bar from the locked row; a write that would lower it is refused
+    unless the caller was gated as a loosening (``raises``).
     """
 
     def change(current: Ceiling) -> tuple[Ceiling, str]:
+        nonlocal entry
         if raises and current.stopped:
             raise CeilingRefusal(409, "Stopped: resume first")
+        before = workflow_bar(current, workflow_id)
+        if keep_bar and entry is not None:
+            entry = {**entry, "bar": before}
+        after = entry.get("bar") if entry else None
+        if not raises and before is not None and (after is None or after < before):
+            raise CeilingRefusal(409, "The bar changed meanwhile: reload")
         workflows = dict(current.workflows)
         if entry is None:
             workflows.pop(workflow_id, None)
@@ -802,6 +885,35 @@ def set_workflow_tier(
         return updated, f"Autonomy of workflow {workflow_id} set"
 
     return _locked_update(change, user_id)
+
+
+def set_workflow_bar(
+    workflow_id: str, bar: Optional[float], user_id: str, *, lowers: bool
+) -> Ceiling:
+    """Store one workflow's bar alone; its tier, floor, record, by and at stay (#5276).
+
+    Refused when the workflow has no entry, when a lowering meets a stop, and
+    when the bar moved since the caller looked so that this now lowers it.
+    """
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        entry = current.workflows.get(workflow_id)
+        if entry is None:
+            raise CeilingRefusal(
+                409, "The workflow follows the fleet, which has no bar"
+            )
+        before = workflow_bar(current, workflow_id)
+        now_lowers = before is not None and (bar is None or bar < before)
+        if now_lowers and not lowers:
+            raise CeilingRefusal(409, "The bar changed meanwhile: reload")
+        if now_lowers and current.stopped:
+            raise CeilingRefusal(409, "Stopped: resume first")
+        workflows = {**current.workflows, workflow_id: {**entry, "bar": bar}}
+        updated = replace(current, workflows=MappingProxyType(workflows))
+        return updated, f"Bar of workflow {workflow_id} set to {bar}"
+
+    # A higher bar only lowers autonomy: not held by a restore's write pause.
+    return _locked_update(change, user_id, gated=lowers)
 
 
 def drop_below_floor() -> None:
@@ -847,7 +959,9 @@ def drop_below_floor() -> None:
                 sampled = _false_close_above(tally, floor)
                 if not missed and not sampled:
                     continue
-                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM, model)
+                workflows[wid] = workflow_entry(
+                    ASSIST, floor, evidence, _SYSTEM, model, entry.get("bar")
+                )
                 if missed:
                     below.append(wid)
                 if sampled:
@@ -1050,7 +1164,9 @@ def _judge(
                 f"Model changed from {model} to {candidate}: dropped to Assist ({why})"
             )
             out[wid] = {
-                **workflow_entry(ASSIST, floor, evidence, _SYSTEM, candidate),
+                **workflow_entry(
+                    ASSIST, floor, evidence, _SYSTEM, candidate, entry.get("bar")
+                ),
                 "from_model": model,
                 "reason": reason,
             }

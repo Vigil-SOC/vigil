@@ -520,6 +520,8 @@ def _user_payload(user: User, session: Session, sid: Optional[str] = None) -> di
     row = session.get(SignIn, sid) if sid else None
     payload = UserSchema.dump(user)
     payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
+    # The console says before a save what a machine is refused (#5276).
+    payload["service_account"] = getattr(user, "service_account", False) is True
     # The console holds this person at MFA setup until it is done.
     # (Not in dev mode, which has no gate and no user row to set MFA up on.)
     payload["mfa_setup_required"] = not DEV_MODE and bool(

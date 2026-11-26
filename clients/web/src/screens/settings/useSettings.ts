@@ -29,6 +29,7 @@ import api, {
   type PlatformDatabaseProxyConfig,
   type ToolClass,
   type AgentAgreement,
+  type StepScoreTally,
   type WorkflowAgreement,
 } from '../../services/api'
 import type { ApiWorkflow } from '../../data/mappers'
@@ -751,6 +752,8 @@ export interface InvestigateWorkflow {
   id: string
   name: string
   agreement: WorkflowAgreement | undefined
+  /** Its dismissals' step scores and holds over the same 30 days. */
+  steps: StepScoreTally | undefined
 }
 
 /** Investigate-kind workflows, the only ones with their own tier, with their 30-day agreement. */
@@ -762,7 +765,9 @@ export function useInvestigateWorkflows() {
     let cancelled = false
     Promise.all([
       workflowApi.listAll(),
-      analyticsApi.getAgreement('30d').catch((): Pick<AgentAgreement, 'by_workflow'> => ({ by_workflow: [] })),
+      analyticsApi
+        .getAgreement('30d')
+        .catch((): Pick<AgentAgreement, 'by_workflow' | 'step_scores'> => ({ by_workflow: [], step_scores: {} })),
     ])
       .then(([res, agreement]) => {
         if (cancelled) return
@@ -775,6 +780,7 @@ export function useInvestigateWorkflows() {
             id: w.id,
             name: w.name || w.id,
             agreement: agreement.by_workflow.find((row) => row.workflow_id === w.id),
+            steps: agreement.step_scores[w.id],
           })),
         )
         setPhase('ready')

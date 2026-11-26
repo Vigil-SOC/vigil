@@ -728,7 +728,12 @@ async def release_under_ceiling(
 async def _release(action: PendingAction, claims, registry) -> PendingAction:
     from core.auth.principals import SYSTEM_PRINCIPAL_ID
     from core.auth.tool_principal import bound_claims
-    from core.response.ceiling import read_ceiling, unattended_refusal
+    from core.response.ceiling import (
+        bar_held,
+        read_ceiling,
+        unattended_refusal,
+        workflow_of,
+    )
     from core.response.reversals import PersonHold
 
     registry = await live_registry(registry)
@@ -761,6 +766,15 @@ async def _release(action: PendingAction, claims, registry) -> PendingAction:
             logger.info("%s waits for a person: %s", action.action_id, why)
             if isinstance(why, PersonHold):
                 await asyncio.to_thread(_note_held, action, why, claims.run_id)
+            return action
+        # The workflow's bar, after every other reason (#5276). A row filed with
+        # no score (the create_approval_action door) holds as unknown.
+        workflow_id = await asyncio.to_thread(workflow_of, claims.run_id)
+        score = ((action.parameters or {}).get("step_score") or {}).get("value")
+        why = bar_held(ceiling, workflow_id, score)
+        if why:
+            logger.info("%s waits for a person: %s", action.action_id, why)
+            await asyncio.to_thread(_note_bar_hold, action, why, claims.run_id)
             return action
         # Last, so the case names the cap only when nothing else held the act.
         released = await asyncio.to_thread(released_last_hour)
@@ -804,6 +818,21 @@ def _note_held(action: PendingAction, why: str, run_id: str) -> None:
             )
     except Exception:  # noqa: BLE001 — the row waits either way
         logger.exception("hold of %s not noted on its case", action.action_id)
+
+
+def _note_bar_hold(action: PendingAction, why: str, run_id: str) -> None:
+    """One trail entry and a case activity for a row the bar holds (#5276)."""
+    from core.response.approval_service import case_ids_for
+    from core.response.ceiling import record_bar_hold
+    from core.response.step_confidence import CONTAINMENT
+
+    try:
+        case_id = next(iter(case_ids_for(action)), None)
+    except Exception:  # noqa: BLE001 — the row waits either way
+        logger.exception("cases of %s not read", action.action_id)
+        case_id = None
+    record_bar_hold(why, CONTAINMENT, case_id, run_id)
+    _note_held(action, why, run_id)
 
 
 def _note_released(action: PendingAction, run_id: str) -> None:
