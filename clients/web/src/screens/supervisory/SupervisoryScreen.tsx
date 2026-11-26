@@ -121,7 +121,8 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
     try {
       await undo(entry)
     } catch (e) {
-      if (id) startWindow(id)
+      // restart the window only while the card still offers Undo; another undo may have closed it
+      if (id && timers.current.has(id)) startWindow(id)
       throw e
     }
     if (id) {

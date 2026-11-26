@@ -80,18 +80,18 @@ export function SuggestionCard({
   applied: HistoryEntry | null
   onApply: () => Promise<void>
   onUndo: () => Promise<void>
-  onDismiss: (reason: DismissReason) => void
+  onDismiss: (reason: DismissReason) => Promise<void>
   openCase: (id: string) => void
 }) {
   const [dismissing, setDismissing] = useState(false)
-  const [busy, setBusy] = useState<'apply' | 'undo' | null>(null)
-  const [failed, setFailed] = useState<'apply' | 'undo' | null>(null)
-  const run = (what: 'apply' | 'undo', call: () => Promise<void>) => {
+  const [busy, setBusy] = useState<'apply' | 'undo' | 'dismiss' | null>(null)
+  const [failed, setFailed] = useState<'apply' | 'undo' | 'dismiss' | null>(null)
+  const run = (what: 'apply' | 'undo' | 'dismiss', call: () => Promise<void>) => {
     setBusy(what)
     setFailed(null)
     call().then(() => setBusy(null), () => { setBusy(null); setFailed(what) })
   }
-  const applying = busy === 'apply'
+  const applying = busy === 'apply' || busy === 'dismiss'
   const blocked = !s.apply.possible
   return (
     <article className={`spv-card spv-sugg${s.widens_autonomy ? ' widens' : ''}`} aria-label={`${s.verb} ${s.key} ${s.from} to ${s.to}`}>
@@ -126,16 +126,18 @@ export function SuggestionCard({
             <span>Why dismiss it? It uses your answer to stop suggesting things like this.</span>
             <div className="spv-dismiss-row">
               {DISMISS_REASONS.map((r) => (
-                <button key={r} type="button" className="filter-chip" onClick={() => { setDismissing(false); onDismiss(r) }}>{r}</button>
+                <button key={r} type="button" className="filter-chip" onClick={() => { setDismissing(false); run('dismiss', () => onDismiss(r)) }}>{r}</button>
               ))}
               <button type="button" className="spv-cancel" onClick={() => setDismissing(false)}>Cancel</button>
             </div>
           </div>
         ) : applied ? (
           <div className="spv-actions">
-            <button type="button" className="btn ghost" disabled={busy === 'undo'} onClick={() => run('undo', onUndo)}>
-              {busy === 'undo' ? 'Undoing…' : 'Undo'}
-            </button>
+            {applied.undoable !== false && (
+              <button type="button" className="btn ghost" disabled={busy === 'undo'} onClick={() => run('undo', onUndo)}>
+                {busy === 'undo' ? 'Undoing…' : 'Undo'}
+              </button>
+            )}
             <span className="spv-applied" role="status">
               {failed === 'undo'
                 ? <span className="spv-failed">Couldn't undo it; <code>{s.key}</code> is still {applied.to}</span>
@@ -155,7 +157,7 @@ export function SuggestionCard({
                 {applying ? 'Applying…' : applyLabel(s)}
               </button>
             )}
-            <button type="button" className="btn ghost" disabled={applying} onClick={() => setDismissing(true)}>Dismiss…</button>
+            <button type="button" className="btn ghost" disabled={applying} onClick={() => setDismissing(true)}>{busy === 'dismiss' ? 'Dismissing…' : 'Dismiss…'}</button>
             <button
               type="button"
               className={`spv-toggle${expanded ? ' open' : ''}`}
@@ -165,9 +167,11 @@ export function SuggestionCard({
             >
               {expanded ? 'Hide evidence' : 'Show evidence'}<Icon name="chevD" size={13} />
             </button>
-            {canApply && (blocked || failed === 'apply') && (
+            {failed === 'dismiss' ? (
+              <p className="spv-why-not failed">Couldn't dismiss it; try again.</p>
+            ) : canApply && (blocked || failed === 'apply') && (
               <p className={`spv-why-not${failed === 'apply' ? ' failed' : ''}`} id={`spv-why-not-${s.id}`}>
-                {failed === 'apply' ? "Couldn't apply it. Nothing changed; try again." : s.apply.reason}
+                {failed === 'apply' ? "Couldn't apply it. The card shows the setting as it is now." : s.apply.reason}
               </p>
             )}
           </div>

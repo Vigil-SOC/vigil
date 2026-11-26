@@ -32,34 +32,54 @@ export function useSupervisory() {
   const [data, setData] = useState<SupervisoryRead | null>(null)
   const [error, setError] = useState<string | null>(null)
   const gen = useRef(0)
+  // Applied suggestions still in their undo window. The server no longer lists
+  // them as open, so a read that lands meanwhile keeps them until `settle`.
+  const pinned = useRef(new Map<string, Suggestion>())
 
   const load = useCallback(() => {
     const mine = ++gen.current
     setError(null)
     fetchRead().then(
-      (read) => { if (mine === gen.current) setData(read) },
+      (read) => {
+        if (mine !== gen.current) return
+        const kept = [...pinned.current.values()].filter((p) => !read.suggestions.some((x) => x.id === p.id))
+        setData(kept.length ? { ...read, suggestions: [...kept, ...read.suggestions] } : read)
+      },
       (e: unknown) => { if (mine === gen.current) setError(e instanceof Error ? e.message : 'network') },
     )
   }, [])
   useEffect(load, [load])
 
-  /** Moves the suggestion into history with the reason given. A refused dismiss reads the page again, so the card shows as the server has it. */
-  const dismiss = useCallback((id: string, reason: DismissReason) => {
-    postDismiss(id, reason).then(
-      (entry) => setData((cur) => cur && { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id), history: [entry, ...cur.history] }),
-      () => load(),
-    )
+  /** Moves the suggestion into history with the reason given. Throws on failure, after reading the page again so the card shows as the server has it. */
+  const dismiss = useCallback(async (id: string, reason: DismissReason) => {
+    let entry: HistoryEntry
+    try {
+      entry = await postDismiss(id, reason)
+    } catch (e) {
+      load()
+      throw e
+    }
+    setData((cur) => cur && { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id), history: [entry, ...cur.history] })
   }, [load])
 
   /** On success the change heads History with an Undo; the card stays until `settle`. Throws on failure. */
   const apply = useCallback(async (s: Suggestion) => {
-    const entry = await postApply(s)
+    let entry: HistoryEntry
+    try {
+      entry = await postApply(s)
+    } catch (e) {
+      // Whether or not the write landed, the page shows the setting as the server has it.
+      load()
+      throw e
+    }
+    pinned.current.set(s.id, s)
     setData((cur) => cur && withValue({ ...cur, history: [entry, ...cur.history] }, s.key, s.to))
     return entry
-  }, [])
+  }, [load])
 
   /** The applied suggestion leaves the open list, and the page reads the server's values again. */
   const settle = useCallback((id: string) => {
+    pinned.current.delete(id)
     setData((cur) => cur && { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id) })
     load()
   }, [load])
