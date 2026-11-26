@@ -712,7 +712,11 @@ class ModelRegistry:
         finally:
             session.close()
 
-    def resolve_model_for_component(self, component: str) -> Optional[Tuple[str, str]]:
+    def resolve_model_for_component(
+        self,
+        component: str,
+        assignments: Optional[Dict[str, ComponentAssignment]] = None,
+    ) -> Optional[Tuple[str, str]]:
         """Return (provider_id, model_id) using the fallback chain.
 
         Chain:
@@ -724,9 +728,12 @@ class ModelRegistry:
         A custom agent's own model is not an input here. Chat applies that
         string, on the provider this chain already chose, after this returns.
 
+        ``assignments`` stands in for the stored rows (a change not yet saved).
+
         Returns None when no DB is reachable or no provider is active.
         """
-        assignments = self.get_all_assignments()
+        if assignments is None:
+            assignments = self.get_all_assignments()
         if component in assignments:
             a = assignments[component]
             return (a.provider_id, a.model_id)
@@ -748,13 +755,18 @@ class ModelRegistry:
         # Free-form JSON in the row; only a level the agent layer accepts leaves here.
         return effort if effort in ("low", "medium", "high") else None
 
-    def fallback_for_component(self, component: str) -> Optional[str]:
+    def fallback_for_component(
+        self,
+        component: str,
+        assignments: Optional[Dict[str, ComponentAssignment]] = None,
+    ) -> Optional[str]:
         """The fallback model of the row ``resolve_model_for_component`` uses.
 
         A component without its own row inherits ``chat_default``'s, so it
         inherits that row's fallback too.
         """
-        assignments = self.get_all_assignments()
+        if assignments is None:
+            assignments = self.get_all_assignments()
         row = assignments.get(component) or assignments.get("chat_default")
         return blank_model((row.settings or {}).get(FALLBACK_KEY)) if row else None
 

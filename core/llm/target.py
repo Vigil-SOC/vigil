@@ -107,12 +107,12 @@ def note_fallback(component: str, model: str, fallback: str) -> None:
         )
 
 
-def component_fallback(component: str) -> Optional[str]:
+def component_fallback(component: str, assignments=None) -> Optional[str]:
     """The fallback model of the assignment row ``component`` resolves to."""
     from core.llm.providers.registry import get_registry
 
     try:
-        return get_registry().fallback_for_component(component)
+        return get_registry().fallback_for_component(component, assignments)
     except Exception as exc:  # noqa: BLE001
         logger.debug("fallback lookup failed for %s: %s", component, exc)
         return None
@@ -147,13 +147,17 @@ def _catalogue(provider) -> Optional[set]:
         return None
 
 
-def resolve_dispatch(component: str) -> Optional[Tuple["ProviderSpec", str]]:
+def resolve_dispatch(
+    component: str, assignments=None
+) -> Optional[Tuple["ProviderSpec", str]]:
     """The ``(provider, model)`` a component's assignment resolves to, ready to
-    hand to ``LLMRouter.dispatch``. None leaves the caller its own default."""
+    hand to ``LLMRouter.dispatch``. None leaves the caller its own default.
+
+    ``assignments`` stands in for the stored rows, to resolve a change not yet saved."""
     from core.llm.providers.registry import get_registry
 
     try:
-        resolved = get_registry().resolve_model_for_component(component)
+        resolved = get_registry().resolve_model_for_component(component, assignments)
     except Exception as exc:  # noqa: BLE001
         logger.warning("model assignment lookup failed for %s: %s", component, exc)
         return None
@@ -168,17 +172,17 @@ def resolve_dispatch(component: str) -> Optional[Tuple["ProviderSpec", str]]:
         )
         return None
     return provider, model_for(
-        provider, model_id, component_fallback(component), component
+        provider, model_id, component_fallback(component, assignments), component
     )
 
 
-def resolve_component(component: str) -> Optional[Tuple[str, str]]:
+def resolve_component(component: str, assignments=None) -> Optional[Tuple[str, str]]:
     """The ``(provider_type, model)`` a component's assignment resolves to.
 
     ``provider_type`` because the row id means nothing to Bifrost. None leaves
     the caller its own default.
     """
-    resolved = resolve_dispatch(component)
+    resolved = resolve_dispatch(component, assignments)
     if resolved is None:
         return None
     provider, model = resolved
