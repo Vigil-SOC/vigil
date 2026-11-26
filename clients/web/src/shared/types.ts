@@ -36,6 +36,8 @@ export interface ChatSeed {
   caseId?: string
   /** The agent a new conversation runs under, sent on its every turn. */
   agent?: ChatAgent
+  /** One of the reader's own conversations, reopened as from history. */
+  conversationId?: string
 }
 
 /** An agent a conversation runs under: its id, sent as `agent_id`, and the name the dock shows. */
@@ -51,7 +53,7 @@ export interface ConsoleScreenGoOptions {
 
 export interface ConsoleScreenProps {
   /** a prompt is auto-sent on open; an agent opens a new conversation under it */
-  openChat: (prompt?: string, options?: { agent?: ChatAgent }) => void
+  openChat: (prompt?: string, options?: { agent?: ChatAgent; conversationId?: string }) => void
   go: (screen: ConsoleScreenKey, options?: ConsoleScreenGoOptions) => void
   goSettings: (section: SettingsSectionKey) => void
   /** Opens a case in the drawer, over whatever screen is showing. */

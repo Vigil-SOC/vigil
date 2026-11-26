@@ -335,9 +335,30 @@ def ledger_key(session_id: str) -> str:
     with db_manager.session_scope() as session:
         conv = session.get(Conversation, session_id)
         generation = int(conv.generation or 0) if conv is not None else 0
-    if generation > 0:
-        return f"{session_id}:{generation}"
-    return session_id
+    return _life_key(session_id, generation)
+
+
+def _life_key(session_id: str, generation: int) -> str:
+    return f"{session_id}:{generation}" if generation > 0 else session_id
+
+
+def conversations_for_runs(run_ids, user_id: Optional[str]) -> dict:
+    """{run_id: conversation id} over ``user_id``'s own live conversations,
+    matching ``run_id_for(ledger_key(id))``; a run in anyone else's is absent."""
+    from core.llm.chat_layers import run_id_for
+
+    wanted = {r for r in run_ids if r}
+    if not wanted or not user_id:
+        return {}
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(Conversation.id, Conversation.generation).where(
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
+        ).all()
+    found = {run_id_for(_life_key(cid, int(gen or 0))): cid for cid, gen in rows}
+    return {r: found[r] for r in wanted if r in found}
 
 
 def delete(conversation_id: str, user_id: Optional[str]) -> bool:

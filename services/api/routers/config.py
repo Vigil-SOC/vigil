@@ -2057,6 +2057,10 @@ class SiteProposalProvenance(BaseModel):
     arguments: Optional[Any] = None
     person_id: Optional[str] = None
     answer: Optional[str] = None
+    # Resolved on read: the person's username, and the conversation the answer
+    # was given in when the reader owns it.
+    person: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class SiteNotEvaluated(BaseModel):
@@ -2124,11 +2128,18 @@ class SiteContextResponse(BaseModel):
 
 
 @router.get("/site", response_model=SiteContextResponse, dependencies=_PLATFORM_READ)
-def get_site_context() -> Dict[str, Any]:
+def get_site_context(
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
     """The applied site/ revision: state, any refusal with file and line, each
     item with file, line and resolved owner, and the applied files' text; the
     open proposal and the site questions."""
-    return site_view()
+    view = site_view()
+    try:
+        site_proposal.link_answers(view.get("proposal"), current_user.user_id)
+    except Exception as exc:  # noqa: BLE001 - the answers still show, unlinked
+        logger.error("site proposal answers not linked: %s", type(exc).__name__)
+    return view
 
 
 @router.get(
