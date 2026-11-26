@@ -1442,8 +1442,8 @@ def close_case(
         # After the arguments are checked, before anything is written. A
         # re-close of a closed case is held too, with no "left open" activity.
         stored = get_data_service().get_case(case_id) or {}
-        open_id = None if stored.get("status") == "closed" else case_id
-        if (held := tool_registry.held_close(open_id)) is not None:
+        left_open = stored.get("status") != "closed"
+        if (held := tool_registry.held_close(case_id, left_open=left_open)) is not None:
             return jdump(held)
 
         with service_session() as session:
@@ -1700,6 +1700,26 @@ def get_autonomy_ceiling() -> str:
         return jdump({"error": "Could not read the autonomy ceiling"})
 
 
+@tool("Model change preview", reads=True)
+@requires("ai_autonomy.read")
+def preview_model_change(component: str, provider_id: str, model_id: str) -> str:
+    """Preview a model assignment, as GET /api/autonomy/model-change does: the
+    investigation model before and after setting ``component`` to
+    ``provider_id``/``model_id``, and per Act workflow whether it would keep
+    Act (on its live record or replay) or drop to Assist, with the reason.
+    Read only; it saves nothing."""
+    from core.response.ceiling import ModelJudgeError
+    from core.response.ceiling import preview_model_change as preview
+
+    try:
+        return jdump(preview(component, provider_id, model_id))
+    except (ValueError, ModelJudgeError) as e:
+        return jdump({"error": str(e)})
+    except Exception as e:
+        logger.error("preview_model_change failed: %s", e)
+        return jdump({"error": "Could not preview the model change"})
+
+
 @tool("Declared intent report", reads=True)
 @requires("ai_autonomy.read")
 def get_intent_report() -> str:
@@ -1723,8 +1743,9 @@ def get_site_context() -> str:
     """Read the declared site (site/*.md beside INTENT.md), as GET
     /api/config/site does: the applied revision, its state (ok, rejected,
     degraded or none), any refusal with file and line, each zone, crown jewel,
-    owner and blind spot with its selectors, file, line and resolved owner, and
-    the applied files' text. Read only; a change is a commit."""
+    owner and blind spot with its selectors, file, line and resolved owner, the
+    applied files' text, and the latest Day 1 Report's site checks and item
+    states. Read only; a change is a commit."""
     from core.site import site_view
 
     try:
@@ -2138,12 +2159,15 @@ async def start_run(
     hypothesis_subjects: Optional[dict[str, list[str]]] = None,
     restricted: bool = False,
     approve_hypotheses: bool = False,
+    zone: Optional[str] = None,
 ) -> str:
     """Start a workflow or operator agent (``agent-run-<id>``) on a case. With
     ``restricted``, the case must be a restricted one, or omit ``case_id`` to open
     a new case only you can read. ``hypothesis_subjects`` maps each hypothesis
     line to the Entity Keys it is about; ``approve_hypotheses`` holds a hunt for
-    a person to approve its board. A ``propose_lead_hunt`` proposal passes as-is.
+    a person to approve its board. ``zone`` starts a hunt on a zone the applied
+    site declares (``get_site_context``), its selectors as the scope; an unknown
+    zone, or no site declared, is refused. A ``propose_lead_hunt`` proposal passes as-is.
     Returns ``run_id``, ``case_id`` and ``status``; re-read the run with
     ``get_run``."""
     from core.agents.tool_registry import _restricter
@@ -2184,6 +2208,7 @@ async def start_run(
                     origin="person",
                     ttl=tool_principal.RUN_TTL,
                 ),
+                zone=zone,
             )
 
         try:

@@ -59,6 +59,19 @@ npx tsx eval/run.ts --engine ../..                        --label kernel   --mod
 npx tsx eval/score.ts eval/results/baseline.jsonl eval/results/kernel.jsonl --md eval/results/report.md
 ```
 
+### At other limits
+
+The budgets in `investigate.config.yaml` are the ones every run uses unless a flag
+replaces them. To run the cases at the limits a supervisory suggestion proposes,
+pass any of `--max-calls` (Vigil's iterations per agent), `--max-cost-usd` (cost
+per investigation) and `--max-wall-seconds` (runtime per investigation). Every
+result line records the budgets it ran under.
+
+```sh
+npx tsx eval/run.ts --engine ../.. --label cost-now  --model anthropic/claude-haiku-5.5 --max-cost-usd 5
+npx tsx eval/run.ts --engine ../.. --label cost-next --model anthropic/claude-haiku-5.5 --max-cost-usd 7.5
+```
+
 - `--only id,id` reruns a few cases; the scorer keeps the last line per case.
 - `--grader-model` grades with a different model than the one under test.
 - `--concurrency n` (default 2) runs cases in parallel.

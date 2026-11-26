@@ -31,6 +31,7 @@ from core.llm.providers.registry import (
 )
 from core.llm.target import blank_model
 from core.reporting.investigation_replay import begin, drive, read
+from core.response.ceiling import investigation_model, judge_after_commit
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.config_service import write_config_audit
 from core.storage.models import AIModelConfig, LLMProviderConfig, User
@@ -159,6 +160,21 @@ def _audit(
     )
 
 
+# The rows the investigation model resolves through (it inherits chat_default).
+_INVESTIGATION_ROWS = ("investigation", "chat_default")
+
+
+def _judge_on_commit(db: Any, component: str) -> None:
+    """After the write commits, judge Act workflows if the investigation model
+    moved. Captures the model in force now; never fails the write."""
+    if component not in _INVESTIGATION_ROWS:
+        return
+    try:
+        judge_after_commit(db, investigation_model())
+    except Exception:  # noqa: BLE001
+        logger.exception("model change judgement not scheduled for %s", component)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — config CRUD
 # ---------------------------------------------------------------------------
@@ -207,6 +223,7 @@ def set_component_assignment(
             detail=f"provider {payload.provider_id} is not active",
         )
 
+    _judge_on_commit(db, component)
     actor = str(current_user.user_id)
     row = db.get(AIModelConfig, component)
     before = _pair(row)
@@ -254,6 +271,7 @@ def clear_component_assignment(
     row = db.get(AIModelConfig, component)
     if row is None:
         return {"component": component, "cleared": False}
+    _judge_on_commit(db, component)
     _audit(db, component, "delete", _pair(row), None, str(current_user.user_id))
     db.delete(row)
     return {"component": component, "cleared": True}
@@ -274,6 +292,22 @@ class FalseCloseRow(BaseModel):
     closure_category: str
     disposition: str
     evidence_opened: Optional[bool] = None
+
+
+class WorkflowReplayTally(BaseModel):
+    total: int
+    replayed: int
+    skipped: int
+    false_closes: int
+    false_close_rate: Optional[float] = None
+    false_close_wilson_low: Optional[float] = None
+    false_close_wilson_high: Optional[float] = None
+    agreed: int
+    disagreed: int
+    abstained: int
+    agreement_rate: Optional[float] = None
+    agreement_wilson_low: Optional[float] = None
+    agreement_wilson_high: Optional[float] = None
 
 
 class InvestigationReplayResponse(BaseModel):
@@ -298,6 +332,7 @@ class InvestigationReplayResponse(BaseModel):
     agreement_wilson_high: Optional[float] = None
     cost_usd: float
     false_close: List[FalseCloseRow]
+    by_workflow: Dict[str, WorkflowReplayTally] = {}
 
 
 @router.post(

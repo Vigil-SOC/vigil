@@ -353,7 +353,15 @@ Four lists, each item by **Selector**: zones, crown jewels with the mission they
 serve, owners naming a Vigil team, and **Site Blind Spots**. The daemon applies
 each revision on its own verdict (`site.applied`), refuses a broken one whole
 with file and line and keeps the last good one. It ranks and informs; it never
-closes, permits or acts. One module holds it: `core/site.py`.
+closes, permits or acts. A crown jewel is held for a person (`crown_jewel_held`
+in `core/response/ceiling.py`, `hold_crown_jewels` on the ceiling, on by
+default): no model closes a case whose findings name it, and a run no person
+started may not add an exception, dismiss a finding or make a reversible or
+irreversible outside call naming it. Limits: a vendor device id is not read; a
+crown jewel declared only by name does not match a range, so declare its
+addresses too; a case whose findings name no crown jewel is not held; an
+exception keyed on no host, address or account is not read. One module holds
+the site: `core/site.py`.
 _Avoid_: inventory, asset list, CMDB (Vigil keeps no list of hosts)
 
 **Selector**:
@@ -362,7 +370,7 @@ matches `ip:` keys, or an **Entity Key** of a kind in `ENTITY_KEY_TYPES`,
 normalised as `normalise_key` mints it, where `*` in the value matches any run
 of characters. No other wildcard, no regex, and no group, tag or cloud
 selectors: a revision's validity never depends on a source being connected.
-Matched only in Python, by `core.site.match`.
+Matched only in Python, by `core.site.match` and `core.site.crown_jewel`.
 _Avoid_: filter, query, pattern
 
 **Site Blind Spot**:

@@ -26,7 +26,7 @@ export function httpFacts(base: Memory, options: RecallOptions): Memory {
 
   return {
     ...base,
-    facts: async ({ keys, caseId, signal }) => {
+    facts: async ({ keys, caseId, signal, declaredOnly }) => {
       // Known-to-be-none without asking, as Recall does on no keys.
       if (keys.length === 0) return { keys: [], case_id: caseId, facts: [], sources_unavailable: {}, dropped_keys: 0 };
 
@@ -40,7 +40,11 @@ export function httpFacts(base: Memory, options: RecallOptions): Memory {
             headers: { "content-type": "application/json", authorization: `Bearer ${options.token}`, ...traceHeaders() },
             body: JSON.stringify({
               tool: FACTS_TOOL,
-              args: { entity_keys: [...keys], ...(caseId === null ? {} : { case_id: caseId }) },
+              args: {
+                entity_keys: [...keys],
+                ...(caseId === null ? {} : { case_id: caseId }),
+                ...(declaredOnly === true ? { declared_only: true } : {}),
+              },
               // One row: the answer is one mapping (see core/recall.ts).
               bounds: { max_rows: 1, timeout_ms: timeoutMs },
               ...(options.principal === undefined ? {} : { principal: options.principal }),

@@ -307,29 +307,36 @@ def parse_site(files: Sequence[Tuple[str, str]]) -> Dict[str, List[Dict[str, Any
 # --- The applied row ---------------------------------------------------------
 
 _APPLIED_TTL_SECONDS = 10.0
-_applied_cache: Tuple[float, Dict[str, Any]] = (float("-inf"), {})
+# (read at, value, whether any read in this process has succeeded)
+_applied_cache: Tuple[float, Dict[str, Any], bool] = (float("-inf"), {}, False)
 
 
-def applied_site(*, fresh: bool = False) -> Dict[str, Any]:
+class SiteUnreadable(Exception):
+    """``site.applied`` could not be read and no earlier read is kept."""
+
+
+def applied_site(*, fresh: bool = False, strict: bool = False) -> Dict[str, Any]:
     """The ``site.applied`` row through a short cache; ``{}`` when absent.
 
     Every process re-reads it at most every 10 s, so an applied revision
     reaches each backend replica without a restart. A failed read keeps the
-    last value read.
+    last value read. ``strict`` raises :class:`SiteUnreadable` when no read has
+    succeeded yet, so a hold can tell "unread" from "no row".
     """
     global _applied_cache
     now = time.monotonic()
-    at, value = _applied_cache
-    if not fresh and now - at < _APPLIED_TTL_SECONDS:
-        return value
-    try:
-        from core.storage.config_service import get_config_service
+    at, value, ok = _applied_cache
+    if fresh or now - at >= _APPLIED_TTL_SECONDS:
+        try:
+            from core.storage.config_service import get_config_service
 
-        row = get_config_service().read_system_config(SITE_APPLIED_KEY)
-        value = row if isinstance(row, dict) else {}
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("site.applied not read; keeping last: %s", exc)
-    _applied_cache = (now, value)
+            row = get_config_service().read_system_config(SITE_APPLIED_KEY)
+            value, ok = (row if isinstance(row, dict) else {}), True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("site.applied not read; keeping last: %s", exc)
+        _applied_cache = (now, value, ok)
+    if strict and not ok:
+        raise SiteUnreadable("site.applied could not be read")
     return value
 
 
@@ -379,6 +386,61 @@ def match(
     return found
 
 
+# --- Crown jewels a value names (#5227) --------------------------------------
+
+
+def _value_keys(value: str) -> Tuple[List[str], Optional[str]]:
+    """The Entity Keys a bare value is tried as, and its ``cidr:`` form if a range."""
+    value = value.strip()
+    if not value:
+        return [], None
+    kind = value.partition(":")[0].lower()
+    keys = [normalise_key(value)] if kind in ENTITY_KEY_TYPES else []
+    keys += [normalise_key(f"host:{value}"), normalise_key(f"user:{value}")]
+    try:
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return keys, None
+    if net.num_addresses == 1:
+        return keys + [normalise_key(f"ip:{net.network_address}")], None
+    return keys, f"cidr:{net}"
+
+
+def crown_jewel(
+    values: Iterable[str],
+    row: Optional[Dict[str, Any]] = None,
+    *,
+    exact: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """The first declared crown jewel one of ``values`` names, with its revision.
+
+    A value is an Entity Key or a bare string, tried as a host, a user and,
+    when it parses, an address; a range names a crown jewel whose ``ip:`` or
+    ``cidr:`` selector it overlaps. ``exact`` skips selectors holding ``*``,
+    so a name chosen to fit a pattern does not count (outside calls).
+    """
+    row = applied_site() if row is None else row
+    if not declared(row):
+        return None
+    jewels = (row.get("items") or {}).get("crown_jewels") or []
+    for value in dict.fromkeys(str(v) for v in values if isinstance(v, str)):
+        keys, cidr = _value_keys(value)
+        for jewel in jewels:
+            selectors = [
+                s for s in jewel.get("selectors") or [] if not (exact and "*" in s)
+            ]
+            if any(selector_matches(s, k) for s in selectors for k in keys if k) or (
+                cidr
+                and any(
+                    selectors_overlap(s, cidr)
+                    for s in selectors
+                    if s.startswith(("cidr:", "ip:"))
+                )
+            ):
+                return {**jewel, "value": value, "revision": row.get("revision")}
+    return None
+
+
 # --- Owners, resolved when read ----------------------------------------------
 
 
@@ -405,14 +467,26 @@ def resolve_owner(
     return {**owner, "unassigned": f"no team named {owner.get('team')}"}
 
 
-def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def site_view(
+    row: Optional[Dict[str, Any]] = None, *, report: bool = True
+) -> Dict[str, Any]:
     """``GET /api/config/site`` and the /mcp ``get_site_context`` tool.
 
     Owners resolve now, against active teams ignoring case, so a team created
     after the commit names its items with no new commit. Each zone and crown
-    jewel lists the owners whose selectors overlap its own.
+    jewel lists the owners whose selectors overlap its own. ``report`` adds the
+    latest Day 1 Report's site checks and evidence; both callers already
+    require platform.read, the module's permission.
     """
     row = applied_site(fresh=True) if row is None else row
+    latest = None
+    if report:
+        try:
+            from core.reporting.site_report import latest as latest_report
+
+            latest = latest_report()
+        except Exception as exc:  # noqa: BLE001 - the site still reads
+            logger.error("site report not read: %s", type(exc).__name__)
     base = {
         "directory": row.get("directory"),
         "declared": declared(row),
@@ -423,6 +497,7 @@ def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "applied_at": row.get("applied_at"),
         "rejected": row.get("rejected"),
         "files": row.get("files") or [],
+        "report": latest,
     }
     items = row.get("items") or {}
     if not base["directory"]:
@@ -452,4 +527,54 @@ def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "crown_jewels": [owned(j) for j in items.get("crown_jewels") or []],
         "owners": owners,
         "blind_spots": list(items.get("blind_spots") or []),
+    }
+
+
+# --- Zone hunts (#5212) ------------------------------------------------------
+
+
+def resolve_zone(name: str, row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The zone a hunt starts on, as its job request carries it.
+
+    Name, selectors, file, line and revision, and the blind spots a selector of
+    which overlaps one of the zone's (``selectors_overlap``). ``ValueError`` names
+    why it is refused: no site declared, or no zone by that name.
+    """
+    row = applied_site(fresh=True) if row is None else row
+    if not declared(row):
+        raise ValueError(
+            f"zone {name!r}: no site is declared, so there is no zone to hunt on"
+        )
+    items = row.get("items") or {}
+    zone = next((z for z in items.get("zones") or [] if z.get("name") == name), None)
+    if zone is None:
+        known = ", ".join(z["name"] for z in items.get("zones") or []) or "none"
+        raise ValueError(
+            f"zone {name!r} is not declared in revision {row.get('revision')} "
+            f"(declared: {known})"
+        )
+    selectors = list(zone.get("selectors") or [])
+    revision = row.get("revision")
+    blind = [
+        {
+            "what": spot.get("what"),
+            "selectors": spot.get("selectors") or [],
+            "file": spot.get("file"),
+            "line": spot.get("line"),
+            "revision": revision,
+        }
+        for spot in items.get("blind_spots") or []
+        if any(
+            selectors_overlap(a, b)
+            for a in selectors
+            for b in spot.get("selectors") or []
+        )
+    ]
+    return {
+        "name": zone["name"],
+        "selectors": selectors,
+        "file": zone.get("file"),
+        "line": zone.get("line"),
+        "revision": revision,
+        "blind_spots": blind,
     }

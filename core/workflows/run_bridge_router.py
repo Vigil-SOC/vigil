@@ -849,7 +849,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
     from core.cases.closure import DISMISSAL_CAUSES, ClosureCategory
-    from core.response.ceiling import close_held
+    from core.response.ceiling import close_held, finding_keys
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
@@ -861,7 +861,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     if _already_closed(case_id):
         return
     # Closing is a reversible act; under Assist a person decides.
-    if held := close_held(run_id):
+    if held := close_held(run_id, lambda: finding_keys(case_id=case_id)):
         _add_activity(
             case_id,
             "agent_run_left_open",

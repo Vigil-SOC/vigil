@@ -385,3 +385,7 @@ class InvestigationReplay(Base):
     agreement_wilson_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
     false_close: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Per-workflow counts and rates keyed by workflow id (#5223).
+    by_workflow: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )

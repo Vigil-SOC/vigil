@@ -43,13 +43,13 @@ _ROW_ID = 1
 # every platform.read holder sees, so a restricted case is never replayed.
 _CASES = text("""
     SELECT ci.case_id, ci.closure_category, ci.close_channel, ci.evidence_opened,
-           picked.run_id
+           picked.run_id, picked.workflow_id
     FROM case_closure_info ci
     JOIN cases c ON c.case_id = ci.case_id AND c.status = 'closed'
          AND coalesce(cardinality(c.reader_principal_ids), 0) = 0
          AND coalesce(cardinality(c.reader_team_ids), 0) = 0
     JOIN LATERAL (
-        SELECT r.run_id
+        SELECT r.run_id, r.workflow_id
         FROM workflow_runs r
         JOIN agent_events e
           ON e.run_id = CAST(substring(r.run_id FROM
@@ -73,6 +73,7 @@ _CASES = text("""
 class Selected:
     case_id: str
     run_id: str
+    workflow_id: str
     closure_category: str
     says_real: bool
     evidence_opened: Optional[bool]
@@ -89,6 +90,15 @@ class Tally:
     abstained: int = 0
     cost_usd: float = 0.0
     false_close: list = field(default_factory=list)
+    # Same counts per workflow id; their cost and false_close lists go unused.
+    by_workflow: dict[str, "Tally"] = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, cases: list["Selected"]) -> "Tally":
+        tally = cls(total=len(cases))
+        for case in cases:
+            tally.by_workflow.setdefault(case.workflow_id, cls(total=0)).total += 1
+        return tally
 
 
 def _provider(db: Session, provider_id: str) -> LLMProviderConfig:
@@ -137,6 +147,7 @@ def select_cases(db: Session, now: datetime) -> list[Selected]:
             Selected(
                 case_id=row.case_id,
                 run_id=str(row.run_id),
+                workflow_id=row.workflow_id,
                 closure_category=row.closure_category,
                 says_real=says_real,
                 evidence_opened=row.evidence_opened,
@@ -178,6 +189,17 @@ def _rates(tally: Tally) -> dict[str, Any]:
         "agreement_wilson_high": agree_high,
         "cost_usd": round(tally.cost_usd, 6),
         "false_close": list(tally.false_close),
+        "by_workflow": {
+            workflow_id: {
+                "total": part.total,
+                **{
+                    k: v
+                    for k, v in _rates(part).items()
+                    if k not in ("cost_usd", "false_close", "by_workflow")
+                },
+            }
+            for workflow_id, part in sorted(tally.by_workflow.items())
+        },
     }
 
 
@@ -204,6 +226,7 @@ def payload_of(row: InvestigationReplay) -> dict[str, Any]:
         "agreement_wilson_high": row.agreement_wilson_high,
         "cost_usd": row.cost_usd,
         "false_close": row.false_close or [],
+        "by_workflow": row.by_workflow or {},
     }
 
 
@@ -234,7 +257,7 @@ def begin(
             raise HTTPException(status_code=409, detail="a replay is already running")
         _fail_stale(row, now)
     cases = select_cases(db, now)
-    tally = Tally(total=len(cases))
+    tally = Tally.of(cases)
     if row is None:
         row = InvestigationReplay(
             id=_ROW_ID,
@@ -254,6 +277,7 @@ def begin(
             abstained=0,
             cost_usd=0,
             false_close=[],
+            by_workflow=_rates(tally)["by_workflow"],
         )
         db.add(row)
     else:
@@ -293,6 +317,11 @@ def read(db: Session) -> dict[str, Any]:
 
 
 def _note(tally: Tally, case: Selected, body: dict[str, Any]) -> None:
+    _count(tally, case, body)
+    _count(tally.by_workflow[case.workflow_id], case, body)
+
+
+def _count(tally: Tally, case: Selected, body: dict[str, Any]) -> None:
     if "skipped" in body:
         tally.skipped += 1
         return
@@ -364,7 +393,7 @@ async def drive(
     started_at: datetime,
 ) -> None:
     """Run the cases at concurrency 2 and fold each one into the row."""
-    tally = Tally(total=len(cases))
+    tally = Tally.of(cases)
     gate = asyncio.Semaphore(CONCURRENCY)
     lock = asyncio.Lock()
     stopped = False

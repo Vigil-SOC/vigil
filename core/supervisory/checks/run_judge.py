@@ -43,13 +43,11 @@ record, playbook loader and answer tools, and a hunt's own tools (the hunt
 plugin's HUNT_TOOLS and ``expand``). root_cause and compose have none beyond the
 playbook loader.
 
-A run's model is the one its spend events on the agent ledger record. For
-investigate and hunt, only the run's own agent counts (role ``agent``; the
-reviewer's and critic's calls are not the run's answer). root_cause spends under
-the name of each move and compose under each phase, so every role counts for
-them except ``reader``, the guard that reads tool output, and a spend with no
-role counts for none. A run that used more than one model, or recorded none, is
-counted under no model, and the card says how many such runs it left out.
+A run's model is read by :mod:`core.supervisory.run_model`, the rule agent
+agreement reads too. root_cause spends under the name of each move and compose
+under each phase, so every role but the reader counts for them. A run that used
+more than one model, or recorded none, is counted under no model, and the card
+says how many such runs it left out.
 
 Models are compared only within one run kind. Triage records no model per
 finding and there is no response model setting, so neither is judged.
@@ -70,26 +68,17 @@ from fractions import Fraction
 from functools import cache
 from typing import Any
 
-from sqlalchemy import (
-    Integer,
-    String,
-    and_,
-    case,
-    cast,
-    column,
-    exists,
-    func,
-    or_,
-    select,
-    table,
-)
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import String, and_, case, column, exists, func, or_, select, table
 
 from core.storage.models import Finding
 from core.storage.models.base import case_findings
 from core.storage.models.workflow import Investigation, WorkflowRun
 from core.storage.unit_of_work import unit_of_work
 from core.supervisory.feedback import _NOT_REAL_DATA, _naive
+from core.supervisory.run_model import AGENT_ONLY as _AGENT_ONLY
+from core.supervisory.run_model import attributed
+from core.supervisory.run_model import events as _events
+from core.supervisory.run_model import ledger_of, run_model
 
 WINDOW_DAYS = 30
 FLOOR = 20
@@ -126,10 +115,6 @@ _ANSWERED = {
     "root_cause": ("completed",),
     "compose": ("completed",),
 }
-# Kinds whose answer is one agent's: other roles on their ledger are reviewers.
-_AGENT_ONLY = ("investigate", "hunt")
-# The guard that reads tool output for the model; its spend is not the answer.
-_SIDE_ROLES = ("reader",)
 # A root-cause trace's own fixed searches, journaled as calls.
 _ENGINE_ROLE = "code"
 # A run's own tools. The kernel's: the hypothesis record, the playbook loader,
@@ -159,15 +144,7 @@ _ACTING = ("reversible", "irreversible")
 # park for up to 30 days, be extended and park again, with its start time set
 # once. So runs are read by when they ended, and the start time bounds them only
 # from above.
-_UUID = "^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$"
 
-_events = table(
-    "agent_events",
-    column("run_id", UUID(as_uuid=False)),
-    column("seq", Integer),
-    column("kind", String),
-    column("payload", JSONB),
-)
 _tool_classes = table(
     "tool_effect_classes", column("tool_name", String), column("effect_class", String)
 )
@@ -191,7 +168,7 @@ def rates(now: datetime | None = None, days: int = WINDOW_DAYS) -> dict[str, Any
     kinds: dict[str, dict[str, dict[str, int]]] = {k: {} for k in KINDS}
     unattributed = {k: 0 for k in KINDS}
     for kind, model, n_models, n, *flagged in rows:
-        if n_models != 1 or model is None:
+        if attributed(model, n_models) is None:
             unattributed[kind] += n
             continue
         counts = dict(zip(FLAGS, flagged))
@@ -228,13 +205,7 @@ def _vigil_writes() -> list[str]:
 def _judged_runs(start: datetime, end: datetime, writes: list[str]):
     """One row per judged run: its kind, model, how many models, and its flags."""
     kind = WorkflowRun.trigger_context["run_kind"].astext
-    ledger = case(
-        (
-            WorkflowRun.run_id.op("~*")(_UUID),
-            cast(WorkflowRun.run_id, UUID(as_uuid=False)),
-        ),
-        else_=None,
-    )
+    ledger = ledger_of(WorkflowRun.run_id)
 
     def models_call(e):
         """A call the model chose: the run's own agent's for investigate and hunt,
@@ -249,20 +220,7 @@ def _judged_runs(start: datetime, end: datetime, writes: list[str]):
         e = _events.alias(alias)
         return e, and_(e.c.run_id == ledger, e.c.kind == event_kind)
 
-    spend, own_spend = events("judge_spend", "spend")
-    role = spend.c.payload["role"].astext
-    its_spend = and_(
-        own_spend,
-        case(
-            (kind.in_(_AGENT_ONLY), role == "agent"),
-            else_=role.is_distinct_from(None) & role.notin_(_SIDE_ROLES),
-        ),
-    )
-    model_of = spend.c.payload["model_id"].astext
-    models = (
-        select(func.count(func.distinct(model_of))).where(its_spend).scalar_subquery()
-    )
-    model = select(func.min(model_of)).where(its_spend).scalar_subquery()
+    model, models = run_model(kind, ledger)
 
     failed, own_failed = events("judge_failed", "call")
     later, own_later = events("judge_later", "call")

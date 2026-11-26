@@ -38,7 +38,13 @@ from core.response.config import (
 )
 from core.storage import config_service as config_store
 from core.storage.connection import get_db_session
-from core.storage.models import SystemConfig, ToolEffectClass, WorkflowRun
+from core.storage.models import (
+    Finding,
+    SystemConfig,
+    ToolEffectClass,
+    WorkflowRun,
+    case_findings,
+)
 from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
@@ -67,6 +73,8 @@ class Ceiling:
     four_eyes: bool = False
     # workflow id -> {tier, floor, evidence, by, at}. Absent follows the fleet.
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
+    # Declared crown jewels are left for a person (#5227). On unless stored off.
+    hold_crown_jewels: bool = True
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,11 @@ class CeilingWriteError(Exception):
 
 def _flag(value: Any) -> bool:
     return value if isinstance(value, bool) else False
+
+
+def _on(value: Any) -> bool:
+    """A missing or non-boolean value reads on: the reverse of ``_flag``."""
+    return value if isinstance(value, bool) else True
 
 
 def _text(value: Any) -> Optional[str]:
@@ -151,6 +164,7 @@ def _parse(value: Any) -> Ceiling:
         stopped_at=_text(value.get("stopped_at")),
         four_eyes=_flag(value.get("four_eyes")),
         workflows=_workflow_entries(value.get("workflows")),
+        hold_crown_jewels=_on(value.get("hold_crown_jewels")),
     )
 
 
@@ -236,19 +250,77 @@ def _workflow_held(run_id: Optional[str]) -> tuple[Optional[str], bool]:
         return None, False
 
 
+Values = Iterable[str] | Callable[[], Iterable[str]]
+
+
+def crown_jewel_held(
+    values: Values, stored: Ceiling, *, exact: bool = False
+) -> Optional[str]:
+    """Why an act naming a declared crown jewel is left for a person, or None (#5227).
+
+    ``values`` are Entity Keys or argument values, or a callable read only once
+    a site is declared. None while the hold is off or no site is declared. A
+    site that has never been read, or values that can't be read, hold the act.
+    """
+    if not stored.hold_crown_jewels:
+        return None
+    from core import site
+
+    try:
+        row = site.applied_site(strict=True)
+        if not site.declared(row):
+            return None
+        jewel = site.crown_jewel(
+            values() if callable(values) else values, row, exact=exact
+        )
+    except Exception as exc:  # noqa: BLE001 — no answer is not permission
+        logger.error("crown jewels not checked; act held: %s", exc)
+        return f"declared crown jewels could not be checked ({type(exc).__name__})"
+    if jewel is None:
+        return None
+    return (
+        f"{jewel['name']} is a declared crown jewel "
+        f"({jewel.get('file')}:{jewel.get('line')}, revision {jewel.get('revision')})"
+    )
+
+
+def finding_keys(
+    *, case_id: Optional[str] = None, finding_ids: Iterable[str] = ()
+) -> list[str]:
+    """The Entity Keys of a case's findings, or of the findings ``finding_ids`` name."""
+    from core.memory.entity_keys import finding_entity_keys
+
+    query = select(Finding.entity_context)
+    if case_id:
+        query = query.join(
+            case_findings, case_findings.c.finding_id == Finding.finding_id
+        ).where(case_findings.c.case_id == case_id)
+    else:
+        ids = [str(i) for i in finding_ids if i]
+        if not ids:
+            return []
+        query = query.where(Finding.finding_id.in_(ids))
+    with unit_of_work() as session:
+        contexts = session.execute(query).scalars().all()
+    return finding_entity_keys([{"entity_context": c} for c in contexts])
+
+
 CLOSE_HELD = "autonomy does not let a model close cases on its own"
 
 
-def close_held(run_id: Optional[str]) -> Optional[str]:
+def close_held(run_id: Optional[str], keys: Values = ()) -> Optional[str]:
     """Why a model's close of a case is held, or None when it may close (#4819).
 
     Closing is a reversible act: it passes only where the run's workflow, or
-    with no workflow (chat, an /mcp caller) the fleet, may act on its own.
+    with no workflow (chat, an /mcp caller) the fleet, may act on its own, and
+    then only when the case's ``keys`` name no declared crown jewel (#5227).
     A ceiling that can't be read holds the close.
     """
     try:
-        if effective_act(read_ceiling(), REVERSIBLE, workflow_of(run_id)):
-            return None
+        stored = read_ceiling()
+        if effective_act(stored, REVERSIBLE, workflow_of(run_id)):
+            # No keys (the production report's status read) never reads the site.
+            return crown_jewel_held(keys, stored) if keys else None
         return CLOSE_HELD
     except Exception as exc:  # noqa: BLE001 — no answer is not permission
         logger.exception("autonomy not read; close for run %s held", run_id)
@@ -336,6 +408,7 @@ def _dump(ceiling: Ceiling) -> dict[str, Any]:
         "stopped_at": ceiling.stopped_at,
         "four_eyes": ceiling.four_eyes,
         "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
+        "hold_crown_jewels": ceiling.hold_crown_jewels,
     }
 
 
@@ -522,7 +595,8 @@ def _false_close_above(tally: dict, floor: int) -> bool:
 
 
 def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
-    """Each workflow's 30-day agreement tally, and the window's end."""
+    """Each workflow's 30-day agreement tally, with its ``by_model`` split, and
+    the window's end."""
     from core.reporting.analytics_service import agent_agreement
 
     end = utcnow()
@@ -531,23 +605,56 @@ def agreement_by_workflow(session) -> tuple[dict[str, dict], str]:
     return tallies, end.isoformat()
 
 
-def workflow_evidence(workflow_id: str) -> dict[str, Any]:
-    """The workflow's 30-day agreement, computed here and never taken from a client."""
+def model_tally(tally: Optional[dict], model: Optional[str]) -> Optional[dict]:
+    """The workflow's tally under ``model``; the blended one when no model is named.
+
+    None when the model has no record on the workflow."""
+    if not model:
+        return tally
+    return next(
+        (m for m in (tally or {}).get("by_model", ()) if m.get("model") == model),
+        None,
+    )
+
+
+def investigation_model() -> Optional[str]:
+    """The model an investigation is handed now, or None when it cannot be resolved."""
+    from core.llm import target
+
+    try:
+        resolved = target.resolve_component("investigation")
+    except Exception:  # noqa: BLE001 - unresolved is judged on the blended tally
+        logger.exception("investigation model not resolved")
+        return None
+    return resolved[1] if resolved else None
+
+
+def workflow_evidence(workflow_id: str, model: Optional[str] = None) -> dict[str, Any]:
+    """The workflow's 30-day agreement under ``model`` (blended when None),
+    computed here and never taken from a client."""
     with unit_of_work() as session:
         tallies, window_end = agreement_by_workflow(session)
-    return _evidence(tallies.get(workflow_id), window_end)
+    return _evidence(model_tally(tallies.get(workflow_id), model), window_end)
 
 
 def workflow_entry(
-    tier: str, floor: Optional[int], evidence: Optional[dict], by: str
+    tier: str,
+    floor: Optional[int],
+    evidence: Optional[dict],
+    by: str,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
-    return {
+    entry = {
         "tier": tier,
         "floor": floor,
         "evidence": evidence,
         "by": by,
         "at": utcnow().isoformat(),
     }
+    # The model the tier was earned (or lost) on; absent when it was not resolved.
+    if model:
+        entry["model"] = model
+    return entry
 
 
 def _locked_update(
@@ -643,14 +750,27 @@ def set_workflow_tier(
 def drop_below_floor() -> None:
     """Drop Act workflows that missed a floor or whose false-close interval is too high.
 
+    Each entry is judged on the record of the model it names. An Act entry that
+    names none (written before #5222) is stamped with the investigation model in
+    force and judged on that model's record; when that cannot be resolved it
+    stays unstamped and is judged on the workflow's blended tally.
+
     Written as the system, under the row lock, so a concurrent edit is not
     lost. Never raises. A person's raise is still ``put_workflow_autonomy``.
     """
     try:
         with unit_of_work() as session:
             tallies, window_end = agreement_by_workflow(session)
+        # Resolved only when an Act entry still lacks a model, and outside the lock.
+        read = try_read_stored_ceiling()
+        unstamped = read is None or any(
+            e.get("tier") == ACT and not e.get("model")
+            for e in read[0].workflows.values()
+        )
+        in_force = investigation_model() if unstamped else None
         below: list[str] = []
         false_close: list[str] = []
+        stamped: list[str] = []
 
         def change(current: Ceiling) -> tuple[Ceiling, str]:
             workflows = dict(current.workflows)
@@ -658,14 +778,19 @@ def drop_below_floor() -> None:
                 floor = entry.get("floor")
                 if entry.get("tier") != ACT or not isinstance(floor, int):
                     continue
-                tally = tallies.get(wid) or {}
+                model = entry.get("model")
+                if not model and in_force:
+                    model = in_force
+                    workflows[wid] = {**entry, "model": model}
+                    stamped.append(wid)
+                tally = model_tally(tallies.get(wid), model) or {}
                 evidence = _evidence(tally, window_end)
                 rate = evidence["agreement_rate"]
                 missed = rate is not None and rate < floor / 100
                 sampled = _false_close_above(tally, floor)
                 if not missed and not sampled:
                     continue
-                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM)
+                workflows[wid] = workflow_entry(ASSIST, floor, evidence, _SYSTEM, model)
                 if missed:
                     below.append(wid)
                 if sampled:
@@ -679,6 +804,10 @@ def drop_below_floor() -> None:
                 parts.append(
                     "False-close interval above the complement of the floor: "
                     + ", ".join(sorted(false_close))
+                )
+            if stamped:
+                parts.append(
+                    "Model stamped on Act workflows: " + ", ".join(sorted(stamped))
                 )
             reason = "; ".join(parts) if parts else "Agreement fell below the floor"
             return replace(current, workflows=MappingProxyType(workflows)), reason
@@ -714,6 +843,340 @@ def drop_after_commit(session) -> None:
     if not event.contains(session, "after_commit", _after_commit):
         event.listen(session, "after_commit", _after_commit)
         event.listen(session, "after_rollback", _after_rollback)
+
+
+class ModelJudgeError(Exception):
+    """A model change could not be judged. A run handed that model does not start."""
+
+
+_SCORED = 20  # the sample the false-close rule and the run judge use
+
+
+def _latest_replay(session) -> Optional[dict]:
+    """The stored replay when it succeeded within the agreement window, else None."""
+    from core.storage.models import InvestigationReplay
+
+    row = session.get(InvestigationReplay, 1)
+    if row is None or row.status != "succeeded":
+        return None
+    if row.started_at < utcnow() - AGREEMENT_WINDOW:
+        return None
+    return {
+        "model": row.model_id,
+        "started_at": row.started_at.isoformat(),
+        "by_workflow": row.by_workflow or {},
+    }
+
+
+def _short(tally: Optional[dict], floor: int) -> Optional[str]:
+    """Why ``tally`` does not hold Act at ``floor``; None when it does."""
+    if not tally:
+        return "no record"
+    scored = (tally.get("agreed") or 0) + (tally.get("disagreed") or 0)
+    rate = tally.get("agreement_rate")
+    if scored < _SCORED:
+        return f"{scored} scored closes, under {_SCORED}"
+    if not isinstance(rate, (int, float)) or rate < floor / 100:
+        return f"agreement {rate} below the floor {floor}%"
+    if _false_close_above(tally, floor):
+        return "false-close interval above the complement of the floor"
+    return None
+
+
+def _verdict(
+    wid: str,
+    floor: Any,
+    candidate: str,
+    tallies: dict,
+    replay: Optional[dict],
+    window_end: str,
+) -> tuple[bool, dict, str]:
+    """``(keeps, evidence, why)``: the candidate's live record, else its latest replay."""
+    live = model_tally(tallies.get(wid), candidate)
+    live_ev = {**_evidence(live, window_end), "source": "live"}
+    if not isinstance(floor, int):
+        return False, live_ev, "no floor"
+    why_live = _short(live, floor)
+    if why_live is None:
+        return True, live_ev, "live record"
+    part = (replay or {}).get("by_workflow", {}).get(wid)
+    if replay is None or replay["model"] != candidate:
+        why_replay = "no replay in the window"
+    elif not part:
+        why_replay = "replay holds no closes of this workflow"
+    else:
+        # Replayed stands for answered, as _false_close_above reads the live sample.
+        tally = {
+            "agreed": part.get("agreed"),
+            "disagreed": part.get("disagreed"),
+            "agreement_rate": part.get("agreement_rate"),
+            "false_close_rate": part.get("false_close_rate"),
+            "answered": part.get("replayed"),
+            "draws": part.get("total"),
+            "wilson_low": part.get("false_close_wilson_low"),
+            "wilson_high": part.get("false_close_wilson_high"),
+        }
+        why_replay = _short(tally, floor)
+        if why_replay is None:
+            ev = {
+                **_evidence(tally, replay["started_at"]),
+                "source": "replay",
+                "replay_started_at": replay["started_at"],
+            }
+            return True, ev, "replay"
+    return False, live_ev, f"live: {why_live}; replay: {why_replay}"
+
+
+def _judge(
+    workflows: Mapping[str, dict],
+    candidate: Optional[str],
+    stamp: Optional[str],
+    only: Optional[str],
+    tallies: Optional[dict],
+    replay: Optional[dict],
+    window_end: Optional[str],
+) -> tuple[dict[str, dict], list[dict], str]:
+    """The entries after judging, one result per Act workflow, and the audit reason.
+
+    An unstamped Act entry takes ``stamp`` first. Never raises a workflow.
+    """
+    out = dict(workflows)
+    results: list[dict] = []
+    for wid, entry in workflows.items():
+        if (only is not None and wid != only) or entry.get("tier") != ACT:
+            continue
+        model = entry.get("model")
+        result = {"workflow_id": wid, "from_model": model, "to_model": candidate}
+        if not model:
+            if not stamp:
+                results.append(
+                    {
+                        **result,
+                        "outcome": "unstamped",
+                        "reason": "Names no model and none to stamp",
+                    }
+                )
+                continue
+            model = stamp
+            out[wid] = {**entry, "model": model}
+            result.update(
+                from_model=model, outcome="stamped", reason=f"Stamped with {model}"
+            )
+            if model == candidate:
+                results.append(result)
+                continue
+        if model == candidate:
+            results.append(
+                {**result, "outcome": "unchanged", "reason": "Model unchanged"}
+            )
+            continue
+        if candidate is None:
+            raise ModelJudgeError(
+                f"{wid} is on Act under {model} and the investigation model was not resolved"
+            )
+        if tallies is None:
+            raise ModelJudgeError("the agreement record was not read")
+        floor = entry.get("floor")
+        keeps, evidence, why = _verdict(
+            wid, floor, candidate, tallies, replay, window_end
+        )
+        if keeps:
+            reason = f"Model changed from {model} to {candidate}: kept Act on {candidate}'s {why}"
+            out[wid] = {
+                **out[wid],
+                "model": candidate,
+                "evidence": evidence,
+                "reason": reason,
+            }
+        else:
+            reason = (
+                f"Model changed from {model} to {candidate}: dropped to Assist ({why})"
+            )
+            out[wid] = {
+                **workflow_entry(ASSIST, floor, evidence, _SYSTEM, candidate),
+                "from_model": model,
+                "reason": reason,
+            }
+        results.append(
+            {
+                **result,
+                "from_model": model,
+                "outcome": "keep" if keeps else "drop",
+                "source": evidence["source"] if keeps else None,
+                "reason": reason,
+                "evidence": evidence,
+            }
+        )
+    audit = "; ".join(
+        f"{r['workflow_id']}: {r['reason']}"
+        for r in results
+        if r["outcome"] != "unchanged"
+    )
+    return out, results, audit or "Model change judged"
+
+
+def judge_model_change(
+    candidate: Optional[str],
+    *,
+    stamp: Optional[str] = None,
+    only: Optional[str] = None,
+    write: bool = False,
+) -> list[dict]:
+    """Judge each Act workflow (or ``only`` that one) whose model is not ``candidate``.
+
+    It keeps Act where the candidate's live record, or its latest replay, for
+    that workflow holds the floor on at least 20 scored closes, and otherwise
+    drops to Assist by the system with a reason naming both models. An Act entry
+    with no model takes ``stamp`` first. ``write=False`` is the preview: the same
+    judgement, nothing stored. Raises ModelJudgeError when it cannot be made.
+    """
+    read = try_read_stored_ceiling()
+    if read is None:
+        raise ModelJudgeError("Could not read the autonomy ceiling")
+
+    def judged(current: Ceiling) -> list[tuple[str, dict]]:
+        return [
+            (wid, e)
+            for wid, e in current.workflows.items()
+            if (only is None or wid == only)
+            and e.get("tier") == ACT
+            and (e.get("model") or stamp) != candidate
+            and (e.get("model") or stamp)
+        ]
+
+    pending = judged(read[0])
+    tallies = replay = window_end = None
+    if pending:
+        if candidate is None:
+            raise ModelJudgeError(
+                "The investigation model was not resolved, and Act workflows name "
+                + ", ".join(sorted({e.get("model") or stamp for _, e in pending}))
+            )
+        try:
+            with unit_of_work() as session:
+                tallies, window_end = agreement_by_workflow(session)
+                replay = _latest_replay(session)
+        except Exception as exc:  # noqa: BLE001
+            raise ModelJudgeError("Could not read the agreement record") from exc
+    workflows, results, _ = _judge(
+        read[0].workflows, candidate, stamp, only, tallies, replay, window_end
+    )
+    if not write or workflows == dict(read[0].workflows):
+        return results
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        # Judged again on the locked row, so a concurrent edit is not lost.
+        workflows, fresh, reason = _judge(
+            current.workflows, candidate, stamp, only, tallies, replay, window_end
+        )
+        results[:] = fresh
+        return replace(current, workflows=MappingProxyType(workflows)), reason
+
+    try:
+        # Only lowers or restamps: not held by a restore's write pause.
+        _locked_update(change, _SYSTEM, gated=False)
+    except CeilingWriteError as exc:
+        raise ModelJudgeError("The judgement was not stored") from exc
+    dropped = [r["workflow_id"] for r in results if r["outcome"] == "drop"]
+    if dropped:
+        logger.warning(
+            "model change dropped workflows to Assist: %s", ", ".join(dropped)
+        )
+    return results
+
+
+def preview_model_change(component: str, provider_id: str, model_id: str) -> dict:
+    """What saving ``component`` as ``provider_id``/``model_id`` would do to Act
+    workflows: the investigation model before and after, and each Act workflow's
+    outcome. Read only, through the judgement the save runs.
+
+    ValueError when the save itself would be refused (unknown component, or a
+    provider that is missing or inactive); ModelJudgeError when it cannot be judged.
+    """
+    from core.llm import target
+    from core.llm.providers.registry import (
+        FALLBACK_KEY,
+        ComponentAssignment,
+        get_registry,
+        is_valid_component,
+    )
+    from core.llm.target import blank_model
+    from core.storage.models import LLMProviderConfig
+
+    if not is_valid_component(component):
+        raise ValueError(f"unknown component: {component}")
+    with unit_of_work() as session:
+        provider = session.get(LLMProviderConfig, provider_id)
+        if provider is None or not provider.is_active:
+            raise ValueError(f"provider {provider_id} is missing or not active")
+
+    assignments = dict(get_registry().get_all_assignments())
+    stored = assignments.get(component)
+    settings: dict = {}
+    # The save keeps a stored fallback on the same provider, unless it is the model.
+    fallback = (
+        blank_model((stored.settings or {}).get(FALLBACK_KEY)) if stored else None
+    )
+    if (
+        stored
+        and stored.provider_id == provider_id
+        and fallback
+        and fallback != model_id
+    ):
+        settings[FALLBACK_KEY] = fallback
+    assignments[component] = ComponentAssignment(
+        component, provider_id, model_id, settings
+    )
+    before = investigation_model()
+    after = target.resolve_component("investigation", assignments)
+    candidate = after[1] if after else None
+    moves = _moves(before, candidate)
+    return {
+        "component": component,
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "investigation_model_before": before,
+        "investigation_model_after": candidate,
+        "moves": moves,
+        # The save judges only a move; anything else is left to the handoff.
+        "workflows": judge_model_change(candidate, stamp=before) if moves else [],
+    }
+
+
+def _moves(before: Optional[str], after: Optional[str]) -> bool:
+    """Whether an assignment write moved the investigation model to one it can judge."""
+    return after is not None and after != before
+
+
+_JUDGE_PENDING = "autonomy.model_judge_pending"
+
+
+def _judge_after_commit(session) -> None:
+    if session.in_nested_transaction() or _JUDGE_PENDING not in session.info:
+        return
+    before = session.info.pop(_JUDGE_PENDING)
+    try:
+        after = investigation_model()
+        if not _moves(before, after):
+            return
+        judge_model_change(after, stamp=before, write=True)
+    except Exception:  # noqa: BLE001 - the assignment saved; the handoff judges again
+        logger.exception("model change not judged after an assignment write")
+
+
+def _judge_after_rollback(session) -> None:
+    if not session.in_nested_transaction():
+        session.info.pop(_JUDGE_PENDING, None)
+
+
+def judge_after_commit(session, before: Optional[str]) -> None:
+    """Judge Act workflows once ``session`` commits, if the investigation model
+    moved from ``before``. The registry reads through its own session, so it
+    only sees the new row after the commit."""
+    session.info.setdefault(_JUDGE_PENDING, before)
+    if not event.contains(session, "after_commit", _judge_after_commit):
+        event.listen(session, "after_commit", _judge_after_commit)
+        event.listen(session, "after_rollback", _judge_after_rollback)
 
 
 # Effect classes, loosest first (#3304). A name with no row is unclassified.
@@ -829,6 +1292,36 @@ def _own_reversible(tool: str, args: Optional[Mapping[str, Any]]) -> Optional[st
     return None
 
 
+def _exception_values(tool: str, args: Optional[Mapping[str, Any]]) -> list:
+    """Each ``match`` value of the exceptions a call adds; removals are not read."""
+    args = args or {}
+    if tool == "detection_rule_exception":
+        adds = [args] if args.get("action") == "add" else []
+    else:
+        per_copy = args.get("exceptions")
+        per_copy = per_copy.values() if isinstance(per_copy, Mapping) else []
+        adds = [e for items in per_copy if isinstance(items, list) for e in items]
+    return [
+        value
+        for add in adds
+        if isinstance(add, Mapping) and isinstance(add.get("match"), Mapping)
+        for value in add["match"].values()
+        if isinstance(value, str)
+    ]
+
+
+def _string_values(value: Any) -> Iterable[str]:
+    """Every string value in nested dicts and lists; keys are not read."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _string_values(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _string_values(item)
+
+
 def unattended_refusal(
     tool: str,
     *,
@@ -842,7 +1335,9 @@ def unattended_refusal(
     changes a record; those run unless stopped, except a rule exception, which
     needs the effective act a reversible call does (#3949). An outside call runs
     only under the effective act its class needs, for the run's own workflow
-    (#3624). A ceiling that cannot be read grants nothing.
+    (#3624). A ceiling that cannot be read grants nothing. Where the act would
+    pass, an exception add or outside call naming a declared crown jewel is
+    refused, and a dismissal of a crown jewel's finding always is (#5227).
     """
     classes = tool_classes([tool])
     own = tool not in classes
@@ -855,12 +1350,20 @@ def unattended_refusal(
     if stored.stopped:
         return STOPPED
     if own:
+        # No ceiling gates a dismissal; a crown jewel's still waits for a person.
+        if tool == "dismiss_finding" and (
+            jewel := crown_jewel_held(
+                lambda: finding_keys(finding_ids=[(args or {}).get("finding_id")]),
+                stored,
+            )
+        ):
+            return jewel
         refusal = _own_reversible(tool, args)
         if refusal is None:
             return None
         workflow, read = _workflow_held(run_id)
         if read and effective_act(stored, REVERSIBLE, workflow):
-            return None
+            return crown_jewel_held(lambda: _exception_values(tool, args), stored)
         return refusal if read else "the run's workflow could not be read"
     effect = classes[tool]
     if effect in (REVERSIBLE, IRREVERSIBLE):
@@ -868,7 +1371,8 @@ def unattended_refusal(
         if not read:
             return "the run's workflow could not be read"
         if effective_act(stored, effect, workflow):
-            return None
+            # Exact selectors only: a name fitted to a pattern can't shield a host.
+            return crown_jewel_held(lambda: _string_values(args), stored, exact=True)
     return (
         f"{tool} is {effect or 'unclassified'} and the autonomy ceiling "
         "does not let a run no person started take it"

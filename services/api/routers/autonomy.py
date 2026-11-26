@@ -26,7 +26,10 @@ from core.response.ceiling import (
     ASSIST,
     CeilingRefusal,
     CeilingWriteError,
+    ModelJudgeError,
+    investigation_model,
     own_tool_names,
+    preview_model_change,
     raises_workflow,
     read_ceiling,
     set_workflow_tier,
@@ -75,7 +78,8 @@ def put_workflow_autonomy(
     Act is always a raise: it holds after the fleet is lowered. Anything else that
     lets the workflow act where it could not, such as clearing Assist under a fleet
     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
-    while stopped, and stores the workflow's 30-day agreement beside its floor.
+    while stopped, and stores the investigation model in force and that model's
+    30-day agreement on the workflow beside its floor.
     Anything else is ``ai_autonomy.stop``.
     """
     workflow = workflows.get_workflow(workflow_id)
@@ -116,7 +120,12 @@ def put_workflow_autonomy(
                 raise HTTPException(
                     status_code=422, detail="A raise needs a floor from 1 to 100"
                 )
-            entry = workflow_entry(ACT, body.floor, workflow_evidence(workflow_id), by)
+            # Act names the model it is raised on, and stores that model's record
+            # (blended, with no model, when the model cannot be resolved).
+            model = investigation_model()
+            entry = workflow_entry(
+                ACT, body.floor, workflow_evidence(workflow_id, model), by, model
+            )
         elif body.tier == ASSIST:
             entry = workflow_entry(ASSIST, None, None, by)
         else:
@@ -135,6 +144,48 @@ def put_workflow_autonomy(
         raise HTTPException(
             status_code=503, detail="Could not read the autonomy ceiling"
         ) from exc
+
+
+class ModelChangeOutcome(BaseModel):
+    """One Act workflow under the change. ``outcome``: keep, drop, stamped,
+    unchanged or unstamped; ``source`` is live or replay on a keep."""
+
+    workflow_id: str
+    outcome: str
+    from_model: Optional[str] = None
+    to_model: Optional[str] = None
+    source: Optional[str] = None
+    reason: str
+    evidence: Optional[Dict[str, object]] = None
+
+
+class ModelChangePreview(BaseModel):
+    component: str
+    provider_id: str
+    model_id: str
+    investigation_model_before: Optional[str] = None
+    investigation_model_after: Optional[str] = None
+    # Whether the investigation model would move at all.
+    moves: bool
+    workflows: List[ModelChangeOutcome]
+
+
+@router.get("/model-change", dependencies=_READ, response_model=ModelChangePreview)
+def preview_model_change_route(
+    component: str, provider_id: str, model_id: str
+) -> ModelChangePreview:
+    """Which Act workflows would keep Act and which would drop to Assist if
+    ``component`` were set to ``provider_id``/``model_id``. Computed by the
+    judgement the save runs; writes nothing. Also the /mcp tool
+    ``preview_model_change``."""
+    try:
+        return ModelChangePreview(
+            **preview_model_change(component, provider_id, model_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except ModelJudgeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
 class RolloutLimitsBody(BaseModel):
