@@ -106,6 +106,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
     })
   }
   const startWindow = (id: string) => {
+    window.clearTimeout(timers.current.get(id))
     timers.current.set(id, window.setTimeout(() => { endWindow(id); settle(id) }, UNDO_WINDOW_MS))
   }
   const applyIt = async (s: Suggestion) => {

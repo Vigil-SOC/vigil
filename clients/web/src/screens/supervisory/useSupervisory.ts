@@ -42,8 +42,17 @@ export function useSupervisory() {
     fetchRead().then(
       (read) => {
         if (mine !== gen.current) return
-        const kept = [...pinned.current.values()].filter((p) => !read.suggestions.some((x) => x.id === p.id))
-        setData(kept.length ? { ...read, suggestions: [...kept, ...read.suggestions] } : read)
+        setData((cur) => {
+          const kept = [...pinned.current.values()].filter((p) => !read.suggestions.some((x) => x.id === p.id))
+          if (!kept.length) return read
+          // each kept card goes back where it was, so the list does not jump
+          const suggestions = [...read.suggestions]
+          for (const p of kept) {
+            const at = cur?.suggestions.findIndex((x) => x.id === p.id) ?? -1
+            suggestions.splice(at < 0 ? 0 : Math.min(at, suggestions.length), 0, p)
+          }
+          return { ...read, suggestions }
+        })
       },
       (e: unknown) => { if (mine === gen.current) setError(e instanceof Error ? e.message : 'network') },
     )
