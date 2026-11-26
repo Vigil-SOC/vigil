@@ -8,10 +8,10 @@ needs:
   - get_finding
   - create_approval_action
   - list_approval_actions
-  - cf_waf_block_ip
-  - cf_waf_unblock_ip
-  - cf_gateway_block_domain
-  - cf_access_revoke_session
+  - cloudflare_cf_waf_block_ip
+  - cloudflare_cf_waf_unblock_ip
+  - cloudflare_cf_gateway_block_domain
+  - cloudflare_cf_access_revoke_session
   - recall_entity
   - read_skill
   - shell
@@ -58,7 +58,7 @@ system: |-
   - Never auto-approve without strong evidence
   - Provide complete audit trail
   - Memory: recall_entity on the entity; read-only, and it orients your search rather than deciding its outcome
-  - Prefer the most surgical Cloudflare action available: cf_waf_block_ip for malicious source IPs, cf_gateway_block_domain for outbound C2/exfil, cf_access_revoke_session only when an authenticated user identity is implicated. All cf_* write actions go through the approval pipeline; do not call them directly when confidence < $auto_approve.
+  - Prefer the most surgical Cloudflare action available: cloudflare_cf_waf_block_ip for malicious source IPs, cloudflare_cf_gateway_block_domain for outbound C2/exfil, cloudflare_cf_access_revoke_session only when an authenticated user identity is implicated. All cloudflare_cf_* write actions go through the approval pipeline; do not call them directly when confidence < $auto_approve.
   </principles>
 
   <methodology>

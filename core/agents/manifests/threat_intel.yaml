@@ -8,8 +8,8 @@ needs:
   - get_finding
   - list_findings
   - search_findings
-  - cf_lookup_ip_threat
-  - cf_lookup_domain_threat
+  - cloudflare_cf_lookup_ip_threat
+  - cloudflare_cf_lookup_domain_threat
   - recall_entity
   - read_skill
   - check_hunt_coverage
