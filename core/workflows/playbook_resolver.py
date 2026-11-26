@@ -90,6 +90,11 @@ INVESTIGATE_CAPABILITIES = (
     "telemetry_search",
     "findings_search",
     "indicator_lookup",
+    # OpenCTI's graph, held when it is connected (OPTIONAL_CAPABILITIES).
+    "intel_observable",
+    "intel_indicator",
+    "intel_entities",
+    "intel_relationships",
 )
 
 
@@ -192,8 +197,8 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
     "detection_coverage": (Candidate(None, ("analyze_coverage",)),),
     # A threat-intel platform's own graph, one tool each: an observable's indicators,
     # one indicator, named actors and malware, and what an entity links to. OpenCTI is
-    # opt-in, so a hunt holds these when it is connected and misses nothing when not
-    # (OPTIONAL_HUNT_CAPABILITIES).
+    # opt-in, so a hunt or investigation holds these when it is connected and misses
+    # nothing when not (OPTIONAL_CAPABILITIES).
     "intel_observable": (Candidate("opencti", ("opencti_search_observable",)),),
     "intel_indicator": (Candidate("opencti", ("opencti_get_indicator",)),),
     "intel_entities": (Candidate("opencti", ("opencti_search_entities",)),),
@@ -302,11 +307,7 @@ def _bound_capabilities(
             )
         if not found:
             # An opt-in integration that is not connected is the expected case.
-            (
-                logger.debug
-                if capability in OPTIONAL_HUNT_CAPABILITIES
-                else logger.warning
-            )(
+            (logger.debug if capability in OPTIONAL_CAPABILITIES else logger.warning)(
                 "no tool in this deployment provides %s; roles needing it lose it",
                 capability,
             )
@@ -686,11 +687,11 @@ HUNT_CAPABILITIES = (
     "identity_lookup",
 )
 
-# Needs a hunt holds when the deployment answers them and goes without otherwise,
-# with no blind spot journalled: an opt-in integration that is not connected, or a
-# coverage read, says nothing about this estate's visibility. Mirrors `optional`
-# in the hunt plugin.yaml.
-OPTIONAL_HUNT_CAPABILITIES = (
+# Needs a run of any kind holds when the deployment answers them and goes without
+# otherwise, with no blind spot journalled: an opt-in integration that is not
+# connected, or a coverage read, says nothing about this estate's visibility.
+# Mirrors `optional` in the hunt and investigate plugin.yaml.
+OPTIONAL_CAPABILITIES = (
     "detection_coverage",
     "intel_observable",
     "intel_indicator",
@@ -756,8 +757,8 @@ def capability_report(
     missing = [name for name in needs if name not in bound]
     return {
         "bound": [name for name in needs if name in bound],
-        "unbound": [n for n in missing if n not in OPTIONAL_HUNT_CAPABILITIES],
-        "absent": [n for n in missing if n in OPTIONAL_HUNT_CAPABILITIES],
+        "unbound": [n for n in missing if n not in OPTIONAL_CAPABILITIES],
+        "absent": [n for n in missing if n in OPTIONAL_CAPABILITIES],
     }
 
 

@@ -18,7 +18,13 @@ min_results: 4
 finish_with: tool
 
 # Bound to this deployment's tools by their `provides` field, as an arch role's are.
-needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+# The intel_* needs are OpenCTI's graph: observables, indicators, named entities and
+# their relationships. Mirrors INVESTIGATE_CAPABILITIES in core/workflows/playbook_resolver.py.
+needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup,
+        intel_observable, intel_indicator, intel_entities, intel_relationships]
+# Held when OpenCTI is connected; when not, the run goes without and records no gap.
+# Mirrors OPTIONAL_CAPABILITIES.
+optional: [intel_observable, intel_indicator, intel_entities, intel_relationships]
 
 system: |
   You are the analyst on a single open case. You work it yourself, end to end:
@@ -160,7 +166,10 @@ guard:
   guarded: [benign, false_positive]
   fallback: needs_review
   min_sources: 2
-  uncounted: [shell, get_finding, entity_recall]
+  # OpenCTI is uncounted too: its four capabilities could otherwise supply both
+  # sources alone, and anyone who can publish to a feed can shape what it says.
+  uncounted: [shell, get_finding, entity_recall, intel_observable, intel_indicator,
+              intel_entities, intel_relationships]
   reviewer_prompt: |
     The agent wants to close this case as benign or a false positive. Closing a
     real attack this way is the costly mistake. Holding a well-grounded benign
@@ -244,4 +253,5 @@ escalation_guard:
 # The lead's grants, as the spec builder and the Python preflight read them.
 roles:
   lead:
-    needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup]
+    needs: [shell, entity_recall, get_finding, telemetry_search, findings_search, indicator_lookup,
+            intel_observable, intel_indicator, intel_entities, intel_relationships]
