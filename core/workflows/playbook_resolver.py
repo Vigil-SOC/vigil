@@ -210,6 +210,24 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("azure-ad", ("aad_get_user",)),
         Candidate("okta", ("get_okta_user", "list_okta_users")),
     ),
+    # A sandbox's prior analysis of a hash, and its report, from whichever sandbox is
+    # connected. Split by question: one tool binds per server per capability. Reads
+    # only -- no submit tool is a candidate.
+    "sandbox_hash_lookup": (
+        Candidate("cape-sandbox", ("cape_search_hash",)),
+        Candidate("hybrid-analysis", ("ha_search_hash",)),
+        Candidate("anyrun", ("anyrun_search_hash",)),
+    ),
+    "sandbox_report": (
+        Candidate("cape-sandbox", ("cape_get_report",)),
+        Candidate("hybrid-analysis", ("ha_get_report",)),
+        Candidate("anyrun", ("anyrun_get_report",)),
+    ),
+    # A topology integration's graph, and the console view it drives: one tool each,
+    # since the two view tools cannot share one capability.
+    "topology_graph": (Candidate("vstrike", ("vstrike_network_graph_get",)),),
+    "topology_focus": (Candidate("vstrike", ("vstrike_ui_rightpanel_focus",)),),
+    "topology_legend": (Candidate("vstrike", ("vstrike_ui_legend_apply",)),),
     # Every outside tool the stored emulation record marks, read when resolve
     # runs (_candidates): no tool is named here, so a person's mark is the binding.
     EMULATION: (),
@@ -267,6 +285,14 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     },
     # One account from an external API; the row cap allows a short user search.
     "identity_lookup": {"timeout_ms": 30_000, "max_rows": 20},
+    # A sandbox API read of one hash or one report; the row cap is the bounds
+    # model's shape.
+    "sandbox_hash_lookup": {"timeout_ms": 60_000, "max_rows": 50},
+    "sandbox_report": {"timeout_ms": 60_000, "max_rows": 200},
+    # A topology read, and a console nudge that answers with an acknowledgement.
+    "topology_graph": {"timeout_ms": 60_000, "max_rows": 200},
+    "topology_focus": {"timeout_ms": 30_000, "max_rows": 20},
+    "topology_legend": {"timeout_ms": 30_000, "max_rows": 20},
     # An emulator runs one technique on one host; a runner's own limit is 180s.
     # Its answer is a step or a few; the row cap is the bounds model's shape.
     EMULATION: {"timeout_ms": 240_000, "max_rows": 200},
@@ -418,7 +444,8 @@ def _instructions_of(phase: Dict[str, Any]) -> str:
 
 # Every phase holds its agent's needs as this deployment binds them; without a
 # catalogue (a preflight read) the needs themselves. A need that binds nothing is
-# returned beside them, so the run journals a blind spot rather than a log line.
+# returned beside them, so the run journals a blind spot rather than a log line; an
+# optional capability nothing answers is an opt-in not connected, and records none.
 def _phase_tools(
     profile: Any, catalogue: Optional[Dict[str, Dict[str, Any]]]
 ) -> Tuple[List[str], List[Dict[str, str]]]:
@@ -429,7 +456,7 @@ def _phase_tools(
     unavailable: List[Dict[str, str]] = []
     for need in needs:
         bound = [t["id"] for t in _bound_capabilities([need], catalogue)]
-        if not bound:
+        if not bound and NEED_ALIASES.get(need, need) not in OPTIONAL_CAPABILITIES:
             unavailable.append(
                 {"tool": need, "reason": f"no tool in this deployment answers {need}"}
             )
@@ -700,6 +727,12 @@ OPTIONAL_CAPABILITIES = (
     # No identity provider is no blind spot on the estate: the account's existence
     # goes to open questions instead (the insider-threat skill).
     "identity_lookup",
+    # Sandboxes and a topology integration are opt-in.
+    "sandbox_hash_lookup",
+    "sandbox_report",
+    "topology_graph",
+    "topology_focus",
+    "topology_legend",
 )
 
 # A hunt is bounded by iterations rather than phases. Separate ceilings: max_calls

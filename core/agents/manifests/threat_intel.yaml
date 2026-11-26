@@ -8,8 +8,7 @@ needs:
   - get_finding
   - list_findings
   - search_findings
-  - cf_lookup_ip_threat
-  - cf_lookup_domain_threat
+  - indicator_lookup
   - recall_entity
   - read_skill
   - check_hunt_coverage
