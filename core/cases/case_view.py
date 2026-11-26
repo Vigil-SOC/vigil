@@ -287,9 +287,7 @@ def _tar(files: Dict[str, str]) -> bytes:
     return buffer.getvalue()
 
 
-_renders: "OrderedDict[Tuple[str, str, str], Tuple[float, Any, bytes]]" = (
-    OrderedDict()
-)
+_renders: "OrderedDict[Tuple[str, str, str], Tuple[float, Any, bytes]]" = OrderedDict()
 
 # Everything the tar renders from the database, as of now: a held render is
 # served only while this is unchanged (#5243). Counts catch a removed row a
