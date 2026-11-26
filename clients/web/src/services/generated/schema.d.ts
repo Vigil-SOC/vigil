@@ -1631,8 +1631,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-         *     four-eyes, is ``ai_autonomy.write``.
+         *     Only lowering act flags, or turning the crown-jewel hold on, is
+         *     ``ai_autonomy.stop``. Raising a flag, changing four-eyes, or turning the
+         *     hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_autonomy"];
         post?: never;
@@ -9270,8 +9271,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags is ``ai_autonomy.stop``. Raising one, or changing
-         *     four-eyes, is ``ai_autonomy.write``.
+         *     Only lowering act flags, or turning the crown-jewel hold on, is
+         *     ``ai_autonomy.stop``. Raising a flag, changing four-eyes, or turning the
+         *     hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_v1_autonomy"];
         post?: never;
@@ -13117,6 +13119,8 @@ export interface components {
             act_reversible?: boolean | null;
             /** Four Eyes */
             four_eyes?: boolean | null;
+            /** Hold Crown Jewels */
+            hold_crown_jewels?: boolean | null;
         };
         /** CeilingResponse */
         CeilingResponse: {
@@ -13124,6 +13128,8 @@ export interface components {
             act_irreversible: boolean;
             /** Act Reversible */
             act_reversible: boolean;
+            /** Crown Jewels */
+            crown_jewels: number;
             /** Environment Locked */
             environment_locked: boolean;
             /** Four Eyes */
@@ -13133,6 +13139,8 @@ export interface components {
              * @default []
              */
             held: components["schemas"]["HeldAction"][];
+            /** Hold Crown Jewels */
+            hold_crown_jewels: boolean;
             /** Propose */
             propose: boolean;
             /** Read */

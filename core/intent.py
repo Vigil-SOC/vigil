@@ -34,7 +34,7 @@ DEFAULT_INTENT_FILE = REPO_ROOT / "INTENT.md"
 
 # Tightening rules, one per field type. The label describes what applying the
 # declared value over the effective one would do to the daemon's autonomy.
-HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, four_eyes
+HIGHER_TIGHTER = "higher_tighter"  # confidence thresholds, four_eyes, hold_crown_jewels
 LOWER_TIGHTER = "lower_tighter"  # budgets, auto_* / enabled booleans
 
 
@@ -42,7 +42,7 @@ LOWER_TIGHTER = "lower_tighter"  # budgets, auto_* / enabled booleans
 class IntentField:
     key: str  # manifest key, "<action class>.<knob>"
     path: str  # attribute path on DaemonConfig
-    setting: str  # Settings field that supplies the env value
+    setting: Optional[str]  # Settings field that supplies the env value; None: no env
     rule: str
 
 
@@ -103,6 +103,13 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         "act.four_eyes",
         "ceiling.four_eyes",
         "daemon_force_approval",
+        HIGHER_TIGHTER,
+    ),
+    # On is tighter; no env setting and exempt from the environment locks.
+    IntentField(
+        "act.hold_crown_jewels",
+        "ceiling.hold_crown_jewels",
+        None,
         HIGHER_TIGHTER,
     ),
     IntentField(

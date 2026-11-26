@@ -66,10 +66,12 @@ def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
         else origin("ceiling.act_irreversible")
     )
     sources["ceiling.four_eyes"] = origin("ceiling.four_eyes")
+    sources["ceiling.hold_crown_jewels"] = origin("ceiling.hold_crown_jewels")
     ceiling = CeilingConfig(
         act_reversible=False if locked else stored.act_reversible,
         act_irreversible=False if locked else stored.act_irreversible,
         four_eyes=stored.four_eyes,
+        hold_crown_jewels=stored.hold_crown_jewels,
     )
     return dataclasses.replace(config, ceiling=ceiling, sources=sources)
 
@@ -153,10 +155,10 @@ def _env_ignored(key: str, declared: Any) -> Optional[Any]:
 
     The act flags have no env value, only locks, which count as drift.
     """
-    if key.startswith("act."):
+    setting = FIELDS_BY_KEY[key].setting
+    if key.startswith("act.") or setting is None:
         return None
     settings = get_settings()
-    setting = FIELDS_BY_KEY[key].setting
     if setting not in settings.model_fields_set:
         return None
     env = getattr(settings, setting)

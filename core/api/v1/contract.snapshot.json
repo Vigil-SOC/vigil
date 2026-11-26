@@ -1157,6 +1157,16 @@
             "title": "Readers",
             "type": "array"
           },
+          "recheck": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecheckMarkView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resolution_steps": {
             "default": [],
             "items": {},
@@ -1166,6 +1176,11 @@
           "restricted": {
             "readOnly": true,
             "title": "Restricted",
+            "type": "boolean"
+          },
+          "reviewers_differ": {
+            "default": false,
+            "title": "Reviewers Differ",
             "type": "boolean"
           },
           "status": {
@@ -3202,6 +3217,17 @@
               }
             ],
             "title": "Four Eyes"
+          },
+          "hold_crown_jewels": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Crown Jewels"
           }
         },
         "title": "CeilingBody",
@@ -3216,6 +3242,10 @@
           "act_reversible": {
             "title": "Act Reversible",
             "type": "boolean"
+          },
+          "crown_jewels": {
+            "title": "Crown Jewels",
+            "type": "integer"
           },
           "environment_locked": {
             "title": "Environment Locked",
@@ -3232,6 +3262,10 @@
             },
             "title": "Held",
             "type": "array"
+          },
+          "hold_crown_jewels": {
+            "title": "Hold Crown Jewels",
+            "type": "boolean"
           },
           "propose": {
             "title": "Propose",
@@ -3300,7 +3334,9 @@
           "write",
           "propose",
           "environment_locked",
-          "four_eyes"
+          "four_eyes",
+          "hold_crown_jewels",
+          "crown_jewels"
         ],
         "title": "CeilingResponse",
         "type": "object"
@@ -5079,6 +5115,30 @@
           "closed_count"
         ],
         "title": "PriorityBreakdownRow",
+        "type": "object"
+      },
+      "RecheckMarkView": {
+        "description": "The one mark on a Case opened from a re-check.",
+        "properties": {
+          "closed_at": {
+            "title": "Closed At",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "closed_at",
+          "run_id"
+        ],
+        "title": "RecheckMarkView",
         "type": "object"
       },
       "RejectRequest": {
