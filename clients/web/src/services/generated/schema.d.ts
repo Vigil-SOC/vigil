@@ -7995,6 +7995,8 @@ export interface paths {
          * Undo Apply
          * @description Put the setting back to its value before an apply, when nothing has
          *     changed it since. Returns the new history entry.
+         *
+         *     The same change is not suggested again for 30 days.
          */
         post: operations["post_api_supervisory_history_history_id_undo"];
         delete?: never;

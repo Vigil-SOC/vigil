@@ -28,7 +28,7 @@ DISMISS_REASONS = ("Too risky", "Evidence looks wrong", "Not now", "Already hand
 FUNCTIONS = ("triage", "investigation", "response")
 COLUMN_KINDS = ("text", "mono", "case", "action")
 EFFECTS = ("better", "worse", "same")
-# A dismissal, whatever its reason, holds the same change back this long.
+# A dismissal, whatever its reason, or an undo holds the same change back this long.
 RESUGGEST_AFTER = timedelta(days=30)
 LIVE = ("open", "held")
 HISTORY_LIMIT = 100
@@ -105,11 +105,10 @@ def propose(
 ) -> str | None:
     """Store a suggestion, replacing the live one for the same setting.
 
-    Returns None, storing nothing, when a person dismissed this same change
-    (same setting, same from and to values, see ``same_value``) and the
-    dismissal still stands: any dismissal stands for ``RESUGGEST_AFTER``, after
-    which the change can be suggested again if the data still supports it. A
-    malformed card or incident raises ``TypeError``.
+    Returns None, storing nothing, when a person dismissed or undid this same
+    change (same setting, same from and to values, see ``same_value``) within
+    ``RESUGGEST_AFTER``; after that the change can be suggested again if the
+    data still supports it. A malformed card or incident raises ``TypeError``.
     """
     _check_card(card)
     _check_incident(held_incident)
@@ -124,7 +123,7 @@ def propose(
     from_value, to_value = str(from_value).strip(), str(to_value).strip()
     with unit_of_work() as session:
         _lock(session, key)
-        if _still_dismissed(session, key, from_value, to_value):
+        if _held_back(session, key, from_value, to_value):
             return None
         card = {k: card.get(k) for k in _CARD_FIELDS}
         if card.get("check") is None:
@@ -263,14 +262,13 @@ def lock_orchestrator_row(session: Session) -> None:
     _lock(session, "orchestrator.settings")
 
 
-def _still_dismissed(
-    session: Session, key: str, from_value: str, to_value: str
-) -> bool:
+def _held_back(session: Session, key: str, from_value: str, to_value: str) -> bool:
+    """A person dismissed or undid this same change within ``RESUGGEST_AFTER``."""
     since = datetime.now(UTC) - RESUGGEST_AFTER
     standing = session.execute(
         select(SupervisoryHistory.from_value, SupervisoryHistory.to_value).where(
             SupervisoryHistory.setting_key == key,
-            SupervisoryHistory.outcome == "dismissed",
+            SupervisoryHistory.outcome.in_(("dismissed", "undone")),
             SupervisoryHistory.at >= since,
         )
     )

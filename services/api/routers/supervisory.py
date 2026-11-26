@@ -180,7 +180,10 @@ def undo_apply(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> HistoryEntryResponse:
     """Put the setting back to its value before an apply, when nothing has
-    changed it since. Returns the new history entry."""
+    changed it since. Returns the new history entry.
+
+    The same change is not suggested again for 30 days.
+    """
     written = None
     try:
         with unit_of_work() as locked:
