@@ -4,7 +4,7 @@ import { recalledPayloadOf } from "../../contracts/memory.js";
 import { isStructured } from "../../contracts/plugin.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { agentCalls, callsIn, childOrdinal, requiredNeeds, runChild, SKILL_TOOL, type Early, type Ending, type Parked, type PluginContext, type PluginHooks } from "../../core/agent.js";
-import { classOf, okWith, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
+import { classOf, okWith, optionalTools, RECORD_TOOLS, refusedWith, type RecordBackend } from "../../core/record.js";
 import type { Harness } from "../../core/loop.js";
 import { errorFields, logger } from "../../core/log.js";
 import type { State } from "../../core/seams.js";
@@ -68,7 +68,7 @@ function state(ctx: PluginContext): State<HuntKinds> {
 // projection a tool reads is the stored one, so two tools never disagree.
 async function withBook<T>(ctx: PluginContext, ports: HuntPorts, use: (book: HuntBook) => T | Promise<T>): Promise<T> {
   const ledger = await Journal.open(state(ctx), ports.queue, ctx.options.run_id, ctx.options.run_kind);
-  const book = new HuntBook(ledger, ctx.harness.budget);
+  const book = new HuntBook(ledger, ctx.harness.budget, optionalTools(ctx.options.plugin, ctx.options.spec.tools));
   const value = await use(book);
   await ledger.flush();
   return value;
@@ -189,7 +189,8 @@ export function huntHooks(ports: HuntPorts): PluginHooks {
         book.advanceTo(turn);
         // A call the estate could not answer is a blind spot the verdicts count.
         const failure = seen.attempt.wrapped.failure;
-        if (!OWN.has(seen.call.tool) && failure !== null && isVisibilityGap(failure)) {
+        // An optional capability's failure (intel, coverage) never counts against a verdict.
+        if (!OWN.has(seen.call.tool) && !book.optional.has(seen.call.tool) && failure !== null && isVisibilityGap(failure)) {
           // The server is the spec's, never guessed from the tool's name.
           const server = ctx.options.spec.tools.find((tool) => tool.id === seen.call.tool)?.["server"];
           book.appendGap(seen.call.tool, typeof server === "string" && server !== "" ? server : null, failure, null);

@@ -62,6 +62,8 @@ export class HuntBook {
     readonly ledger: Journal,
     // The harness's own ceiling, so an extension can widen what the pool refuses on.
     private readonly pool?: Budget,
+    // Tools answering only an optional need: a failed call to one is no blind spot.
+    readonly optional: ReadonlySet<string> = new Set(),
   ) {}
 
   get projection() {
@@ -643,7 +645,7 @@ export class HuntBook {
 
   // The agent recommends stopping; the termination predicate decides.
   conclude(reason: string): { said: string; concluded: boolean; parked?: string } {
-    const verdict = terminationVerdict(this.projection, this.hunt.iteration, this.termination, this.verdicts, this.ledger.log);
+    const verdict = terminationVerdict(this.projection, this.hunt.iteration, this.termination, this.verdicts, this.ledger.log, this.optional);
     if (verdict.outcome === null) return { said: `refused: ${verdict.blocked_by}. Resolve it before concluding again.`, concluded: false };
     const { checkpoint, parked } = this.ask("verdict_review", `Conclude this hunt as ${verdict.outcome}?`, {
       kind: "conclude",
@@ -675,7 +677,7 @@ export class HuntBook {
     const hunt = this.hunt;
     // However it was reached -- the agent stopping, an operator's conclude -- an ending
     // that could not look is not a finished hunt.
-    if (outcome === "completed" && huntStarved(this.projection, this.ledger.log, this.verdicts)) outcome = "data_starved";
+    if (outcome === "completed" && huntStarved(this.projection, this.ledger.log, this.verdicts, this.optional)) outcome = "data_starved";
     if (hunt.outcome !== null && OUTCOME_PRECEDENCE[hunt.outcome] >= OUTCOME_PRECEDENCE[outcome]) return;
     for (const hypothesis of this.projection.hypotheses.values()) {
       if (hypothesis.status !== "active") continue;
@@ -704,7 +706,7 @@ export class HuntBook {
   // The budget's own ending, read when the harness refused: a hunt that has
   // nothing left to do concludes; otherwise it parks.
   atCeiling(reason: string): "concluded" | "parked" {
-    const verdict = terminationVerdict(this.projection, this.hunt.iteration, this.termination, this.verdicts, this.ledger.log);
+    const verdict = terminationVerdict(this.projection, this.hunt.iteration, this.termination, this.verdicts, this.ledger.log, this.optional);
     if (verdict.outcome !== null) {
       this.concludeWith(verdict, `the termination predicate passed as the budget ran out: ${reason}`);
       return "concluded";

@@ -10,6 +10,8 @@ import type {
 } from "../contracts/events.js";
 import { isEmptyResult } from "./call-view.js";
 import { isVisibilityGap } from "./security.js";
+import type { PluginManifest } from "../contracts/plugin.js";
+import type { ToolSpec } from "./spec.js";
 
 // The hypothesis record: beliefs, what bears on each, and what the run could not answer.
 // Three kernel tools keep it and one fold reads it; a plugin may supply a richer backend.
@@ -64,12 +66,25 @@ export function classOf(call: CallPayload): CallClass {
   return call.failure === "timeout" || call.failure === "unavailable" || call.failure === "backend_error" ? "visibility_gap" : "defect";
 }
 
+// The tools that answer only an optional need: their failure is no blind spot.
+export function optionalTools(plugin: PluginManifest, tools: readonly ToolSpec[]): ReadonlySet<string> {
+  const optional = new Set(plugin.optional ?? []);
+  return new Set(tools.filter((tool) => typeof tool["provides"] === "string" && optional.has(tool["provides"])).map((tool) => tool.id));
+}
+
 // The run could not look, and its answer rests on nothing it saw (#3248): the ledger holds a
 // blind spot -- a call the estate failed, or a need no tool here answers -- and no ref in
 // `rests` is a served estate call. One gap beside a result the answer stands on is not this.
-export function starved(events: readonly { kind: string; payload: unknown }[], rests: readonly string[]): boolean {
+// A failed call to a tool in `optional` (one answering an optional need) is no blind spot.
+export function starved(
+  events: readonly { kind: string; payload: unknown }[],
+  rests: readonly string[],
+  optional: ReadonlySet<string> = new Set(),
+): boolean {
   const calls = events.filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
-  const blind = events.some((event) => event.kind === "unbound") || calls.some((call) => classOf(call) === "visibility_gap");
+  const blind =
+    events.some((event) => event.kind === "unbound") ||
+    calls.some((call) => classOf(call) === "visibility_gap" && !optional.has(call.tool));
   if (!blind) return false;
   const wanted = new Set(rests);
   const bookkeeping = new Set<string>([SKILL_TOOL, ...RECORD_TOOLS]);
