@@ -15421,6 +15421,13 @@ export interface components {
             agreement_wilson_high?: number | null;
             /** Agreement Wilson Low */
             agreement_wilson_low?: number | null;
+            /**
+             * By Workflow
+             * @default {}
+             */
+            by_workflow: {
+                [key: string]: components["schemas"]["WorkflowReplayTally"];
+            };
             /** Cost Usd */
             cost_usd: number;
             /** Disagreed */
@@ -19655,6 +19662,35 @@ export interface components {
             purpose: string | null;
             /** Steps */
             steps?: string[];
+        };
+        /** WorkflowReplayTally */
+        WorkflowReplayTally: {
+            /** Abstained */
+            abstained: number;
+            /** Agreed */
+            agreed: number;
+            /** Agreement Rate */
+            agreement_rate?: number | null;
+            /** Agreement Wilson High */
+            agreement_wilson_high?: number | null;
+            /** Agreement Wilson Low */
+            agreement_wilson_low?: number | null;
+            /** Disagreed */
+            disagreed: number;
+            /** False Close Rate */
+            false_close_rate?: number | null;
+            /** False Close Wilson High */
+            false_close_wilson_high?: number | null;
+            /** False Close Wilson Low */
+            false_close_wilson_low?: number | null;
+            /** False Closes */
+            false_closes: number;
+            /** Replayed */
+            replayed: number;
+            /** Skipped */
+            skipped: number;
+            /** Total */
+            total: number;
         };
         /**
          * WorkflowRunCancelRequest
