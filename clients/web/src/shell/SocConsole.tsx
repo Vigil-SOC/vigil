@@ -45,6 +45,7 @@ import SupervisoryScreen from '../screens/supervisory/SupervisoryScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import HomeScreen from '../screens/home/HomeScreen'
 import ReportScreen from '../screens/report/ReportScreen'
+import ReviewScreen from '../screens/review/ReviewScreen'
 import { HOME_SETUP_HREF, SETUP_HIDDEN_CHANGED, openSetupSteps, readSetupHidden } from '../screens/home/setupHidden'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import { AUTONOMY_CHANGED, DEMO_MODE_CHANGED } from '../screens/settings/useSettings'
@@ -83,6 +84,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   medic: MedicScreen,
   supervisory: SupervisoryScreen,
   report: ReportScreen,
+  review: ReviewScreen,
   settings: SettingsScreen,
 }
 

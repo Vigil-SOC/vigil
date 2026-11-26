@@ -57,6 +57,8 @@ class SchedulerConfig:
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     probes_enabled: bool = True  # known-answer probes (#923)
     probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
+    supervisory_enabled: bool = True  # the supervisory model's scheduled check
+    supervisory_interval: int = 3600
     cleanup_interval: int = 86400  # Daily
     cleanup_retention_days: int = 90
     approval_expiry_days: int = 7
@@ -180,6 +182,8 @@ class DaemonConfig:
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
         config.scheduler.probes_enabled = settings.daemon_probes_enabled
         config.scheduler.probe_interval = settings.daemon_probe_interval
+        config.scheduler.supervisory_enabled = settings.daemon_supervisory_enabled
+        config.scheduler.supervisory_interval = settings.daemon_supervisory_interval
         config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 

@@ -52,9 +52,10 @@ wsl_preflight() {
     return 0
 }
 
-# Containers reach the host-native Ollama via host.docker.internal, but
-# load_env exports the host-side OLLAMA_URL and shell env beats the compose
-# default - so rewrite it here, at the single container boundary.
+# Containers reach the host-native Ollama via host.docker.internal. env.example
+# leaves OLLAMA_URL unset, but an operator may set a host-side localhost value,
+# which load_env exports and shell env beats the compose default - so rewrite
+# it here, at the single container boundary.
 _container_ollama_url() {
     echo "${OLLAMA_URL:-http://localhost:11434}" \
         | sed -e 's|//localhost:|//host.docker.internal:|' \

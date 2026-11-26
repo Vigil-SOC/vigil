@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from core.auth import trail_events
+from core.auth.password_hash import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from core.config import _settings_env_file
 from core.storage.models import SystemConfig
 from core.storage.unit_of_work import unit_of_work
@@ -47,14 +48,36 @@ PRIVILEGED_PERMISSIONS = frozenset(
 
 
 class SessionPolicy(BaseModel):
-    idle_standard_minutes: int = Field(15, ge=1, le=60)
-    idle_privileged_minutes: int = Field(10, ge=1, le=30)
+    # 0: no idle limit. The two are independent; a privileged limit may be longer.
+    idle_standard_minutes: int = Field(
+        15,
+        ge=0,
+        le=720,
+        description=(
+            "Minutes with no activity before a standard sign-in ends. "
+            "0 is no idle limit. 0 to 720 (12 hours)."
+        ),
+    )
+    idle_privileged_minutes: int = Field(
+        10,
+        ge=0,
+        le=720,
+        description=(
+            "Minutes with no activity before a privileged sign-in ends, "
+            "independent of the standard limit. 0 is no idle limit. Also how "
+            "long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes."
+        ),
+    )
     absolute_hours: int = Field(12, ge=1, le=24)
     # Most open sign-ins one account may hold; None: no limit.
     sign_in_limit: Optional[int] = Field(None, ge=1, le=10)
-    # Characters (code points). Under 15 only with MFA for everyone (see
-    # _short_needs_mfa_for_everyone).
-    password_min_length: int = Field(16, ge=12, le=64)
+    # Characters (code points), from the shortest password up to the longest one
+    # hashing will accept. A sign-in without MFA rechecks a password shorter
+    # than the lower of 15 and this minimum.
+    password_min_length: int = Field(16, ge=MIN_PASSWORD_LENGTH, le=MAX_PASSWORD_LENGTH)
+    # zxcvbn score a new password must reach, 0–4. 0 requires no score.
+    # Lowering it is a loosening. A save that leaves it out keeps the stored value.
+    password_min_score: int = Field(3, ge=0, le=4)
     password_character_rules: Literal["none", "letters_digits", "four_classes"] = "none"
     # Previous passwords kept, and refused on reuse.
     password_history: int = Field(5, ge=4, le=24)
@@ -87,15 +110,6 @@ class SessionPolicy(BaseModel):
     token_unused_days: Optional[int] = Field(45, ge=7, le=365)
 
     @model_validator(mode="after")
-    def _privileged_within_standard(self):
-        if self.idle_privileged_minutes > self.idle_standard_minutes:
-            raise ValueError(
-                f"idle_privileged_minutes ({self.idle_privileged_minutes}) cannot "
-                f"exceed idle_standard_minutes ({self.idle_standard_minutes})"
-            )
-        return self
-
-    @model_validator(mode="after")
     def _min_age_before_max_age(self):
         # Else the bell would send a person to a change the minimum age refuses.
         if (
@@ -105,16 +119,6 @@ class SessionPolicy(BaseModel):
             raise ValueError(
                 f"password_min_age_days ({self.password_min_age_days}) must be "
                 f"less than password_max_age_days ({self.password_max_age_days})"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _short_needs_mfa_for_everyone(self):
-        # Refused, never adjusted: either field may be the one that moved.
-        if self.password_min_length < 15 and self.require_mfa != "everyone":
-            raise ValueError(
-                f"password_min_length ({self.password_min_length}) is under 15, "
-                f"which needs require_mfa to be 'everyone' (it is '{self.require_mfa}')"
             )
         return self
 
@@ -158,11 +162,21 @@ def mfa_covered(
     return level == "everyone" or not PRIVILEGED_PERMISSIONS.isdisjoint(permissions)
 
 
+def _longer_idle(old: int, new: int) -> bool:
+    """Whether ``new`` lets a sign-in sit idle longer. 0 is no limit, the loosest."""
+    if new == 0:
+        return old != 0
+    if old == 0:
+        return False
+    return new > old
+
+
 def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
     """Whether ``new`` lets a sign-in last longer, an account hold more, a
     guesser have more tries or a shorter lock, an idle account stay longer, or a
-    password be shorter, simpler, reused sooner, older or changed sooner, a
-    token live longer, or an unused token stay valid longer."""
+    password be shorter, weaker, simpler, reused sooner, older or changed sooner,
+    a token live longer, or an unused token stay valid longer. An idle of 0 is
+    looser than any positive length; leaving 0, or lowering a nonzero idle, tightens."""
     weaker_rules = (
         _RULE_STRENGTH[new.password_character_rules]
         < _RULE_STRENGTH[old.password_character_rules]
@@ -199,11 +213,12 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or lower_keys
         or longer_max_age
         or new.password_min_age_days < old.password_min_age_days
-        or new.idle_standard_minutes > old.idle_standard_minutes
-        or new.idle_privileged_minutes > old.idle_privileged_minutes
+        or _longer_idle(old.idle_standard_minutes, new.idle_standard_minutes)
+        or _longer_idle(old.idle_privileged_minutes, new.idle_privileged_minutes)
         or new.absolute_hours > old.absolute_hours
         or more_sign_ins
         or new.password_min_length < old.password_min_length
+        or new.password_min_score < old.password_min_score
         or weaker_rules
         or new.password_history < old.password_history
         or easier_lock
@@ -212,6 +227,20 @@ def is_loosening(old: SessionPolicy, new: SessionPolicy) -> bool:
         or new.service_token_max_days > old.service_token_max_days
         or longer_unused
     )
+
+
+def with_omitted_score(body: SessionPolicy, stored: SessionPolicy) -> SessionPolicy:
+    """A save that leaves the strength score out keeps the stored score.
+
+    Parsing has already filled the default, so an explicit value is told from
+    an omission by whether the field was present. The loosening check, the dry
+    run, the trail and the write all use this result.
+    """
+    if "password_min_score" in body.model_fields_set:
+        return body
+    if body.password_min_score == stored.password_min_score:
+        return body
+    return body.model_copy(update={"password_min_score": stored.password_min_score})
 
 
 class Stored(NamedTuple):
@@ -239,7 +268,13 @@ def _carried_values() -> dict:
     env.update(os.environ)
     carried = {}
     for var, field, old_default, low, high in (
-        ("AUTH_MIN_PASSWORD_LENGTH", "password_min_length", 12, 15, 64),
+        (
+            "AUTH_MIN_PASSWORD_LENGTH",
+            "password_min_length",
+            12,
+            MIN_PASSWORD_LENGTH,
+            MAX_PASSWORD_LENGTH,
+        ),
         ("AUTH_PASSWORD_HISTORY_LIMIT", "password_history", 5, 4, 24),
     ):
         try:
@@ -332,7 +367,7 @@ def read_row(
 
 
 class Limits(NamedTuple):
-    # None: no idle limit (a service account's).
+    # None: no idle limit (a service account, or an idle setting of 0).
     idle: Optional[timedelta]
     absolute: timedelta
     # None: no limit on open sign-ins (a service account has none).
@@ -357,8 +392,9 @@ def limits(
     """The limits for an account holding ``permissions``.
 
     A service account is bound by the absolute limit only: it has no person
-    whose idleness could end it, and no sign-in limit. ``current`` is the policy
-    when the caller has read it already.
+    whose idleness could end it, and no sign-in limit. An idle setting of 0 is
+    no idle limit for a person too: ``idle`` is None, not a zero timedelta.
+    ``current`` is the policy when the caller has read it already.
     """
     current = current or policy()
     absolute = timedelta(hours=current.absolute_hours)
@@ -368,4 +404,5 @@ def limits(
     minutes = (
         current.idle_privileged_minutes if privileged else current.idle_standard_minutes
     )
-    return Limits(timedelta(minutes=minutes), absolute, current.sign_in_limit)
+    idle = None if minutes == 0 else timedelta(minutes=minutes)
+    return Limits(idle, absolute, current.sign_in_limit)

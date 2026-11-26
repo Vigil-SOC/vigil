@@ -72,6 +72,7 @@ from core.findings.arrival_counts import utc_day_bounds
 from core.findings.source_link import resolve_source_link
 from core.integrations.elastic.ingestion import ElasticIngestion, elastic_alert_status
 from core.memory.entity_keys import finding_entity_keys
+from core.reporting.recheck_review import case_recheck
 from core.response.approval_service import needs_you_case_ids
 from core.routing import Auth, OptionalUnitOfWorkSession, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository, first_finding_id
@@ -761,6 +762,11 @@ def get_case(case_id: str, session: OptionalUnitOfWorkSession):
     case["opened_from"] = (
         first_finding_id(session, case_id) if session is not None else None
     )
+    if session is not None:
+        case.update(case_recheck(session, case_id))
+    else:
+        case["recheck"] = None
+        case["reviewers_differ"] = False
     return case
 
 

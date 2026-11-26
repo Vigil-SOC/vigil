@@ -3779,6 +3779,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/site": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Site Context
+         * @description The applied site/ revision: state, any refusal with file and line, each
+         *     item with file, line and resolved owner, and the applied files' text.
+         */
+        get: operations["get_api_config_site"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/theme": {
         parameters: {
             query?: never;
@@ -6377,8 +6398,8 @@ export interface paths {
          * Remove Ledgers
          * @description Erase marked re-decision ledgers once the import is gone.
          *
-         *     A run a Case was opened from is not passed. ``cases`` names those, and
-         *     is empty until that link is recorded. Any other id erases nothing.
+         *     A run a Case was opened from is not passed. ``cases`` names those.
+         *     Any other id erases nothing.
          */
         post: operations["post_api_memory_imports_ledgers_import_id"];
         delete?: never;
@@ -6943,6 +6964,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recheck-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Queue
+         * @description Unconfirmed tickets, then confirmed ones. The two are not one list.
+         *
+         *     ``cases.read`` is the screen. Titles still drop without ``automation.read``.
+         */
+        get: operations["get_api_recheck-review"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ticket
+         * @description Alert fields and tool results. Verdicts stay off until a call is stored.
+         */
+        get: operations["get_api_recheck-review_ticket_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/case": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Case
+         * @description Open a Case from the first confirming call. No finding, no intake.
+         */
+        post: operations["post_api_recheck-review_ticket_id_case"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recheck-review/{ticket_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Confirm
+         * @description Record the call. A token or a service account is refused.
+         */
+        post: operations["post_api_recheck-review_ticket_id_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/search": {
         parameters: {
             query?: never;
@@ -7182,10 +7285,13 @@ export interface paths {
         get: operations["get_api_session-policy"];
         /**
          * Put Policy
-         * @description Replace the policy. An idle limit above its standard, or a stale version, is refused.
+         * @description Replace the policy. A stale version is refused.
          *
-         *     ``dry_run`` checks the version like a save, then saves nothing and answers whether
-         *     the body would loosen the policy now in force.
+         *     Each idle limit is 0 (no idle limit) through 720 minutes (12 hours), set
+         *     independently of the other. A privileged idle of 0 leaves Confirm it's you
+         *     at 10 minutes. ``dry_run`` checks the version like a save, then saves nothing
+         *     and answers whether the body would loosen the policy now in force. 0 is the
+         *     loosest idle value, so a machine caller may not set it.
          */
         put: operations["put_api_session-policy"];
         post?: never;
@@ -7212,7 +7318,7 @@ export interface paths {
          * Import List
          * @description Add the entries of a plain-text file, one per line, to the breached list.
          *
-         *     Entries under 12 characters, email-shaped ones and blanks are dropped; the
+         *     Entries under 3 characters, email-shaped ones and blanks are dropped; the
          *     rest are lowercased and added, never removed. Every accepted import counts as
          *     a refresh, even one that adds nothing. The trail records the counts and the
          *     file's SHA-256, never an entry. What a file may be used for is the operator's
@@ -7780,6 +7886,95 @@ export interface paths {
         get: operations["get_api_storage_status"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Supervisory
+         * @description What the supervisory model has to learn from, its suggestions, the settings
+         *     it watches, and why agent runs stopped early.
+         *
+         *     The state and the check times come from the daemon's scheduled check
+         *     (``core.supervisory.worker``).
+         */
+        get: operations["get_api_supervisory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisory/history/{history_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo Apply
+         * @description Put the setting back to its value before an apply, when nothing has
+         *     changed it since. Returns the new history entry.
+         */
+        post: operations["post_api_supervisory_history_history_id_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisory/suggestions/{suggestion_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Suggestion
+         * @description Change the setting to the suggested value, when it still has the value the
+         *     suggestion started from. Returns the history entry.
+         */
+        post: operations["post_api_supervisory_suggestions_suggestion_id_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisory/suggestions/{suggestion_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Suggestion
+         * @description Dismiss a suggestion with one of the page's reasons. Returns its history entry.
+         *
+         *     The same change is not suggested again: for good when too risky or the
+         *     evidence looks wrong, for 30 days otherwise.
+         */
+        post: operations["post_api_supervisory_suggestions_suggestion_id_dismiss"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10961,6 +11156,26 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** ActionOut */
+        ActionOut: {
+            /**
+             * Action Type
+             * @default
+             */
+            action_type: string;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Target
+             * @default
+             */
+            target: string;
+        };
         /**
          * ActivityAdd
          * @description Add activity to case.
@@ -11059,6 +11274,21 @@ export interface components {
             skills?: string[];
             /** Updated At */
             updated_at?: string | null;
+        };
+        /** AlertOut */
+        AlertOut: {
+            /** Description */
+            description: string;
+            /** Entity Keys */
+            entity_keys: string[];
+            /** Rule */
+            rule: string;
+            /** Severity */
+            severity: string;
+            /** Time */
+            time: string;
+            /** Title */
+            title: string;
         };
         /** ApprovalActionResult */
         ApprovalActionResult: {
@@ -11389,10 +11619,117 @@ export interface components {
             /** Status Breakdown */
             status_breakdown?: components["schemas"]["StatusBreakdownRow"][];
         };
+        /** CappedBatch */
+        CappedBatch: {
+            /** Batch Id */
+            batch_id: string;
+            cost: components["schemas"]["CappedCost"];
+            /** Groups */
+            groups?: components["schemas"]["CappedGroup"][];
+            /** Status */
+            status: string;
+        };
+        /** CappedCost */
+        CappedCost: {
+            /** Calls */
+            calls?: number | null;
+            /** Dollars */
+            dollars?: number | null;
+            /**
+             * Local Model
+             * @default false
+             */
+            local_model: boolean;
+            /**
+             * Priced At Zero
+             * @default false
+             */
+            priced_at_zero: boolean;
+            /**
+             * Runs
+             * @default 0
+             */
+            runs: number;
+            /**
+             * Unpriced
+             * @default false
+             */
+            unpriced: boolean;
+            /**
+             * Unread
+             * @default false
+             */
+            unread: boolean;
+            /** Wall Ms */
+            wall_ms?: number | null;
+        };
+        /** CappedDirection */
+        CappedDirection: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** High */
+            high?: number | null;
+            /** K */
+            k: number;
+            /** Low */
+            low?: number | null;
+        };
+        /** CappedGroup */
+        CappedGroup: {
+            /**
+             * After Close
+             * @default 0
+             */
+            after_close: number;
+            /**
+             * Approximate
+             * @default 0
+             */
+            approximate: number;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** N */
+            n: number;
+            /** Rows */
+            rows?: components["schemas"]["CappedDirection"][];
+            /** Tickets */
+            tickets?: components["schemas"]["CappedTicket"][];
+        };
         /** CappedRecheckCeiling */
         CappedRecheckCeiling: {
             /** Runs */
             runs: number;
+        };
+        /** CappedTicket */
+        CappedTicket: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "not_real_not_real" | "not_real_real" | "undetermined_real" | "undetermined_not_real" | "not_real_undetermined" | "undetermined_undetermined" | "could_not";
+            /** Entities */
+            entities?: string[];
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "top" | "control";
+            /** Reason */
+            reason?: string | null;
+            /** Source */
+            source: string;
+            /** Text Note */
+            text_note?: string | null;
+            /** Ticket */
+            ticket: string;
+            /** Title */
+            title?: string | null;
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -11602,6 +11939,7 @@ export interface components {
             reader_teams?: string[];
             /** Readers */
             readers?: string[];
+            recheck?: components["schemas"]["RecheckMarkView"] | null;
             /**
              * Resolution Steps
              * @default []
@@ -11609,6 +11947,11 @@ export interface components {
             resolution_steps: unknown[];
             /** Restricted */
             readonly restricted: boolean;
+            /**
+             * Reviewers Differ
+             * @default false
+             */
+            reviewers_differ: boolean;
             /** Status */
             status?: string | null;
             /**
@@ -13007,6 +13350,14 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConfirmIn */
+        ConfirmIn: {
+            /**
+             * Call
+             * @enum {string}
+             */
+            call: "real" | "not real" | "can't tell";
+        };
         /**
          * ConfirmItRequest
          * @description Confirm it's you for a privileged change. ``strong``: the password and,
@@ -13491,6 +13842,7 @@ export interface components {
              */
             hidden_worse: boolean;
             history_before?: components["schemas"]["HistoryBefore"] | null;
+            history_capped_recheck?: components["schemas"]["HistoryCappedRecheck"] | null;
             history_recheck?: components["schemas"]["HistoryRecheck"] | null;
             history_tuning?: components["schemas"]["HistoryTuning"] | null;
             /** Id */
@@ -13630,6 +13982,14 @@ export interface components {
             directive_id: string;
             /** Kind */
             kind: string;
+        };
+        /** DismissBody */
+        DismissBody: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "Too risky" | "Evidence looks wrong" | "Not now" | "Already handled";
         };
         /** DraftRequest */
         DraftRequest: {
@@ -13841,6 +14201,13 @@ export interface components {
             source?: string | null;
             /** Tags */
             tags?: string[] | null;
+        };
+        /** EvidenceOut */
+        EvidenceOut: {
+            /** Result */
+            result: string;
+            /** Tool */
+            tool: string;
         };
         /** ExclusionCreate */
         ExclusionCreate: {
@@ -14249,6 +14616,54 @@ export interface components {
             window_end: string;
             /** Window Start */
             window_start: string;
+        };
+        /** HistoryCappedRecheck */
+        HistoryCappedRecheck: {
+            /**
+             * Awaiting List
+             * @default false
+             */
+            awaiting_list: boolean;
+            finished?: components["schemas"]["CappedBatch"] | null;
+            /** How */
+            how?: string | null;
+            /**
+             * None Run
+             * @default false
+             */
+            none_run: boolean;
+            /** Not Checked */
+            not_checked?: string | null;
+            /**
+             * Open Only
+             * @default false
+             */
+            open_only: boolean;
+            stopped?: components["schemas"]["CappedBatch"] | null;
+        };
+        /** HistoryEntryResponse */
+        HistoryEntryResponse: {
+            /** At */
+            at: string;
+            /** From */
+            from: string;
+            /** Id */
+            id: string;
+            /** Improved */
+            improved?: boolean | null;
+            /** Key */
+            key: string;
+            /** Note */
+            note: string;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "applied" | "dismissed" | "undone";
+            /** To */
+            to: string;
+            /** Undoable */
+            undoable?: boolean | null;
         };
         /** HistoryFigure */
         HistoryFigure: {
@@ -15383,6 +15798,8 @@ export interface components {
             count: number;
             /** Erase Permission */
             erase_permission: string;
+            /** Queued Reviews */
+            queued_reviews: number;
             /** Run Ids */
             run_ids: string[];
         };
@@ -15881,6 +16298,11 @@ export interface components {
             /** Ids */
             ids?: number[] | null;
         };
+        /** OpenedOut */
+        OpenedOut: {
+            /** Case Id */
+            case_id: string;
+        };
         /**
          * OperatorInstructions
          * @description Deployment-wide text appended to every agent run's system prompt (#4918).
@@ -16313,11 +16735,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
@@ -16361,6 +16785,11 @@ export interface components {
              * @default 16
              */
             password_min_length: number;
+            /**
+             * Password Min Score
+             * @default 3
+             */
+            password_min_score: number;
             /**
              * Personal Token Max Days
              * @default 365
@@ -16599,6 +17028,38 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** QueueItem */
+        QueueItem: {
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Id */
+            id: number;
+            /** Recorded */
+            recorded: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Source */
+            source: string;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** QueueOut */
+        QueueOut: {
+            /** Pending */
+            pending: components["schemas"]["QueueItem"][];
+            /** Reviewed */
+            reviewed: components["schemas"]["QueueItem"][];
+        };
         /** Range */
         Range: {
             /** Max */
@@ -16649,6 +17110,18 @@ export interface components {
         ReassignRequest: {
             /** Accountable */
             accountable: string;
+        };
+        /**
+         * RecheckMarkView
+         * @description The one mark on a Case opened from a re-check.
+         */
+        RecheckMarkView: {
+            /** Closed At */
+            closed_at: string;
+            /** Run Id */
+            run_id: string;
+            /** Source */
+            source: string;
         };
         /**
          * RecoveryCodesResponse
@@ -17291,11 +17764,13 @@ export interface components {
             dormancy_days: number | null;
             /**
              * Idle Privileged Minutes
+             * @description Minutes with no activity before a privileged sign-in ends, independent of the standard limit. 0 is no idle limit. Also how long a Confirm-it's-you lasts, up to 12 hours; at 0, 10 minutes.
              * @default 10
              */
             idle_privileged_minutes: number;
             /**
              * Idle Standard Minutes
+             * @description Minutes with no activity before a standard sign-in ends. 0 is no idle limit. 0 to 720 (12 hours).
              * @default 15
              */
             idle_standard_minutes: number;
@@ -17337,6 +17812,11 @@ export interface components {
              * @default 16
              */
             password_min_length: number;
+            /**
+             * Password Min Score
+             * @default 3
+             */
+            password_min_score: number;
             /**
              * Personal Token Max Days
              * @default 365
@@ -17449,6 +17929,127 @@ export interface components {
             sign_in_id: string;
             /** Started At */
             started_at: string;
+        };
+        /** SiteBlindSpot */
+        SiteBlindSpot: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Selectors */
+            selectors: string[];
+            /** What */
+            what: string;
+        };
+        /**
+         * SiteContextResponse
+         * @description The declared site (site/*.md) the daemon applied. Read-only; not /api/v1.
+         */
+        SiteContextResponse: {
+            /** Applied At */
+            applied_at?: string | null;
+            /** Blind Spots */
+            blind_spots?: components["schemas"]["SiteBlindSpot"][];
+            /** Crown Jewels */
+            crown_jewels?: components["schemas"]["SiteCrownJewel"][];
+            /** Declared */
+            declared: boolean;
+            /** Directory */
+            directory?: string | null;
+            /** Files */
+            files?: components["schemas"]["SiteFile"][];
+            /** Hash */
+            hash?: string | null;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwner"][];
+            /** Reason */
+            reason: string;
+            /** Rejected */
+            rejected?: {
+                [key: string]: unknown;
+            } | null;
+            /** Revision */
+            revision?: string | null;
+            /** State */
+            state: string;
+            /** Zones */
+            zones?: components["schemas"]["SiteZone"][];
+        };
+        /** SiteCrownJewel */
+        SiteCrownJewel: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Mission */
+            mission: string;
+            /** Name */
+            name: string;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwnerRef"][];
+            /** Selectors */
+            selectors: string[];
+            /** Why */
+            why?: string | null;
+            /** Zone */
+            zone?: string | null;
+        };
+        /** SiteFile */
+        SiteFile: {
+            /** File */
+            file: string;
+            /** Text */
+            text: string;
+        };
+        /** SiteOwner */
+        SiteOwner: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Resolved */
+            resolved?: string | null;
+            /** Selectors */
+            selectors: string[];
+            /** Team */
+            team: string;
+            /** Team Id */
+            team_id?: string | null;
+            /** Unassigned */
+            unassigned?: string | null;
+        };
+        /**
+         * SiteOwnerRef
+         * @description An owner as resolved now: a team, or why it is unassigned.
+         */
+        SiteOwnerRef: {
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Resolved */
+            resolved?: string | null;
+            /** Team */
+            team: string;
+            /** Team Id */
+            team_id?: string | null;
+            /** Unassigned */
+            unassigned?: string | null;
+        };
+        /** SiteZone */
+        SiteZone: {
+            /** Description */
+            description?: string | null;
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Name */
+            name: string;
+            /** Owners */
+            owners?: components["schemas"]["SiteOwnerRef"][];
+            /** Selectors */
+            selectors: string[];
         };
         /** SkillApproveRequest */
         SkillApproveRequest: {
@@ -18465,6 +19066,62 @@ export interface components {
              * @default dark
              */
             theme: string;
+        };
+        /** TicketOut */
+        TicketOut: {
+            /** Alerts */
+            alerts?: components["schemas"]["AlertOut"][] | null;
+            /**
+             * Alerts Hidden
+             * @default false
+             */
+            alerts_hidden: boolean;
+            /** Batch Id */
+            batch_id: string;
+            /** Call */
+            call?: ("real" | "not real" | "can't tell") | null;
+            /** Can Open */
+            can_open: boolean;
+            /** Case Id */
+            case_id?: string | null;
+            /** Closed At */
+            closed_at: string;
+            /** Closure Verdict */
+            closure_verdict?: string | null;
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceOut"][] | null;
+            /**
+             * Evidence Hidden
+             * @default false
+             */
+            evidence_hidden: boolean;
+            /** Id */
+            id: number;
+            /** Notice */
+            notice?: string | null;
+            /** Proposed Actions */
+            proposed_actions?: components["schemas"]["ActionOut"][] | null;
+            /** Recorded */
+            recorded: boolean;
+            /**
+             * Removed
+             * @default false
+             */
+            removed: boolean;
+            /** Reviewers Differ */
+            reviewers_differ: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /** Source */
+            source: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Id */
+            ticket_id: string;
+            /** Title */
+            title?: string | null;
+            /** Vigil Verdict */
+            vigil_verdict?: string | null;
         };
         /**
          * TimelineEvent
@@ -25753,6 +26410,37 @@ export interface operations {
             };
         };
     };
+    get_api_config_site: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteContextResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_config_theme: {
         parameters: {
             query?: never;
@@ -31526,6 +32214,140 @@ export interface operations {
             };
         };
     };
+    "get_api_recheck-review": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_recheck-review_ticket_id": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_case": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_recheck-review_ticket_id_confirm": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                ticket_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_search: {
         parameters: {
             query: {
@@ -33031,6 +33853,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_supervisory: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_supervisory_history_history_id_undo: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                history_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryEntryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_supervisory_suggestions_suggestion_id_apply: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                suggestion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryEntryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_supervisory_suggestions_suggestion_id_dismiss: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                suggestion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DismissBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryEntryResponse"];
                 };
             };
             /** @description Validation Error */

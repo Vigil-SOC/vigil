@@ -12,7 +12,7 @@ type Mfa = SessionPolicyBody['require_mfa']
 type Keys = SessionPolicyBody['require_phishing_resistant']
 type NumKey =
   | 'idle_standard_minutes' | 'idle_privileged_minutes' | 'absolute_hours' | 'sign_in_limit'
-  | 'password_min_length' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
+  | 'password_min_length' | 'password_min_score' | 'password_history' | 'password_max_age_days' | 'password_min_age_days' | 'lockout_threshold' | 'lockout_minutes' | 'dormancy_days'
   | 'personal_token_max_days' | 'service_token_max_days' | 'token_unused_days'
 // What the form holds: every field of the body.
 type Form = Record<NumKey, string> & { password_character_rules: Rules; require_mfa: Mfa; require_phishing_resistant: Keys; lockout_timed: boolean }
@@ -31,12 +31,12 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   {
-    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min',
-    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not.',
+    key: 'idle_standard_minutes', title: 'Idle limit', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'A sign-in with no action from the person for this long ends. Only clicks, keystrokes and page changes count; polling and live streams do not. 0: no idle limit.',
   },
   {
-    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min',
-    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. It cannot exceed the idle limit.',
+    key: 'idle_privileged_minutes', title: 'Idle limit, privileged roles', unit: 'min', none: 'No idle limit', zeroIsOff: true,
+    hint: 'Applies to a role that holds any of these permissions: users, roles, audit, integrations, AI autonomy, AI decision approval, sessions. Also how long a Confirm-it\'s-you lasts, up to 12 hours; at 0, 10 minutes. 0: no idle limit.',
   },
   {
     key: 'absolute_hours', title: 'Sign-in length', unit: 'hours',
@@ -60,7 +60,11 @@ const FIELDS: FieldDef[] = [
   },
   {
     key: 'password_min_length', title: 'Password length', unit: 'characters',
-    hint: 'The fewest characters a new password has. Applies when a password is set or changed; existing passwords are not rechecked.',
+    hint: 'The fewest characters a new password has. One that is "Vigil", the username or the email is still refused, and a higher strength score can need more characters than this. At sign-in a password is rechecked when the person has no MFA and it is shorter than the lower of 15 and this minimum, when it is on the breached list, or when it is past the maximum age. Raising this minimum sends a person without MFA whose password is under that length to a forced change.',
+  },
+  {
+    key: 'password_min_score', title: 'Password strength', unit: 'of 4',
+    hint: 'The score a new password must reach, from 0 to 4. 0 requires no score. 1 is very guessable, 2 somewhat guessable, 3 safely unguessable and 4 very unguessable. A higher score can need more characters than the minimum length. Only a person can lower it.',
   },
   {
     key: 'password_history', title: 'Password history', unit: 'passwords',
@@ -118,7 +122,7 @@ const timedText = (v: boolean) => (v ? 'on' : 'off')
 const ORDER: (NumKey | 'require_mfa' | 'require_phishing_resistant' | 'lockout_timed' | 'password_character_rules' | 'api_tokens')[] = [
   'idle_standard_minutes', 'idle_privileged_minutes', 'absolute_hours', 'sign_in_limit',
   'require_mfa', 'require_phishing_resistant', 'lockout_threshold', 'lockout_timed', 'lockout_minutes', 'dormancy_days',
-  'password_min_length', 'password_history', 'password_character_rules',
+  'password_min_length', 'password_min_score', 'password_history', 'password_character_rules',
   'password_max_age_days', 'password_min_age_days',
   'api_tokens', 'personal_token_max_days', 'service_token_max_days', 'token_unused_days',
 ]
@@ -133,6 +137,7 @@ const toForm = (p: SessionPolicy): Form => ({
   absolute_hours: String(p.absolute_hours),
   sign_in_limit: p.sign_in_limit == null ? '' : String(p.sign_in_limit),
   password_min_length: String(p.password_min_length),
+  password_min_score: String(p.password_min_score),
   password_character_rules: p.password_character_rules,
   password_history: String(p.password_history),
   password_max_age_days: p.password_max_age_days == null ? '' : String(p.password_max_age_days),
@@ -439,7 +444,7 @@ export default function SessionsSection({ notify }: SectionProps) {
         body={
           <>
             <p>{confirm?.loosening
-              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, an unused account stay open longer, a new token last longer, or an unused token stay valid longer:'
+              ? 'This change loosens the policy: a sign-in can last longer, an account hold more sign-ins, a password be shorter, weaker, simpler, reused sooner, older or changed sooner, someone sign in without MFA or without a security key, a guesser have more tries or a shorter lock, an unused account stay open longer, a new token last longer, or an unused token stay valid longer:'
               : confirm?.without_key != null
                 ? 'This change requires security keys of more people:'
                 : 'This change lowers how long an API token may last:'}</p>
@@ -456,6 +461,9 @@ export default function SessionsSection({ notify }: SectionProps) {
             </ul>
             {confirm?.without_mfa != null && (
               <p>{confirm.without_mfa} {confirm.without_mfa === 1 ? 'person' : 'people'} will be able to sign in without MFA.</p>
+            )}
+            {next?.require_mfa === 'off' && saved.require_mfa !== 'off' && (
+              <p>People without MFA will confirm privileged changes and create tokens with their password.</p>
             )}
             {confirm?.without_key != null && <p>{noKeyText(confirm.without_key)}.</p>}
             {saved.unreadable && <p>The stored policy could not be read, so this save replaces whatever it held with the values above and the defaults for every other setting.</p>}

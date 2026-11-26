@@ -55,6 +55,22 @@
   overflow-wrap: anywhere;
 }
 
+.case-page .case-recheck {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--tx1);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.case-page .case-recheck .differ {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--vio);
+  font-weight: 650;
+}
+
 .case-page .case-state-line {
   display: flex;
   flex-wrap: wrap;

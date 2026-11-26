@@ -26,6 +26,7 @@ from core.memory.ledger_erasure import (
     erase_ledgers,
     marked_run_ids,
 )
+from core.reporting.recheck_review import queued_count
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 
@@ -98,6 +99,8 @@ class LedgerCountOut(BaseModel):
     count: int
     run_ids: List[str]
     erase_permission: str
+    # Queued reviews this import's delete takes off the review queue.
+    queued_reviews: int
 
 
 class LedgerEraseIn(BaseModel):
@@ -112,7 +115,7 @@ class SparedCase(BaseModel):
 
 class LedgerEraseOut(BaseModel):
     erased: int
-    # Empty until a Case records which run it was opened from.
+    # Cases a run was opened from. Those runs are not erased.
     cases: List[SparedCase]
 
 
@@ -134,6 +137,7 @@ def count_ledgers(
         "count": len(run_ids),
         "run_ids": run_ids,
         "erase_permission": LEDGERS_ERASE,
+        "queued_reviews": queued_count(session, import_id),
     }
 
 
@@ -151,8 +155,8 @@ def remove_ledgers(
 ):
     """Erase marked re-decision ledgers once the import is gone.
 
-    A run a Case was opened from is not passed. ``cases`` names those, and
-    is empty until that link is recorded. Any other id erases nothing.
+    A run a Case was opened from is not passed. ``cases`` names those.
+    Any other id erases nothing.
     """
     try:
         return erase_ledgers(

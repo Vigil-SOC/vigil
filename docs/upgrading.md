@@ -130,6 +130,21 @@ Adoption from 0.7.0 and 0.8.0 is supported until the first release that ships at
 
 Revision `0077_email_confirmed` marks every account's email confirmed (`users.is_verified = true`). An address already on the account when you upgrade can be used for a password reset straight away. After the upgrade, only a person changing their own email leaves the new address unconfirmed, until they open the 24-hour link mailed to it. A new account's email, and an email an identity provider sets, counts as confirmed and is not sent that link.
 
+## Idle limits of 0 to 12 hours
+
+Both idle limits accept 0 (no idle limit) through 720 minutes (12 hours), set independently of each other. The defaults stay 15 minutes for a standard sign-in and 10 for a privileged one. A value already saved inside the previous ranges (standard 1–60, privileged 1–30, and the privileged limit not above the standard one) behaves the same after the upgrade. Nothing is migrated, and there is no second reader.
+
+A privileged idle of 0 does not turn off Confirm it's you. That window stays 10 minutes. A nonzero privileged idle is the window, up to 12 hours.
+
+**Rolling back** to the previous release after saving an idle of 0, a value above the previous range, or a privileged limit above the standard one makes the stored policy unreadable until an administrator saves Settings > Sessions again. That is what an unreadable policy already does:
+
+- Sessions shows the defaults and says the stored policy could not be read.
+- Token mint and rotate are refused.
+- The unused-token sweep stops: no reminder and no revocation.
+- The Day 1 session checks read "Could not read the session settings."
+
+Saving Settings > Sessions again writes a policy the previous release can read, and those stop.
+
 ## What the sign-in changes do on upgrade day
 
 An upgrade from a database older than these changes does the following. Everything is read from the revisions and the sign-in code.
@@ -152,10 +167,10 @@ An upgrade from a database older than these changes does the following. Everythi
 
 1. The password is checked. A lock refuses it even when it is right. A good password stored as a bcrypt hash is replaced by a PBKDF2 hash at once; the password itself and `password_changed_at` do not change.
 2. If the account has two-step sign-in, the code or key is checked. An old recovery code (from before the new hashing) is accepted once. The whole old set is then voided and a new set is shown once, so the person must keep those. A person who signed in with the app code gets the new set the same way, as their stored set is from the old scheme.
-3. The password is checked against the breached-password list and the policy: a listed password, one past its maximum age, or one under 15 characters without two-step sign-in is not accepted for a sign-in. The answer is `password_change_required` with a reset link, and the person chooses a new password. A spent code stays spent.
+3. The password is checked against the breached-password list and the policy: a listed password, one past its maximum age, or one shorter than the lower of 15 and the minimum length without two-step sign-in is not accepted for a sign-in. The answer is `password_change_required` with a reset link, and the person chooses a new password. A spent code stays spent.
 4. The sign-in is created. If the account is already at the sign-in limit, its oldest open sign-in ends.
 
-**Settings that left.** These are fixed and ignored when set; the API logs one line per variable at start: `JWT_ACCESS_EXPIRATION_MINUTES` (30 minutes), `JWT_REFRESH_EXPIRATION_DAYS` (7 days), `AUTH_MIN_ZXCVBN_SCORE` (3), `PASSWORD_RESET_TTL_SECONDS` (3600 seconds). `AUTH_LOCKOUT_THRESHOLD`, `AUTH_LOCKOUT_DURATION_MINUTES` (now the session policy's lockout fields) and `REVOCATION_FAIL_OPEN` (Redis no longer holds revocation state) are also ignored. Remove all of them from a copied `.env` and from Helm values.
+**Settings that left.** These are fixed and ignored when set; the API logs one line per variable at start: `JWT_ACCESS_EXPIRATION_MINUTES` (30 minutes), `JWT_REFRESH_EXPIRATION_DAYS` (7 days), `PASSWORD_RESET_TTL_SECONDS` (3600 seconds). `AUTH_MIN_ZXCVBN_SCORE` is ignored too: it is not fixed at 3, and the strength score is set in Settings › Sessions (default 3). `AUTH_LOCKOUT_THRESHOLD`, `AUTH_LOCKOUT_DURATION_MINUTES` (now the session policy's lockout fields) and `REVOCATION_FAIL_OPEN` (Redis no longer holds revocation state) are also ignored. Remove all of them from a copied `.env` and from Helm values.
 
 **Password hashes.** Revision `0040_password_scheme_stamp` writes the upgrade time once, to `system_config` key `auth.password_scheme_upgraded_at`; a re-run never overwrites it. Read it with:
 
@@ -165,6 +180,35 @@ FROM system_config WHERE key = 'auth.password_scheme_upgraded_at';
 ```
 
 Each bcrypt password hash is replaced at that person's first good sign-in. The old hashing ends 12 months after the date in that row. A person who has not signed in by then sets a new password with a reset link. To find accounts that have not signed in, open Settings > Users: the Last Login column shows each account's last sign-in, and "Never" for an account that has none.
+
+## Password minimum and strength score
+
+The minimum length is 3–255 characters (default 16) and the strength score is a setting, 0–4 (default 3). At 0, no score is required. The minimum no longer depends on Require MFA. A policy saved before this release has no score and reads as 3, so an install that never changed a setting behaves the same. Set both in Settings › Sessions.
+
+A sign-in without MFA still rechecks a password shorter than the lower of 15 and the minimum. Raising the minimum sends a person without MFA whose password is under that length to a forced change at the next sign-in. A password on the breached list, and one past its maximum age, are still rechecked. An imported breached list keeps entries down to 3 characters; a list imported before this release covers short entries once it is imported again. The shipped list holds no entry under 12 characters.
+
+An install with no saved policy that still sets `AUTH_MIN_PASSWORD_LENGTH` carries that length once, clamped into 3–255, where the variable reaches the API process. A value of exactly 12 counts as unset, so the defaults apply. `AUTH_MIN_ZXCVBN_SCORE` is not carried into the score.
+
+**Rolling back** to the previous release has costs after either of these:
+
+- saving a length outside 12–64, or any other value the previous release's ranges refuse;
+- saving a minimum under 15, or seeding one from the host, while Require MFA is not everyone (that release refuses the combination).
+
+Until an administrator saves Settings › Sessions again, the previous release:
+
+- reads the policy as unreadable, enforces its own defaults (a 3-character minimum reads as 16) and says so on Sessions;
+- refuses token mint and rotate, and stops the unused-token sweep;
+- shows "Could not read" on the Day 1 session checks.
+
+Also on the previous release:
+
+- it ignores the new strength field and applies 3 silently, and a save made there drops the field;
+- a person without MFA whose password is under 15 characters is sent to a forced change at sign-in;
+- a password over 128 characters is a wrong password, and the way back is a reset link to a password of 128 or fewer.
+
+## BIFROST_URL and OLLAMA_URL in .env
+
+`env.example` no longer sets `BIFROST_URL` or `OLLAMA_URL` (#5200). Each install shape now uses its own default: host-run uses localhost, Compose uses `http://bifrost:8080` and `http://host.docker.internal:11434`, and Helm sets its own. An existing `.env` is not rewritten. On a full-stack Compose install, delete the shipped `BIFROST_URL="http://localhost:8080"` and `OLLAMA_URL="http://localhost:11434"` lines from `.env`: a value there overrides the Compose defaults, and inside a container localhost is the container itself, so model calls never reach the gateway or Ollama. A host-run install may keep them.
 
 ## Medic's gateway token on Compose
 

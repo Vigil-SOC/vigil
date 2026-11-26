@@ -1061,6 +1061,8 @@ export function CasePage({
   closure,
   linkedFindings,
   openedFrom = null,
+  recheck = null,
+  reviewersDiffer = false,
   phase,
   error,
   pageKey,
@@ -1093,6 +1095,10 @@ export function CasePage({
   linkedFindings: CaseLinkedFinding[]
   /** The finding the case was opened from (the first linked). */
   openedFrom?: string | null
+  /** Set when the Case was opened from a re-check. */
+  recheck?: { source: string; closed_at: string; run_id: string } | null
+  /** A later review disagreed. Names nobody. */
+  reviewersDiffer?: boolean
   phase: Phase
   error: string | null
   /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
@@ -1794,6 +1800,13 @@ export function CasePage({
                 {canWrite && !closed && <button type="button" className="btn primary" onClick={() => setClosing(true)}>Close case</button>}
               </div>
             </div>
+            {recheck && (
+              <p className="case-recheck">
+                Opened from a re-check of a ticket closed on {utcDay(recheck.closed_at) || recheck.closed_at} in {recheck.source}.{' '}
+                <Link to={`/workflows?run=${encodeURIComponent(recheck.run_id)}`}>Run</Link>
+                {reviewersDiffer && <span className="differ">Reviewers differ.</span>}
+              </p>
+            )}
             <div className="case-state-line">
               <SeverityMark level={c.prio} />
               <StatePill state={pillState} needs={needsShown > 0} />

@@ -278,7 +278,9 @@ export const importsApi = {
   list: () => api.get<Schema<'ImportListResponse'>>('/memory/imports'),
   /** Marked re-decision ledgers this import would keep. Read when the delete dialog opens. */
   ledgers: (id: string) =>
-    api.get<Schema<'LedgerCountOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`),
+    api.get<Schema<'LedgerCountOut'> & { queued_reviews: number }>(
+      `/memory/imports/ledgers/${encodeURIComponent(id)}`,
+    ),
   remove: (id: string) => api.delete<ImportDelete>(`/memory/imports/${encodeURIComponent(id)}`),
   eraseLedgers: (id: string, runIds: string[]) =>
     api.post<Schema<'LedgerEraseOut'>>(`/memory/imports/ledgers/${encodeURIComponent(id)}`, {
@@ -301,6 +303,54 @@ export interface CaseRecordResponse {
   run_id: string | null
   investigation_id: string | null
   rows: CaseRecordRow[]
+}
+
+export type RecheckCall = 'real' | 'not real' | "can't tell"
+
+export interface RecheckQueueItem {
+  id: number
+  batch_id: string
+  source: string
+  closed_at: string
+  ticket_id: string
+  title: string | null
+  recorded: boolean
+  call: RecheckCall | null
+  reviewers_differ: boolean
+  can_open: boolean
+  case_id: string | null
+}
+
+export interface RecheckAlert {
+  time: string
+  title: string
+  rule: string
+  severity: string
+  entity_keys: string[]
+  description: string
+}
+
+export interface RecheckTicket extends RecheckQueueItem {
+  removed: boolean
+  notice: string | null
+  alerts: RecheckAlert[] | null
+  alerts_hidden: boolean
+  evidence: { tool: string; result: string }[] | null
+  evidence_hidden: boolean
+  closure_verdict: string | null
+  vigil_verdict: string | null
+  summary: string | null
+  proposed_actions: { action_type: string; target: string; reason: string }[] | null
+  run_id: string | null
+}
+
+/** Blind review of a finished capped re-check (#5095). */
+export const recheckReviewApi = {
+  queue: () => api.get<{ pending: RecheckQueueItem[]; reviewed: RecheckQueueItem[] }>('/recheck-review'),
+  get: (id: number) => api.get<RecheckTicket>(`/recheck-review/${id}`),
+  confirm: (id: number, call: RecheckCall) =>
+    api.post<RecheckTicket>(`/recheck-review/${id}/confirm`, { call }),
+  openCase: (id: number) => api.post<{ case_id: string }>(`/recheck-review/${id}/case`),
 }
 
 export const casesApi = {
@@ -750,6 +800,8 @@ export const configApi = {
 
   getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
   getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
+  // The applied site/ revision, read-only (#5214)
+  getSite: () => api.get<Schema<'SiteContextResponse'>>('/config/site'),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
     api.post<Schema<'IntentReportResponse'>>('/config/intent/accept', data),
@@ -801,6 +853,11 @@ export const day1Api = {
   selection: () => api.get<SelectionView>('/day1-report/selection'),
   setSelection: (data: SelectionDraft) =>
     api.put<SelectionView>('/day1-report/selection', data),
+}
+
+export const cappedRecheckApi = {
+  latest: () => api.get<Schema<'Projection'>>('/day1-report/capped-recheck'),
+  start: () => api.post<Schema<'Projection'>>('/day1-report/capped-recheck'),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -2315,6 +2372,18 @@ export const overviewApi = {
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
+export type TriageRaisedBy =
+  | {
+      source: 'crown_jewel'
+      name: string
+      file: string
+      line: number
+      revision: string | null
+      selector: string
+      key: string
+    }
+  | { source: 'enrichment'; criticality: 'critical' }
+
 export interface TriageRow {
   id: number
   kind: string
@@ -2328,6 +2397,8 @@ export interface TriageRow {
   age_seconds: number
   ttl_seconds: number
   last_quarter: boolean
+  /** What launches it ahead of older rows in its band; null when nothing does. */
+  raised_by: TriageRaisedBy | null
   pickup_seconds: number | null
   workflow_id: string
   case_door: string | null

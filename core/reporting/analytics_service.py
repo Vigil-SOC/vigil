@@ -696,6 +696,7 @@ async def get_cost_breakdown(db: Session, time_range: str) -> Dict[str, Any]:
 # sealed at or before the close. ``closed_at`` is naive UTC and ``ts`` timestamptz,
 # so the close is cast rather than read in the server's zone. A run id that is not
 # a uuid has no ledger rows, and is cast to NULL rather than failing the query.
+# A Case opened from a re-check carries cases.recheck_mark and is left out.
 _CLOSURE_VERDICTS = text("""
     SELECT ci.case_id, ci.closure_category, ci.close_channel,
            ci.closed_at, ci.sampled_at, ci.evidence_opened,
@@ -720,8 +721,11 @@ _CLOSURE_VERDICTS = text("""
         ORDER BY e.ts DESC, e.seq DESC
         LIMIT 1
     ) t ON true
-    WHERE (ci.closed_at >= :start AND ci.closed_at <= :end)
-       OR (ci.sampled_at >= :start AND ci.sampled_at <= :end)
+    WHERE c.recheck_mark IS NULL
+      AND (
+        (ci.closed_at >= :start AND ci.closed_at <= :end)
+        OR (ci.sampled_at >= :start AND ci.sampled_at <= :end)
+      )
     """)
 
 # 95% two-sided Wilson interval. z is the standard normal 0.975 quantile.

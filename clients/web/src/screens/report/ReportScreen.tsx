@@ -57,6 +57,7 @@ const MODULE_TITLE: Record<string, string> = {
   estate: 'What CrowdStrike, Defender and Wazuh still list',
   'history.before': 'Your "before"',
   'history.recheck': 'Re-check list',
+  'history.capped_recheck': 'Capped re-check',
   'history.tuning': 'Tuning candidates',
   'history.forecast': 'Cost forecast',
   'production.running': 'What is running',
@@ -77,6 +78,7 @@ const MODULE_PERMISSION: Record<string, string> = {
   estate: 'integrations.read',
   'history.before': 'findings.read',
   'history.recheck': 'findings.read',
+  'history.capped_recheck': 'findings.read',
   'history.tuning': 'findings.read',
   'history.forecast': 'platform.read',
   'production.running': 'platform.read',
@@ -94,6 +96,7 @@ const MODULE_PERMISSION: Record<string, string> = {
 const REPORT_SECTIONS = new Set([
   'history.before',
   'history.recheck',
+  'history.capped_recheck',
   'history.tuning',
   'history.forecast',
   'production.confidence',
@@ -1697,6 +1700,7 @@ export default function ReportScreen() {
         )}
         {day1 && withheld.includes('history.before') && <Withheld id="history.before" />}
         {day1 && withheld.includes('history.recheck') && <Withheld id="history.recheck" />}
+        {day1 && withheld.includes('history.capped_recheck') && <Withheld id="history.capped_recheck" />}
         {day1 && withheld.includes('history.tuning') && <Withheld id="history.tuning" />}
         {day1 && <HistorySections report={day1} />}
         {estateRan && withheld.includes('estate') && <Withheld id="estate" />}

@@ -14,6 +14,7 @@ export type ConsoleScreenKey =
   | 'medic'
   | 'supervisory'
   | 'report'
+  | 'review'
   | 'settings'
 
 /** A nav item carrying a gate only renders when the gate is satisfied. */
@@ -35,6 +36,7 @@ export const NAV: [IconName, string, ConsoleScreenKey, NavGate?][] = [
   ['eye', 'Medic', 'medic'],
   ['brain', 'Supervisory model', 'supervisory'],
   ['doc', 'Day 1 Report', 'report'],
+  ['check', 'Review', 'review'],
   ['gear', 'Settings', 'settings'],
 ]
 
@@ -146,5 +148,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   medic: ['Medic', 'What Medic watches in this install, and the incidents it records'],
   supervisory: ['Supervisory model', 'Setting changes it suggests, and the evidence behind each. Nothing changes until a person acts.'],
   report: ['Day 1 Report', 'What this install can see, and what to fix first'],
+  review: ['Review', 'Confirm a re-decision before a Case can open'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

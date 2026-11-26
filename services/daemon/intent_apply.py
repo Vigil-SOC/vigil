@@ -15,6 +15,9 @@ their content hash changes it applies the revision:
 A poll with an unchanged hash writes nothing, so a local narrowing survives
 until a commit changes that key. A missing directory keeps the last applied
 revision with state ``degraded``.
+
+The same poll applies ``<dir>/site/*.md`` (:mod:`core.site`) to its own
+``site.applied`` row, in its own ``try``, with or without INTENT.md.
 """
 
 from __future__ import annotations
@@ -45,6 +48,14 @@ from core.response.ceiling import (
     environment_locks_act,
 )
 from core.response.config import INTENT_APPLIED_KEY, applied_intent
+from core.site import (
+    NOTHING_DECLARED,
+    SITE_APPLIED_KEY,
+    SITE_DIR_NAME,
+    SiteRejected,
+    applied_site,
+    parse_site,
+)
 from core.storage.config_service import get_config_service
 from core.time import utcnow
 
@@ -357,6 +368,133 @@ def accept_pending(
     )
 
 
+def _write_site(row: Dict[str, Any], reason: str) -> None:
+    ok = get_config_service(ACTOR).set_system_config(
+        key=SITE_APPLIED_KEY,
+        value=row,
+        description="Declared site/ revision applied by the daemon",
+        config_type="intent",
+        change_reason=reason,
+    )
+    if not ok:
+        raise StoreWriteFailed(SITE_APPLIED_KEY)
+    applied_site(fresh=True)
+
+
+def _site_snapshot(directory: Path) -> tuple[str, str, List[tuple[str, str]]]:
+    """``(hash, revision, [(site/<name>, text)])`` in name order.
+
+    Raises ``OSError`` when the directory cannot be read. A readable directory
+    with no ``site/`` is an empty declaration. INTENT.md plays no part.
+    """
+    next(directory.iterdir(), None)  # listable, not just present
+    marker, revision = read_revision(directory)
+    site = directory / SITE_DIR_NAME
+    paths = (
+        sorted(p for p in site.iterdir() if p.suffix == ".md" and p.is_file())
+        if site.is_dir()
+        else []
+    )
+    digest = hashlib.sha256()
+    files: List[tuple[str, str]] = []
+    for path in paths:
+        content = path.read_bytes()
+        name = f"{SITE_DIR_NAME}/{path.name}"
+        digest.update(name.encode() + b"\0" + content + b"\0")
+        files.append((name, content.decode("utf-8-sig", "replace")))
+    digest.update(b"\0" + marker)
+    return digest.hexdigest(), revision, files
+
+
+def site_apply_once(directory: Path) -> None:
+    """One poll of ``site/``. Never reads or writes ``intent.applied``.
+
+    A refused revision keeps the last good items; an unreadable directory
+    keeps them too and reads ``degraded``. An unchanged hash writes nothing.
+    """
+    row: Dict[str, Any] = (
+        get_config_service(ACTOR).read_system_config(SITE_APPLIED_KEY) or {}
+    )
+    base = {**row, "directory": str(directory)}
+    try:
+        digest, revision, files = _site_snapshot(directory)
+    except OSError as exc:
+        reason = f"{directory} not readable ({exc.strerror or exc}); kept site revision {row.get('revision') or 'none'}"
+        if row.get("state") != "degraded" or row.get("reason") != reason:
+            logger.warning("site: %s", reason)
+            _write_site({**base, "state": "degraded", "reason": reason}, reason)
+        return
+
+    if digest == row.get("hash") and row.get("directory") == str(directory):
+        if row.get("state") == "degraded":
+            rejected = row.get("rejected")
+            state = "rejected" if rejected else "ok"
+            reason = (
+                rejected["reason"]
+                if rejected
+                else f"site revision {row.get('revision')} applied"
+            )
+            _write_site({**base, "state": state, "reason": reason}, reason)
+        return
+
+    try:
+        items = parse_site(files)
+    except SiteRejected as exc:
+        reason = f"site revision {revision} rejected: {exc}"
+        logger.warning("site: %s", reason)
+        rejected = {
+            "revision": revision,
+            "file": exc.file,
+            "line": exc.line,
+            "reason": reason,
+        }
+        _write_site(
+            {
+                **base,
+                "hash": digest,
+                "state": "rejected",
+                "reason": reason,
+                "rejected": rejected,
+            },
+            reason,
+        )
+        return
+
+    count = sum(len(v) for v in items.values())
+    reason = (
+        f"site revision {revision} applied ({count} item(s) from {len(files)} file(s))"
+    )
+    logger.info("site: %s", reason)
+    _write_site(
+        {
+            "directory": str(directory),
+            "revision": revision,
+            "hash": digest,
+            "state": "ok",
+            "reason": reason,
+            "applied_at": utcnow().isoformat(),
+            "items": items,
+            "files": [{"file": name, "text": text} for name, text in files],
+            "rejected": None,
+        },
+        reason,
+    )
+
+
+def clear_site() -> None:
+    """With no declared directory: clear ``site.applied`` once, at daemon start.
+
+    ``intent.applied`` is left as it is.
+    """
+    row = get_config_service(ACTOR).read_system_config(SITE_APPLIED_KEY)
+    if row and row.get("directory"):
+        logger.info("site: VIGIL_INTENT_DIR is unset; clearing the declared site")
+        _write_site(
+            {"directory": None, "state": "none", "reason": NOTHING_DECLARED},
+            NOTHING_DECLARED,
+        )
+
+
 async def run_applier(directory: Path, shutdown_event: asyncio.Event) -> None:
     """Poll until shutdown. A failed poll is logged and retried next time."""
     logger.info("intent: applying %s every %ds", directory, POLL_SECONDS)
@@ -365,6 +503,10 @@ async def run_applier(directory: Path, shutdown_event: asyncio.Event) -> None:
             await asyncio.to_thread(apply_once, directory)
         except Exception:  # noqa: BLE001 - never stops the daemon
             logger.exception("intent: poll of %s failed; retrying", directory)
+        try:  # its own try: a site failure never holds up INTENT.md, nor the reverse
+            await asyncio.to_thread(site_apply_once, directory)
+        except Exception:  # noqa: BLE001 - never stops the daemon
+            logger.exception("site: poll of %s failed; retrying", directory)
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=POLL_SECONDS)
         except asyncio.TimeoutError:

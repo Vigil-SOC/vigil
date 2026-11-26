@@ -29,6 +29,8 @@ import httpx
 
 from core.federation.error_kind import kind_of
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.descriptor import TaxiiFeed
+from core.integrations._base.proxy import integration_proxy
 from core.integrations.amazon_security_lake.descriptor import AMAZON_SECURITY_LAKE
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
@@ -235,9 +237,17 @@ async def _opencti() -> Outcome:
     )
     try:
         # me { name } with the token: a bad token and a wrong URL differ.
-        return await service.test_connection()
+        outcome = await service.test_connection()
     finally:
         await service.close()
+    # The threat feed: the same declaration, verify and proxy the poller uses.
+    feed = OPENCTI.taxii_feed(config)  # type: ignore[misc]
+    if not outcome[0] or feed is None:
+        return outcome
+    taxii = await _taxii_check("OpenCTI", OPENCTI.id, feed)
+    if not taxii[0]:
+        return taxii
+    return True, f"{outcome[1]}; {taxii[1]}"
 
 
 async def _sentinel() -> Outcome:
@@ -509,69 +519,77 @@ async def _crowdstrike() -> Outcome:
         service.session.close()
 
 
-async def _cloudforce_one() -> Outcome:
-    # Same descriptor the poller resolves, so Test and the poll see one config.
-    config = resolve(CLOUDFORCE_ONE)
-    collection_ids = [
-        part.strip()
-        for part in str(config.get("collection_ids") or "").split(",")
-        if part.strip()
-    ]
-    absent = missing(config, "api_token", "taxii_server_url")
-    if not collection_ids:
-        absent = (*absent, "collection_ids")
-    if absent:
-        return _absent(absent)
+def _taxii_collections(feed: TaxiiFeed, proxy: Optional[str]) -> set:
+    """Which of the feed's collection ids its TAXII 2.1 server lists.
 
-    def discover() -> Outcome:
-        from taxii2client.v21 import Server
+    Discovery only: fetching a collection pages every object. Every request
+    carries the short timeout and the feed's verify and proxy. Stops at the
+    first API root that holds them all. Raises what taxii2client raises.
+    """
+    from taxii2client.v21 import Server
 
-        from core.threat_intel.threat_feed_service import _BearerAuth
+    from core.threat_intel.threat_feed_service import _BearerAuth, pin_taxii_session
 
-        # Discovery only. Fetching the collection pages every object.
-        # Each API root opens its own session, so the short timeout has to be
-        # put on that session before its collections are listed.
-        server = Server(
-            str(config["taxii_server_url"]),
-            auth=_BearerAuth(str(config["api_token"])),
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+
+    def pin(session: Any) -> None:
+        pin_taxii_session(
+            session, feed.requests_verify, proxies, timeout=_REQUEST_TIMEOUT
         )
 
-        def limit(session: Any) -> None:
-            request = session.request
-
-            def limited(method: str, url: str, **kwargs: Any) -> Any:
-                kwargs.setdefault("timeout", _REQUEST_TIMEOUT)
-                return request(method, url, **kwargs)
-
-            session.request = limited
-
-        roots: list = []
-        try:
-            limit(server._conn.session)
-            roots = list(server.api_roots)
-            wanted = collection_ids[0]
-            for root in roots:
-                limit(root._conn.session)
-                for collection in root.collections:
-                    if collection.id == wanted:
-                        return True, "Cloudforce One accepted the call"
-            return False, "Cloudforce One collection was not found"
-        finally:
-            server.close()
-            for root in roots:
-                root.close()
-
+    wanted = set(feed.collection_ids)
+    server = Server(str(feed.server_url), auth=_BearerAuth(str(feed.api_token)))
+    roots: list = []
+    found: set = set()
     try:
-        return await asyncio.to_thread(discover)
+        pin(server._conn.session)
+        roots = list(server.api_roots)
+        for root in roots:
+            # Each API root opens its own session.
+            pin(root._conn.session)
+            found.update(c.id for c in root.collections if c.id in wanted)
+            if found >= wanted:
+                break
+        return found
+    finally:
+        server.close()
+        for root in roots:
+            root.close()
+
+
+async def _taxii_check(name: str, integration_id: str, feed: TaxiiFeed) -> Outcome:
+    """Look up every saved collection id; name each one the server lacks."""
+    try:
+        found = await asyncio.to_thread(
+            _taxii_collections, feed, integration_proxy(integration_id)
+        )
     except Exception as exc:  # noqa: BLE001
         # The class name only: the HTTP error names the URL it was given.
         logger.warning(
-            "Credential check for cloudforce_one failed (%s)", type(exc).__name__
+            "Credential check for %s TAXII failed (%s)",
+            integration_id,
+            type(exc).__name__,
         )
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status in (401, 403):
-            return failed("Cloudforce One rejected the call", status=status, exc=exc)
-        return failed("Cloudforce One could not be reached", status=status, exc=exc)
+            return failed(f"{name} TAXII rejected the call", status=status, exc=exc)
+        return failed(f"{name} TAXII could not be reached", status=status, exc=exc)
+    unknown = [cid for cid in feed.collection_ids if cid not in found]
+    if unknown:
+        return False, f"{name} TAXII collection not found: {', '.join(unknown)}"
+    return True, f"{name} TAXII listed {len(feed.collection_ids)} collection(s)"
+
+
+async def _cloudforce_one() -> Outcome:
+    # Same declaration the poller reads, so Test and the poll see one config.
+    config = resolve(CLOUDFORCE_ONE)
+    feed = CLOUDFORCE_ONE.taxii_feed(config)  # type: ignore[misc]
+    absent = missing(config, "api_token", "taxii_server_url")
+    if feed is None:
+        absent = (*absent, "collection_ids")
+    if absent:
+        return _absent(absent)
+    return await _taxii_check("Cloudforce One", CLOUDFORCE_ONE.id, feed)
 
 
 _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {

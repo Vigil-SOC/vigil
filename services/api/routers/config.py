@@ -62,6 +62,7 @@ from core.secrets import (
     set_secret,
 )
 from core.secrets_manager import get_secrets_manager
+from core.site import site_view
 from core.skills.skill_library import (
     is_bundled,
     load_skills,
@@ -1970,6 +1971,80 @@ def get_intent_report() -> Dict[str, Any]:
     rows, so the Settings card can say so in one line.
     """
     return intent_body()
+
+
+class SiteOwnerRef(BaseModel):
+    """An owner as resolved now: a team, or why it is unassigned."""
+
+    team: str
+    team_id: Optional[str] = None
+    resolved: Optional[str] = None
+    unassigned: Optional[str] = None
+    file: str
+    line: int
+
+
+class SiteZone(BaseModel):
+    name: str
+    selectors: list[str]
+    description: Optional[str] = None
+    file: str
+    line: int
+    # The owners whose selectors overlap this zone's.
+    owners: list[SiteOwnerRef] = Field(default_factory=list)
+
+
+class SiteCrownJewel(BaseModel):
+    name: str
+    mission: str
+    selectors: list[str]
+    zone: Optional[str] = None
+    why: Optional[str] = None
+    file: str
+    line: int
+    owners: list[SiteOwnerRef] = Field(default_factory=list)
+
+
+class SiteOwner(SiteOwnerRef):
+    selectors: list[str]
+
+
+class SiteBlindSpot(BaseModel):
+    selectors: list[str]
+    what: str
+    file: str
+    line: int
+
+
+class SiteFile(BaseModel):
+    file: str
+    text: str
+
+
+class SiteContextResponse(BaseModel):
+    """The declared site (site/*.md) the daemon applied. Read-only; not /api/v1."""
+
+    declared: bool
+    directory: Optional[str] = None
+    revision: Optional[str] = None
+    # ok | rejected | degraded | none (no declared directory)
+    state: str
+    reason: str
+    hash: Optional[str] = None
+    applied_at: Optional[str] = None
+    rejected: Optional[Dict[str, Any]] = None
+    zones: list[SiteZone] = Field(default_factory=list)
+    crown_jewels: list[SiteCrownJewel] = Field(default_factory=list)
+    owners: list[SiteOwner] = Field(default_factory=list)
+    blind_spots: list[SiteBlindSpot] = Field(default_factory=list)
+    files: list[SiteFile] = Field(default_factory=list)
+
+
+@router.get("/site", response_model=SiteContextResponse, dependencies=_PLATFORM_READ)
+def get_site_context() -> Dict[str, Any]:
+    """The applied site/ revision: state, any refusal with file and line, each
+    item with file, line and resolved owner, and the applied files' text."""
+    return site_view()
 
 
 class IntentAcceptBody(BaseModel):

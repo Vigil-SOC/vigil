@@ -1256,6 +1256,7 @@ class DatabaseService:
                 mitre_techniques=kwargs.get("mitre_techniques"),
                 readers=kwargs.get("readers"),
                 reader_teams=kwargs.get("reader_teams"),
+                recheck_mark=kwargs.get("recheck_mark"),
             )
             session.refresh(case)
             # Touch it while the session is open: the dump runs after it closes.

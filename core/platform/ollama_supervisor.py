@@ -47,7 +47,7 @@ _SPAWN_LOCK = threading.Lock()
 def base_url() -> str:
     """Host-side Ollama URL — what the backend/worker/daemon should call.
 
-    ``OLLAMA_URL`` holds the host-side value (``.env`` ships localhost:11434).
+    ``OLLAMA_URL`` holds the host-side value (localhost:11434 when unset).
     See :func:`container_base_url` for the container-side form.
     """
     return get_settings().ollama_url.strip().rstrip("/")

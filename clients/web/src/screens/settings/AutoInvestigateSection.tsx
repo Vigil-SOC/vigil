@@ -24,6 +24,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import IntentReportCard from './IntentReportCard'
+import SiteContextCard from './SiteContextCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
 import EmulatorsBlock from './EmulatorsBlock'
 import {
@@ -214,6 +215,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const canRaise = hasPermission('ai_autonomy.write')
   const canLower = canRaise || hasPermission('ai_autonomy.stop')
   const canDecide = hasPermission('ai_decisions.approve')
+  const canReadSite = hasPermission('platform.read')
   const [rejectFor, setRejectFor] = useState<HeldRow | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [heldBusy, setHeldBusy] = useState<string | null>(null)
@@ -1083,9 +1085,10 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 reload()
               }}
             />
+            {canReadSite && <SiteContextCard reloadKey={intentRevision} />}
           </div>
         ) : (
-          <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage and the intent report.</span>
+          <span className="text-xs text-tx-3">Hidden — click Show to see timing, storage, the intent report and the declared site.</span>
         )}
       </SettingsCard>
 

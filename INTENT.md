@@ -108,6 +108,58 @@ token, accepts pending loosenings with `POST /api/config/intent/accept`
 (`{"revision": ...}`); each store write is audited under their name with the
 revision.
 
+A folder with no `INTENT.md` reads intent as `degraded` (the last applied
+revision stays), and an `INTENT.md` whose front matter is empty declares
+nothing, so no key is managed.
+
+### Site context: `site/*.md`
+
+Beside `INTENT.md`, a `site/` folder states what Vigil cannot discover about
+the site. Each `site/*.md` is Markdown with YAML front matter; the body is
+prose for people. Any file may hold any of four lists, and only these keys:
+
+```yaml
+---
+zones:
+  - name: core                      # unique across all files
+    selectors: ["cidr:10.1.0.0/16"]
+    description: Payment systems    # optional
+crown_jewels:
+  - name: payments-db
+    mission: Take card payments
+    selectors: ["host:db01.corp.example", "ip:10.1.2.3"]
+    zone: core                      # optional; must be a declared zone
+    why: Holds card data            # optional
+owners:
+  - selectors: ["cidr:10.1.0.0/16"]
+    team: Payments                  # a Vigil team, matched ignoring case
+blind_spots:
+  - selectors: ["host:ot-*"]
+    what: No EDR on the OT hosts
+---
+```
+
+A selector is `cidr:<range>` (matches `ip:` keys) or an Entity Key of kind
+`ip`, `domain`, `host`, `url`, `email`, `hash`, `arn`, `aws_key`, `user` or
+`process`, normalised as Vigil mints keys, where `*` in the value matches any
+run of characters. No other wildcard or regex. No key takes a secret.
+
+The same 30-second poll applies `site/` on its own verdict, in its own
+`site.applied` row, with or without `INTENT.md`; its hash covers `site/*.md`
+in name order and `REVISION`. An unknown key, a wrong-typed value, any other
+selector kind (`edr_group:` included), a crown jewel naming an undeclared zone,
+or a revision over 512 KiB or 2000 items refuses the whole site revision with
+file and line, and the last good one stays. A site refusal never holds up an
+`INTENT.md` change, nor the reverse. A directory with no `site/` declares an
+empty site; one that cannot be read keeps the last good revision, `degraded`.
+An owner naming no active team reads `unassigned: no team named <name>` until
+that team exists, with no new commit. With `VIGIL_INTENT_DIR` unset, the daemon
+clears the site at start and leaves the intent row alone.
+
+`GET /api/config/site` and the /mcp tool `get_site_context` (both
+`platform.read`, not part of `/api/v1`) show the applied revision, its state,
+any refusal, each item with file, line and resolved owner, and the files' text.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the

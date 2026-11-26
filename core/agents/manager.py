@@ -179,9 +179,16 @@ class AgentManager:
         except Exception as e:
             logger.warning(f"Agent run stats unavailable: {e}")
             stats = None
-        # One lookup for every agent's tools.
+        from core.workflows.playbook_resolver import CAPABILITIES, EMULATION
+
+        # One lookup for every agent's tools. A capability binds tools at run time and
+        # is no tool name, so it is left out -- but emulation's tools act on hosts, and
+        # it stays in to read as asking first.
         asking = asks_first(
-            t for a in self.agents.values() for t in a.recommended_tools
+            t
+            for a in self.agents.values()
+            for t in a.recommended_tools
+            if t not in CAPABILITIES or t == EMULATION
         )
         rows = []
         for a in self.agents.values():

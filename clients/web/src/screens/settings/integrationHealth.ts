@@ -111,7 +111,7 @@ export function healthPhrase(source: Pick<IntegrationHealthSource, 'state' | 're
     case 'failing_once':
       return source.reason || 'last attempt failed'
     case 'switched_off':
-      return ''
+      return 'Switched off'
     default: {
       const unexpected: never = source.state
       void unexpected
@@ -123,7 +123,7 @@ export function healthPhrase(source: Pick<IntegrationHealthSource, 'state' | 're
 /** Wording for the health cell and the Last verified cell. Empty when the row has nothing to say. */
 export function rowPhrase(r: Pick<ServerRow, 'healthFailed' | 'integration' | 'judgement'>, now = Date.now()): string {
   if (r.healthFailed && r.integration) return 'Could not read'
-  if (!r.judgement || r.judgement.state === 'switched_off') return ''
+  if (!r.judgement) return ''
   return healthPhrase(r.judgement, now)
 }
 
@@ -141,6 +141,9 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const extConfigured = Boolean(isExtension && integration && i.integrations[integration.id]?.['connectorUrl'])
     const collects = Boolean(integration && PULLED_SOURCES.has(integration.id))
     const saved = Boolean(integration && i.integrations[integration.id])
+    // A saved built-in stays on Connected when its own on/off is off. An
+    // extension still needs a connector URL (extConfigured) to count as set up.
+    const savedBuiltIn = saved && !isExtension
     // an alert source reads On while either gate is, so Off never hides live collection
     const masterOn = collects ? isEnabled || configured : configured && isEnabled
     const missing = i.missingCredentials[name] ?? []
@@ -155,7 +158,7 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const waiting = setup ? 'Not set up' : i.statuses[name] === 'on_demand' ? 'Starts on first use' : ''
     const stopped = isEnabled && !waiting && !isRunning
     const mcpWord = waiting || (stopped ? 'Not running' : '')
-    const unconfigured = integration && !configured && !extConfigured && !(collects && saved) ? 'Not set up' : ''
+    const unconfigured = integration && !configured && !extConfigured && !savedBuiltIn ? 'Not set up' : ''
     const runtime = mcpWord || unconfigured
     const judgement = !failed && integration ? byId.get(integration.id) ?? null : null
     // no integration, or no record, is neutral — never Good
@@ -178,8 +181,9 @@ export function buildRows(i: HealthInput): ServerRow[] {
       ...faults,
       collecting ? 'Agent tools off · alert collection still on' : '',
     ].filter((n, idx, all) => n && all.indexOf(n) === idx)
-    // a server nobody connected has no health to report; a switched-off source keeps its row
-    const connected = isEnabled || configured || extConfigured || (collects && saved)
+    // a server nobody connected has no health to report; a saved built-in stays
+    // on Connected when switched off, tool server on or off
+    const connected = isEnabled || configured || extConfigured || savedBuiltIn
     const word = cellTaken ? '' : runtime || (isEnabled || (collects && configured) ? '' : 'Off')
     return {
       name,

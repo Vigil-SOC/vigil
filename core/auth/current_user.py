@@ -196,7 +196,9 @@ def _check_sign_in(
     sign-in found past a limit is ended here, with its reason, and commits with the 401.
     An account the MFA requirement covers, with no MFA yet (or the key requirement,
     with no key), is refused with 403 ``mfa_setup_required`` unless the route is a setup route. Judged on every
-    request, so a role edit or a raised setting applies at the next one.
+    request, so a role edit or a raised setting applies at the next one. An idle
+    setting of 0 is no idle limit (``limits`` returns None), so idleness never
+    ends the sign-in; a new limit is counted from ``last_action_at`` on the next request.
     """
     with unit_of_work() as db:
         user = db.query(User).filter(User.user_id == user_id).first()

@@ -39,12 +39,15 @@ from core.integrations.readiness import (
 from core.llm import residency, statements
 from core.platform import notices
 from core.platform.process_health import ProcessHealth
+from core.reporting.capped_recheck_report import present as present_capped
+from core.reporting.capped_recheck_report import produce as produce_capped
 from core.reporting.checks import (
     CHANGES,
     COVERAGE,
     ESTATE,
     FORECAST,
     HISTORY,
+    HISTORY_CAPPED,
     LEGACY_CITATIONS,
     MODULES,
     SETTINGS,
@@ -303,6 +306,7 @@ def build(state: dict, gateway: Optional[tuple] = None) -> dict[str, Any]:
         modules.append(ESTATE.id)
         checks.extend(produce_estate(sources, health_failed))
     _append_history(modules, evidence, disabled)
+    _append_capped(modules, evidence, disabled)
     if FORECAST.id not in disabled:
         modules.append(FORECAST.id)
         evidence[FORECAST.id] = _forecast(state)
@@ -357,6 +361,24 @@ def _append_history(
     for module_id in pending:
         modules.append(module_id)
         evidence[module_id] = produced[module_id]
+
+
+def _append_capped(
+    modules: list[str], evidence: dict[str, Any], disabled: set[str]
+) -> None:
+    """The capped re-check. A failed read is not-checked here, and the report completes."""
+    if HISTORY_CAPPED.id in disabled:
+        return
+    modules.append(HISTORY_CAPPED.id)
+    try:
+        evidence[HISTORY_CAPPED.id] = produce_capped()
+    except Exception as exc:  # noqa: BLE001 - this module only
+        logger.error(
+            "Day 1 Report could not read the capped re-check: %s", type(exc).__name__
+        )
+        evidence[HISTORY_CAPPED.id] = {
+            "not_checked": "not checked: could not read the capped re-check."
+        }
 
 
 def _forecast(state: dict) -> dict[str, Any]:
@@ -605,6 +627,14 @@ def _present(
         "evidence": _readable_evidence(session, user_id, record, hidden),
         "switched_off": switched_off,
         "forecast": forecast,
+        "history_capped_recheck": present_capped(
+            session,
+            evidence,
+            list(record.modules or []),
+            hidden,
+            record.recorded_at,
+            user_id,
+        ),
         "coverage_comparison": coverage_comparison,
         **present_history(
             session,
@@ -1508,7 +1538,7 @@ def _judge_session(
     rows = (
         (
             "settings.idle",
-            policy.idle_standard_minutes,
+            None if _looser_idle(policy) == 0 else _looser_idle(policy),
             _idle_reason(policy),
             None,
             False,
@@ -2008,10 +2038,38 @@ def _level(actual: str, cited: str, above: Optional[str]) -> tuple[str, str]:
     return FAIL, _WEAKER
 
 
+def _looser_idle(policy) -> int:
+    """The looser idle limit, in minutes. 0 (no idle limit) is the loosest."""
+    standard, privileged = policy.idle_standard_minutes, policy.idle_privileged_minutes
+    if standard == 0 or privileged == 0:
+        return 0
+    return max(standard, privileged)
+
+
 def _idle_reason(policy) -> str:
+    """Name the looser limit, or both when they are equal. 0 reads as no idle limit."""
+    standard = policy.idle_standard_minutes
+    privileged = policy.idle_privileged_minutes
+    if standard == privileged:
+        if standard == 0:
+            return (
+                "Session inactivity: both the standard and the privileged "
+                "idle limits are no idle limit."
+            )
+        return (
+            "Session inactivity: both the standard and the privileged idle "
+            f"limits end a sign-in after {standard} minutes with no activity."
+        )
+    # 0 is looser than any length; otherwise the longer one is.
+    if standard == 0 or (privileged != 0 and standard > privileged):
+        which, minutes = "standard", standard
+    else:
+        which, minutes = "privileged", privileged
+    if minutes == 0:
+        return f"Session inactivity: the {which} idle limit is no idle limit."
     return (
-        "Session inactivity: a standard sign-in ends after "
-        f"{policy.idle_standard_minutes} minutes with no activity."
+        f"Session inactivity: the {which} idle limit ends a sign-in after "
+        f"{minutes} minutes with no activity."
     )
 
 

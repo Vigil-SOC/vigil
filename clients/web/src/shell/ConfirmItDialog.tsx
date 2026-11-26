@@ -81,7 +81,7 @@ export default function ConfirmItHost() {
   if (!pending) return null
   if (pending.detail.variant === 'sso') return <ConfirmAtProvider detail={pending.detail} onCancel={() => finish(false)} />
   return pending.detail.code === CONFIRMATION_REQUIRED ? (
-    <ConfirmIt detail={pending.detail} mfa={!!user?.mfa_enabled} onDone={finish} />
+    <ConfirmIt detail={pending.detail} onDone={finish} />
   ) : (
     // No two-step sign-in yet: set it up (that starts the window), then the change goes through.
     <TwoStepDialog
@@ -125,10 +125,13 @@ function ConfirmAtProvider({ detail, onCancel }: { detail: StepUpDetail; onCance
   )
 }
 
-/** "Confirm it's you to …": a current code or a key touch (the password with no MFA); strong adds the password. */
-function ConfirmIt({ detail, mfa, onDone }: { detail: StepUpDetail; mfa: boolean; onDone: (ok: boolean) => void }) {
+/** "Confirm it's you to …": a current code or a key touch, or the password when the refusal says so; strong adds the password. */
+function ConfirmIt({ detail, onDone }: { detail: StepUpDetail; onDone: (ok: boolean) => void }) {
   const strong = detail.variant === 'strong'
-  const needPassword = strong || !mfa
+  // The refusal says what the server will accept now, not the methods loaded with the page.
+  const { user } = useAuth()
+  const mfa = detail.accepts === 'code' || (detail.accepts == null && !!user?.mfa_enabled)
+  const needPassword = strong || detail.accepts === 'password' || (detail.accepts == null && !mfa)
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [error, setError] = useState<{ field: 'password' | 'code'; text: string } | null>(null)
@@ -136,7 +139,6 @@ function ConfirmIt({ detail, mfa, onDone }: { detail: StepUpDetail; mfa: boolean
 
   // Keys: only where this install offers them and the person has one. A person with an app
   // and a key chooses; one with only keys has no code to type.
-  const { user } = useAuth()
   const keysOn = mfa && !!user?.security_keys?.available && keysSupported()
   const [held, setHeld] = useState<{ keys: boolean; app: boolean }>({ keys: false, app: true })
   useEffect(() => {

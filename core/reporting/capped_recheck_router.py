@@ -1,8 +1,7 @@
 """Start, resume, and read a capped re-check, and set its run ceiling.
 
-The report page that renders this is a later change. ``platform.write``
-starts a batch, resumes one, and changes the ceiling. ``platform.read``
-reads them.
+``platform.write`` starts a batch, resumes one, and changes the ceiling.
+``platform.read`` reads them. The Day 1 Report renders the projection.
 """
 
 from __future__ import annotations
