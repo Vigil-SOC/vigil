@@ -800,7 +800,7 @@ export const configApi = {
 
   getOrchestrator: () => coalesce('orchestrator', () => api.get('/config/orchestrator')),
   getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
-  // The applied site revision (#5209); a hunt may start on one of its zones (#5212).
+  // The applied site/ revision, read-only (#5214); a hunt may start on one of its zones (#5212).
   getSite: () => api.get<Schema<'SiteContextResponse'>>('/config/site'),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>

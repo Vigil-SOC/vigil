@@ -1,7 +1,7 @@
 """Wazuh MCP tool server.
 
-Read-only tools over the Wazuh manager's server API: loaded rules, agents and
-their log collection, and logtest of a sample event against the ruleset.
+Read-only tools over the Wazuh manager's server API: loaded rules, agents, their
+groups and log collection, and logtest of a sample event against the ruleset.
 """
 
 import sys
@@ -31,8 +31,30 @@ logger = logging.getLogger(__name__)
 _wazuh_service = None
 
 
-def result(data):
-    return [types.TextContent(type="text", text=json.dumps(data, indent=2))]
+# A full page of agents (long names, OS strings, groups) measured ~360 chars each
+# as compact JSON, so 40 stays well under the agent layer's 20 000-char result cap.
+AGENTS_PAGE_MAX = 40
+
+
+def result(data, compact=False):
+    text = (
+        json.dumps(data, separators=(",", ":"))
+        if compact
+        else json.dumps(data, indent=2)
+    )
+    return [types.TextContent(type="text", text=text)]
+
+
+def _int_arg(value, default):
+    """A non-negative int from a model's argument (an int or digit string)."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise ValueError
+    n = int(value)
+    if n < 0:
+        raise ValueError
+    return n
 
 
 def get_wazuh_service():
@@ -121,7 +143,47 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="wazuh_list_agents",
-            description="List Wazuh agents (id, name, status, groups, OS). Agent 000 is the manager.",
+            description=(
+                "List Wazuh agents (id, name, status, groups, OS, IP, version), one page "
+                "at a time, with `total` matching agents. Filter by group, exact name or "
+                "Wazuh's free-text search; page with offset/limit and read on from "
+                "`next_offset`. Agent 000 is the manager. For group sizes, use "
+                "wazuh_list_groups instead of paging through everything."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "description": "Only agents in this group, e.g. 'default'",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Only the agent with exactly this name",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Wazuh's substring search across agent fields (name, IP, OS, ...)",
+                    },
+                    "offset": {"type": "integer", "minimum": 0, "default": 0},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": AGENTS_PAGE_MAX,
+                        "default": AGENTS_PAGE_MAX,
+                    },
+                },
+            },
+        ),
+        types.Tool(
+            name="wazuh_list_groups",
+            description=(
+                "Wazuh agent groups with how many agents each holds, plus the count of "
+                "agents in no group. An agent in two groups counts in both. Agent 000 "
+                "is named as the manager and not counted. Built from the agents this "
+                "API user can read (agent:read), not the group list (group:read), so a "
+                "group with no agents does not appear."
+            ),
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
@@ -188,8 +250,28 @@ async def handle_call_tool(name: str, arguments: dict | None):
             )
             return result({"total": total, "rules": [_rule(r) for r in rules]})
         if name == "wazuh_list_agents":
-            agents = await svc.list_agents()
-            return result({"total": len(agents), "agents": agents})
+            try:
+                offset = _int_arg(args.get("offset"), 0)
+                limit = _int_arg(args.get("limit"), AGENTS_PAGE_MAX)
+            except (TypeError, ValueError):
+                return result(
+                    {"error": "offset and limit must be non-negative integers"}
+                )
+            # Clamped here too: the schema maximum is advice to the model.
+            limit = min(max(limit, 1), AGENTS_PAGE_MAX)
+            agents, total = await svc.list_agents(
+                group=args.get("group"),
+                name=args.get("name"),
+                search=args.get("search"),
+                offset=offset,
+                limit=limit,
+            )
+            page = {"total": total, "offset": offset, "limit": limit, "agents": agents}
+            if agents and offset + len(agents) < total:
+                page["next_offset"] = offset + len(agents)
+            return result(page, compact=True)
+        if name == "wazuh_list_groups":
+            return result(await svc.group_counts())
         if name == "wazuh_agent_log_collection":
             agent_id = str(args.get("agent_id") or "").strip()
             if not agent_id:
