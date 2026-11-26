@@ -4861,6 +4861,16 @@
       color: var(--tx2);
    }
 
+   /* a workflow's record per model, and its latest replay; model ids are long and unbroken */
+   .lim-row-title .lim-wf-model {
+      overflow-wrap: anywhere;
+   }
+
+   .lim-row-title .lim-wf-model b {
+      font-weight: 600;
+      color: var(--tx1);
+   }
+
    .lim-row-title .not-measured {
       display: inline;
       white-space: normal;
@@ -4889,6 +4899,7 @@
    .lim-wf-tag span:first-child {
       color: var(--tx1);
       font-weight: 600;
+      overflow-wrap: anywhere;
    }
 
    /* the last change wraps, then stops at two lines; focus in the row shows the rest */
