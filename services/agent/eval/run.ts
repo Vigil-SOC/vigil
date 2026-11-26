@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import OpenAI from "openai";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { estateDispatch, loadCases, type DispatchLike, type EvalCase } from "./estate.js";
 import { grade, keywordGrade, type Graded, type GraderClient } from "./grade.js";
 
@@ -17,6 +17,10 @@ import { grade, keywordGrade, type Graded, type GraderClient } from "./grade.js"
 // from the case (estate.ts), no recall and prices.yaml; the model is the gateway's --model.
 
 // --dry swaps in a model that answers by schema and calls nothing: wiring only, no measure.
+
+// --max-calls, --max-cost-usd and --max-wall-seconds replace the config's budgets, so the
+// cases can be run at the limits a supervisory suggestion proposes: Vigil's iterations per
+// agent, cost per investigation and runtime per investigation, in that order.
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 
@@ -31,11 +35,14 @@ const { values: flags } = parseArgs({
     out: { type: "string" },
     concurrency: { type: "string", default: "2" },
     dry: { type: "boolean", default: false },
+    "max-calls": { type: "string" },
+    "max-cost-usd": { type: "string" },
+    "max-wall-seconds": { type: "string" },
   },
 });
 
 if (flags.engine === undefined || flags.label === undefined) {
-  console.error("usage: tsx eval/run.ts --engine <repo root> --label <name> [--model provider/model] [--grader-model provider/model] [--only id,id] [--out file] [--concurrency n] [--dry]");
+  console.error("usage: tsx eval/run.ts --engine <repo root> --label <name> [--model provider/model] [--grader-model provider/model] [--only id,id] [--out file] [--concurrency n] [--dry] [--max-calls n] [--max-cost-usd n] [--max-wall-seconds n]");
   process.exit(2);
 }
 
@@ -182,15 +189,46 @@ async function loadEngine(): Promise<Engine> {
   };
 }
 
-function configFor(dir: string): string {
+type Budgets = { max_calls: number; max_wall_ms: number; max_cost_usd: number };
+
+/** A positive number from a flag, or undefined when the flag is absent; anything else stops the run. */
+function positive(name: string): number | undefined {
+  const raw = flags[name as keyof typeof flags];
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    console.error(`--${name} must be a positive number, got ${String(raw)}`);
+    process.exit(2);
+  }
+  return value;
+}
+
+const OVERRIDES = {
+  max_calls: positive("max-calls"),
+  max_cost_usd: positive("max-cost-usd"),
+  max_wall_ms: ((s) => (s === undefined ? undefined : Math.round(s * 1000)))(positive("max-wall-seconds")),
+};
+if (OVERRIDES.max_calls !== undefined && !Number.isInteger(OVERRIDES.max_calls)) {
+  console.error(`--max-calls must be a whole number, got ${OVERRIDES.max_calls}`);
+  process.exit(2);
+}
+
+/** The config with the model named and any budget a flag sets; returns its path and the budgets it holds. */
+function configFor(dir: string): { path: string; budgets: Budgets } {
   const template = readFileSync(join(HERE, "investigate.config.yaml"), "utf8");
+  const config = parseYaml(template.replace(/^model: MODEL$/m, `model: ${MODEL}`)) as { budgets: Budgets };
+  for (const [key, value] of Object.entries(OVERRIDES)) {
+    if (value !== undefined) config.budgets[key as keyof Budgets] = value;
+  }
   const path = join(dir, "investigate.config.yaml");
-  writeFileSync(path, template.replace(/^model: MODEL$/m, `model: ${MODEL}`));
-  return path;
+  writeFileSync(path, stringifyYaml(config));
+  return { path, budgets: { ...config.budgets } };
 }
 
 export interface CaseResult {
   label: string;
+  // The budgets the case ran under: the config's, or a flag's in its place.
+  budgets: Budgets;
   engine_commit: string;
   model: string;
   case_id: string;
@@ -215,7 +253,7 @@ export interface CaseResult {
   error: string | null;
 }
 
-async function runCase(engine: Engine, one: EvalCase, config: string, grader: GraderClient | null): Promise<CaseResult> {
+async function runCase(engine: Engine, one: EvalCase, config: string, grader: GraderClient | null): Promise<Omit<CaseResult, "budgets">> {
   const state = new engine.InProcessState();
   const leases = new engine.InProcessLeases();
   const runId = randomUUID();
@@ -310,16 +348,16 @@ async function main(): Promise<void> {
   const work = join(tmpdir(), `vigil-eval-${LABEL}-${process.pid}`);
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(OUT), { recursive: true });
-  const config = configFor(work);
+  const { path: config, budgets } = configFor(work);
   const grader = flags.dry ? null : graderClient();
 
-  console.log(`${LABEL}: ${cases.length} cases on ${engine.commit} with ${MODEL}, graded by ${grader?.model ?? "keywords"}`);
+  console.log(`${LABEL}: ${cases.length} cases on ${engine.commit} with ${MODEL}, graded by ${grader?.model ?? "keywords"}, budgets ${budgets.max_calls} calls / $${budgets.max_cost_usd} / ${budgets.max_wall_ms / 1000} s`);
   const queue = [...cases];
   const width = Math.max(1, Number(flags.concurrency));
   await Promise.all(
     Array.from({ length: width }, async () => {
       for (let one = queue.shift(); one !== undefined; one = queue.shift()) {
-        const result = await runCase(engine, one, config, grader);
+        const result = { ...(await runCase(engine, one, config, grader)), budgets };
         appendFileSync(OUT, `${JSON.stringify(result)}\n`);
         const mark = result.error !== null ? "ERROR" : result.verdict ?? "-";
         console.log(`  ${one.id.padEnd(34)} truth=${one.truth.padEnd(6)} got=${String(mark).padEnd(12)} $${result.cost_usd.toFixed(4)} ${result.model_calls} model / ${result.tool_calls} tool calls${result.error ? `  (${result.error.slice(0, 120)})` : ""}`);
