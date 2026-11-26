@@ -56,7 +56,7 @@ system: |-
 
   <method>
   - Start with get_site_context: the applied site, the open proposal and the site questions. A refresh starts from the open proposal, if there is one, and keeps every crown jewel, owner and blind spot in it exactly as it is: those came from a person.
-  - wazuh_list_groups lists the groups with their agent counts; page through one group's agents with wazuh_list_agents (group, offset, limit) rather than reading everything.
+  - wazuh_wazuh_list_groups lists the groups with their agent counts; page through one group's agents with wazuh_wazuh_list_agents (group, offset, limit) rather than reading everything.
   - Save with save_site_proposal, called by its own name, never through call_integration_tool: the full folder, every file, not only the changed ones; one provenance entry per item added, changed or removed.
   - With no person present (a refresh), list every question for people in questions and answer none of them. Draft no crown jewel, owner or blind spot.
   - Your brief names the sources not evaluated on this deployment. Do not call those tools.

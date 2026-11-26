@@ -322,8 +322,12 @@ async def save_site_proposal(
             if key in given:
                 raise ProposalRefused(f"{key[0]} {key[1]!r}: provenance given twice")
             given[key] = await _provenance(entry, claims, now)
-        registry = await site_registry(registry)
-        skipped = await asyncio.to_thread(not_evaluated, registry)
+        try:
+            registry = await site_registry(registry)
+            skipped = await asyncio.to_thread(not_evaluated, registry)
+        except Exception:  # noqa: BLE001 - an advisory list never costs the save
+            logger.exception("site sources not evaluated: not worked out")
+            skipped = []
         return await asyncio.to_thread(
             _store,
             named,
@@ -597,11 +601,15 @@ def _site_needs() -> List[str]:
 def _need_servers(needs: List[str]) -> List[str]:
     """Every outside server a need may bind: a capability's candidates, or the
     ``{server}`` of a catalogue name."""
+    from core.response.ceiling import own_tool_names
     from core.workflows.playbook_resolver import CAPABILITIES, NEED_ALIASES
 
+    own = own_tool_names()
     servers: Dict[str, None] = {}
     for need in needs:
         capability = NEED_ALIASES.get(need, need)
+        if need in own:
+            continue
         if capability in CAPABILITIES:
             for c in CAPABILITIES[capability]:
                 if c.server:
@@ -728,15 +736,17 @@ def _outcome(state: str, message: str, **extra: Any) -> Dict[str, Any]:
 
 
 def _autoops_on() -> bool:
-    """The ``orchestrator.settings`` row's ``enabled``, as the orchestrator reads it."""
+    """The ``orchestrator.settings`` row's ``enabled``, as the orchestrator reads it;
+    with no row, ``ORCHESTRATOR_ENABLED``, which the orchestrator starts from."""
+    from core.config import get_settings
     from core.storage.connection import get_db_manager
     from core.storage.models import SystemConfig
 
     with get_db_manager().session_scope() as session:
         cfg = session.get(SystemConfig, "orchestrator.settings")
-        return bool(
-            cfg and isinstance(cfg.value, dict) and cfg.value.get("enabled", False)
-        )
+        if cfg and isinstance(cfg.value, dict):
+            return bool(cfg.value.get("enabled", False))
+    return bool(get_settings().orchestrator_enabled)
 
 
 def _unfinished() -> Optional[Tuple[int, Optional[str]]]:
@@ -777,12 +787,17 @@ class _Lock:
         from core.storage.connection import get_db_manager
 
         self.conn = get_db_manager().engine.connect()
-        self.got = bool(
-            self.conn.execute(
-                text("SELECT pg_try_advisory_lock(:k)"), {"k": _REFRESH_LOCK}
-            ).scalar()
-        )
-        self.conn.commit()
+        self.got = False
+        try:
+            self.got = bool(
+                self.conn.execute(
+                    text("SELECT pg_try_advisory_lock(:k)"), {"k": _REFRESH_LOCK}
+                ).scalar()
+            )
+            self.conn.commit()
+        except BaseException:
+            self.conn.close()
+            raise
         return self.got
 
     def __exit__(self, *exc) -> None:
