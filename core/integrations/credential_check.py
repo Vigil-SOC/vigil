@@ -8,7 +8,8 @@ list of at most one alert, or one fixed read-only MCP call. Nothing is written
 to the external system.
 
 Each source that federation pulls alerts from has a direct check, built on the
-client and credentials its adapter uses. Anything else with a read-only call
+client and credentials its adapter uses, and so does Palo Alto, whose Test
+reads the running config for the setup a block needs. Anything else with a read-only call
 is one row in ``_READ_ONLY``: a fixed tool and fixed arguments, called through
 ``execute_mcp_tool``. An id in ``_NO_READ_ONLY``, or a fixed call with no
 credential saved, is not checked: Test says so and stores nothing, and the
@@ -40,6 +41,7 @@ from core.integrations.elastic.descriptor import ELASTIC
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.integrations.opencti.descriptor import OPENCTI, OPENCTI_REQUIRED
 from core.integrations.opensearch.descriptor import OPENSEARCH
+from core.integrations.palo_alto.descriptor import PALO_ALTO
 from core.integrations.splunk.descriptor import SPLUNK
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 
@@ -87,7 +89,6 @@ _NO_CREDENTIAL_UNCHECKED = frozenset(
         "carbon-black",
         "okta",
         "azure-ad",
-        "palo-alto",
         "cloudflare",
         "slack",
         "pagerduty",
@@ -592,6 +593,54 @@ async def _cloudforce_one() -> Outcome:
     return await _taxii_check("Cloudforce One", CLOUDFORCE_ONE.id, feed)
 
 
+async def _palo_alto() -> Outcome:
+    """Reads the running config only: blocking works once a dynamic address
+    group on the vigil-block tag is used by an enabled deny/drop rule."""
+    from core.integrations.palo_alto import tool as pan
+
+    config = resolve(PALO_ALTO)
+    absent = missing(config, "hostname", "api_key")
+    if absent:
+        return _absent(absent)
+    api, verify = pan.endpoint(config)
+
+    def show(xpath: str) -> httpx.Response:
+        # POST keeps the key out of any logged URL.
+        return httpx.post(
+            api,
+            data={
+                "type": "config",
+                "action": "show",
+                "key": config["api_key"],
+                "xpath": xpath,
+            },
+            verify=verify,
+            timeout=_REQUEST_TIMEOUT,
+        )
+
+    try:
+        resp = await asyncio.to_thread(
+            show, f"/config/devices/entry/vsys/entry[@name='{pan.VSYS}']"
+        )
+        vsys, reason = pan.parse(resp)
+        if reason:
+            # A wrong key answers 403 or status="error": the key is rejected.
+            return failed(
+                f"Palo Alto rejected the call ({reason})", status=resp.status_code
+            )
+        # Shared groups count too. PAN-OS answers "No such node" when there are
+        # none, so a refusal here only means none are found.
+        shared, _ = pan.parse(
+            await asyncio.to_thread(show, "/config/shared/address-group")
+        )
+    except httpx.HTTPError as exc:
+        return failed(f"Palo Alto could not be reached ({type(exc).__name__})", exc=exc)
+    ok, detail = pan.block_setup(vsys, shared)
+    if not ok:
+        return False, f"Palo Alto cannot enforce a block: {detail}"
+    return True, f"Palo Alto can block: {detail}"
+
+
 _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     SPLUNK.id: _splunk,
     ELASTIC.id: _elastic,
@@ -604,6 +653,7 @@ _CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
     MICROSOFT_DEFENDER.id: _defender,
     CROWDSTRIKE.id: _crowdstrike,
     CLOUDFORCE_ONE.id: _cloudforce_one,
+    PALO_ALTO.id: _palo_alto,
 }
 
 
@@ -668,7 +718,6 @@ _READ_ONLY: Dict[str, FixedCall] = {
     ),
     "okta": FixedCall("okta", "list_okta_users", {"max_results": 1}, "Okta"),
     "azure-ad": FixedCall("azure-ad", "aad_get_sign_ins", {"limit": 1}, "Entra"),
-    "palo-alto": FixedCall("palo-alto", "pan_get_threats", {"limit": 1}, "Palo Alto"),
     "cloudflare": FixedCall(
         "cloudflare",
         "cf_lookup_ip_threat",
