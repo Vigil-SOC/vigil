@@ -307,11 +307,7 @@ def _bound_capabilities(
             )
         if not found:
             # An opt-in integration that is not connected is the expected case.
-            (
-                logger.debug
-                if capability in OPTIONAL_CAPABILITIES
-                else logger.warning
-            )(
+            (logger.debug if capability in OPTIONAL_CAPABILITIES else logger.warning)(
                 "no tool in this deployment provides %s; roles needing it lose it",
                 capability,
             )
