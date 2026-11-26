@@ -37,7 +37,9 @@ export interface Memory {
   // The entity facts for a run's trigger keys, on its case's rows when it has one
   // (#4742). Optional: absent, the run journals the read as unavailable. Throws on
   // a read that did not happen, as entities does.
-  facts?(read: KeyedRead & { caseId: string | null }): Promise<EntityFacts>;
+  // declaredOnly (#5212, a hunt's opening read): the applied site revision's
+  // Declared rows alone, so no source is asked and no case is read.
+  facts?(read: KeyedRead & { caseId: string | null; declaredOnly?: boolean }): Promise<EntityFacts>;
   remember(note: string): Promise<void>;
 }
 

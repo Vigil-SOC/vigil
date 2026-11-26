@@ -108,8 +108,9 @@ export interface TurnConfig {
   recall_keys?: readonly string[];
   // Set when the run is an investigation of trigger findings: it opens on the entity
   // facts for these keys, on its case's rows when it has one (#4742). Absent reads
-  // none -- a hunt, a chat, a subagent.
-  facts?: { keys: readonly string[]; case_id: string | null };
+  // none -- a chat, a subagent. held: render only the read the run's opening already
+  // journaled, and never read here -- a hunt's (#5212), whose read is declared-only.
+  facts?: { keys: readonly string[]; case_id: string | null; held?: true };
   // Numbers each result so the model can cite it: the nth call is `${prefix}${offset + n}`.
   // Absent leaves results unnumbered, as the workflows written before the kernel expect.
   refs?: { prefix: string; offset: number };

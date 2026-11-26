@@ -221,6 +221,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const log = await this.harness.state.read(this.cfg.run_id);
     const held = factsPayloadOf(log);
     if (held !== null) return renderFacts(held);
+    // A hunt's opening journaled its read or had nothing to read; asking here would ask sources.
+    if (ask.held === true) return "";
     // A run that already showed a model its prefix without facts -- one started
     // before this read existed -- keeps that prefix rather than growing it mid-run.
     if (log.some((one) => one.kind === "frame")) return "";

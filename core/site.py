@@ -453,3 +453,51 @@ def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "owners": owners,
         "blind_spots": list(items.get("blind_spots") or []),
     }
+
+
+# --- Zone hunts (#5212) ------------------------------------------------------
+
+
+def resolve_zone(name: str, row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The zone a hunt starts on, as its job request carries it.
+
+    Name, selectors, file, line and revision, and the blind spots a selector of
+    which overlaps one of the zone's (``selectors_overlap``). ``ValueError`` names
+    why it is refused: no site declared, or no zone by that name.
+    """
+    row = applied_site(fresh=True) if row is None else row
+    if not declared(row):
+        raise ValueError(
+            f"zone {name!r}: no site is declared, so there is no zone to hunt on"
+        )
+    items = row.get("items") or {}
+    zone = next((z for z in items.get("zones") or [] if z.get("name") == name), None)
+    if zone is None:
+        known = ", ".join(z["name"] for z in items.get("zones") or []) or "none"
+        raise ValueError(
+            f"zone {name!r} is not declared in revision {row.get('revision')} "
+            f"(declared: {known})"
+        )
+    selectors = list(zone.get("selectors") or [])
+    revision = row.get("revision")
+    blind = [
+        {
+            "what": spot.get("what"),
+            "selectors": spot.get("selectors") or [],
+            "file": spot.get("file"),
+            "line": spot.get("line"),
+            "revision": revision,
+        }
+        for spot in items.get("blind_spots") or []
+        if any(
+            selectors_overlap(a, b) for a in selectors for b in spot.get("selectors") or []
+        )
+    ]
+    return {
+        "name": zone["name"],
+        "selectors": selectors,
+        "file": zone.get("file"),
+        "line": zone.get("line"),
+        "revision": revision,
+        "blind_spots": blind,
+    }

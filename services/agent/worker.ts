@@ -82,6 +82,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
+          ...(job.request.zone === undefined ? {} : { zone: job.request.zone }),
           ...(Object.keys(refs).length === 0 ? {} : { refs }),
           ...(manifest === undefined ? {} : { operator_manifest: manifest, operator_skills: manifestSkills }),
           ...(added.length === 0 ? {} : { [ADDED_SKILLS]: added }),

@@ -650,6 +650,8 @@ class WorkflowsService:
         origin_kind: Optional[str] = None,
         # The parent run, when origin_kind is parent.
         origin_id: Optional[str] = None,
+        # A declared zone a hunt starts on (#5212); its selectors become the scope.
+        zone: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Start a workflow as a compose run on the agent layer.
 
@@ -711,6 +713,22 @@ class WorkflowsService:
                     "Pass context, finding_id, or case_id."
                 ),
             }
+
+        # Resolved before a run record exists, so a refused zone leaves none.
+        zoned = None
+        if zone:
+            if workflow.run_kind != HUNT_RUN_KIND:
+                return {
+                    "success": False,
+                    "error": "A zone scopes a hunt only",
+                    "refused": True,
+                }
+            from core import site
+
+            try:
+                zoned = await asyncio.to_thread(site.resolve_zone, zone)
+            except ValueError as exc:
+                return {"success": False, "error": str(exc), "refused": True}
 
         workflow_dict = workflow.to_dict(include_body=False)
         run_service = self._workflow_runs
@@ -817,6 +835,7 @@ class WorkflowsService:
                 # config's policy rather than pinning every run to this side's.
                 "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
                 or None,
+                "zone": zoned,
             }
         )
         try:
