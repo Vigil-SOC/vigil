@@ -51,7 +51,7 @@ function Group({ title, count, children }: { title: string; count: number; child
         {title} <span className="text-tx-3 font-normal">{count}</span>
       </h4>
       {count ? (
-        <ul className="flex flex-col gap-2 [overflow-wrap:anywhere]">{children}</ul>
+        <ul className="list-none m-0 p-0 flex flex-col gap-2 [overflow-wrap:anywhere]">{children}</ul>
       ) : (
         <p className="text-xs text-tx-3">None declared.</p>
       )}
@@ -139,7 +139,7 @@ export default function SiteContextCard({ reloadKey = 0 }: { reloadKey?: number 
             from <span className="mono">{site.directory}</span>. Change it there, not here.
           </span>
         </div>
-        <div>{site.reason}</div>
+        {site.reason !== rejected?.reason && <div>{site.reason}</div>}
       </div>
       {rejected && (
         <div
