@@ -2038,6 +2038,8 @@ class SiteContextResponse(BaseModel):
     owners: list[SiteOwner] = Field(default_factory=list)
     blind_spots: list[SiteBlindSpot] = Field(default_factory=list)
     files: list[SiteFile] = Field(default_factory=list)
+    # The latest Day 1 Report's site checks and evidence; None before one ran.
+    report: Optional[Dict[str, Any]] = None
 
 
 @router.get("/site", response_model=SiteContextResponse, dependencies=_PLATFORM_READ)

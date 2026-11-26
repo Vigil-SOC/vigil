@@ -405,14 +405,26 @@ def resolve_owner(
     return {**owner, "unassigned": f"no team named {owner.get('team')}"}
 
 
-def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def site_view(
+    row: Optional[Dict[str, Any]] = None, *, report: bool = True
+) -> Dict[str, Any]:
     """``GET /api/config/site`` and the /mcp ``get_site_context`` tool.
 
     Owners resolve now, against active teams ignoring case, so a team created
     after the commit names its items with no new commit. Each zone and crown
-    jewel lists the owners whose selectors overlap its own.
+    jewel lists the owners whose selectors overlap its own. ``report`` adds the
+    latest Day 1 Report's site checks and evidence; both callers already
+    require platform.read, the module's permission.
     """
     row = applied_site(fresh=True) if row is None else row
+    latest = None
+    if report:
+        try:
+            from core.reporting.site_report import latest as latest_report
+
+            latest = latest_report()
+        except Exception as exc:  # noqa: BLE001 - the site still reads
+            logger.error("site report not read: %s", type(exc).__name__)
     base = {
         "directory": row.get("directory"),
         "declared": declared(row),
@@ -423,6 +435,7 @@ def site_view(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "applied_at": row.get("applied_at"),
         "rejected": row.get("rejected"),
         "files": row.get("files") or [],
+        "report": latest,
     }
     items = row.get("items") or {}
     if not base["directory"]:

@@ -81,6 +81,12 @@ class Day1Evidence(BaseModel):
     over_30_days: Optional[int] = None
     never_connected: Optional[int] = None
     degraded: Optional[int] = None
+    # Site counts. Unset when that check was not checked.
+    checked: Optional[int] = None
+    unseen: Optional[int] = None
+    outside: Optional[int] = None
+    unowned: Optional[int] = None
+    undeclared: Optional[int] = None
 
 
 class Day1Comparison(BaseModel):
