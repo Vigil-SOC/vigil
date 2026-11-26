@@ -65,8 +65,8 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
   # The supervisory model: soc-daemon runs its check, the backend reports whether
-  # it is on. Both must agree; false in .env switches it off.
-  DAEMON_SUPERVISORY_ENABLED: ${DAEMON_SUPERVISORY_ENABLED:-true}
+  # it is on. Both must agree. Off by default; true in .env switches it on.
+  DAEMON_SUPERVISORY_ENABLED: ${DAEMON_SUPERVISORY_ENABLED:-false}
   DAEMON_SUPERVISORY_INTERVAL: ${DAEMON_SUPERVISORY_INTERVAL:-3600}
   # Skill scanning, and so the hold on unscanned or flagged skills. Every process
   # that builds a prompt (backend, soc-daemon, llm-worker) must agree on whether

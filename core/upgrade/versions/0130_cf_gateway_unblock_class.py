@@ -1,11 +1,11 @@
-"""The site context agent's principal (#5259).
+"""Effect class for the Cloudflare Gateway unblock tool (#5234).
 
 Chains after ``0129_pan_unblock_ip_class``.
 """
 
 from core.upgrade.revision import run_sql
 
-revision = "0130_site_context_principal"
+revision = "0130_cf_gateway_unblock_class"
 down_revision = "0129_pan_unblock_ip_class"
 
 
