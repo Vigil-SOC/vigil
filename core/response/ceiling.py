@@ -845,6 +845,340 @@ def drop_after_commit(session) -> None:
         event.listen(session, "after_rollback", _after_rollback)
 
 
+class ModelJudgeError(Exception):
+    """A model change could not be judged. A run handed that model does not start."""
+
+
+_SCORED = 20  # the sample the false-close rule and the run judge use
+
+
+def _latest_replay(session) -> Optional[dict]:
+    """The stored replay when it succeeded within the agreement window, else None."""
+    from core.storage.models import InvestigationReplay
+
+    row = session.get(InvestigationReplay, 1)
+    if row is None or row.status != "succeeded":
+        return None
+    if row.started_at < utcnow() - AGREEMENT_WINDOW:
+        return None
+    return {
+        "model": row.model_id,
+        "started_at": row.started_at.isoformat(),
+        "by_workflow": row.by_workflow or {},
+    }
+
+
+def _short(tally: Optional[dict], floor: int) -> Optional[str]:
+    """Why ``tally`` does not hold Act at ``floor``; None when it does."""
+    if not tally:
+        return "no record"
+    scored = (tally.get("agreed") or 0) + (tally.get("disagreed") or 0)
+    rate = tally.get("agreement_rate")
+    if scored < _SCORED:
+        return f"{scored} scored closes, under {_SCORED}"
+    if not isinstance(rate, (int, float)) or rate < floor / 100:
+        return f"agreement {rate} below the floor {floor}%"
+    if _false_close_above(tally, floor):
+        return "false-close interval above the complement of the floor"
+    return None
+
+
+def _verdict(
+    wid: str,
+    floor: Any,
+    candidate: str,
+    tallies: dict,
+    replay: Optional[dict],
+    window_end: str,
+) -> tuple[bool, dict, str]:
+    """``(keeps, evidence, why)``: the candidate's live record, else its latest replay."""
+    live = model_tally(tallies.get(wid), candidate)
+    live_ev = {**_evidence(live, window_end), "source": "live"}
+    if not isinstance(floor, int):
+        return False, live_ev, "no floor"
+    why_live = _short(live, floor)
+    if why_live is None:
+        return True, live_ev, "live record"
+    part = (replay or {}).get("by_workflow", {}).get(wid)
+    if replay is None or replay["model"] != candidate:
+        why_replay = "no replay in the window"
+    elif not part:
+        why_replay = "replay holds no closes of this workflow"
+    else:
+        # Replayed stands for answered, as _false_close_above reads the live sample.
+        tally = {
+            "agreed": part.get("agreed"),
+            "disagreed": part.get("disagreed"),
+            "agreement_rate": part.get("agreement_rate"),
+            "false_close_rate": part.get("false_close_rate"),
+            "answered": part.get("replayed"),
+            "draws": part.get("total"),
+            "wilson_low": part.get("false_close_wilson_low"),
+            "wilson_high": part.get("false_close_wilson_high"),
+        }
+        why_replay = _short(tally, floor)
+        if why_replay is None:
+            ev = {
+                **_evidence(tally, replay["started_at"]),
+                "source": "replay",
+                "replay_started_at": replay["started_at"],
+            }
+            return True, ev, "replay"
+    return False, live_ev, f"live: {why_live}; replay: {why_replay}"
+
+
+def _judge(
+    workflows: Mapping[str, dict],
+    candidate: Optional[str],
+    stamp: Optional[str],
+    only: Optional[str],
+    tallies: Optional[dict],
+    replay: Optional[dict],
+    window_end: Optional[str],
+) -> tuple[dict[str, dict], list[dict], str]:
+    """The entries after judging, one result per Act workflow, and the audit reason.
+
+    An unstamped Act entry takes ``stamp`` first. Never raises a workflow.
+    """
+    out = dict(workflows)
+    results: list[dict] = []
+    for wid, entry in workflows.items():
+        if (only is not None and wid != only) or entry.get("tier") != ACT:
+            continue
+        model = entry.get("model")
+        result = {"workflow_id": wid, "from_model": model, "to_model": candidate}
+        if not model:
+            if not stamp:
+                results.append(
+                    {
+                        **result,
+                        "outcome": "unstamped",
+                        "reason": "Names no model and none to stamp",
+                    }
+                )
+                continue
+            model = stamp
+            out[wid] = {**entry, "model": model}
+            result.update(
+                from_model=model, outcome="stamped", reason=f"Stamped with {model}"
+            )
+            if model == candidate:
+                results.append(result)
+                continue
+        if model == candidate:
+            results.append(
+                {**result, "outcome": "unchanged", "reason": "Model unchanged"}
+            )
+            continue
+        if candidate is None:
+            raise ModelJudgeError(
+                f"{wid} is on Act under {model} and the investigation model was not resolved"
+            )
+        if tallies is None:
+            raise ModelJudgeError("the agreement record was not read")
+        floor = entry.get("floor")
+        keeps, evidence, why = _verdict(
+            wid, floor, candidate, tallies, replay, window_end
+        )
+        if keeps:
+            reason = f"Model changed from {model} to {candidate}: kept Act on {candidate}'s {why}"
+            out[wid] = {
+                **out[wid],
+                "model": candidate,
+                "evidence": evidence,
+                "reason": reason,
+            }
+        else:
+            reason = (
+                f"Model changed from {model} to {candidate}: dropped to Assist ({why})"
+            )
+            out[wid] = {
+                **workflow_entry(ASSIST, floor, evidence, _SYSTEM, candidate),
+                "from_model": model,
+                "reason": reason,
+            }
+        results.append(
+            {
+                **result,
+                "from_model": model,
+                "outcome": "keep" if keeps else "drop",
+                "source": evidence["source"] if keeps else None,
+                "reason": reason,
+                "evidence": evidence,
+            }
+        )
+    audit = "; ".join(
+        f"{r['workflow_id']}: {r['reason']}"
+        for r in results
+        if r["outcome"] != "unchanged"
+    )
+    return out, results, audit or "Model change judged"
+
+
+def judge_model_change(
+    candidate: Optional[str],
+    *,
+    stamp: Optional[str] = None,
+    only: Optional[str] = None,
+    write: bool = False,
+) -> list[dict]:
+    """Judge each Act workflow (or ``only`` that one) whose model is not ``candidate``.
+
+    It keeps Act where the candidate's live record, or its latest replay, for
+    that workflow holds the floor on at least 20 scored closes, and otherwise
+    drops to Assist by the system with a reason naming both models. An Act entry
+    with no model takes ``stamp`` first. ``write=False`` is the preview: the same
+    judgement, nothing stored. Raises ModelJudgeError when it cannot be made.
+    """
+    read = try_read_stored_ceiling()
+    if read is None:
+        raise ModelJudgeError("Could not read the autonomy ceiling")
+
+    def judged(current: Ceiling) -> list[tuple[str, dict]]:
+        return [
+            (wid, e)
+            for wid, e in current.workflows.items()
+            if (only is None or wid == only)
+            and e.get("tier") == ACT
+            and (e.get("model") or stamp) != candidate
+            and (e.get("model") or stamp)
+        ]
+
+    pending = judged(read[0])
+    tallies = replay = window_end = None
+    if pending:
+        if candidate is None:
+            raise ModelJudgeError(
+                "The investigation model was not resolved, and Act workflows name "
+                + ", ".join(sorted({e.get("model") or stamp for _, e in pending}))
+            )
+        try:
+            with unit_of_work() as session:
+                tallies, window_end = agreement_by_workflow(session)
+                replay = _latest_replay(session)
+        except Exception as exc:  # noqa: BLE001
+            raise ModelJudgeError("Could not read the agreement record") from exc
+    workflows, results, _ = _judge(
+        read[0].workflows, candidate, stamp, only, tallies, replay, window_end
+    )
+    if not write or workflows == dict(read[0].workflows):
+        return results
+
+    def change(current: Ceiling) -> tuple[Ceiling, str]:
+        # Judged again on the locked row, so a concurrent edit is not lost.
+        workflows, fresh, reason = _judge(
+            current.workflows, candidate, stamp, only, tallies, replay, window_end
+        )
+        results[:] = fresh
+        return replace(current, workflows=MappingProxyType(workflows)), reason
+
+    try:
+        # Only lowers or restamps: not held by a restore's write pause.
+        _locked_update(change, _SYSTEM, gated=False)
+    except CeilingWriteError as exc:
+        raise ModelJudgeError("The judgement was not stored") from exc
+    dropped = [r["workflow_id"] for r in results if r["outcome"] == "drop"]
+    if dropped:
+        logger.warning(
+            "model change dropped workflows to Assist: %s", ", ".join(dropped)
+        )
+    return results
+
+
+def preview_model_change(component: str, provider_id: str, model_id: str) -> dict:
+    """What saving ``component`` as ``provider_id``/``model_id`` would do to Act
+    workflows: the investigation model before and after, and each Act workflow's
+    outcome. Read only, through the judgement the save runs.
+
+    ValueError when the save itself would be refused (unknown component, or a
+    provider that is missing or inactive); ModelJudgeError when it cannot be judged.
+    """
+    from core.llm import target
+    from core.llm.providers.registry import (
+        FALLBACK_KEY,
+        ComponentAssignment,
+        get_registry,
+        is_valid_component,
+    )
+    from core.llm.target import blank_model
+    from core.storage.models import LLMProviderConfig
+
+    if not is_valid_component(component):
+        raise ValueError(f"unknown component: {component}")
+    with unit_of_work() as session:
+        provider = session.get(LLMProviderConfig, provider_id)
+        if provider is None or not provider.is_active:
+            raise ValueError(f"provider {provider_id} is missing or not active")
+
+    assignments = dict(get_registry().get_all_assignments())
+    stored = assignments.get(component)
+    settings: dict = {}
+    # The save keeps a stored fallback on the same provider, unless it is the model.
+    fallback = (
+        blank_model((stored.settings or {}).get(FALLBACK_KEY)) if stored else None
+    )
+    if (
+        stored
+        and stored.provider_id == provider_id
+        and fallback
+        and fallback != model_id
+    ):
+        settings[FALLBACK_KEY] = fallback
+    assignments[component] = ComponentAssignment(
+        component, provider_id, model_id, settings
+    )
+    before = investigation_model()
+    after = target.resolve_component("investigation", assignments)
+    candidate = after[1] if after else None
+    moves = _moves(before, candidate)
+    return {
+        "component": component,
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "investigation_model_before": before,
+        "investigation_model_after": candidate,
+        "moves": moves,
+        # The save judges only a move; anything else is left to the handoff.
+        "workflows": judge_model_change(candidate, stamp=before) if moves else [],
+    }
+
+
+def _moves(before: Optional[str], after: Optional[str]) -> bool:
+    """Whether an assignment write moved the investigation model to one it can judge."""
+    return after is not None and after != before
+
+
+_JUDGE_PENDING = "autonomy.model_judge_pending"
+
+
+def _judge_after_commit(session) -> None:
+    if session.in_nested_transaction() or _JUDGE_PENDING not in session.info:
+        return
+    before = session.info.pop(_JUDGE_PENDING)
+    try:
+        after = investigation_model()
+        if not _moves(before, after):
+            return
+        judge_model_change(after, stamp=before, write=True)
+    except Exception:  # noqa: BLE001 - the assignment saved; the handoff judges again
+        logger.exception("model change not judged after an assignment write")
+
+
+def _judge_after_rollback(session) -> None:
+    if not session.in_nested_transaction():
+        session.info.pop(_JUDGE_PENDING, None)
+
+
+def judge_after_commit(session, before: Optional[str]) -> None:
+    """Judge Act workflows once ``session`` commits, if the investigation model
+    moved from ``before``. The registry reads through its own session, so it
+    only sees the new row after the commit."""
+    session.info.setdefault(_JUDGE_PENDING, before)
+    if not event.contains(session, "after_commit", _judge_after_commit):
+        event.listen(session, "after_commit", _judge_after_commit)
+        event.listen(session, "after_rollback", _judge_after_rollback)
+
+
 # Effect classes, loosest first (#3304). A name with no row is unclassified.
 READ = "read"
 READ_UNVERIFIED = "read_unverified"

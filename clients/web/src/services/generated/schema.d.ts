@@ -1710,6 +1710,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/model-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview Model Change Route
+         * @description Which Act workflows would keep Act and which would drop to Assist if
+         *     ``component`` were set to ``provider_id``/``model_id``. Computed by the
+         *     judgement the save runs; writes nothing. Also the /mcp tool
+         *     ``preview_model_change``.
+         */
+        get: operations["get_api_autonomy_model-change"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/resume": {
         parameters: {
             query?: never;
@@ -16075,6 +16098,46 @@ export interface components {
             /** User Id */
             user_id?: string | null;
         };
+        /**
+         * ModelChangeOutcome
+         * @description One Act workflow under the change. ``outcome``: keep, drop, stamped,
+         *     unchanged or unstamped; ``source`` is live or replay on a keep.
+         */
+        ModelChangeOutcome: {
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            } | null;
+            /** From Model */
+            from_model?: string | null;
+            /** Outcome */
+            outcome: string;
+            /** Reason */
+            reason: string;
+            /** Source */
+            source?: string | null;
+            /** To Model */
+            to_model?: string | null;
+            /** Workflow Id */
+            workflow_id: string;
+        };
+        /** ModelChangePreview */
+        ModelChangePreview: {
+            /** Component */
+            component: string;
+            /** Investigation Model After */
+            investigation_model_after?: string | null;
+            /** Investigation Model Before */
+            investigation_model_before?: string | null;
+            /** Model Id */
+            model_id: string;
+            /** Moves */
+            moves: boolean;
+            /** Provider Id */
+            provider_id: string;
+            /** Workflows */
+            workflows: components["schemas"]["ModelChangeOutcome"][];
+        };
         /** ModelInfoResponse */
         ModelInfoResponse: {
             /** Context Window */
@@ -22695,6 +22758,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_autonomy_model-change": {
+        parameters: {
+            query: {
+                component: string;
+                provider_id: string;
+                model_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelChangePreview"];
                 };
             };
             /** @description Validation Error */
