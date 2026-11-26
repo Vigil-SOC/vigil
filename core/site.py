@@ -490,7 +490,9 @@ def resolve_zone(name: str, row: Optional[Dict[str, Any]] = None) -> Dict[str, A
         }
         for spot in items.get("blind_spots") or []
         if any(
-            selectors_overlap(a, b) for a in selectors for b in spot.get("selectors") or []
+            selectors_overlap(a, b)
+            for a in selectors
+            for b in spot.get("selectors") or []
         )
     ]
     return {
