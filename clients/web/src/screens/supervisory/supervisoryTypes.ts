@@ -1,7 +1,7 @@
 /** The functions the supervisory model watches in phase 1. */
 export type SupervisedFunction = 'triage' | 'investigation' | 'response'
 
-/** running: checks on schedule. on_hold: a related Medic incident is open, so it suggests nothing. off: not running on this install. unknown: the server could not read its own state. */
+/** running: checks on schedule. on_hold: a related Medic incident is open, so it suggests nothing. off: not running on this install. unknown: no check has run yet, the last one is more than two intervals old, or the server could not read its own state. */
 export type SupervisorState = 'running' | 'on_hold' | 'off' | 'unknown'
 
 export interface SupervisorStatus {
@@ -112,6 +112,8 @@ export interface CurrentSetting {
   value: string
   /** where the value comes from */
   source: 'env' | 'database' | 'default' | 'INTENT.md'
+  /** whether Vigil can change it itself; `reason` says why not, or why only one way */
+  change: { possible: boolean; reason?: string }
 }
 
 export interface LearnsFrom {

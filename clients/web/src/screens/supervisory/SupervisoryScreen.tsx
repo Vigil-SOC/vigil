@@ -21,13 +21,14 @@ const UNDO_WINDOW_MS = 10_000
 const FILTERS = ['all', 'open', 'held', 'widens'] as const
 type Filter = (typeof FILTERS)[number]
 
-const STATE_WORD: Record<Exclude<SupervisorStatus['state'], 'unknown'>, [string, 'good' | 'fair' | null]> = {
+const STATE_WORD: Record<SupervisorStatus['state'], [string, 'good' | 'fair' | null]> = {
   running: ['Running', 'good'],
   on_hold: ['On hold', 'fair'],
   off: ['Off', null],
+  unknown: ['Not on schedule', 'fair'],
 }
 
-function StatusCard({ status, openMedic }: { status: SupervisorStatus & { state: keyof typeof STATE_WORD }; openMedic: () => void }) {
+function StatusCard({ status, openMedic }: { status: SupervisorStatus; openMedic: () => void }) {
   const [word, level] = STATE_WORD[status.state]
   return (
     <section className="spv-card spv-status" aria-label="Supervisory model status">
@@ -36,7 +37,7 @@ function StatusCard({ status, openMedic }: { status: SupervisorStatus & { state:
         <InfoTip
           label="How status is worked out"
           source="The supervisory model runs as a scheduled job, about once an hour."
-          calculation="Running while checks happen on schedule; On hold while a related Medic incident is open, when it suggests nothing; Off when it is not switched on."
+          calculation="Running while checks happen on schedule; On hold while a related Medic incident is open, when it suggests nothing; Off when it is not switched on; Not on schedule when no check has run yet, or the last one is more than two intervals old."
           limit="It reads Medic's incidents; it runs no health checks of its own."
           align="start"
         />
@@ -112,7 +113,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
     setApplied((cur) => ({ ...cur, [s.id]: entry }))
     startWindow(s.id)
   }
-  /** From the card or from History; an undo inside the window puts the card back to Apply. */
+  /** From the card or from History. An undone suggestion is not offered again, so its card leaves. */
   const undoIt = async (entry: HistoryEntry) => {
     const id = Object.keys(applied).find((k) => applied[k].id === entry.id)
     // the window must not close while the undo is in flight; a failed undo gets a fresh one
@@ -123,7 +124,10 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
       if (id) startWindow(id)
       throw e
     }
-    if (id) endWindow(id)
+    if (id) {
+      endWindow(id)
+      settle(id)
+    }
   }
   const [params, setParams] = useSearchParams()
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -131,8 +135,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
   const filter: Filter = FILTERS.find((f) => f === raw) ?? 'all'
   const setFilter = (f: Filter) => setParams(f === 'all' ? {} : { show: f }, { replace: true })
 
-  // unknown: the server couldn't read its own state, which reads the same as a failed read
-  if (!data || data.status.state === 'unknown') {
+  if (!data) {
     return (
       <div className="spv-page">
         {error || data
@@ -143,7 +146,7 @@ export default function SupervisoryScreen({ go, openCase }: ConsoleScreenProps) 
   }
 
   const { functions, suggestions, held } = data
-  const status = { ...data.status, state: data.status.state }
+  const status = data.status
   const openMedic = (incident?: string) => go('medic', incident ? { search: `?tab=incidents&incident=${encodeURIComponent(incident)}` } : undefined)
 
   const widens = suggestions.filter((s) => s.widens_autonomy)

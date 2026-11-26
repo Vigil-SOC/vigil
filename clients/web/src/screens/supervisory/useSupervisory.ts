@@ -15,17 +15,17 @@ const withValue = (read: SupervisoryRead, key: string, value: string): Superviso
   settings: read.settings?.map((x) => (x.key === key ? { ...x, value } : x)) ?? null,
 })
 
-const roundTrip = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-/** Stands in for POST /api/supervisory/suggestions/{id}/apply, which returns the new history entry. */
+/** Each write returns the history entry it recorded. */
 async function postApply(s: Suggestion): Promise<HistoryEntry> {
-  await roundTrip(900)
-  return { id: `h-${s.id}-${Date.now()}`, at: new Date().toISOString(), key: s.key, from: s.from, to: s.to, outcome: 'applied', note: '', undoable: true }
+  return (await api.post<HistoryEntry>(`/supervisory/suggestions/${encodeURIComponent(s.id)}/apply`)).data
 }
 
-/** Stands in for POST /api/supervisory/history/{id}/undo. */
-async function postUndo(): Promise<void> {
-  await roundTrip(300)
+async function postUndo(entry: HistoryEntry): Promise<HistoryEntry> {
+  return (await api.post<HistoryEntry>(`/supervisory/history/${encodeURIComponent(entry.id)}/undo`)).data
+}
+
+async function postDismiss(id: string, reason: DismissReason): Promise<HistoryEntry> {
+  return (await api.post<HistoryEntry>(`/supervisory/suggestions/${encodeURIComponent(id)}/dismiss`, { reason })).data
 }
 
 export function useSupervisory() {
@@ -43,16 +43,13 @@ export function useSupervisory() {
   }, [])
   useEffect(load, [load])
 
-  /** Moves the suggestion into history with the reason given. Local only until POST /api/supervisory/suggestions/{id}/dismiss exists. */
+  /** Moves the suggestion into history with the reason given. A refused dismiss reads the page again, so the card shows as the server has it. */
   const dismiss = useCallback((id: string, reason: DismissReason) => {
-    setData((cur) => {
-      if (!cur) return cur
-      const s = cur.suggestions.find((x) => x.id === id)
-      if (!s) return cur
-      const entry: HistoryEntry = { id: `h-${id}-${Date.now()}`, at: new Date().toISOString(), key: s.key, from: s.from, to: s.to, outcome: 'dismissed', note: reason }
-      return { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id), history: [entry, ...cur.history] }
-    })
-  }, [])
+    postDismiss(id, reason).then(
+      (entry) => setData((cur) => cur && { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id), history: [entry, ...cur.history] }),
+      () => load(),
+    )
+  }, [load])
 
   /** On success the change heads History with an Undo; the card stays until `settle`. Throws on failure. */
   const apply = useCallback(async (s: Suggestion) => {
@@ -61,16 +58,19 @@ export function useSupervisory() {
     return entry
   }, [])
 
-  /** The applied suggestion leaves the open list. */
+  /** The applied suggestion leaves the open list, and the page reads the server's values again. */
   const settle = useCallback((id: string) => {
     setData((cur) => cur && { ...cur, suggestions: cur.suggestions.filter((x) => x.id !== id) })
-  }, [])
+    load()
+  }, [load])
 
-  /** Puts an applied value back; its history entry then reads Undone. Throws on failure. */
+  /** Puts an applied value back: the applied entry can no longer be undone and an Undone entry heads History. Throws on failure. */
   const undo = useCallback(async (entry: HistoryEntry) => {
-    await postUndo()
-    const undone: HistoryEntry = { ...entry, outcome: 'undone', at: new Date().toISOString(), undoable: false }
-    setData((cur) => cur && withValue({ ...cur, history: cur.history.map((h) => (h.id === entry.id ? undone : h)) }, entry.key, entry.from))
+    const undone = await postUndo(entry)
+    setData((cur) => cur && withValue({
+      ...cur,
+      history: [undone, ...cur.history.map((h) => (h.id === entry.id ? { ...h, undoable: false } : h))],
+    }, entry.key, entry.from))
   }, [])
 
   return { data, error, reload: load, dismiss, apply, settle, undo }
