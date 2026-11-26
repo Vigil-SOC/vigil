@@ -635,6 +635,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     # The site proposal (core/site_proposal.py)
     "site.proposal.save": "Saved a site proposal",
     "site.proposal.discard": "Discarded a site proposal",
+    "site.proposal.refresh": "Started a site refresh",
     # Analyst notes on an entity (core/memory/notes.py)
     "memory.note.written": _note("Wrote"),
     "memory.note.withdrawn": _note("Withdrew"),

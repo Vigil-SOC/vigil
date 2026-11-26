@@ -8,7 +8,7 @@ import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy import exists, select, text
@@ -16,6 +16,7 @@ from sqlalchemy import exists, select, text
 from core import site_proposal
 from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
+from core.auth import tool_principal
 from core.auth.current_user import is_machine_request
 from core.auth.permissions import permission_gate
 from core.config import (
@@ -30,6 +31,7 @@ from core.deps import (
     provide_detection_rules,
     provide_integration_bridge,
     provide_mcp_client,
+    provide_mcp_registry,
     provide_process_health,
 )
 from core.detections.detection_rules_service import DetectionRulesService
@@ -2045,6 +2047,15 @@ class SiteProposalProvenance(BaseModel):
     answer: Optional[str] = None
 
 
+class SiteNotEvaluated(BaseModel):
+    """An outside tool the site agent holds that cannot run on this deployment."""
+
+    tool: str
+    reason: str
+    # Where to set its class, for a tool that is not classed read.
+    where: Optional[str] = None
+
+
 class SiteProposalResponse(BaseModel):
     id: str
     # open | applied | outdated | discarded
@@ -2057,6 +2068,7 @@ class SiteProposalResponse(BaseModel):
     provenance: Dict[str, SiteProposalProvenance] = Field(default_factory=dict)
     questions: list[str] = Field(default_factory=list)
     refresh: Optional[Dict[str, Any]] = None
+    not_evaluated: list[SiteNotEvaluated] = Field(default_factory=list)
     discarded: Optional[Dict[str, Any]] = None
     diff: list[SiteProposalChange] = Field(default_factory=list)
 
@@ -2115,7 +2127,7 @@ def get_site_context() -> Dict[str, Any]:
 def download_site_proposal() -> Response:
     """The proposed site/ folder as a .tar.gz, to unpack into the declared directory."""
     value = site_proposal.read_proposal()
-    if not value:
+    if not site_proposal._is_proposal(value):
         raise HTTPException(status_code=404, detail="There is no site proposal")
     if value.get("discarded"):
         raise HTTPException(status_code=409, detail="The site proposal was discarded")
@@ -2155,6 +2167,26 @@ def discard_site_proposal(
         raise HTTPException(status_code=409, detail=str(exc)) from None
     session.flush()
     return site_proposal.proposal_view(applied_site(fresh=True), session=session)
+
+
+@router.post(
+    "/site/proposal/refresh",
+    dependencies=[permission_gate("ai_chat.use")],
+)
+async def refresh_site_proposal(
+    request: Request, current_user: User = Depends(get_current_active_user)
+) -> JSONResponse:
+    """Queue the site agent to draft a refresh now, as this user. 200 when queued;
+    409 with the reason when refused (agent or workflow off, AutoOps off, a
+    refresh unfinished, or another start in progress)."""
+    from services.api.routers.orchestrator import _person
+
+    person = _person(current_user, tool_principal.sid_of(request))
+    outcome = await site_proposal.start_refresh(person, provide_mcp_registry(request))
+    code = {site_proposal.REFUSED: 409, site_proposal.NOT_QUEUED: 500}.get(
+        outcome["status"], 200
+    )
+    return JSONResponse(outcome, status_code=code)
 
 
 class IntentAcceptBody(BaseModel):

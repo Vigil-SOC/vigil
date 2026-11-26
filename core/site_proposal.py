@@ -55,6 +55,7 @@ MAX_QUESTIONS = 200
 
 SAVE_ACTION = "site.proposal.save"
 DISCARD_ACTION = "site.proposal.discard"
+REFRESH_ACTION = "site.proposal.refresh"
 
 # The field that names an item of each list in the diff and in provenance.
 LABEL = {
@@ -183,6 +184,11 @@ def _write(session, value: Dict[str, Any], by: str) -> None:
         row.updated_by = by
 
 
+def _is_proposal(value: Optional[Dict[str, Any]]) -> bool:
+    """A row the refresh wrote before any save holds only ``refresh``: no proposal."""
+    return bool(value and value.get("id"))
+
+
 def read_proposal() -> Optional[Dict[str, Any]]:
     from core.storage.connection import get_db_manager
 
@@ -283,6 +289,7 @@ async def save_site_proposal(
     files: Any = None,
     provenance: Any = None,
     questions: Any = None,
+    registry: Any = None,
 ) -> Dict[str, Any]:
     """The ``save_site_proposal`` backend tool. Errors are returned, not raised."""
     import asyncio
@@ -315,14 +322,22 @@ async def save_site_proposal(
             if key in given:
                 raise ProposalRefused(f"{key[0]} {key[1]!r}: provenance given twice")
             given[key] = await _provenance(entry, claims, now)
+        registry = await site_registry(registry)
+        skipped = await asyncio.to_thread(not_evaluated, registry)
         return await asyncio.to_thread(
-            _store, named, items, given, [q.strip() for q in questions or []], claims
+            _store,
+            named,
+            items,
+            given,
+            [q.strip() for q in questions or []],
+            claims,
+            skipped,
         )
     except ProposalRefused as exc:
         return {"error": f"save_site_proposal refused: {exc}"}
 
 
-def _store(named, items, given, questions, claims) -> Dict[str, Any]:
+def _store(named, items, given, questions, claims, skipped) -> Dict[str, Any]:
     """Check provenance against the diff and replace the row, under the lock."""
     from core.storage.connection import get_db_manager
 
@@ -343,7 +358,7 @@ def _store(named, items, given, questions, claims) -> Dict[str, Any]:
         )
     with get_db_manager().session_scope() as session:
         held = _read(session, lock=True)
-        kept_from = held if held and status(held, row) == OPEN else None
+        kept_from = held if _is_proposal(held) and status(held, row) == OPEN else None
         theirs = _groups(kept_from.get("items") or {}) if kept_from else {}
         ours = _groups(items)
         stored = {}
@@ -392,8 +407,9 @@ def _store(named, items, given, questions, claims) -> Dict[str, Any]:
             "items": items,
             "provenance": stored,
             "questions": questions,
-            # Written by the refresh (a later child of #5218).
+            # What the last refresh saw (start_refresh); a save keeps it.
             "refresh": (held or {}).get("refresh"),
+            "not_evaluated": skipped,
             "discarded": None,
         }
         _write(session, value, claims.person_id or claims.agent_id or "agent")
@@ -419,7 +435,7 @@ def discard(session, reason: str, username: Optional[str]) -> Dict[str, Any]:
     if not reason:
         raise ProposalRefused("a discard needs a reason")
     held = _read(session, lock=True)
-    if not held:
+    if not _is_proposal(held):
         raise LookupError("there is no proposal")
     state = status(held, applied_site(fresh=True))
     if state in (DISCARDED, APPLIED):
@@ -453,7 +469,7 @@ def archive(value: Dict[str, Any]) -> bytes:
 def proposal_view(row: Dict[str, Any], session=None) -> Optional[Dict[str, Any]]:
     """The proposal with its status and its diff against the revision applied now."""
     value = _read(session) if session is not None else read_proposal()
-    if not value:
+    if not _is_proposal(value):
         return None
     state = status(value, row)
     return {
@@ -561,3 +577,388 @@ def site_questions(view: Dict[str, Any], row: Dict[str, Any]) -> List[Dict[str, 
 
 def archive_name(value: Dict[str, Any]) -> str:
     return f"site-proposal-{str(value.get('id'))[:8]}.tar.gz"
+
+
+# --- Sources not evaluated (#5259) -----------------------------------------------
+
+SITE_AGENT = "site_context"
+SITE_WORKFLOW = f"agent-run-{SITE_AGENT}"
+WHERE_CLASS = "Settings → Limits & autonomy"
+
+
+def _site_needs() -> List[str]:
+    import yaml
+
+    from core.agents.builtins import builtin_manifests
+
+    return list(yaml.safe_load(builtin_manifests()[SITE_AGENT]).get("needs") or [])
+
+
+def _need_servers(needs: List[str]) -> List[str]:
+    """Every outside server a need may bind: a capability's candidates, or the
+    ``{server}`` of a catalogue name."""
+    from core.workflows.playbook_resolver import CAPABILITIES, NEED_ALIASES
+
+    servers: Dict[str, None] = {}
+    for need in needs:
+        capability = NEED_ALIASES.get(need, need)
+        if capability in CAPABILITIES:
+            for c in CAPABILITIES[capability]:
+                if c.server:
+                    servers[c.server] = None
+        elif "_" in need:
+            servers[need.partition("_")[0]] = None
+    return list(servers)
+
+
+_DIAL_TIMEOUT_S = 10
+
+
+async def site_registry(registry: Any = None) -> Any:
+    """The registry the site agent's needs bind against.
+
+    The API passes its own, which a run binds against. Elsewhere (the daemon's
+    tick) this process dials the servers those needs name, as containment
+    dials its vendors; ``connect_to_server`` skips one disabled or without
+    credentials.
+    """
+    import asyncio
+
+    from core.integrations.mcp.client import process_mcp_client
+    from core.integrations.mcp.registry import MCPRegistry
+
+    if registry is not None:
+        return registry
+    client = process_mcp_client()
+    if client is not None:
+        connected = getattr(client, "tools_cache", None) or {}
+        for server in _need_servers(_site_needs()):
+            if server in connected:
+                continue
+            try:
+                await asyncio.wait_for(
+                    client.connect_to_server(server, persistent=True), _DIAL_TIMEOUT_S
+                )
+            except Exception:  # noqa: BLE001 - it reads as not connected
+                logger.debug("site agent server %s not connected", server)
+    return MCPRegistry()
+
+
+def not_evaluated(registry=None) -> List[Dict[str, str]]:
+    """The site agent's outside tools that cannot run on this deployment.
+
+    From its manifest's needs and what each binds here, a capability's tools
+    included: a server not connected, or a tool not classed read or
+    read_unverified. Vigil's own tools are never listed.
+    """
+    from core.integrations.mcp.registry import MCPRegistry
+    from core.response.ceiling import is_read, own_tool_names, tool_classes
+    from core.workflows.playbook_resolver import (
+        CAPABILITIES,
+        NEED_ALIASES,
+        _bound_capabilities,
+        _tool_catalogue,
+    )
+
+    needs = _site_needs()
+    bound = _bound_capabilities(needs, _tool_catalogue(registry or MCPRegistry()))
+    provided = {b["provides"] for b in bound}
+    own = own_tool_names()
+    out: List[Dict[str, str]] = []
+    for need in needs:
+        capability = NEED_ALIASES.get(need, need)
+        if capability in provided or need in own:
+            continue
+        if capability in CAPABILITIES:
+            reason = f"not connected: no connected source answers {capability}"
+        else:  # a catalogue name, {server}_{tool}
+            reason = f"not connected: {need.partition('_')[0]} is not connected"
+        out.append({"tool": need, "reason": reason})
+    for name, effect in tool_classes(b["id"] for b in bound).items():
+        if not is_read(effect):
+            out.append(
+                {
+                    "tool": name,
+                    "reason": (
+                        f"classed {effect}, not read" if effect else "not classed"
+                    ),
+                    "where": WHERE_CLASS,
+                }
+            )
+    return out
+
+
+def _skipped_line(line: Dict[str, str]) -> str:
+    where = f"; set its class in {line['where']}" if line.get("where") else ""
+    return f"{line['tool']} ({line['reason']}{where})"
+
+
+# --- The refresh (#5259) ---------------------------------------------------------
+
+QUEUED, REFUSED, NOTHING_NEW, NOT_QUEUED = (
+    "queued",
+    "refused",
+    "nothing_new",
+    "not_queued",
+)
+_REFRESH_LOCK = 0x7669_6769_6C53_5246  # "vigilSRF"
+
+AGENT_OFF = (
+    f"The site refresh is turned off: the site context agent or its workflow "
+    f"{SITE_WORKFLOW} is off. Turn it on in Workflows → Agents."
+)
+AUTOOPS_OFF = (
+    "AutoOps is off, so a site refresh would not launch. Turn AutoOps on, then "
+    "start the refresh again."
+)
+
+_OPENING = (
+    "Refresh the site/ proposal. No person is present. Read the applied site, "
+    "the open proposal and the site questions with get_site_context, draft from "
+    "the sources you hold, and save the full folder with save_site_proposal: "
+    "every file, each changed item citing the call it rests on. Propose "
+    "selector changes (widen a zone, or add one), never one host as an "
+    "instance. Draft no crown jewel, owner or blind spot: put each thing only a "
+    "person can settle in questions, and answer none of them."
+)
+
+
+def _outcome(state: str, message: str, **extra: Any) -> Dict[str, Any]:
+    return {"status": state, "message": message, **extra}
+
+
+def _autoops_on() -> bool:
+    """The ``orchestrator.settings`` row's ``enabled``, as the orchestrator reads it."""
+    from core.storage.connection import get_db_manager
+    from core.storage.models import SystemConfig
+
+    with get_db_manager().session_scope() as session:
+        cfg = session.get(SystemConfig, "orchestrator.settings")
+        return bool(
+            cfg and isinstance(cfg.value, dict) and cfg.value.get("enabled", False)
+        )
+
+
+def _unfinished() -> Optional[Tuple[int, Optional[str]]]:
+    """(intake id, investigation id) of a site refresh still queued or working."""
+    from sqlalchemy import and_, or_, select
+
+    from core.detections.engineering.proposals import _RUNNING_INVESTIGATION_STATUSES
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger, Investigation
+
+    with get_db_manager().session_scope() as session:
+        row = session.execute(
+            select(IntakeTrigger.id, IntakeTrigger.investigation_id)
+            .outerjoin(
+                Investigation,
+                Investigation.investigation_id == IntakeTrigger.investigation_id,
+            )
+            .where(
+                IntakeTrigger.kind == "schedule",
+                IntakeTrigger.payload["workflow_id"].astext == SITE_WORKFLOW,
+                or_(
+                    IntakeTrigger.state == "queued",
+                    and_(
+                        IntakeTrigger.state == "launched",
+                        Investigation.status.in_(_RUNNING_INVESTIGATION_STATUSES),
+                    ),
+                ),
+            )
+            .order_by(IntakeTrigger.id)
+        ).first()
+    return None if row is None else (row[0], row[1])
+
+
+class _Lock:
+    """Session advisory lock for one start; ``got`` is False when another holds it."""
+
+    def __enter__(self) -> bool:
+        from core.storage.connection import get_db_manager
+
+        self.conn = get_db_manager().engine.connect()
+        self.got = bool(
+            self.conn.execute(
+                text("SELECT pg_try_advisory_lock(:k)"), {"k": _REFRESH_LOCK}
+            ).scalar()
+        )
+        self.conn.commit()
+        return self.got
+
+    def __exit__(self, *exc) -> None:
+        try:
+            if self.got:
+                self.conn.execute(
+                    text("SELECT pg_advisory_unlock(:k)"), {"k": _REFRESH_LOCK}
+                )
+                self.conn.commit()
+        finally:
+            self.conn.close()
+
+
+def _question_key(q: Dict[str, Any]) -> str:
+    return f"{q.get('question')} " + (
+        q.get("entity_key") or f"{q.get('kind')} {q.get('name')}"
+    )
+
+
+def _entries(view: Dict[str, Any]) -> Dict[str, List[str]]:
+    """What a refresh sees: the report's check outcomes and item states (declared
+    names, never the hosts behind them) and the site-question keys."""
+    report = view.get("report") or {}
+    checks = {
+        f"check {c.get('id')}: {c.get('outcome')}" for c in report.get("checks") or []
+    }
+    items = {
+        f"{i.get('kind')} {i.get('name')}: {i.get('state')}"
+        for i in (report.get("evidence") or {}).get("items") or []
+    }
+    return {
+        "report": sorted(checks | items),
+        "questions": sorted(
+            {_question_key(q) for q in view.get("site_questions") or []}
+        ),
+    }
+
+
+def _opening(
+    proposal: Optional[Dict[str, Any]],
+    new: Dict[str, List[str]],
+    skipped: List[Dict[str, str]],
+) -> str:
+    parts = [_OPENING]
+    if proposal:
+        parts.append(
+            f"The proposal saved {proposal.get('saved_at')} is {proposal['status']}"
+            + (
+                ": start from its files, and keep every crown jewel, owner and "
+                "blind spot in it exactly as it is."
+                if proposal["status"] == OPEN
+                else "."
+            )
+        )
+    else:
+        parts.append("There is no proposal: start from the applied revision.")
+    if new["questions"]:
+        parts.append(
+            "Site questions new since the last refresh: "
+            + "; ".join(new["questions"])
+            + "."
+        )
+    if new["report"]:
+        parts.append(
+            "Day 1 Report site entries new since the last refresh: "
+            + "; ".join(new["report"])
+            + "."
+        )
+    if skipped:
+        parts.append(
+            "Sources not evaluated; do not call these tools, they cannot run here: "
+            + "; ".join(_skipped_line(s) for s in skipped)
+            + "."
+        )
+    return " ".join(parts)
+
+
+async def start_refresh(
+    person: Optional[Dict[str, str]] = None, registry: Any = None
+) -> Dict[str, Any]:
+    """Queue the site agent with no Case; the console route's and the daily tick's start.
+
+    ``person`` is ``started_by`` and ``principal`` of whoever started it; None is
+    the tick, which queues only when a revision is applied, the proposal is not
+    open, and the report or the site questions hold an entry the last refresh
+    did not see. What it saw is written once the row is queued, in the same
+    transaction, so a discard does not re-arm the tick.
+    """
+    import asyncio
+
+    from core.agents.enablement import disabled_agent_ids
+    from core.workflows.enablement import is_enabled
+
+    if not is_enabled(SITE_WORKFLOW) or SITE_AGENT in disabled_agent_ids():
+        return _outcome(REFUSED, AGENT_OFF)
+    if not await asyncio.to_thread(_autoops_on):
+        return _outcome(REFUSED, AUTOOPS_OFF)
+    registry = await site_registry(registry)
+    return await asyncio.to_thread(_start_refresh, person, registry)
+
+
+def _start_refresh(person: Optional[Dict[str, str]], registry: Any) -> Dict[str, Any]:
+    from core.site import site_view
+    from core.storage.connection import get_db_manager
+    from core.storage.intake_queue import insert_intake_trigger
+
+    with _Lock() as got:
+        if not got:
+            return _outcome(REFUSED, "Another site refresh is being started right now.")
+        unfinished = _unfinished()
+        if unfinished is not None:
+            intake_id, investigation_id = unfinished
+            which = (
+                f"investigation {investigation_id}"
+                if investigation_id
+                else "still queued"
+            )
+            return _outcome(
+                REFUSED,
+                f"A site refresh is unfinished (intake row {intake_id}, {which}); "
+                "start another once it ends.",
+                intake_id=intake_id,
+            )
+        row = applied_site(fresh=True)
+        if person is None and not row.get("revision"):
+            return _outcome(NOTHING_NEW, "No site/ revision is applied.")
+        view = site_view(row)
+        proposal = view.get("proposal")
+        if person is None and proposal and proposal["status"] == OPEN:
+            return _outcome(
+                NOTHING_NEW, "The site proposal is open; a person reviews it first."
+            )
+        now = _entries(view)
+        before = (read_proposal() or {}).get("refresh") or {}
+        new = {
+            k: [e for e in v if e not in set(before.get(k) or [])]
+            for k, v in now.items()
+        }
+        if person is None and not any(new.values()):
+            return _outcome(NOTHING_NEW, "Nothing new since the last site refresh.")
+        skipped = not_evaluated(registry)
+        hypothesis = _opening(proposal, new, skipped)
+        with get_db_manager().session_scope() as session:
+            queued = insert_intake_trigger(
+                kind="schedule",
+                priority="low",
+                payload={
+                    "workflow_id": SITE_WORKFLOW,
+                    "trigger_type": "manual" if person else "scheduled",
+                    "finding_ids": [],
+                    "hypothesis": hypothesis,
+                    "no_case": True,
+                    **(person or {}),
+                },
+                session=session,
+            )
+            if queued is None:
+                return _outcome(
+                    NOT_QUEUED, "The site refresh's intake row was not queued."
+                )
+            held = _read(session, lock=True) or {}
+            held["refresh"] = {"at": utcnow().isoformat(), "intake_id": queued, **now}
+            _write(session, held, (person or {}).get("started_by") or "system")
+            if person:
+                _audit(
+                    session, REFRESH_ACTION, held.get("id"), person.get("started_by")
+                )
+            else:
+                from core.audit import trail
+                from core.auth import trail_events
+
+                trail_events.record(
+                    session,
+                    REFRESH_ACTION,
+                    actor="system",
+                    proposal_id=held.get("id"),
+                    **{trail.OBJECT: PROPOSAL_KEY},
+                )
+    return _outcome(QUEUED, hypothesis, intake_id=queued, not_evaluated=skipped)

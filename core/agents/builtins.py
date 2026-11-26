@@ -38,6 +38,7 @@ class AgentId(str, Enum):
     MALWARE_ANALYST = "malware_analyst"
     NETWORK_ANALYST = "network_analyst"
     AUTO_RESPONDER = "auto_responder"
+    SITE_CONTEXT = "site_context"
 
 
 # The autonomous loop authors decisions of its own but is not an agent: it has
