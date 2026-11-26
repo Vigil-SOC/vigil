@@ -255,6 +255,11 @@ async def _provenance(entry: Dict[str, Any], claims: Any, now: str) -> Dict[str,
             "a failed call is not evidence"
         )
     tool, arguments = call.get("tool"), call.get("arguments")
+    if isinstance(arguments, str):  # the ledger keeps them as the model sent them
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            pass
     if tool == CALL_INTEGRATION_TOOL and isinstance(arguments, dict):
         tool, arguments = arguments.get("name") or tool, arguments.get("arguments")
     cited = {
@@ -428,11 +433,16 @@ def discard(session, reason: str, username: Optional[str]) -> Dict[str, Any]:
 def archive(value: Dict[str, Any]) -> bytes:
     """The proposed folder as a .tar.gz of ``site/*.md``, to unpack into the declared directory."""
     out = io.BytesIO()
+    try:
+        saved = datetime.fromisoformat(value["saved_at"])  # naive UTC
+        mtime = saved.replace(tzinfo=timezone.utc).timestamp()
+    except (KeyError, TypeError, ValueError):
+        mtime = 0
     with tarfile.open(fileobj=out, mode="w:gz") as tar:
         for entry in value.get("files") or []:
             data = entry["text"].encode("utf-8")
             info = tarfile.TarInfo(entry["file"])
-            info.size, info.mode = len(data), 0o644
+            info.size, info.mode, info.mtime = len(data), 0o644, mtime
             tar.addfile(info, io.BytesIO(data))
     return out.getvalue()
 
