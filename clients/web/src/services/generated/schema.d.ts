@@ -1631,9 +1631,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags, or turning the crown-jewel hold on, is
-         *     ``ai_autonomy.stop``. Raising a flag, changing four-eyes, or turning the
-         *     hold off is ``ai_autonomy.write``.
+         *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
+         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
+         *     or turning the hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_autonomy"];
         post?: never;
@@ -9312,9 +9312,9 @@ export interface paths {
          * Put Ceiling
          * @description Edit the ceiling. The permission depends on the direction.
          *
-         *     Only lowering act flags, or turning the crown-jewel hold on, is
-         *     ``ai_autonomy.stop``. Raising a flag, changing four-eyes, or turning the
-         *     hold off is ``ai_autonomy.write``.
+         *     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
+         *     on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
+         *     or turning the hold off is ``ai_autonomy.write``.
          */
         put: operations["put_api_v1_autonomy"];
         post?: never;
@@ -13162,6 +13162,8 @@ export interface components {
             four_eyes?: boolean | null;
             /** Hold Crown Jewels */
             hold_crown_jewels?: boolean | null;
+            /** Released Per Hour */
+            released_per_hour?: number | null;
         };
         /** CeilingResponse */
         CeilingResponse: {
@@ -13186,6 +13188,8 @@ export interface components {
             propose: boolean;
             /** Read */
             read: boolean;
+            /** Released Per Hour */
+            released_per_hour: number;
             /** Stopped */
             stopped: boolean;
             /** Stopped At */
