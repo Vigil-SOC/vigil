@@ -9,7 +9,7 @@ import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, func, literal, select, text
 from sqlalchemy.orm import Session, noload
 
 from core.auth.permissions import CaseReader, case_read_clause
@@ -21,6 +21,7 @@ from core.storage.models import (
     Finding,
     FindingMitrePrediction,
     LLMInteractionLog,
+    WorkflowRun,
 )
 from core.threat_intel.mitre_lookup import get_time_range, resolve_technique
 
@@ -700,11 +701,11 @@ async def get_cost_breakdown(db: Session, time_range: str) -> Dict[str, Any]:
 _CLOSURE_VERDICTS = text("""
     SELECT ci.case_id, ci.closure_category, ci.close_channel,
            ci.closed_at, ci.sampled_at, ci.evidence_opened,
-           t.workflow_id, t.disposition, t.confidence
+           t.run_id, t.workflow_id, t.disposition, t.confidence
     FROM case_closure_info ci
     JOIN cases c ON c.case_id = ci.case_id AND c.status = 'closed'
     JOIN LATERAL (
-        SELECT r.workflow_id,
+        SELECT r.run_id, r.workflow_id,
                e.payload->>'disposition' AS disposition,
                e.payload->>'confidence' AS confidence
         FROM workflow_runs r
@@ -776,6 +777,34 @@ def _in_window(moment: Optional[datetime], start: datetime, end: datetime) -> bo
     return moment is not None and start <= moment <= end
 
 
+def _finish(tally: Dict[str, Any]) -> None:
+    """Fill the rates and the Wilson bounds from the counts."""
+    scored = tally["agreed"] + tally["disagreed"]
+    tally["agreement_rate"] = round(tally["agreed"] / scored, 4) if scored else None
+    answered = tally["answered"]
+    if answered:
+        tally["false_close_rate"] = round(tally["false_closes"] / answered, 4)
+        bounds = _wilson(tally["false_closes"], answered)
+        if bounds is not None:
+            tally["wilson_low"], tally["wilson_high"] = bounds
+
+
+def _run_models(db: Session, run_ids: set) -> Dict[str, str]:
+    """Each investigate run's model, by the rule the run judge reads; a run under
+    no model is left out."""
+    if not run_ids:
+        return {}
+    from core.supervisory.run_model import attributed, ledger_of, run_model
+
+    model, models = run_model(literal("investigate"), ledger_of(WorkflowRun.run_id))
+    rows = db.execute(
+        select(WorkflowRun.run_id, model, models).where(WorkflowRun.run_id.in_(run_ids))
+    )
+    return {
+        run_id: name for run_id, m, n in rows if (name := attributed(m, n)) is not None
+    }
+
+
 async def get_agent_agreement(
     db: Session, start_time: datetime, end_time: datetime
 ) -> Dict[str, Any]:
@@ -800,6 +829,10 @@ def agent_agreement(
     how many a person answered, and false closes (an answered draw whose
     disposition is not-real and whose closure says real). The rate and the Wilson
     bounds are null when none are answered.
+
+    Each workflow's tally is also split ``by_model``, the model that ran the
+    investigation whose verdict is scored (:mod:`core.supervisory.run_model`);
+    ``unattributed`` counts its rows whose run used more than one model or none.
     ``readable``, a read clause on cases, leaves out the closures it does not admit.
     """
     rows = list(db.execute(_CLOSURE_VERDICTS, {"start": start_time, "end": end_time}))
@@ -812,10 +845,20 @@ def agent_agreement(
             )
         )
         rows = [row for row in rows if row.case_id in kept]
+    run_models = _run_models(db, {row.run_id for row in rows})
     overall = _agreement_tally()
     by_workflow: Dict[str, Dict[str, Any]] = {}
+    # Per workflow: model id -> tally, and the rows under no model.
+    by_model: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    unattributed: Dict[str, int] = {}
     for row in rows:
         tallies = (overall, by_workflow.setdefault(row.workflow_id, _agreement_tally()))
+        models = by_model.setdefault(row.workflow_id, {})
+        model = run_models.get(row.run_id)
+        if model is None:
+            unattributed[row.workflow_id] = unattributed.get(row.workflow_id, 0) + 1
+        else:
+            tallies += (models.setdefault(model, _agreement_tally()),)
         if _in_window(row.closed_at, start_time, end_time):
             if not closed_by_person(row.close_channel):
                 key = "closed_by_agent_alone"
@@ -853,18 +896,22 @@ def agent_agreement(
                 if false_close:
                     tally["false_closes"] += 1
     for tally in (overall, *by_workflow.values()):
-        scored = tally["agreed"] + tally["disagreed"]
-        tally["agreement_rate"] = round(tally["agreed"] / scored, 4) if scored else None
-        answered = tally["answered"]
-        if answered:
-            tally["false_close_rate"] = round(tally["false_closes"] / answered, 4)
-            bounds = _wilson(tally["false_closes"], answered)
-            if bounds is not None:
-                tally["wilson_low"], tally["wilson_high"] = bounds
+        _finish(tally)
+    for models in by_model.values():
+        for tally in models.values():
+            _finish(tally)
     return {
         "overall": overall,
         "by_workflow": [
-            {"workflow_id": workflow_id, **tally}
+            {
+                "workflow_id": workflow_id,
+                **tally,
+                "by_model": [
+                    {"model": model, **m}
+                    for model, m in sorted(by_model[workflow_id].items())
+                ],
+                "unattributed": unattributed.get(workflow_id, 0),
+            }
             for workflow_id, tally in sorted(by_workflow.items())
         ],
     }

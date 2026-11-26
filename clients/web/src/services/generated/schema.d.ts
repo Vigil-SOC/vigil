@@ -1816,7 +1816,8 @@ export interface paths {
          *     Act is always a raise: it holds after the fleet is lowered. Anything else that
          *     lets the workflow act where it could not, such as clearing Assist under a fleet
          *     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
-         *     while stopped, and stores the workflow's 30-day agreement beside its floor.
+         *     while stopped, and stores the investigation model in force and that model's
+         *     30-day agreement on the workflow beside its floor.
          *     Anything else is ``ai_autonomy.stop``.
          */
         put: operations["put_api_autonomy_workflows_workflow_id"];
