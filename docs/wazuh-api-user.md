@@ -25,7 +25,7 @@ One custom policy, on one custom role:
 
 | Action | Resource | What Vigil uses it for |
 |---|---|---|
-| `agent:read` | `agent:id:*` | `wazuh_list_agents`, and `wazuh_agent_log_collection` (`GET /agents`, `GET /agents/{id}/config/logcollector/localfile`) |
+| `agent:read` | `agent:id:*` | `wazuh_list_agents`, `wazuh_list_groups` and `wazuh_agent_log_collection` (`GET /agents`, `GET /agents/{id}/config/logcollector/localfile`). Group counts come from the agents, not `GET /groups` (`group:read`), so a group with no agents is not listed |
 | `rules:read` | `rule:file:*` | `wazuh_list_rules` and the rule inventory (`GET /rules`) |
 | `logtest:run` | `*:*:*` | `wazuh_test_event` (`PUT /logtest`, then deleting that session) |
 
