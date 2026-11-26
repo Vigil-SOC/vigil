@@ -670,7 +670,8 @@ def _propose_actions(
 
 # True when another run's proposal already covers this one: a pending ask now
 # lists this case too, and an approved or executed one is noted here. A rejected
-# or failed one is not an answer to this run's evidence, so it is asked again.
+# or failed one is not an answer to this run's evidence, so it is asked again;
+# nor is an executed one undone since (a released host, an enabled user).
 def _already_asked(
     service: ApprovalService, match: Any, case_id: str, run_id: str, title: str
 ) -> bool:
@@ -686,6 +687,10 @@ def _already_asked(
                 {"action_id": match.action_id, "run_id": run_id, "case_id": first},
             )
             return True
+    from core.response.proposal_targets import undone
+
+    if match.status == "executed" and undone(match.action_type, match.execution_result):
+        return False
     if match.status in ("approved", "executed"):
         when = (match.executed_at or match.approved_at or "")[:10]
         _note_shared(
