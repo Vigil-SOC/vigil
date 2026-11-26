@@ -165,6 +165,12 @@ NUMERIC_BOUNDS: Dict[str, Tuple[float, float]] = {
 }
 INTEGER_KEYS = frozenset({"investigate.max_runtime_per_investigation"})
 
+# Per-workflow autonomy (#5272): ``workflows: {<id>: {tier, floor}}``, one
+# managed key ``workflows.<id>`` per entry whose value is the whole entry.
+WORKFLOWS = "workflows"
+WORKFLOW_TIERS = ("act", "assist")
+WORKFLOW_ENTRY_KEYS = ("tier", "floor")
+
 # Enforced mode (VIGIL_INTENT_DIR): the directory holds INTENT.md and this
 # marker, whose first line names the revision.
 INTENT_FILE_NAME = "INTENT.md"
@@ -246,6 +252,8 @@ def read_intent(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     if front is None:
         logger.warning("INTENT.md has no YAML frontmatter (%s)", path)
         return None
+    front = dict(front)
+    front.pop(WORKFLOWS, None)  # enforced mode only (VIGIL_INTENT_DIR)
     declared = _flatten(front)
     for key in sorted(set(declared) - set(FIELDS_BY_KEY)):
         logger.warning("INTENT.md key %r has no reader in the daemon; ignored", key)
@@ -274,6 +282,8 @@ def parse_intent_strict(
     if front is None:
         raise IntentRejected(name, 1, "no YAML frontmatter")
     lines = frontmatter_key_lines(content)
+    front = dict(front)
+    workflows = _parse_workflows(front.pop(WORKFLOWS, None), lines, name)
     declared = _flatten(front)
     for key in sorted(declared, key=lambda k: lines.get(k, 0)):
         value = declared[key]
@@ -294,7 +304,67 @@ def parse_intent_strict(
             raise IntentRejected(
                 name, lines.get(key), f"{key}: {value!r} is outside {low:g}..{high:g}"
             )
+    declared.update(workflows)
     return declared, {k: lines.get(k, 1) for k in declared}
+
+
+def _parse_workflows(
+    section: Any, lines: Dict[str, int], name: str
+) -> Dict[str, Dict[str, Any]]:
+    """``{"workflows.<id>": {"tier", "floor"?}}``, or :class:`IntentRejected`.
+
+    A bad inner key or value is reported at its own line, a missing one at the
+    entry's. ``floor`` is a whole number 1..100, required with ``act`` and
+    refused with ``assist``.
+    """
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise IntentRejected(name, lines.get(WORKFLOWS), "workflows: not a mapping")
+    out: Dict[str, Dict[str, Any]] = {}
+    for wid, entry in section.items():
+        key = f"{WORKFLOWS}.{wid}"
+        at = lines.get(key)
+        if not isinstance(entry, dict):
+            raise IntentRejected(name, at, f"{key}: not a mapping of tier and floor")
+        for inner in entry:
+            if inner not in WORKFLOW_ENTRY_KEYS:
+                raise IntentRejected(
+                    name, lines.get(f"{key}.{inner}", at), f"unknown key {key}.{inner}"
+                )
+        tier, floor = entry.get("tier"), entry.get("floor")
+        if "tier" not in entry:
+            raise IntentRejected(name, at, f"{key}: tier is required")
+        if tier not in WORKFLOW_TIERS:
+            raise IntentRejected(
+                name,
+                lines.get(f"{key}.tier"),
+                f"{key}.tier: {tier!r} is not act or assist",
+            )
+        if tier == "assist":
+            if "floor" in entry:
+                raise IntentRejected(
+                    name,
+                    lines.get(f"{key}.floor"),
+                    f"{key}.floor: assist takes no floor",
+                )
+            out[key] = {"tier": tier}
+            continue
+        if "floor" not in entry:
+            raise IntentRejected(name, at, f"{key}: act needs a floor")
+        # bool is an int in Python; a floor is never true or false.
+        if (
+            isinstance(floor, bool)
+            or not isinstance(floor, int)
+            or not 1 <= floor <= 100
+        ):
+            raise IntentRejected(
+                name,
+                lines.get(f"{key}.floor"),
+                f"{key}.floor: {floor!r} is not a whole number from 1 to 100",
+            )
+        out[key] = {"tier": tier, "floor": floor}
+    return out
 
 
 def effective_values(config: Any) -> Dict[str, Any]:
@@ -331,6 +401,39 @@ def label(rule: str, declared: Any, effective: Any) -> str:
     if rule == LOWER_TIGHTER:
         return "tighten" if declared < effective else "loosen"
     raise ValueError(f"unknown tightening rule {rule!r}")
+
+
+def is_workflow_key(key: str) -> bool:
+    return key.startswith(f"{WORKFLOWS}.")
+
+
+def workflow_label(
+    declared: Mapping[str, Any], stored: Optional[Mapping[str, Any]]
+) -> str:
+    """The one comparison of a workflow entry over the stored one (None: no entry).
+
+    Act over anything not Act loosens; Act at a lower floor loosens and at a
+    higher one tightens; Assist over anything not Assist tightens. A stored
+    Assist entry's floor (kept by the floor drop) is not compared.
+    """
+    have = stored.get("tier") if stored else None
+    if declared.get("tier") != "act":
+        return "same" if have == "assist" else "tighten"
+    if have != "act":
+        return "loosen"
+    want_floor = declared.get("floor") or 0
+    have_floor = stored.get("floor") if stored else None
+    have_floor = have_floor if isinstance(have_floor, int) else 0
+    if want_floor == have_floor:
+        return "same"
+    return "tighten" if want_floor > have_floor else "loosen"
+
+
+def key_label(key: str, declared: Any, effective: Any) -> str:
+    """:func:`label` for a scalar key, :func:`workflow_label` for ``workflows.<id>``."""
+    if is_workflow_key(key):
+        return workflow_label(declared, effective)
+    return label(FIELDS_BY_KEY[key].rule, declared, effective)
 
 
 def diff_intent(

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from core.config import Settings, get_settings
-from core.intent import FIELDS_BY_KEY, label
+from core.intent import is_workflow_key, key_label
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +55,31 @@ def applied_intent(*, fresh: bool = False) -> Dict[str, Any]:
 
 
 def managed_widening(
-    key: str, requested: Any, applied: Optional[Dict[str, Any]] = None
+    key: str,
+    requested: Any,
+    applied: Optional[Dict[str, Any]] = None,
+    *,
+    ceiling: Any = None,
 ) -> Optional[str]:
     """Why a local write of ``requested`` to a managed key is refused, or None.
 
     Refused when it is looser than the declared value. Compared with the
     declared value, not the current one, so setting it back is the reset.
+    For ``workflows.<id>``, ``requested`` is the entry to store, or None to
+    follow the fleet: that is refused when, against the declared entry on
+    ``ceiling`` (the stored :class:`Ceiling`), it would let the workflow act.
     """
     applied = applied_intent(fresh=True) if applied is None else applied
     meta = (applied.get("keys") or {}).get(key) if applied.get("directory") else None
-    if not meta or requested is None:
+    if not meta:
         return None
     declared = meta.get("declared")
-    if label(FIELDS_BY_KEY[key].rule, requested, declared) != "loosen":
+    if is_workflow_key(key) and requested is None:
+        if ceiling is None or not _fleet_raises(
+            ceiling, key.split(".", 1)[1], declared
+        ):
+            return None
+    elif requested is None or key_label(key, requested, declared) != "loosen":
         return None
     return (
         f"{key} is managed by {meta.get('file')}:{meta.get('line')} at revision "
@@ -75,6 +87,21 @@ def managed_widening(
         f"change may only narrow it. Change it in the declared directory "
         f"{applied['directory']}."
     )
+
+
+def _fleet_raises(ceiling: Any, workflow_id: str, declared: Dict[str, Any]) -> bool:
+    """Whether following the fleet lets the workflow act where ``declared`` would not."""
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    from core.response.ceiling import raises_workflow
+
+    others = {k: v for k, v in ceiling.workflows.items() if k != workflow_id}
+    held = replace(
+        ceiling, workflows=MappingProxyType({**others, workflow_id: dict(declared)})
+    )
+    fleet = replace(ceiling, workflows=MappingProxyType(others))
+    return raises_workflow(held, workflow_id, fleet)
 
 
 def settle_pending(values: Dict[str, Any], user_id: str) -> None:
@@ -94,10 +121,9 @@ def settle_pending(values: Dict[str, Any], user_id: str) -> None:
         settled = [
             k
             for k in row["pending"]
-            if k in values
+            if values.get(k) is not None
             and k in keys
-            and label(FIELDS_BY_KEY[k].rule, values[k], keys[k].get("declared"))
-            == "same"
+            and key_label(k, values[k], keys[k].get("declared")) == "same"
         ]
         if not settled:
             return

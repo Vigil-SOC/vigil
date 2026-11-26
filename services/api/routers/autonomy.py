@@ -36,6 +36,7 @@ from core.response.ceiling import (
     workflow_entry,
     workflow_evidence,
 )
+from core.response.config import managed_widening, settle_pending
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import ToolEffectClass, User
 from core.workflows.workflows_service import INVESTIGATE_RUN_KIND, WorkflowsService
@@ -80,7 +81,8 @@ def put_workflow_autonomy(
     on Act, is a raise too. A raise is a person's ``ai_autonomy.write``, refused
     while stopped, and stores the investigation model in force and that model's
     30-day agreement on the workflow beside its floor.
-    Anything else is ``ai_autonomy.stop``.
+    Anything else is ``ai_autonomy.stop``. A workflow a declared INTENT.md
+    manages is refused (409) anything looser than its declared entry.
     """
     workflow = workflows.get_workflow(workflow_id)
     if workflow is None:
@@ -130,7 +132,21 @@ def put_workflow_autonomy(
             entry = workflow_entry(ASSIST, None, None, by)
         else:
             entry = None
+        # A workflow INTENT.md manages may only narrow; its declared value is the reset.
+        key = f"workflows.{workflow_id}"
+        requested = (
+            None
+            if body.tier is None
+            else {
+                "tier": body.tier,
+                **({"floor": body.floor} if body.tier == ACT else {}),
+            }
+        )
+        refused = managed_widening(key, requested, ceiling=current)
+        if refused:
+            raise HTTPException(status_code=409, detail=refused)
         set_workflow_tier(workflow_id, entry, str(current_user.user_id), raises=raises)
+        settle_pending({key: requested}, str(current_user.user_id))
         return _view()
     except CeilingRefusal as exc:
         raise _http(exc) from exc
