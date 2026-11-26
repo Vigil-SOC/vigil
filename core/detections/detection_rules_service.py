@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import _safe_home, get_settings, vigil_path
-from core.detections.inventory.readers import OVERLAY_ID
+from core.detections.inventory.readers import (
+    FORMAT_SUFFIXES,
+    OVERLAY_ID,
+    rule_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +76,9 @@ _GITHUB_URL_RE = re.compile(
 LOCAL_ROOTS_ENV = "VIGIL_DETECTION_LOCAL_ROOTS"
 
 # File extensions per format
-FORMAT_EXTENSIONS = {
-    "sigma": [".yml"],
-    "splunk": [".yml"],
-    "elastic": [".toml"],
-    "kql": [".yaml", ".kql", ".md"],
-    "wazuh": [".xml"],
-    "auto": [".yml", ".yaml", ".toml", ".kql", ".md", ".xml"],
-}
+# One map of the files each format reads, owned by the readers, so a source's
+# rule count and the rules the inventory reads cannot disagree.
+FORMAT_EXTENSIONS = {fmt: list(suffixes) for fmt, suffixes in FORMAT_SUFFIXES.items()}
 
 # MCP env var name per format
 FORMAT_ENV_VARS = {
@@ -575,11 +574,14 @@ class DetectionRulesService:
         if not target.exists():
             return 0
 
-        extensions = FORMAT_EXTENSIONS.get(fmt, FORMAT_EXTENSIONS["auto"])
-        count = 0
-        for ext in extensions:
-            count += len(list(target.rglob(f"*{ext}")))
-        return count
+        # The readers' own walk: .git skipped, each file once, the same
+        # suffixes the inventory reads. A count is a status read: an
+        # unreadable directory counts nothing rather than raising.
+        try:
+            return len(rule_files(target, fmt))
+        except OSError as exc:
+            logger.warning("Could not count rules under %s: %s", target, exc)
+            return 0
 
     def _contained(self, source: Dict, rel: str) -> Optional[str]:
         """``rel`` under the source's clone path, or None (logged) when a stored
