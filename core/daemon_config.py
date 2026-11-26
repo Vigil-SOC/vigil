@@ -57,7 +57,7 @@ class SchedulerConfig:
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     probes_enabled: bool = True  # known-answer probes (#923)
     probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
-    supervisory_enabled: bool = True  # the supervisory model's scheduled check
+    supervisory_enabled: bool = False  # the supervisory model's scheduled check
     supervisory_interval: int = 3600
     cleanup_interval: int = 86400  # Daily
     cleanup_retention_days: int = 90

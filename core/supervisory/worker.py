@@ -22,8 +22,9 @@ scheduler's other tasks does not push a check back by a whole interval.
 The scheduler runs its tasks one after another, so a check must stay light: work
 that takes long goes through a queued job, not the tick.
 
-The model is switched off with ``DAEMON_SUPERVISORY_ENABLED=false``. The daemon
-then registers no tick, the page reads ``off``, and suggestions stay as they are.
+The model is off by default and switched on with
+``DAEMON_SUPERVISORY_ENABLED=true``. While it is off the daemon registers no
+tick, the page reads ``off``, and suggestions stay as they are.
 ``DAEMON_SUPERVISORY_INTERVAL`` sets the interval in seconds; it is never under
 five minutes.
 """

@@ -360,8 +360,9 @@ class Settings(BaseSettings):
     # Known-answer probes (#923): an hourly sweep, injected once a day by id.
     daemon_probes_enabled: bool = True
     daemon_probe_interval: int = 3600
-    # The supervisory model's scheduled check. Off: no check runs and the page says off.
-    daemon_supervisory_enabled: bool = True
+    # The supervisory model's scheduled check. Off by default until its page (#5157)
+    # and its hold on a dismissed or undone suggestion (#5262) land. Off: no check runs.
+    daemon_supervisory_enabled: bool = False
     daemon_supervisory_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
     # Separate from cleanup_retention_days on purpose: that only ages out the

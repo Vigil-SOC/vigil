@@ -1000,8 +1000,9 @@ config:
   DAEMON_PAGERDUTY_ENABLED: "false"
   DAEMON_THREAT_HUNT_INTERVAL: "86400"
   # The supervisory model's scheduled check, in seconds (five minutes at least).
-  # "false" switches the model off; the backend and the daemon read the same value.
-  DAEMON_SUPERVISORY_ENABLED: "true"
+  # Off by default; "true" switches the model on. The backend and the daemon read
+  # the same value.
+  DAEMON_SUPERVISORY_ENABLED: "false"
   DAEMON_SUPERVISORY_INTERVAL: "3600"
   # Ages out only the episodic read log; findings and processed events are
   # kept until an admin deletes them.
