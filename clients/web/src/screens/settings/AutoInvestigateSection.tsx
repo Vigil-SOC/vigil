@@ -315,7 +315,7 @@ const FLEET_ROWS: LimitRow[] = [
   { field: 'max_total_hourly_cost', title: 'Spend per hour, whole fleet', hint: 'Intake pauses when the last hour reaches this', label: 'Hourly cap', prefix: '$', unit: 'per hour' },
 ]
 
-export default function AutoInvestigateSection({ notify }: SectionProps) {
+export default function AutoInvestigateSection({ notify, openChat }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
   const investigate = useInvestigateWorkflows()
@@ -1361,7 +1361,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             />
             {canReadSite && (
               <div id="declared-site">
-                <SiteContextCard reloadKey={intentRevision} />
+                <SiteContextCard reloadKey={intentRevision} notify={notify} openChat={openChat} />
               </div>
             )}
           </div>

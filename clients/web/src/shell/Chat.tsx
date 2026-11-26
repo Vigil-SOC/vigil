@@ -1100,7 +1100,9 @@ export default function Chat({
     if (!open || seed === seedRef.current) return
     if (loading && (!lockedCaseId || caseReady.current)) return
     seedRef.current = seed
-    if (seed.caseId && !pinned) {
+    if (seed.conversationId && !pinned) {
+      openFromHistory(seed.conversationId)
+    } else if (seed.caseId && !pinned) {
       followCase(seed.caseId, seed.text)
     } else if (seed.agent && !pinned) {
       startUnder(seed.agent, seed.text, seed.document)

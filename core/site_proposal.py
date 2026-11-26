@@ -487,6 +487,31 @@ def proposal_view(row: Dict[str, Any], session=None) -> Optional[Dict[str, Any]]
     }
 
 
+def link_answers(proposal: Optional[Dict[str, Any]], user_id: Optional[str]) -> None:
+    """Name the person behind each quoted answer and, when the reader owns the
+    conversation it was given in, that conversation's id. Nothing is stored."""
+    answers = [
+        p
+        for p in ((proposal or {}).get("provenance") or {}).values()
+        if p.get("source") == "answer"
+    ]
+    if not answers:
+        return
+    from core.chat.conversation_service import conversations_for_runs
+    from core.storage.connection import get_db_manager
+    from core.storage.models import User
+
+    owned = conversations_for_runs([p.get("run_id") for p in answers], user_id)
+    ids = {p["person_id"] for p in answers if p.get("person_id")}
+    with get_db_manager().session_scope() as session:
+        names = dict(
+            session.query(User.user_id, User.username).filter(User.user_id.in_(ids))
+        )
+    for p in answers:
+        p["person"] = names.get(p.get("person_id"))
+        p["conversation_id"] = owned.get(p.get("run_id"))
+
+
 def site_questions(view: Dict[str, Any], row: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Unplaced, unowned and contradicted, against the applied ``row`` and its ``view``."""
     from core.memory.recall import _OFFERED

@@ -804,6 +804,11 @@ export const configApi = {
   getIntent: () => api.get<Schema<'IntentReportResponse'>>('/config/intent'),
   // The applied site/ revision, read-only (#5214); a hunt may start on one of its zones (#5212).
   getSite: () => api.get<Schema<'SiteContextResponse'>>('/config/site'),
+  // The open site proposal (#5229): its folder as a .tar.gz, its discard, and a refresh by the site agent (#5259).
+  getSiteProposalArchive: () => api.get<Blob>('/config/site/proposal/archive', { responseType: 'blob' }),
+  discardSiteProposal: (reason: string) =>
+    api.post<Schema<'SiteProposalResponse'>>('/config/site/proposal/discard', { reason }),
+  refreshSiteProposal: () => api.post<{ status: string; message: string }>('/config/site/proposal/refresh'),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
     api.post<Schema<'IntentReportResponse'>>('/config/intent/accept', data),

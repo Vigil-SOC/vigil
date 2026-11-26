@@ -214,10 +214,10 @@ function SocConsoleInner() {
   const [needsYou, setNeedsYou] = useState(0)
   const [openCases, setOpenCases] = useState(0)
 
-  const openChat = useCallback((prompt?: string, options?: { document?: SeedDocument; agent?: ChatAgent }) => {
+  const openChat = useCallback((prompt?: string, options?: { document?: SeedDocument; agent?: ChatAgent; conversationId?: string }) => {
     setChatOpen(true)
-    const { document, agent } = options ?? {}
-    if (prompt || document || agent) setChatSeed({ text: prompt ?? '', document, agent })
+    const { document, agent, conversationId } = options ?? {}
+    if (prompt || document || agent || conversationId) setChatSeed({ text: prompt ?? '', document, agent, conversationId })
   }, [])
   const closeChat = useCallback(() => {
     setChatOpen(false)

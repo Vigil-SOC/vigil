@@ -18260,6 +18260,10 @@ export interface components {
             at?: string | null;
             /** Change */
             change: string;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Person */
+            person?: string | null;
             /** Person Id */
             person_id?: string | null;
             /** Ref */

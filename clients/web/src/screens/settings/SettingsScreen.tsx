@@ -138,7 +138,7 @@ export default function SettingsScreen(props: ConsoleScreenProps) {
   )
 }
 
-function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
+function SettingsLayout({ setViewFull, openChat }: ConsoleScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const { hasPermission } = useAuth()
@@ -178,7 +178,7 @@ function SettingsLayout({ setViewFull }: ConsoleScreenProps) {
 
       <div className="settings-content">
         {!current.ownsHead && <PageHead title={current.label} description={current.desc} />}
-        <Section notify={notify} />
+        <Section notify={notify} openChat={openChat} />
       </div>
     </div>
   )
