@@ -42,7 +42,8 @@ class CheckRefusal(Exception):
 
 @dataclass(frozen=True)
 class Run:
-    cases: frozenset[str]
+    # case id -> its truth, attack or benign
+    truth: dict[str, str]
     attacks: int
     missed: int
     cost_per_case: float
@@ -60,12 +61,17 @@ def read_run(path: Path) -> Run:
         raise CheckRefusal(f"{path}: {e}") from None
     if not rows:
         raise CheckRefusal(f"{path} has no results")
+    if not all(isinstance(r, dict) for r in rows):
+        raise CheckRefusal(f"{path} has a line that is not a result")
     errored = [r.get("case_id") for r in rows if r.get("error")]
     if errored:
         raise CheckRefusal(f"{path}: {len(errored)} cases errored, e.g. {errored[0]}")
     budgets = {json.dumps(r.get("budgets"), sort_keys=True) for r in rows}
-    if len(budgets) != 1 or rows[0].get("budgets") is None:
+    if len(budgets) != 1 or not _numbers(rows[0].get("budgets")):
         raise CheckRefusal(f"{path} does not record one set of budgets for every case")
+    costs = [r.get("cost_usd") or 0 for r in rows]
+    if not all(_finite(c) for c in costs):
+        raise CheckRefusal(f"{path} has a cost that is not a number")
     models = {r.get("model") for r in rows}
     if len(models) != 1:
         raise CheckRefusal(f"{path} mixes models: {sorted(map(str, models))}")
@@ -74,10 +80,10 @@ def read_run(path: Path) -> Run:
         raise CheckRefusal(f"{path} has a case more than once")
     attacks = [r for r in rows if r.get("truth") == "attack"]
     return Run(
-        cases=frozenset(cases),
+        truth={r.get("case_id"): r.get("truth") for r in rows},
         attacks=len(attacks),
         missed=sum(1 for r in attacks if r.get("verdict") == "benign"),
-        cost_per_case=sum(float(r.get("cost_usd") or 0) for r in rows) / len(rows),
+        cost_per_case=sum(float(c) for c in costs) / len(rows),
         budgets=rows[0]["budgets"],
         model=str(rows[0].get("model")),
     )
@@ -89,8 +95,10 @@ def compare(
     """The check for the card: passed when the proposed limit misses no more attacks."""
     if key not in _BUDGET:
         raise CheckRefusal(f"{key} is not an investigation limit the eval can run at")
-    if now.cases != proposed.cases:
-        raise CheckRefusal("The two runs do not cover the same cases")
+    if now.truth != proposed.truth:
+        raise CheckRefusal(
+            "The two runs do not cover the same cases with the same truth"
+        )
     if now.model != proposed.model:
         raise CheckRefusal(
             f"The runs used different models: {now.model}, {proposed.model}"
@@ -98,6 +106,11 @@ def compare(
     if not now.attacks:
         raise CheckRefusal("The runs have no attack cases to miss")
     field, as_budget = _BUDGET[key]
+    others = {k for k in now.budgets.keys() | proposed.budgets.keys() if k != field}
+    if any(now.budgets.get(k) != proposed.budgets.get(k) for k in others):
+        raise CheckRefusal(
+            f"The runs differ in more than {field}: {now.budgets} and {proposed.budgets}"
+        )
     for run, value, which in (
         (now, from_value, "today's"),
         (proposed, to_value, "the proposed"),
@@ -116,6 +129,23 @@ def compare(
         f"${proposed.cost_per_case:.2f} a case"
     )
     return {"passed": passed, "text": text}
+
+
+def _finite(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _numbers(budgets: Any) -> bool:
+    """A budgets object whose every value is a finite number."""
+    return (
+        isinstance(budgets, dict)
+        and bool(budgets)
+        and all(_finite(v) for v in budgets.values())
+    )
 
 
 def _limit(key: str) -> Limit:
