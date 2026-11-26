@@ -949,6 +949,7 @@ export interface AIConfigResponse {
 }
 
 export type InvestigationReplayResponse = Schema<'InvestigationReplayResponse'>
+export type WorkflowReplayTally = Schema<'WorkflowReplayTally'>
 
 export const aiConfigApi = {
   getConfig: () => api.get<AIConfigResponse>('/ai/config'),
@@ -1956,7 +1957,11 @@ export const autonomyApi = {
   releaseHeld: (actionId: string) =>
     api.post<Ceiling>(`/autonomy/held/${encodeURIComponent(actionId)}/release`),
   releaseAllHeld: () => api.post<Ceiling>('/autonomy/held/release'),
+  // What saving component as provider/model would do to Act workflows; the save's own judgement, nothing stored.
+  previewModelChange: (component: string, provider_id: string, model_id: string) =>
+    api.get<ModelChangePreview>('/autonomy/model-change', { params: { component, provider_id, model_id } }),
 }
+export type ModelChangePreview = Schema<'ModelChangePreview'>
 
 export interface OrchestratorStatus {
   enabled?: boolean

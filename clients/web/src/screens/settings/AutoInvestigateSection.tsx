@@ -9,7 +9,7 @@ import { ScrubField } from '../../shared/ScrubField'
 import { ConfirmDialog, Field, NumberInput, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { utcDayClock } from '../../shared/utc'
-import { agreementText, falseCloseText, workflowTier, type WorkflowTier } from '../../shared/autonomy'
+import { agreementText, dropWhy, falseCloseText, modelsInOrder, workflowTier, type WorkflowTier } from '../../shared/autonomy'
 import {
   matchesProfile,
   useCeiling,
@@ -28,9 +28,11 @@ import SiteContextCard from './SiteContextCard'
 import RolloutLimitsCard from './RolloutLimitsCard'
 import EmulatorsBlock from './EmulatorsBlock'
 import {
+  aiConfigApi,
   approvalsApi,
   detectionRulesApi,
   type Ceiling,
+  type InvestigationReplayResponse,
   type EffectClass,
   type OverlayOnlyRule,
   type ToolClass,
@@ -112,6 +114,11 @@ function lastChange(entry: WorkflowTier | undefined): string {
   // the ceiling stores naive UTC stamps; without an offset a browser reads them as local time
   const at = utcDayClock(/(Z|[+-]\d\d:?\d\d)$/.test(entry.at) ? entry.at : `${entry.at}Z`) ?? ''
   const rate = entry.evidence?.agreement_rate
+  if (entry.by === 'system' && entry.from_model) {
+    // A model-change drop: the stored reason ends with why, in brackets; it names no floor shortfall.
+    const why = dropWhy(entry.reason)
+    return `Lowered by Vigil ${at} on a model change: ${entry.from_model} → ${entry.model ?? 'unknown model'}${why ? ` · ${why}` : ''}`
+  }
   if (entry.by === 'system') {
     // rounded down: the server drops below the exact floor, so 79.5% must not read as 80%
     const agree = rate == null ? 'Not measured' : `${Math.floor(rate * 100)}%`
@@ -125,6 +132,23 @@ function lastChange(entry: WorkflowTier | undefined): string {
   return `Raised by ${who} ${at} at ${rate == null ? 'Not measured' : `${pct(rate)} over ${over}`}`
 }
 const TOOLS_SHOWN = 8
+
+/** The latest replay's line for one workflow, marked as a replay with its model and start date. */
+function replayLine(replay: InvestigationReplayResponse | null, id: string): string | null {
+  const part = replay?.status === 'succeeded' ? replay.by_workflow?.[id] : undefined
+  if (!replay || !part) return null
+  const agree = agreementText({ agreed: part.agreed, disagreed: part.disagreed, agreement_rate: part.agreement_rate ?? null })
+  // falseCloseText reads answered / wilson_*; the replay names them replayed / false_close_wilson_*
+  const close = falseCloseText({
+    false_close_rate: part.false_close_rate ?? null,
+    answered: part.replayed,
+    wilson_low: part.false_close_wilson_low ?? null,
+    wilson_high: part.false_close_wilson_high ?? null,
+  })?.replace(/^30 days · /, '')
+  const when = utcStamp(replay.started_at)
+  const figures = [agree?.text ?? 'agreement not measured', close ?? 'false close not measured'].join(' · ')
+  return `Replay of ${replay.model_id}${when ? `, ${when}` : ''} · ${figures}`
+}
 
 const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
   switch (pending.kind) {
@@ -206,6 +230,11 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, defaults, bounds, profiles, phase, reload, save } = useOrchestrator()
   const ceiling = useCeiling()
   const investigate = useInvestigateWorkflows()
+  // The latest replay, shown per workflow apart from live agreement; none or unreadable shows nothing.
+  const [replay, setReplay] = useState<InvestigationReplayResponse | null>(null)
+  useEffect(() => {
+    aiConfigApi.getInvestigationReplay().then((r) => setReplay(r.data), () => setReplay(null))
+  }, [])
   const [floor, setFloor] = useState('')
   const unverified = useUnverifiedTools()
   const emulation = useEmulation()
@@ -582,6 +611,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     const shown = agreementText(w.agreement)
     const close = falseCloseText(w.agreement)
     const change = lastChange(entry)
+    const unattributed = w.agreement?.unattributed ?? 0
+    const replayed = replayLine(replay, w.id)
     return (
       <div className={`lim-row lim-wf${choices.length < 2 ? ' lim-wf-static' : ''}`} key={w.id}>
         <span className="lim-row-title">
@@ -591,9 +622,33 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             {' · '}
             {close ?? <NotMeasured label="False close" />}
           </span>
+          {/* each model's own record, the tier's model first; the blended line above is the workflow's */}
+          {entry?.model && !w.agreement?.by_model.some((m) => m.model === entry.model) && (
+            <span className="lim-wf-model">
+              <b>{entry.model}</b> · no live record in 30 days
+            </span>
+          )}
+          {modelsInOrder(w.agreement, entry?.model).map((m) => (
+            <span className="lim-wf-model" key={m.model}>
+              <b>{m.model}</b>
+              {' · '}
+              {agreementText(m)?.text ?? 'agreement not measured'}
+              {' · '}
+              {falseCloseText(m)?.replace(/^30 days · /, '') ?? 'false close not measured'}
+            </span>
+          ))}
+          {unattributed > 0 && (
+            <span className="lim-wf-model">
+              {unattributed} {unattributed === 1 ? 'close' : 'closes'} not attributed to one model
+            </span>
+          )}
+          {replayed && <span className="lim-wf-model">{replayed}</span>}
         </span>
         <span className="lim-wf-tag">
-          <span>{entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}</span>
+          <span>
+            {entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}
+            {entry?.model && ` · on ${entry.model}`}
+          </span>
           {change && <span title={change}>{change}</span>}
         </span>
         <span className="lim-row-ctl">

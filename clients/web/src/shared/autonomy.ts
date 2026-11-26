@@ -1,4 +1,4 @@
-import type { AgreementTally, Ceiling, WorkflowAgreement } from '../services/api'
+import type { AgreementTally, Ceiling, ModelAgreement, WorkflowAgreement } from '../services/api'
 
 /** One workflow's stored entry in the ceiling (core/response/ceiling.py workflow_entry). */
 export interface WorkflowTier {
@@ -19,6 +19,12 @@ export interface WorkflowTier {
   /** that principal's name, read at request time; null when blank or erased */
   by_label: string | null
   at: string
+  /** the model the tier was earned (or lost) on; absent when it was not resolved */
+  model?: string
+  /** set when Vigil lowered it on a model change: the model it was on before */
+  from_model?: string
+  /** the model-change judgement's reason, naming both models */
+  reason?: string
 }
 
 export function workflowTier(ceiling: Ceiling | null | undefined, id: string | null | undefined): WorkflowTier | undefined {
@@ -67,4 +73,17 @@ export function uncheckedText(row: Pick<WorkflowAgreement, 'agreed' | 'agreed_un
   const total = agreed + unchecked
   if (!row || total === 0) return null
   return `${asPct(unchecked / total)}% agreed without the evidence`
+}
+
+/** A workflow's per-model tallies, the model its tier is on first, then by most scored closes. */
+export function modelsInOrder(row: WorkflowAgreement | undefined, inForce: string | undefined): ModelAgreement[] {
+  const scored = (m: ModelAgreement) => m.agreed + m.disagreed
+  return [...(row?.by_model ?? [])].sort(
+    (a, b) => Number(b.model === inForce) - Number(a.model === inForce) || scored(b) - scored(a),
+  )
+}
+
+/** Why a model change dropped a workflow: the bracketed tail of the judgement's reason, else the whole reason. */
+export function dropWhy(reason: string | null | undefined): string | undefined {
+  return reason?.match(/\(([^()]*)\)$/)?.[1] ?? reason ?? undefined
 }
