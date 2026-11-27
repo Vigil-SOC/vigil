@@ -266,6 +266,12 @@ REST closes are unchanged: `POST /api/v1/cases/{id}/close`, a `PATCH` to status 
 
 The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for a close that passed this check, `person` for a console close, `api` for everything else. The closure row's channel is unchanged, so nothing is migrated.
 
+## An approval's confidence is its step score
+
+From this release `confidence` on an approval, in `/api/v1` and in `/mcp`, carries the step score an investigation filed with its containment (`parameters.step_score.value`, a number from 0 to 1), or null (#5278). It used to carry the proposer's own claim, which is still in the `approval_actions.confidence` column but is no longer read or written. Rows filed before the upgrade, and rows no investigation filed (workflow checkpoints, rule deploys, undos, `create_approval_action`), read null. A score that is unknown also reads null; `parameters.step_score.band` tells it apart (`unknown`), and band `none` means every factor was switched off. A client that compared `confidence` with a threshold should treat null as "no score", not 0.
+
+`create_approval_action` no longer takes `confidence`; a caller that still sends it is refused by the tool's schema. An agent you wrote that names it in its prompt should drop it.
+
 ## One image registry for the Helm chart
 
 From this release `global.imageRegistry` moves every image the chart renders, not only Vigil's own: Postgres, Redis, Bifrost, pgAdmin, Splunk, the `helm test` pod, and the Bitnami and OpenTelemetry subcharts. Its default is now empty. Unset, Vigil's images still come from `ghcr.io/vigil-soc/vigil-<component>` and the others from Docker Hub.

@@ -1514,7 +1514,6 @@ async def create_approval_action(
     title: str,
     description: str,
     target: str,
-    confidence: float,
     reason: str,
     evidence: Optional[list] = None,
 ) -> str:
@@ -1524,23 +1523,16 @@ async def create_approval_action(
     quarantine_file, disable_user, revoke_session (end an account's sessions;
     the account stays usable), custom.
 
-    The caller's ``confidence`` is its own claim, so it never releases the
-    action: the row waits in the queue for a person, unless a run no person
+    The row waits in the queue for a person, unless a run no person
     started proposed a kind Vigil carries and the autonomy ceiling lets that
     run take the act, in which case it is carried out at once.
     """
     from core.auth.tool_principal import current_claims
     from core.response import containment
-    from core.response.proposal_targets import (
-        REASON_SENTENCES,
-        check_confidence,
-        check_target,
-    )
+    from core.response.proposal_targets import REASON_SENTENCES, check_target
 
-    # Only the kinds a run may propose; the target must fit the kind and the
-    # confidence be above zero.
+    # Only the kinds a run may propose, and the target must fit the kind.
     checked, code = check_target(action_type, target)
-    code = code or check_confidence({"confidence": confidence})
     if code:
         return jdump({"error": REASON_SENTENCES[code], "reason_code": code})
     target = checked
@@ -1558,7 +1550,6 @@ async def create_approval_action(
             title=title,
             description=description,
             target=target,
-            confidence=confidence,
             reason=reason,
             evidence=evidence or [],
             created_by=actor(),
@@ -1602,6 +1593,9 @@ def list_approval_actions(
     """List approval actions.
 
     ``status`` is one of pending, approved, rejected, executed, failed.
+    ``confidence`` is the step score's value and ``step_score`` the score an
+    investigation filed with its containment (band, lowest factor, what would
+    raise it, factors); both are null on a row without one.
     """
     try:
         from core.response.approval_service import screen_actions
@@ -1624,6 +1618,7 @@ def list_approval_actions(
                         "title": a.title,
                         "target": a.target,
                         "confidence": a.confidence,
+                        "step_score": (a.parameters or {}).get("step_score"),
                         "status": a.status,
                         "created_at": a.created_at,
                     }
@@ -1641,7 +1636,9 @@ async def get_approval_action(action_id: str) -> str:
     """Get action details. An isolation or account disable carries the vendor
     IDs its target resolved to, or what it is waiting on, in
     ``parameters.containment``, and once run, the vendor's state in
-    ``execution_result.state``."""
+    ``execution_result.state``. A containment an investigation filed carries
+    its step score in ``parameters.step_score``; ``confidence`` is that score's
+    value, null on a row without one."""
     return await _acall(tool_registry.get_approval_action, action_id=action_id)
 
 

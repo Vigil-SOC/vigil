@@ -292,6 +292,16 @@
 .case-needs .needs-row-reason { margin: 0; font-size: 12.5px; color: var(--tx1); overflow-wrap: anywhere; }
 .case-needs .needs-row-reason { color: var(--tx2); }
 
+/* A containment's step score (#5278): the line, its raise line, factors on expand. */
+.case-needs .step-score { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.case-needs .step-score-line { color: var(--tx0); }
+.case-needs .step-score-raise { color: var(--tx2); font-size: 12.5px; overflow-wrap: anywhere; }
+.case-needs .step-score-factors summary { cursor: pointer; color: var(--tx2); font-size: 12px; width: fit-content; }
+.case-needs .step-score-factors ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; background: none; border-radius: 0; }
+.case-needs .step-score-factors li { display: flex; gap: 12px; flex-direction: row; justify-content: space-between; max-width: 260px; padding: 0; background: none; }
+.case-needs .needs-row-score { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; font-size: 13px; }
+.case-needs .needs-row-score-label { color: var(--tx2); }
+
 /* Row buttons are shorter than the block's; the hold button keeps its width so Reject doesn't shift. */
 .case-needs .needs-row .needs-actions .btn,
 .case-needs .needs-more li .needs-reject .btn { height: 28px; padding: 0 10px; border-radius: 8px; font-size: 12px; }

@@ -227,7 +227,9 @@ class PendingAction:
     title: str
     description: str
     target: str  # IP, hostname, username, etc.
-    confidence: float
+    # The step score's value (#5278), None for a row without one. The stored
+    # column held the proposer's claim and is no longer read.
+    confidence: Optional[float]
     reason: str
     evidence: List[str]
     created_at: str
@@ -305,6 +307,27 @@ def four_eyes_refuses(
     return started_by == principal_id
 
 
+def _step_value(parameters: Any) -> Optional[float]:
+    """``parameters.step_score.value``, or None for a row without a score."""
+    score = parameters.get("step_score") if isinstance(parameters, dict) else None
+    value = score.get("value") if isinstance(score, dict) else None
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _decider_score(parameters: Any) -> Optional[Dict[str, Any]]:
+    """What the person deciding sees: the quote plus the raise line and factors."""
+    from core.response.step_confidence import quote
+
+    score = parameters.get("step_score") if isinstance(parameters, dict) else None
+    if not isinstance(score, dict) or not score:
+        return None
+    return {
+        **quote(score),
+        "raise": score.get("raise"),
+        "factors": score.get("factors"),
+    }
+
+
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
     return PendingAction(
         action_id=row.action_id,
@@ -312,7 +335,7 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         title=row.title,
         description=row.description,
         target=row.target,
-        confidence=float(row.confidence or 0),
+        confidence=_step_value(row.parameters),
         reason=row.reason,
         evidence=list(row.evidence or []),
         created_at=_iso_utc(row.created_at) if row.created_at else "",
@@ -428,7 +451,6 @@ class ApprovalService:
         title: str,
         description: str,
         target: str,
-        confidence: float,
         reason: str,
         evidence: List[str],
         created_by: str = "system",
@@ -449,20 +471,18 @@ class ApprovalService:
 
         ``effect_class`` is the called tool's stored class, None when it is
         unclassified; a row that names no outside tool stays ``reversible``.
-        Every row requires approval. ``human_only`` holds the
-        row for a person whatever ``confidence`` says: for callers whose
-        confidence is their own claim (an agent, a model's reading of alert
-        text) and so cannot be what releases the action. A second call with
-        the same ``idempotency_key`` returns the existing non-failed row.
+        Every row requires approval. ``human_only`` records that the row is
+        a person's call whatever the ceiling allows (an agent's ask, a model's
+        reading of alert text). A second call with the same
+        ``idempotency_key`` returns the existing non-failed row.
         ``annotate_rule=False`` keeps the deciding rule off ``reason`` for rows
-        whose reason is read by an analyst and no confidence was ever compared.
+        whose reason is read by an analyst.
         """
         action, _inserted = self._put_action(
             action_type=action_type,
             title=title,
             description=description,
             target=target,
-            confidence=confidence,
             reason=reason,
             evidence=evidence,
             created_by=created_by,
@@ -483,7 +503,6 @@ class ApprovalService:
         title: str,
         description: str,
         target: str,
-        confidence: float,
         reason: str,
         evidence: List[str],
         created_by: str = "system",
@@ -510,7 +529,7 @@ class ApprovalService:
         # narrative so the row records the rule it was decided by (#917).
         forced = human_only or environment_locks_act()
         requires_approval, rule = approval_requirement(
-            forced, effect_class, confidence, self.config
+            forced, effect_class, self.config
         )
         if human_only:
             rule = decision_rule("approval.human_only", True)
@@ -550,7 +569,6 @@ class ApprovalService:
                     title=title,
                     description=description,
                     target=target,
-                    confidence=float(confidence),
                     reason=reason,
                     evidence=list(evidence or []),
                     created_at=utcnow(),
@@ -569,12 +587,7 @@ class ApprovalService:
                 pending = _row_to_pending(row)
                 if status == ActionStatus.PENDING.value:
                     _trail_request(session, row, effect_class)
-            logger.info(
-                "Created action %s: %s (confidence: %s)",
-                action_id,
-                title,
-                confidence,
-            )
+            logger.info("Created action %s: %s", action_id, title)
             return pending, True
         except IntegrityError:
             if not key:
@@ -1038,7 +1051,6 @@ class ApprovalService:
                     title=title,
                     description=f"Undoes {action_id}: {original.title}",
                     target=original.target,
-                    confidence=1.0,
                     reason=f"{approved_by} undid {action_id}"
                     + (f": {reason.strip()}" if (reason or "").strip() else ""),
                     evidence=list(original.evidence or []),
@@ -1531,7 +1543,7 @@ def _placeholder(action: PendingAction) -> PendingAction:
         title=RESTRICTED_TITLE,
         description="",
         target="",
-        confidence=0.0,
+        confidence=None,
         reason="",
         evidence=[],
         created_at=action.created_at,
@@ -1807,6 +1819,8 @@ def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
                 "run_id": action.workflow_run_id,
                 "waiting": action.waiting,
                 "containment": (action.parameters or {}).get("containment"),
+                # The score the person deciding sees (#5278); None when unscored.
+                "step_score": _decider_score(action.parameters),
                 **_checkpoint_fields(action),
             }
         )

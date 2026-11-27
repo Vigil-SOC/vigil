@@ -141,16 +141,13 @@ conclusion:
         items:
           type: object
           additionalProperties: false
-          required: [action_type, target, reason, confidence]
+          required: [action_type, target, reason]
           properties:
             action_type:
               type: string
               enum: [isolate_host, block_ip, block_domain, quarantine_file, disable_user, revoke_session, custom]
             target: { type: string, description: "The host, IP, domain, file or account the action acts on: a bare value, no URL scheme or placeholder." }
             reason: { type: string, description: Why the evidence calls for it. }
-            # Above zero: the backend refuses 0 as no claim (#4963). No exclusiveMinimum,
-            # because this schema also reaches every provider behind Bifrost.
-            confidence: { type: number, minimum: 0, maximum: 1, description: "Your confidence that the action is warranted, above 0." }
 
 # Dismissing a case is cheap to say and expensive to say wrongly: a run that
 # found nothing, or was talked out of what it found, reads as benign. So a

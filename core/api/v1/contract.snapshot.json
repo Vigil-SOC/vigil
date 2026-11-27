@@ -4835,6 +4835,19 @@
             "title": "Source Id",
             "type": "string"
           },
+          "step_score": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A containment an investigation filed: its step score's value, band ('none' when no factor is in force, 'unknown' when value is null), lowest factor, the line on what would raise it, and the factors.",
+            "title": "Step Score"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -4951,6 +4964,7 @@
                 "type": "null"
               }
             ],
+            "description": "The step score's value (parameters.step_score.value) on a containment an investigation filed; null on a row without one.",
             "title": "Confidence"
           },
           "created_at": {

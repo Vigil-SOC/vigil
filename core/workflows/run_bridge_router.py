@@ -593,15 +593,10 @@ PROPOSAL_TITLES = {
 
 
 # A proposal or why it was refused, as (code, target_kind). The target must fit
-# its action (core/response/proposal_targets.py) and the confidence be a stated
-# view above zero; neither rule reaches ApprovalService, whose checkpoints and
-# rule deploys pass 0.0 on purpose.
+# its action (core/response/proposal_targets.py). The proposer states no
+# confidence: the step score (#5265) is what the person deciding sees.
 def _proposal(raw: Any) -> Union[Dict[str, Any], Tuple[str, str]]:
-    from core.response.proposal_targets import (
-        check_confidence,
-        check_target,
-        target_kind,
-    )
+    from core.response.proposal_targets import check_target, target_kind
 
     if not isinstance(raw, dict):
         return "action_type_unknown", "missing"
@@ -610,14 +605,12 @@ def _proposal(raw: Any) -> Union[Dict[str, Any], Tuple[str, str]]:
     target, code = check_target(action_type, raw.get("target"))
     if code is None and (not isinstance(reason, str) or not reason.strip()):
         code = "reason_missing"
-    code = code or check_confidence(raw)
     if code:
         return code, kind
     return {
         "action_type": action_type,
         "target": target,
         "reason": reason.strip(),
-        "confidence": float(raw["confidence"]),
     }
 
 
@@ -679,7 +672,6 @@ def _propose_actions(
                 title=title,
                 description=proposal["reason"],
                 target=target,
-                confidence=proposal["confidence"],
                 reason=proposal["reason"],
                 evidence=[run_id],
                 created_by="agent",
@@ -690,8 +682,7 @@ def _propose_actions(
                     "step_score": step_score,
                 },
                 idempotency_key=key,
-                # The confidence is the model's own claim, so it never releases
-                # the action: a person decides each one.
+                # A run's proposal never releases itself: a person decides each one.
                 human_only=True,
             )
         except Exception:  # noqa: BLE001 — the run ended either way
