@@ -164,9 +164,10 @@ def from_row(name: str, raw: Optional[dict]) -> Optional[Binding]:
     return Binding(name, raw.get("server") or None, capability, "person")
 
 
-def tools_for(capability: str) -> List[Binding]:
+def tools_for(capability: str, *, fresh: bool = False) -> List[Binding]:
     """Every tool bound to ``capability``, in force now."""
-    return [b for b in merged().values() if b.capability == capability]
+    rows = stored(fresh=True) if fresh else None
+    return [b for b in merged(rows).values() if b.capability == capability]
 
 
 def servers_for(capability: str) -> List[str]:
@@ -174,10 +175,11 @@ def servers_for(capability: str) -> List[str]:
     return list(dict.fromkeys(b.server for b in tools_for(capability) if b.server))
 
 
-def emulators() -> frozenset:
-    """Every tool bound as an emulator now, by catalogue name."""
-    return frozenset(b.tool for b in tools_for(EMULATION))
+def emulators(*, fresh: bool = False) -> frozenset:
+    """Every tool bound as an emulator now, by catalogue name. ``fresh`` reads
+    the store past the cache, as a call's host check does."""
+    return frozenset(b.tool for b in tools_for(EMULATION, fresh=fresh))
 
 
-def is_emulator(tool: str) -> bool:
-    return tool in emulators()
+def is_emulator(tool: str, *, fresh: bool = False) -> bool:
+    return tool in emulators(fresh=fresh)

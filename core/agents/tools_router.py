@@ -465,9 +465,9 @@ async def _run(
     if tool == CALL_INTEGRATION_TOOL:
         tool, raw = resolve_integration_call(registry, raw)
     claims = current_claims()
-    # A tool bound as an emulator is held to the operator's host list before
-    # anything leaves.
-    emulator = await asyncio.to_thread(bindings.is_emulator, tool)
+    # A tool bound as an emulator is held to the host list before anything
+    # leaves; read past the cache, so a binding made elsewhere holds at once.
+    emulator = await asyncio.to_thread(bindings.is_emulator, tool, fresh=True)
     limits = await asyncio.to_thread(emulation.read_emulation) if emulator else None
     held = emulation.refusal(limits, tool, raw) if limits is not None else None
     if held is not None:

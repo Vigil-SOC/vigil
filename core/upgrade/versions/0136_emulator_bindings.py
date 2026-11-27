@@ -37,6 +37,12 @@ def _trail(conn, payload: dict) -> None:
         trail.append(conn, {trail.ACTOR: trail.SYSTEM, **payload})
 
 
+def _shipped_capabilities() -> set:
+    from core.integrations import bindings
+
+    return {n for n, b in bindings.shipped().items() if b.capability != "emulation"}
+
+
 def _bind(conn, name: str, binding: dict) -> None:
     row = conn.execute(
         text("SELECT binding FROM public.tool_effect_classes WHERE tool_name = :n"),
@@ -49,6 +55,10 @@ def _bind(conn, name: str, binding: dict) -> None:
             row[0],
         )
         return
+    if name in _shipped_capabilities():
+        logger.warning(
+            "%s was marked: its emulator binding replaces the shipped one", name
+        )
     if row is None:
         conn.execute(
             text("""
@@ -107,8 +117,8 @@ def upgrade() -> None:
         for name in dict.fromkeys(names):
             if name not in ATOMIC_TOOLS:
                 _bind(conn, name, EMULATOR)
-        # A person unmarked Atomic: it stays unbound rather than shipped.
-        if not any(t in ATOMIC_TOOLS for t in names):
+        # A person unmarked Atomic's callable spelling: it stays unbound.
+        if ATOMIC not in names:
             _bind(conn, ATOMIC, {})
     conn.execute(
         text(
