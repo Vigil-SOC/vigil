@@ -807,7 +807,12 @@ export function useUnverifiedTools() {
       .tools()
       .then(({ data }) => {
         if (seq !== latest.current) return
-        setTools(data.filter((t) => t.effect_class == null || t.effect_class === 'read_unverified'))
+        // a withdrawn tool first: its definition changed since a person classified it
+        setTools(
+          data
+            .filter((t) => t.effect_class == null || t.effect_class === 'read_unverified')
+            .sort((a, b) => Number(b.withdrawn ?? false) - Number(a.withdrawn ?? false)),
+        )
         setPhase('ready')
       })
       .catch(() => seq === latest.current && setPhase('error'))
@@ -818,9 +823,9 @@ export function useUnverifiedTools() {
 
   // refetch after a failure too: a 409 may mean someone stopped meanwhile
   const classify = useCallback(
-    async (name: string, effectClass: EffectClass) => {
+    async (name: string, effectClass: EffectClass, definitionHash?: string | null) => {
       try {
-        await autonomyApi.classifyTool(name, effectClass)
+        await autonomyApi.classifyTool(name, effectClass, definitionHash)
       } finally {
         await load()
       }

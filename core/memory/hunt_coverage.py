@@ -16,7 +16,8 @@ The rule: the newest entry decides. proven, disproven and handed_off cover for
 the key type's window from ``concluded_at``; inconclusive covers for ``RETRY``
 doubled per consecutive inconclusive entry since the last other outcome, capped
 at the window. An analyst's proven entry after an agent's disproven one, a
-reopen entry, or no entry at all is due now.
+reopen entry, or no entry at all is due now. An asked technique due by its own
+entries is still covered while a sub-technique under it is (``covered_by``).
 
 Entries are read as the caller: hunt entries through ``_hidden_hunts``, Case
 entries through ``case_read_clause``; reopen entries name no investigation and
@@ -38,6 +39,7 @@ from core.memory.hunt_claim import claim_from
 from core.memory.prior_hunts import (
     _hidden_hunts,
     _iso,
+    expand_techniques,
     in_flight_hunts,
     normalise_techniques,
 )
@@ -216,9 +218,21 @@ def check_coverage(
     if not keys and not t_ids:
         raise ValueError("nothing to check: no entity keys or techniques were found")
 
+    # An asked technique is also covered by a covered sub-technique under it
+    # (#5292): T1078 by T1078.004, AML.T0051 by AML.T0051.000.
+    under = {t: [x for x in expand_techniques([t]) if x != t] for t in t_ids}
+    asked = [*keys, *t_ids, *{x for subs in under.values() for x in subs}]
     with unit_of_work(session) as db:
-        found = _entries(db, [*keys, *t_ids])
+        found = _entries(db, list(dict.fromkeys(asked)))
         coverage = [_answer(key, found[key]) for key in [*keys, *t_ids]]
+    for row in coverage:
+        if row["due_at"] or not under.get(row["key"]):
+            continue
+        via = {sub: due_at(sub, found[sub]) for sub in under[row["key"]]}
+        via = {sub: at for sub, at in via.items() if at}
+        if via:
+            row["due_at"] = _iso(max(via.values()))
+            row["covered_by"] = sorted(via)
     covered = {row["key"] for row in coverage if row["due_at"]}
     in_flight = in_flight_hunts(keys, t_ids)
 

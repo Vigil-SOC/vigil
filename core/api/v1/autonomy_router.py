@@ -20,7 +20,11 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
 from core.deps import provide_approvals, provide_mcp_registry
-from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
+from core.integrations.mcp.registry import (
+    MCPRegistry,
+    live_mcp_tools,
+    remote_servers,
+)
 from core.response.approval_service import (
     ActionNotFound,
     ApprovalService,
@@ -39,6 +43,7 @@ from core.response.ceiling import (
     read_ceiling,
     resume_ceiling,
     store_tool_class,
+    tool_definition_hash,
     update_ceiling,
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -326,23 +331,84 @@ EffectClass = Literal["read", "read_unverified", "reversible", "irreversible"]
 
 class ToolClassBody(BaseModel):
     effect_class: EffectClass
+    # The definition hash the person saw (#5300). On a mismatch the answer is
+    # 409 with the current definition; null says none was shown. Omitted, what
+    # Vigil holds now is pinned.
+    definition_hash: Optional[str] = None
+
+
+class ToolDefinition(BaseModel):
+    """A tool as its server lists it: what a model reads, and what is pinned."""
+
+    name: str
+    description: str = ""
+    inputSchema: Dict[str, Any] = {}
 
 
 class ToolClassEntry(BaseModel):
-    """One outside tool. ``effect_class`` is None while it is unclassified."""
+    """One outside tool. ``effect_class`` is None while it is unclassified or
+    withdrawn."""
 
     name: str
     effect_class: Optional[EffectClass] = None
     classified_by: Optional[str] = None
     classified_at: Optional[str] = None
+    # The definition the registry holds now, as its server lists it, and its hash.
+    definition: Optional[ToolDefinition] = None
+    definition_hash: Optional[str] = None
+    # A remote server's tool: classifying it pins its definition (#5300).
+    remote: bool = False
+    pinned_hash: Optional[str] = None
+    # Its definition no longer matches the pin; offered to no agent until a
+    # person classifies it again. The pinned definition is then shown too.
+    withdrawn: bool = False
+    pinned_definition: Optional[ToolDefinition] = None
 
 
-def _entry(row: ToolEffectClass) -> ToolClassEntry:
+def _server(name: str, remote: frozenset) -> bool:
+    return any(name.startswith(f"{server}_") for server in remote)
+
+
+def _state(
+    row: Optional[ToolEffectClass], held: Optional[dict]
+) -> tuple[bool, Optional[dict]]:
+    """Whether the row is withdrawn, and the tool's current definition.
+
+    A held definition that is not the pin counts as withdrawn before the
+    registry has written it, as the registry already withholds it.
+    """
+    if row is None:
+        return False, held
+    # A withdrawn row with nothing held now shows the definition it changed to.
+    current = held or row.changed_definition
+    withdrawn = row.changed_definition is not None or bool(
+        row.pinned_hash and held and tool_definition_hash(held) != row.pinned_hash
+    )
+    return withdrawn, current if withdrawn else held
+
+
+def _entry(
+    row: Optional[ToolEffectClass],
+    name: str,
+    held: Optional[dict],
+    remote: frozenset,
+) -> ToolClassEntry:
+    withdrawn, current = _state(row, held)
     return ToolClassEntry(
-        name=row.tool_name,
-        effect_class=row.effect_class,
-        classified_by=row.classified_by,
-        classified_at=row.classified_at.isoformat() if row.classified_at else None,
+        name=name,
+        effect_class=None if row is None or withdrawn else row.effect_class,
+        classified_by=row.classified_by if row is not None else None,
+        classified_at=(
+            row.classified_at.isoformat()
+            if row is not None and row.classified_at
+            else None
+        ),
+        definition=current,
+        definition_hash=tool_definition_hash(current) if current else None,
+        remote=_server(name, remote),
+        pinned_hash=row.pinned_hash if row is not None else None,
+        withdrawn=withdrawn,
+        pinned_definition=row.pinned_definition if withdrawn else None,
     )
 
 
@@ -357,11 +423,13 @@ def list_tool_classes(
     session: UnitOfWorkSession,
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> List[ToolClassEntry]:
-    """Every stored class, and each unclassified name a connected server exposes."""
-    rows = {row.tool_name: _entry(row) for row in session.query(ToolEffectClass).all()}
-    for name in _exposed(registry) - rows.keys():
-        rows[name] = ToolClassEntry(name=name)
-    return [rows[name] for name in sorted(rows)]
+    """Every stored class, and each unclassified name a connected server exposes,
+    with the definition the registry holds for it."""
+    exposed = _exposed(registry)  # refreshes the registry, writing any withdrawal
+    rows = {row.tool_name: row for row in session.query(ToolEffectClass).all()}
+    held, remote = registry.held_definitions(), remote_servers()
+    names = rows.keys() | exposed
+    return [_entry(rows.get(n), n, held.get(n), remote) for n in sorted(names)]
 
 
 @router.put("/tools/{name}", dependencies=_READ, response_model=ToolClassEntry)
@@ -374,21 +442,27 @@ def put_tool_class(
 ) -> ToolClassEntry:
     """Set one tool's class. The permission depends on the direction.
 
-    Loosening, or classifying an unclassified name, is a person's
+    Loosening, or classifying an unclassified or withdrawn name, is a person's
     ``ai_autonomy.write`` and is refused while stopped. Tightening is
-    ``ai_autonomy.stop``, which a service account may hold.
+    ``ai_autonomy.stop``, which a service account may hold. A person's
+    classification of a remote server's tool pins the definition held now.
     """
     own = name in own_tool_names()
+    # The row first: a withdrawn tool is not exposed, but it is still classifiable.
     row = None if own else session.get(ToolEffectClass, name)
     if row is None and (own or name not in _exposed(registry)):
         raise HTTPException(status_code=404, detail="No outside tool by that name")
-    before = row.effect_class if row is not None else None
+    remote = remote_servers()
+    held = registry.held_definitions().get(name)
+    withdrawn, current = _state(row, held)
+    before = None if row is None or withdrawn else row.effect_class
     after = body.effect_class
     if after == before:
-        return _entry(row)
+        return _entry(row, name, held, remote)
+    machine = is_machine_request(current_user)
     if loosens(before, after):
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
-        if is_machine_request(current_user):
+        if machine:
             raise HTTPException(
                 status_code=403,
                 detail="A service account or API token cannot loosen a tool's class",
@@ -403,5 +477,17 @@ def put_tool_class(
             raise HTTPException(status_code=409, detail="Stopped: resume first")
     else:
         deny_unless(current_user.user_id, "ai_autonomy.stop", session)
-    store_tool_class(session, name, before, after, current_user.principal_id)
-    return _entry(session.get(ToolEffectClass, name))
+    shown = "definition_hash" in body.model_fields_set
+    if shown and ((current and tool_definition_hash(current)) != body.definition_hash):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "The tool's definition changed since it was shown",
+                "definition": current,
+                "definition_hash": tool_definition_hash(current) if current else None,
+            },
+        )
+    # Only a person pins: a machine's tightening leaves the pin, and a withdrawal.
+    pin = current if (withdrawn or _server(name, remote)) and not machine else None
+    store_tool_class(session, name, before, after, current_user.principal_id, pin=pin)
+    return _entry(session.get(ToolEffectClass, name), name, held, remote)

@@ -142,8 +142,10 @@ def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
 # Operator-dropped reports: STIX bundle or plain text -> Entity Keys + T-IDs
 # ---------------------------------------------------------------------------
 
-# The same shape core/detections/tools.py scans rules with.
-_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b", re.ASCII)
+# An ATT&CK id (the shape core/detections/tools.py scans rules with) or an ATLAS one.
+# The lookbehind keeps AML.T0051.000 from also reading as T0051.000.
+_TECHNIQUE_ID = re.compile(r"\b(?:AML\.T|(?<!AML\.)T)\d{4}(?:\.\d{3})?\b", re.ASCII)
+_TECHNIQUE_SOURCES = ("mitre-attack", "mitre-atlas")
 
 # `_STIX_TO_VIGIL_TYPE` speaks the threat_indicators vocabulary, which splits
 # hashes by algorithm; Entity Keys have one `hash` type. `entity_key()` does not
@@ -197,7 +199,10 @@ def _stix_objects(text: str) -> Optional[List[Dict[str, Any]]]:
 
 def _attack_pattern_ids(obj: Dict[str, Any]) -> Iterable[str]:
     for ref in obj.get("external_references") or []:
-        if not isinstance(ref, dict) or ref.get("source_name") != "mitre-attack":
+        if (
+            not isinstance(ref, dict)
+            or ref.get("source_name") not in _TECHNIQUE_SOURCES
+        ):
             continue
         external_id = str(ref.get("external_id") or "")
         if _TECHNIQUE_ID.fullmatch(external_id):
@@ -205,7 +210,7 @@ def _attack_pattern_ids(obj: Dict[str, Any]) -> Iterable[str]:
 
 
 def parse_report(text: str) -> Dict[str, List[str]]:
-    """Entity Keys and ATT&CK technique ids from a STIX bundle or a text report.
+    """Entity Keys and ATT&CK / ATLAS technique ids from a STIX bundle or a text report.
 
     A bundle is a JSON list of objects or ``{"objects": [...]}``. Anything else
     — unparseable JSON, JSON of another shape — is scanned as plain text with

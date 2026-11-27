@@ -75,9 +75,9 @@ COPY --from=build /build/dist ./dist
 # are, and the repo's one skill library (core/skills/library) beside them.
 COPY --from=build /build/plugins/ ./dist/plugins/
 COPY core/skills/library/ ./dist/skills/
-# The ATT&CK catalogue hunt evidence is checked against (plugins/hunt/attack.ts),
-# with the notice its licence asks to travel with it.
-COPY core/threat_intel/attack_techniques.json core/threat_intel/ATTACK_NOTICE.md ./dist/threat_intel/
+# The ATT&CK and ATLAS catalogue hunt evidence is checked against (plugins/hunt/attack.ts),
+# with the notices their licences ask to travel with it.
+COPY core/threat_intel/attack_techniques.json core/threat_intel/ATTACK_NOTICE.md core/threat_intel/ATLAS_NOTICE.md ./dist/threat_intel/
 
 RUN if [ -n "${VIGIL_VERSION}" ]; then echo "${VIGIL_VERSION}" > /app/VERSION; fi
 

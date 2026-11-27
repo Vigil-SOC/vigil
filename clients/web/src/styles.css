@@ -5154,6 +5154,61 @@
       color: var(--tx0);
    }
 
+   /* A tool's definition under its name (#5300): description, then the schema collapsed */
+   .lim-tool-def {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 4px;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: var(--tx2);
+   }
+
+   .lim-tool-def b {
+      font-weight: 600;
+      color: var(--tx1);
+   }
+
+   .lim-tool-def p {
+      margin: 0;
+      overflow-wrap: anywhere;
+      color: var(--tx1);
+   }
+
+   .lim-tool-def summary {
+      width: fit-content;
+      cursor: pointer;
+      color: var(--tx2);
+   }
+
+   .lim-tool-def summary:focus-visible {
+      outline: 2px solid var(--ac);
+      outline-offset: 1px;
+   }
+
+   .lim-tool-def pre {
+      max-height: 240px;
+      margin: 4px 0 0;
+      padding: 8px 10px;
+      overflow-y: auto;
+      border-radius: 8px;
+      background: var(--bg2);
+      font-family: var(--mono);
+      font-size: 11px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--tx1);
+   }
+
+   .lim-tool-pin {
+      display: block;
+      margin-top: 2px;
+      color: var(--tx3);
+   }
+
    /* Emulators: the mark beside a tool's class, and the host list under its row */
    .lim-emu-mark {
       display: inline-block;
@@ -5228,12 +5283,14 @@
       Held rows do the same so Release and Reject stay on screen. */
    @container main (max-width: 700px) {
       .lim-row.lim-wf,
-      .lim-row.lim-held {
+      .lim-row.lim-held,
+      .lim-row.lim-tool {
          grid-template-columns: minmax(0, 1fr);
       }
 
       .lim-row.lim-wf .lim-row-ctl,
-      .lim-row.lim-held .lim-row-ctl {
+      .lim-row.lim-held .lim-row-ctl,
+      .lim-row.lim-tool .lim-row-ctl {
          grid-column: 1;
          grid-row: 3;
          justify-self: start;
