@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy import exists, select, text
+from sqlalchemy.orm import Session
 
 from core import site_proposal
 from core.api.v1.findings_router import data_service as findings_data_service
@@ -2410,6 +2411,22 @@ def set_orchestrator_config(
     A ``profiles`` field on the body is ignored. The stored object stays the
     flat keys; no profile name is written.
     """
+    managed = save_orchestrator_config(config, current_user)
+    settle_pending(managed, str(current_user.user_id))
+
+    return {"success": True, "message": "Orchestrator settings saved"}
+
+
+def save_orchestrator_config(
+    config: OrchestratorSettingsConfig,
+    current_user: User,
+    session: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """Store the orchestrator row, refusing a widening of an INTENT.md managed key.
+
+    With ``session`` the write joins that transaction and the caller commits.
+    Returns the managed values, for the caller to settle once the write lands.
+    """
     config_data = config.model_dump()
     managed = {
         f"investigate.{name}": config_data[name]
@@ -2429,15 +2446,14 @@ def set_orchestrator_config(
         description="Autonomous orchestrator settings",
         config_type="orchestrator",
         change_reason="Updated via Settings UI",
+        session=session,
     )
 
     if not success:
         raise HTTPException(
             status_code=500, detail="Failed to save orchestrator config to database"
         )
-    settle_pending(managed, str(current_user.user_id))
-
-    return {"success": True, "message": "Orchestrator settings saved"}
+    return managed
 
 
 # ---- Darktrace webhook receiver config ----

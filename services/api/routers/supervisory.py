@@ -1,9 +1,10 @@
 """The Supervisory model page: its read, and a person applying, undoing or dismissing a suggestion.
 
-Apply and undo write through the same endpoints Settings uses (the autonomy
+Apply and undo write through the same code Settings uses (the autonomy
 ceiling, the orchestrator settings), so every check those make still holds:
 the permission for the direction, the environment lock, a stop, INTENT.md
-managed keys, and the bounds.
+managed keys, and the bounds. The setting and its history entry are one
+transaction: both land, or neither does.
 """
 
 import logging
@@ -13,12 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.api.v1.autonomy_router import CeilingBody, put_ceiling
+from core.api.v1.autonomy_router import CeilingBody, write_ceiling
 from core.auth.current_user import get_current_user
 from core.auth.permissions import permission_gate
 from core.daemon_config import DaemonConfig
-from core.response.config import applied_intent
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.response.config import applied_intent, settle_pending
+from core.routing import Auth, RouterMeta
 from core.storage.models import User
 from core.storage.unit_of_work import unit_of_work
 from core.supervisory import medic_hold, store, worker
@@ -28,7 +29,7 @@ from core.supervisory.settings import settings
 from services.api.middleware.auth import get_current_active_user
 from services.api.routers.config import (
     OrchestratorSettingsConfig,
-    set_orchestrator_config,
+    save_orchestrator_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,25 +144,19 @@ def dismiss_suggestion(
 )
 def apply_suggestion(
     suggestion_id: str,
-    session: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> HistoryEntryResponse:
     """Change the setting to the suggested value, when it still has the value the
     suggestion started from. Returns the history entry."""
-    written = None
-    try:
-        with unit_of_work() as locked:
-            row = _refusing(store.locked_live, locked, suggestion_id)
-            if row.setting_key.startswith("investigate."):
-                store.lock_orchestrator_row(locked)
-            _change(
-                row.setting_key, row.from_value, row.to_value, session, current_user
-            )
-            written = (row.setting_key, row.to_value)
-            entry = _record(locked, row, "applied", current_user)
-    except Exception:
-        _unrecorded(written, "apply", suggestion_id)
-        raise
+    with unit_of_work() as locked:
+        row = _refusing(store.locked_live, locked, suggestion_id)
+        if row.setting_key.startswith("investigate."):
+            store.lock_orchestrator_row(locked)
+        written = _change(
+            row.setting_key, row.from_value, row.to_value, locked, current_user
+        )
+        entry = _record(locked, row, "applied", current_user)
+    settle_pending(written, str(current_user.user_id))
     entry["undoable"] = _undo_possible(entry)
     # Shaped after the commit, so nothing here can roll back a recorded change.
     return HistoryEntryResponse.model_validate(entry)
@@ -176,7 +171,6 @@ def apply_suggestion(
 )
 def undo_apply(
     history_id: str,
-    session: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> HistoryEntryResponse:
     """Put the setting back to its value before an apply, when nothing has
@@ -184,20 +178,15 @@ def undo_apply(
 
     The same change is not suggested again for 30 days.
     """
-    written = None
-    try:
-        with unit_of_work() as locked:
-            _entry, row = _refusing(store.locked_applied, locked, history_id)
-            if row.setting_key.startswith("investigate."):
-                store.lock_orchestrator_row(locked)
-            _change(
-                row.setting_key, row.to_value, row.from_value, session, current_user
-            )
-            written = (row.setting_key, row.from_value)
-            entry = _record(locked, row, "undone", current_user)
-    except Exception:
-        _unrecorded(written, "undo", history_id)
-        raise
+    with unit_of_work() as locked:
+        _entry, row = _refusing(store.locked_applied, locked, history_id)
+        if row.setting_key.startswith("investigate."):
+            store.lock_orchestrator_row(locked)
+        written = _change(
+            row.setting_key, row.to_value, row.from_value, locked, current_user
+        )
+        entry = _record(locked, row, "undone", current_user)
+    settle_pending(written, str(current_user.user_id))
     return HistoryEntryResponse.model_validate(entry)
 
 
@@ -221,18 +210,6 @@ def _undo_possible(entry: dict) -> bool:
         return False
 
 
-def _unrecorded(written: tuple[str, str] | None, what: str, ref: str) -> None:
-    """The setting write and its record are two transactions. When the record
-    fails after the write, say so loudly: the change happened, unrecorded."""
-    if written is not None:
-        logger.error(
-            "supervisory %s %s changed %s to %s but its history was not recorded",
-            what,
-            ref,
-            *written,
-        )
-
-
 def _refusing(fn, *args):
     try:
         return fn(*args)
@@ -254,8 +231,9 @@ _CEILING_FIELDS = {
 }
 
 
-def _change(key: str, expected: str, value: str, session, user: User) -> None:
-    """Write ``value`` to ``key`` through Settings' own endpoint, if it is ``expected`` now."""
+def _change(key: str, expected: str, value: str, session, user: User) -> dict:
+    """Write ``value`` to ``key`` in ``session`` through Settings' own code, if
+    it is ``expected`` now. Returns what to settle in INTENT.md once committed."""
     if key not in store.APPLICABLE:
         raise HTTPException(status_code=409, detail=f"Vigil can't change {key}")
     now = next((r for r in settings() if r["key"] == key), None)
@@ -266,13 +244,16 @@ def _change(key: str, expected: str, value: str, session, user: User) -> None:
             detail=f"{key} is {shown} now, not {expected}: it changed since",
         )
     if key in _CEILING_FIELDS:
-        put_ceiling(CeilingBody(**{_CEILING_FIELDS[key]: _flag(value)}), session, user)
-        return
+        flag = _flag(value)
+        write_ceiling(
+            CeilingBody(**{_CEILING_FIELDS[key]: flag}), session, user, joined=True
+        )
+        return {key: flag}
     try:
         body = _orchestrator_body(key, value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=_first_error(exc)) from None
-    set_orchestrator_config(body, user)
+    return save_orchestrator_config(body, user, session)
 
 
 def _orchestrator_body(key: str, value: str) -> OrchestratorSettingsConfig:
