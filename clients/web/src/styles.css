@@ -5301,6 +5301,41 @@
       min-width: 0;
    }
 
+   /* An act carrier in the declared form (#5314): the YAML under its row, and the role marks */
+   .lim-tool-role {
+      display: block;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+      font-weight: 600;
+      color: var(--tx1);
+   }
+
+   .lim-row.lim-tool .lim-carrier {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+   }
+
+   .lim-carrier-text {
+      min-height: 160px;
+      resize: vertical;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+   }
+
+   .lim-carrier-ctl {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+   }
+
    /* Emulators: the mark beside a tool's class, and the host list under its row */
    .lim-emu-mark {
       display: inline-block;

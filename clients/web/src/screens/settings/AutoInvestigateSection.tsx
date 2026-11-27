@@ -1,5 +1,6 @@
 // Changes save automatically, and take ~60s to apply (runtime-config TTL).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { parse as parseYaml, stringify as yamlText } from 'yaml'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { DurationPicker } from '../../shared/DurationPicker'
@@ -38,6 +39,7 @@ import {
   type StepScoreTally,
   type EffectClass,
   type OverlayOnlyRule,
+  type ToolBindingBody,
   type ToolClass,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
@@ -63,7 +65,9 @@ type PendingSave =
   | { kind: 'stop' }
   | { kind: 'tool'; name: string; to: EffectClass; hash?: string | null }
   // a capability, or null to put the shipped binding back
-  | { kind: 'bind'; name: string; capability: string | null }
+  | { kind: 'bind'; name: string; capability: string | null; shippedAct?: string }
+  // an act carrier entered in the declared form (docs/acts.md)
+  | { kind: 'carrier'; name: string; act: string; body: ToolBindingBody }
   | { kind: 'workflow'; workflow: InvestigateWorkflow }
 
 // Tighter last, as in core/response/ceiling.py; an unclassified tool loosens to anything
@@ -96,8 +100,9 @@ const CLASS_TAG: Record<EffectClass, string> = {
 // The capability select's values beside the capability names (#5312)
 const BIND_NOTHING = ''
 const BIND_SHIPPED = ':shipped'
+const BIND_ACT = ':act'
 const bindValue = (t: ToolClass) =>
-  t.binding_source === 'file' ? BIND_SHIPPED : (t.binding?.capability ?? BIND_NOTHING)
+  t.binding_source === 'file' ? BIND_SHIPPED : t.binding?.act ? BIND_ACT : (t.binding?.capability ?? BIND_NOTHING)
 // An act tool's binding is its carrier (#5313): it carries the act, answering nothing
 const said = (b: NonNullable<ToolClass['binding']>) => (b.act ? `Carries ${b.act}` : `Answers ${b.capability}`)
 // What the tool answers or carries, and whose binding that is
@@ -107,7 +112,73 @@ const bindingNote = (t: ToolClass) => {
   if (t.binding_source !== 'person') return null
   const was = shipped ? ` (shipped: ${shipped.act ?? shipped.capability})` : ''
   // set in Vigil: a person binds; a person or a machine may unbind
-  return t.binding ? `${said(t.binding)}, bound here${was}` : `Answers nothing, unbound here${was}`
+  return t.binding ? `${said(t.binding)}, bound here${was}` : `${shipped?.act ? 'Carries' : 'Answers'} nothing, unbound here${was}`
+}
+
+// The carrier editor's text: the row's own carrier, else the shipped one, else a template (docs/acts.md)
+const UNDO_HINT = /release|unisolate|undo|lift|restore|enable|unblock/
+const LOOKUP_HINT = /find|search|lookup|get/
+const carrierText = (t: ToolClass, tools: ToolClass[]) => {
+  const own = (t.binding?.act ? t.binding : t.shipped_binding?.act ? t.shipped_binding : null)?.carrier
+  if (own) {
+    // stored with its server and every unset part; the form takes neither
+    return yamlText(Object.fromEntries(Object.entries(own).filter(([k, v]) => k !== 'server' && v != null)))
+  }
+  // No binding names the server yet: the flattened name's prefix, only to word the template; the server checks it.
+  const { server, tool } = splitTool(t.name)
+  const others = tools.map((x) => x.name).filter((n) => n !== t.name && n.startsWith(`${server}_`)).map((n) => n.slice(server.length + 1))
+  const lookup = others.find((n) => LOOKUP_HINT.test(n) && !UNDO_HINT.test(n)) ?? 'find_host'
+  const undo = others.find((n) => UNDO_HINT.test(n)) ?? 'release_host'
+  return [
+    `# ${tool} on ${server || 'its server'} as a carrier (docs/acts.md). Every tool named here is a`,
+    `# bare name of ${server || 'that server'}${others.length ? `: ${others.join(', ')}` : ''}.`,
+    'act: isolate_host',
+    'id_arg: machine_id',
+    'note_arg: comment',
+    `lookup: ${lookup}`,
+    'lookup_arg: hostname',
+    'id: machine_id',
+    'name: name',
+    'state:',
+    '  read: [{field: isolation.state, map: {isolated: contained}}]',
+    '  default: not_contained',
+    'act_state:',
+    '  default: requested',
+    `undo: ${undo}`,
+    '',
+  ].join('\n')
+}
+// BindingBody's carrier parts: the server ignores any other key, so a misspelt optional part would vanish
+const CARRIER_KEYS = new Set([
+  'act', 'carrier', 'id_arg', 'note_arg', 'lookup', 'lookup_arg', 'address_arg', 'rows', 'id', 'name',
+  'state', 'takes', 'act_state', 'state_read', 'read_state', 'undo', 'undo_from',
+])
+// A 422's detail: the carrier check's sentence, or pydantic's list of wrong-typed fields
+const refusal = (err: unknown) => {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (Array.isArray(detail))
+    return detail
+      .map((d: { loc?: unknown[]; msg?: string }) => `${(d.loc ?? []).slice(-1)[0] ?? 'carrier'}: ${d.msg ?? 'invalid'}`)
+      .join('; ')
+  return errorText(err, 'Failed to save the carrier.')
+}
+// The tools an act binding names, by row name, with their role in it
+const roleMarks = (tools: ToolClass[]) => {
+  const marks: Record<string, string[]> = {}
+  for (const t of tools) {
+    const b = t.binding
+    const c = b?.carrier as { carrier?: string; lookup?: string; undo?: string; state_read?: { tool?: string } } | undefined
+    if (!b?.act || !b.server || !c) continue
+    const label = c.carrier || b.server
+    const roles: [string, string | undefined][] = [
+      ['Lookup', c.lookup],
+      ['State read', c.state_read?.tool],
+      ['Undo', c.undo],
+    ]
+    for (const [role, bare] of roles)
+      if (bare) (marks[`${b.server}_${bare}`] ??= []).push(`${role} for ${b.act} · ${label}`)
+  }
+  return marks
 }
 
 // A tool as its server lists it (#5300): the description, the input schema collapsed.
@@ -448,8 +519,18 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
         }; ${close}. Below the floor, Vigil puts it back on Assist.`,
       }
     }
+    case 'carrier':
+      return {
+        title: `Make ${pending.name} carry ${pending.act}?`,
+        body: `Once a person or the ceiling approves ${pending.act}, Vigil carries it out through ${pending.name} and the tools its carrier names.`,
+      }
     case 'bind':
-      return pending.capability == null
+      return pending.capability == null && pending.shippedAct
+        ? {
+            title: `Put ${pending.name} back on its shipped carrier?`,
+            body: `Approved ${pending.shippedAct} is carried through it again as shipped.`,
+          }
+        : pending.capability == null
         ? {
             title: `Put ${pending.name} back on its shipped binding?`,
             body: 'Hunts, investigations and root-cause traces that need its shipped capability hold it again from their next run.',
@@ -531,6 +612,10 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   const [advanced, setAdvanced] = useState(false)
   const [intentRevision, setIntentRevision] = useState(0)
   const [pending, setPending] = useState<PendingSave | null>(null)
+  // The one carrier being edited: its text, kept through a refusal, and the refusal
+  const [carrierEdit, setCarrierEdit] = useState<{ name: string; text: string; error: string | null } | null>(null)
+  const editing = useRef(carrierEdit)
+  editing.current = carrierEdit
   // Live rules only Vigil runs: Stop halts their detection, so the Stop prompt names them
   const [overlayOnly, setOverlayOnly] = useState<OverlayOnlyRule[]>([])
   const [deploying, setDeploying] = useState<number[] | 'all' | null>(null)
@@ -815,6 +900,9 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
       case 'bind':
         bindTool(current.name, current.capability)
         return
+      case 'carrier':
+        saveCarrier(current.name, current.act, current.body)
+        return
       case 'workflow':
         setWorkflow(current.workflow, 'act', floorValue)
         return
@@ -935,13 +1023,14 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   const bindTool = async (name: string, capability: string | null) => {
     try {
       await outsideTools.bind(name, capability === BIND_NOTHING ? {} : capability == null ? null : { capability })
+      setCarrierEdit((e) => (e?.name === name ? null : e))
       notify(
         'ok',
         capability == null
           ? `${name} is back on its shipped binding.`
           : capability
             ? `${name} now answers ${capability}.`
-            : `${name} answers no capability.`,
+            : `${name} is bound to nothing.`,
       )
     } catch (err) {
       notify('err', errorText(err, 'Failed to save the tool’s capability.'))
@@ -949,35 +1038,122 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     }
   }
 
+  // A refusal (a missing part, a second carrier of the act on the server) shows under the text, which stays.
+  const saveCarrier = async (name: string, act: string, body: ToolBindingBody) => {
+    try {
+      await outsideTools.bind(name, body)
+      setCarrierEdit((e) => (e?.name === name ? null : e))
+      notify('ok', `${name} now carries ${act}.`)
+    } catch (err) {
+      const why = refusal(err)
+      // inline under its own editor; a toast once that editor is closed or moved on
+      if (editing.current?.name === name) setCarrierEdit((e) => (e?.name === name ? { ...e, error: why } : e))
+      else notify('err', `${name}: ${why}`)
+      ceiling.refresh()
+    }
+  }
+
+  // Parsed in the field; the server judges the parts once confirmed.
+  const submitCarrier = () => {
+    if (!carrierEdit) return
+    let body: unknown
+    try {
+      body = parseYaml(carrierEdit.text)
+    } catch (err) {
+      setCarrierEdit({ ...carrierEdit, error: `Not YAML: ${(err as Error).message.split('\n')[0].replace(/:$/, '')}` })
+      return
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof (body as { act?: unknown }).act !== 'string') {
+      setCarrierEdit({ ...carrierEdit, error: 'A carrier is a mapping that starts with act, such as act: isolate_host.' })
+      return
+    }
+    const unknown = Object.keys(body).filter((k) => !CARRIER_KEYS.has(k))
+    if (unknown.length) {
+      setCarrierEdit({ ...carrierEdit, error: `Not a part of a carrier: ${unknown.join(', ')}. See docs/acts.md.` })
+      return
+    }
+    setCarrierEdit({ ...carrierEdit, error: null })
+    const carrier = body as ToolBindingBody & { act: string }
+    setPending({ kind: 'carrier', name: carrierEdit.name, act: carrier.act, body: carrier })
+  }
+
+  const carrierEditor = (t: ToolClass, mayBind: boolean) => {
+    if (carrierEdit?.name !== t.name) return null
+    const id = `lim-carrier-${t.name}`
+    return (
+      <div className="lim-carrier">
+        <label className="field-label" htmlFor={id}>
+          Carrier for {t.name}, in the form docs/acts.md describes
+        </label>
+        <textarea
+          id={id}
+          className="field-input lim-carrier-text"
+          rows={Math.min(18, carrierEdit.text.split('\n').length + 1)}
+          spellCheck={false}
+          value={carrierEdit.text}
+          aria-invalid={carrierEdit.error != null}
+          aria-describedby={`${id}-why`}
+          onChange={(e) => setCarrierEdit({ ...carrierEdit, text: e.target.value })}
+        />
+        {carrierEdit.error ? (
+          <span className="field-hint err" id={`${id}-why`} role="alert">
+            {carrierEdit.error}
+          </span>
+        ) : (
+          <span className="field-hint" id={`${id}-why`}>
+            Tools are bare names of the act tool’s own server. A server carries one carrier per act kind.
+          </span>
+        )}
+        <div className="lim-carrier-ctl">
+          {!mayBind && <span className="lim-class-note">{machine ? 'A service account cannot bind a carrier.' : STOPPED_LOOSEN}</span>}
+          <button type="button" className="btn ghost" onClick={() => setCarrierEdit(null)}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" disabled={!mayBind} onClick={submitCarrier}>
+            Save carrier
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // Changing what a tool answers loosens unless it binds nothing; a machine never binds.
   const bindSelect = (t: ToolClass, stopped: boolean) => {
-    // a carrier is set through the API until the act editor lands; its note says what it carries
-    if (t.binding?.act || t.shipped_binding?.act) return null
     const current = bindValue(t)
     const shipped = t.shipped_binding?.capability
+    const shippedAct = t.shipped_binding?.act ?? undefined
     const mayBind = canRaise && !machine && !stopped
     const options = [
-      ...(shipped ? [{ value: BIND_SHIPPED, label: `${shipped} · shipped` }] : []),
+      ...(shipped || shippedAct ? [{ value: BIND_SHIPPED, label: `${shipped ?? shippedAct} · shipped` }] : []),
       { value: BIND_NOTHING, label: 'Nothing' },
+      // any tool may carry an act, a tool Vigil has never named included
+      { value: BIND_ACT, label: current === BIND_ACT ? `${t.binding?.act} · edit carrier…` : 'Act…' },
       // the shipped capability once, unless a person bound it again by name
       ...outsideTools.capabilities.filter((c) => c !== shipped || c === current).map((c) => ({ value: c, label: c })),
     ].filter((o) => o.value === current || (o.value === BIND_NOTHING ? canLower : mayBind))
     // the server binds only a classified tool
     if (!canLower || t.effect_class == null || options.length < 2) return null
     const pick = (value: string) => {
+      // the editor opens again on its own choice, to change the carrier in force
+      if (value === BIND_ACT) {
+        // an editor already open on this row keeps its text
+        if (mayBind && carrierEdit?.name !== t.name)
+          setCarrierEdit({ name: t.name, text: carrierText(t, outsideTools.tools ?? []), error: null })
+        return
+      }
       if (value === current) return
       if (value === BIND_NOTHING) bindTool(t.name, BIND_NOTHING)
-      else setPending({ kind: 'bind', name: t.name, capability: value === BIND_SHIPPED ? null : value })
+      else setPending({ kind: 'bind', name: t.name, capability: value === BIND_SHIPPED ? null : value, shippedAct })
     }
     return (
       <span className="lim-bind">
-        <span>Answers</span>
+        <span>{t.binding?.act ? 'Carries' : 'Answers'}</span>
         <Select label={`Capability of ${t.name}`} value={current} options={options} onSelect={pick} />
       </span>
     )
   }
 
-  const toolRow = (t: ToolClass, stopped: boolean) => {
+  const toolRow = (t: ToolClass, stopped: boolean, roles: string[] = []) => {
     const { server, tool } = splitTool(t.name)
     const choices = CHOICES.filter((c) => canRaise || (canLower && !loosens(t.effect_class, c.to)))
     return (
@@ -1000,6 +1176,11 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             <span className="lim-tool-pin">Classifying pins the definition shown; a change withdraws it</span>
           )}
           {bindingNote(t) && <span className="lim-tool-bound">{bindingNote(t)}</span>}
+          {roles.map((r) => (
+            <span className="lim-tool-role" key={r}>
+              {r}
+            </span>
+          ))}
         </span>
         <span className="lim-row-ctl lim-tool-ctl">
           {choices.length > 0 && (
@@ -1031,6 +1212,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
           )}
           {bindSelect(t, stopped)}
         </span>
+        {carrierEditor(t, canRaise && !machine && !stopped)}
       </div>
     )
   }
@@ -1196,6 +1378,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     const tools = (outsideTools.phase === 'ready' && outsideTools.tools) || []
     const unconfirmed = tools.filter((t) => t.withdrawn || t.effect_class == null || t.effect_class === 'read_unverified')
     const shown = allTools ? tools : tools.slice(0, TOOLS_SHOWN)
+    const marks = roleMarks(tools)
     return (
       <div className="lim-tools mt-3">
         <div className="lim-tools-head">
@@ -1231,7 +1414,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
         {outsideTools.phase === 'ready' && tools.length === 0 && (
           <span className="text-xs text-tx-3">No outside tool is connected.</span>
         )}
-        {shown.map((t) => toolRow(t, stopped))}
+        {shown.map((t) => toolRow(t, stopped, marks[t.name]))}
         {tools.length > TOOLS_SHOWN && (
           <button type="button" className="btn ghost mt-2" onClick={() => setAllTools((a) => !a)}>
             {allTools ? 'Show fewer' : `Show all ${tools.length}`}
@@ -1764,7 +1947,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             ? overlayOnly.length
               ? `Stop · ${overlayOnly.length === 1 ? '1 rule goes' : `${overlayOnly.length} rules go`} dark`
               : 'Stop'
-            : pending?.kind === 'tool' || pending?.kind === 'bind'
+            : pending?.kind === 'tool' || pending?.kind === 'bind' || pending?.kind === 'carrier'
               ? 'Confirm'
               : 'Save'
         }
