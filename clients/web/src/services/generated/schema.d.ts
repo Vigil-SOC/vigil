@@ -16406,6 +16406,13 @@ export interface components {
             run_id?: string | null;
             /** Source Id */
             source_id: string;
+            /**
+             * Step Score
+             * @description A containment an investigation filed: its step score's value, band ('none' when no factor is in force, 'unknown' when value is null), lowest factor, the line on what would raise it, and the factors.
+             */
+            step_score?: {
+                [key: string]: unknown;
+            } | null;
             /** Title */
             title: string;
             /**
@@ -16700,7 +16707,10 @@ export interface components {
             approved_at?: string | null;
             /** Approved By */
             approved_by?: string | null;
-            /** Confidence */
+            /**
+             * Confidence
+             * @description The step score's value (parameters.step_score.value) on a containment an investigation filed; null on a row without one.
+             */
             confidence?: number | null;
             /** Created At */
             created_at?: string | null;
@@ -18176,6 +18186,8 @@ export interface components {
             site_questions?: components["schemas"]["SiteQuestion"][];
             /** State */
             state: string;
+            /** Telemetry */
+            telemetry?: components["schemas"]["SiteTelemetry"][];
             /** Zones */
             zones?: components["schemas"]["SiteZone"][];
         };
@@ -18352,6 +18364,17 @@ export interface components {
             name?: string | null;
             /** Question */
             question: string;
+        };
+        /** SiteTelemetry */
+        SiteTelemetry: {
+            /** Covers */
+            covers: string;
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Name */
+            name: string;
         };
         /** SiteZone */
         SiteZone: {

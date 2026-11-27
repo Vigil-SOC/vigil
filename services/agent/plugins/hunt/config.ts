@@ -143,11 +143,26 @@ export interface HuntSpec extends RunSpec {
   // the spec is built, rather than reaching the ledger as an entity nothing means.
   operator_hypothesis_subjects: Record<string, Entity[]>;
   data_domains: string[];
+  // The site-declared telemetry among data_domains (#5291), with what each covers.
+  site_telemetry: SiteTelemetry[];
   enrichment: EnrichmentPolicy;
   checkpoints: Checkpoints;
   termination: Termination;
   // The declared zone the hunt started on (#5212), as Python resolved it.
   zone?: ZoneScope;
+}
+
+export interface SiteTelemetry {
+  name: string;
+  covers: string;
+}
+
+// Only well-formed entries: the brief renders each one, so a bad one is dropped, not shown.
+function siteTelemetryOf(held: unknown): SiteTelemetry[] {
+  if (!Array.isArray(held)) return [];
+  return held.filter(
+    (one): one is SiteTelemetry => typeof one === "object" && one !== null && typeof one.name === "string" && typeof one.covers === "string",
+  );
 }
 
 // A ceiling under the budget it caps would clamp every extension to less than
@@ -201,6 +216,7 @@ export function huntSpec(spec: RunSpec): HuntSpec {
     operator_hypotheses: Array.isArray(held["operator_hypotheses"]) ? (held["operator_hypotheses"] as string[]) : [],
     operator_hypothesis_subjects: subjectsOf(held["operator_hypothesis_subjects"]),
     data_domains: Array.isArray(held["data_domains"]) ? (held["data_domains"] as string[]) : [],
+    site_telemetry: siteTelemetryOf(held["site_telemetry"]),
     enrichment: { ...DEFAULT_ENRICHMENT, ...(held["enrichment"] as object | undefined) },
     checkpoints: { ...DEFAULT_CHECKPOINTS, ...checkpointsFrom(held["checkpoints"]) },
     termination: terminationOf(spec),

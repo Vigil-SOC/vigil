@@ -21,6 +21,7 @@ import { CallArgs } from '../../shared/CallArgs'
 import { visibleText } from '../../shared/visibleText'
 import { HoldButton } from '../../shared/HoldButton'
 import { ContainmentTargets } from '../../shared/containment'
+import { StepScore } from '../../shared/StepScore'
 import { canApprove, chosenCandidate, containmentOf, undoable, type Containment } from '../../shared/containmentRead'
 import { CaseContainments } from './CaseContainments'
 import { Icon } from '../../shared/icons'
@@ -494,6 +495,12 @@ function CaseNeed(props: NeedProps) {
         )}
         <dt>Reversibility</dt>
         <dd>{undoFact(containment, picked) ?? (item.reversibility === 'reversible' ? 'Reversible' : 'Cannot be undone')}</dd>
+        {item.step_score && (
+          <>
+            <dt>Step score</dt>
+            <dd><StepScore score={item.step_score} /></dd>
+          </>
+        )}
       </dl>
       <div className="needs-actions">
         <ApproveButton {...props} picked={picked} />
@@ -585,6 +592,12 @@ function CaseNeedRow(props: NeedProps) {
       </div>
       <CallArgs tool={item.tool} args={item.args} />
       {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
+      {item.step_score && (
+        <div className="needs-row-score">
+          <span className="needs-row-score-label">Step score</span>
+          <StepScore score={item.step_score} />
+        </div>
+      )}
       {rejecting && <RejectForm {...props} />}
     </li>
   )

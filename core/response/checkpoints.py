@@ -94,10 +94,8 @@ def raise_for_checkpoint(
         title=title,
         description=description,
         target=run_id,
-        confidence=0.0,
         reason=reason,
-        # A checkpoint is always a person's call: no confidence was compared, so
-        # no threshold belongs on the row.
+        # A checkpoint is always a person's call: no rule belongs on the row.
         human_only=True,
         annotate_rule=False,
         evidence=[run_id],

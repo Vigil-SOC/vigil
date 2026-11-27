@@ -231,15 +231,13 @@ class ResponseConfig:
 def approval_requirement(
     forced: bool,
     effect_class: Optional[str],
-    confidence: float,
     config: ResponseConfig,
 ) -> tuple[bool, str]:
     """Whether an approval row waits for a human, and the rule that decided it.
 
-    A confidence never marks a row approved: every class waits. ``config``
-    stays in the signature so callers and the intent replay keep one
-    function; the threshold it carries is a routing knob, not a release. An
-    act flag does not release a row either (#2931).
+    Every class waits; no confidence is an input (#5278). ``config`` stays in
+    the signature so callers and the intent replay keep one function. An act
+    flag does not release a row either (#2931).
 
     ``forced`` is ``environment_locks_act()`` on the live path.
     ``effect_class`` is the tool's stored class (#3304), None when it is
@@ -250,9 +248,5 @@ def approval_requirement(
     if effect_class is None or effect_class == "irreversible":
         return True, decision_rule("effect_class", effect_class or "unclassified")
     if effect_class in ("read", "read_unverified", "reversible"):
-        # A confidence is a probability. Anything else (5.0, NaN) is recorded
-        # as out of range, and still waits.
-        if not isinstance(confidence, (int, float)) or not 0.0 <= confidence <= 1.0:
-            return True, decision_rule("response.confidence_range", confidence)
         return True, decision_rule("effect_class", effect_class)
     raise ValueError(f"Unknown effect class: {effect_class}")
