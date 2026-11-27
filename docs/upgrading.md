@@ -270,7 +270,7 @@ The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for
 
 From this release `confidence` on an approval, in `/api/v1` and in `/mcp`, carries the step score an investigation filed with its containment (`parameters.step_score.value`, a number from 0 to 1), or null (#5278). It used to carry the proposer's own claim, which is still in the `approval_actions.confidence` column but is no longer read or written. Rows filed before the upgrade, and rows no investigation filed (workflow checkpoints, rule deploys, undos, `create_approval_action`), read null. A score that is unknown also reads null; `parameters.step_score.band` tells it apart (`unknown`), and band `none` means every factor was switched off. A client that compared `confidence` with a threshold should treat null as "no score", not 0.
 
-`create_approval_action` no longer takes `confidence`; a caller that still sends it is refused by the tool's schema. An agent you wrote that names it in its prompt should drop it.
+`create_approval_action` no longer takes `confidence`; one a caller still sends is ignored, and the action files. An agent you wrote that asks for it in its prompt can drop that line.
 
 ## One image registry for the Helm chart
 
