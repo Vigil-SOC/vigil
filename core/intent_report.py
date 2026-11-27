@@ -30,7 +30,11 @@ from core.intent import (
     read_intent,
     workflow_label,
 )
-from core.response.ceiling import environment_locks_act, try_read_stored_ceiling
+from core.response.ceiling import (
+    CONFIDENCE_SWITCHES,
+    environment_locks_act,
+    try_read_stored_ceiling,
+)
 from core.response.config import applied_intent
 
 logger = logging.getLogger(__name__)
@@ -69,11 +73,14 @@ def _overlay_ceiling(config: DaemonConfig) -> DaemonConfig:
     )
     sources["ceiling.four_eyes"] = origin("ceiling.four_eyes")
     sources["ceiling.hold_crown_jewels"] = origin("ceiling.hold_crown_jewels")
+    for attr in CONFIDENCE_SWITCHES:
+        sources[f"ceiling.{attr}"] = origin(f"ceiling.{attr}")
     ceiling = CeilingConfig(
         act_reversible=False if locked else stored.act_reversible,
         act_irreversible=False if locked else stored.act_irreversible,
         four_eyes=stored.four_eyes,
         hold_crown_jewels=stored.hold_crown_jewels,
+        **{attr: getattr(stored, attr) for attr in CONFIDENCE_SWITCHES},
     )
     return dataclasses.replace(config, ceiling=ceiling, sources=sources)
 

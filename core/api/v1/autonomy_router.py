@@ -27,6 +27,7 @@ from core.response.approval_service import (
     NotHeld,
 )
 from core.response.ceiling import (
+    CONFIDENCE_SWITCHES,
     RELEASED_PER_HOUR_MAX,
     CeilingRefusal,
     CeilingWriteError,
@@ -70,6 +71,10 @@ class CeilingBody(BaseModel):
     four_eyes: Optional[bool] = None
     # Declared crown jewels left for a person (#5227). Off is a loosening.
     hold_crown_jewels: Optional[bool] = None
+    # Step-score factors in force (#5277). Off is a loosening.
+    confidence_precedent: Optional[bool] = None
+    confidence_blind_spots: Optional[bool] = None
+    confidence_run_quality: Optional[bool] = None
     # Proposals the ceiling releases per hour (#5274). A higher number is a raise.
     released_per_hour: Optional[int] = Field(
         default=None, ge=0, le=RELEASED_PER_HOUR_MAX, strict=True
@@ -110,8 +115,16 @@ class CeilingResponse(BaseModel):
     hold_crown_jewels: bool
     # Crown jewels in the applied site revision; 0 when none is declared.
     crown_jewels: int
+    # Each on counts its factor in the step score (#5277); off leaves it out.
+    confidence_precedent: bool
+    confidence_blind_spots: bool
+    confidence_run_quality: bool
     # Proposals the ceiling releases in any 60 minutes; 0 releases none (#5274).
     released_per_hour: int
+
+
+# On is the tighter value for these; off is a person's loosening.
+_ON_TIGHTER = ("hold_crown_jewels", *CONFIDENCE_SWITCHES)
 
 
 def _view() -> CeilingResponse:
@@ -141,8 +154,9 @@ def put_ceiling(
     """Edit the ceiling. The permission depends on the direction.
 
     Only lowering act flags or the hourly cap, or turning the crown-jewel hold
-    on, is ``ai_autonomy.stop``. Raising a flag or the cap, changing four-eyes,
-    or turning the hold off is ``ai_autonomy.write``.
+    or a step-score factor on, is ``ai_autonomy.stop``. Raising a flag or the
+    cap, changing four-eyes, or turning the hold or a factor off is
+    ``ai_autonomy.write``.
     """
     try:
         current = read_ceiling()
@@ -154,7 +168,9 @@ def put_ceiling(
         not _raises(current.act_reversible, body.act_reversible)
         and not _raises(current.act_irreversible, body.act_irreversible)
         and body.four_eyes in (None, current.four_eyes)
-        and body.hold_crown_jewels in (None, True, current.hold_crown_jewels)
+        and all(
+            getattr(body, k) in (None, True, getattr(current, k)) for k in _ON_TIGHTER
+        )
         and not raises_cap(current.released_per_hour, body.released_per_hour)
     )
     perm = "ai_autonomy.stop" if lowers else "ai_autonomy.write"
@@ -163,13 +179,14 @@ def put_ceiling(
     if lowers:
         # A restated "on" is dropped, so a flag switched off since the read
         # above is not turned back on under ai_autonomy.stop.
-        # The hold is the other way round: on is the lower, a restated off drops.
+        # The hold and the factors are the other way round: on is the lower,
+        # a restated off drops.
         # The cap passes as it is; update_ceiling drops it if a lower since
         # the read above makes it a raise.
         edit = {
             k: (
                 (None if v is False else v)
-                if k == "hold_crown_jewels"
+                if k in _ON_TIGHTER
                 else v if k == "released_per_hour" else (None if v is True else v)
             )
             for k, v in edit.items()

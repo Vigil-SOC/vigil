@@ -77,8 +77,29 @@ class Ceiling:
     workflows: Mapping[str, dict] = field(default_factory=_no_workflows)
     # Declared crown jewels are left for a person (#5227). On unless stored off.
     hold_crown_jewels: bool = True
+    # Step-score factors in force (#5277). On unless stored off; off is a loosening.
+    confidence_precedent: bool = True
+    confidence_blind_spots: bool = True
+    confidence_run_quality: bool = True
     # Proposals the ceiling releases in any 60 minutes (#5274). 0 releases none.
     released_per_hour: int = RELEASED_PER_HOUR
+
+
+# Ceiling attribute -> INTENT.md key for each step-score factor switch (#5277).
+CONFIDENCE_SWITCHES = {
+    "confidence_precedent": "confidence.precedent",
+    "confidence_blind_spots": "confidence.blind_spots",
+    "confidence_run_quality": "confidence.run_quality",
+}
+
+
+def factors_in_force(ceiling: Ceiling) -> list[str]:
+    """The step-score factors switched on, in rule order."""
+    return [
+        key.split(".", 1)[1]
+        for attr, key in CONFIDENCE_SWITCHES.items()
+        if getattr(ceiling, attr)
+    ]
 
 
 @dataclass(frozen=True)
@@ -177,6 +198,7 @@ def _parse(value: Any) -> Ceiling:
         four_eyes=_flag(value.get("four_eyes")),
         workflows=_workflow_entries(value.get("workflows")),
         hold_crown_jewels=_on(value.get("hold_crown_jewels")),
+        **{attr: _on(value.get(attr)) for attr in CONFIDENCE_SWITCHES},
         released_per_hour=_cap(value.get("released_per_hour")),
     )
 
@@ -401,6 +423,7 @@ def ceiling_read() -> dict[str, Any]:
         "held": held_for_ceiling(),
         "hold_crown_jewels": stored.hold_crown_jewels,
         "crown_jewels": _crown_jewel_count(),
+        **{attr: getattr(stored, attr) for attr in CONFIDENCE_SWITCHES},
         "released_per_hour": stored.released_per_hour,
     }
 
@@ -439,6 +462,7 @@ def _dump(ceiling: Ceiling) -> dict[str, Any]:
         "four_eyes": ceiling.four_eyes,
         "workflows": {wid: dict(e) for wid, e in ceiling.workflows.items()},
         "hold_crown_jewels": ceiling.hold_crown_jewels,
+        **{attr: getattr(ceiling, attr) for attr in CONFIDENCE_SWITCHES},
         "released_per_hour": ceiling.released_per_hour,
     }
 
@@ -459,6 +483,9 @@ def update_ceiling(
     act_irreversible: Optional[bool] = None,
     four_eyes: Optional[bool] = None,
     hold_crown_jewels: Optional[bool] = None,
+    confidence_precedent: Optional[bool] = None,
+    confidence_blind_spots: Optional[bool] = None,
+    confidence_run_quality: Optional[bool] = None,
     released_per_hour: Optional[int] = None,
     lowers_only: bool = False,
     locked: Optional[bool] = None,
@@ -466,16 +493,26 @@ def update_ceiling(
     """Store a person's edit of the ceiling. Does not execute anything.
 
     A service account may lower an act flag. It may not raise one, resume,
-    switch four-eyes, turn the crown-jewel hold off, or raise the hourly cap. An act flag is not stored on while the environment
-    has locked them off. While stopped, raising an act flag or the hourly cap, or turning
-    four-eyes or the crown-jewel hold off is refused; a lower, and turning
-    either on, still store.
+    switch four-eyes, turn the crown-jewel hold or a step-score factor off, or
+    raise the hourly cap. An act flag is not stored on while the environment
+    has locked them off. While stopped, raising an act flag or the hourly cap,
+    or turning four-eyes, the crown-jewel hold or a factor off is refused; a
+    lower, and turning any of them on, still store.
     The refusal is decided on the locked row, so a stop that lands during
     the write is not stored past.
     """
     if locked is None:
         locked = environment_locks_act()
     applied = applied_intent(fresh=True)
+    factors = {
+        attr: value
+        for attr, value in (
+            ("confidence_precedent", confidence_precedent),
+            ("confidence_blind_spots", confidence_blind_spots),
+            ("confidence_run_quality", confidence_run_quality),
+        )
+        if value is not None
+    }
     asked = {
         key: value
         for key, value in (
@@ -483,6 +520,7 @@ def update_ceiling(
             ("act.irreversible", act_irreversible),
             ("act.four_eyes", four_eyes),
             ("act.hold_crown_jewels", hold_crown_jewels),
+            *((CONFIDENCE_SWITCHES[a], v) for a, v in factors.items()),
         )
         if value is not None
     }
@@ -495,10 +533,12 @@ def update_ceiling(
             if lowers_only and raises_cap(current.released_per_hour, released_per_hour)
             else released_per_hour
         )
+        # A factor switched off that is on now: a loosening, as the hold's off is.
+        factor_off = any(v is False and getattr(current, a) for a, v in factors.items())
         wants_act_on = act_reversible is True or act_irreversible is True
         if locked and wants_act_on:
             raise CeilingRefusal(409, "The environment wins; Act was not saved.")
-        # A declared directory's act.* keys may be narrowed here, never widened.
+        # A declared directory's act.* and confidence.* keys may be narrowed here, never widened.
         for key, value in asked.items():
             refused = managed_widening(key, value, applied)
             if refused:
@@ -509,6 +549,10 @@ def update_ceiling(
             if hold_crown_jewels is False and current.hold_crown_jewels:
                 raise CeilingRefusal(
                     403, "A service account cannot turn the crown-jewel hold off"
+                )
+            if factor_off:
+                raise CeilingRefusal(
+                    403, "A service account cannot switch a step-score factor off"
                 )
             if (
                 _raises(current.act_reversible, act_reversible)
@@ -521,6 +565,7 @@ def update_ceiling(
             or _raises(current.act_irreversible, act_irreversible)
             or (four_eyes is False and current.four_eyes)
             or (hold_crown_jewels is False and current.hold_crown_jewels)
+            or factor_off
             or raises_cap(current.released_per_hour, cap)
         ):
             raise CeilingRefusal(409, "Stopped: resume first")
@@ -534,7 +579,7 @@ def update_ceiling(
                 ("released_per_hour", cap),
             )
             if value is not None
-        }
+        } | factors
         return replace(current, **edit), "Autonomy ceiling updated"
 
     stored = _locked_update(change, user_id)
