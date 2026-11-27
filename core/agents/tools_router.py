@@ -45,6 +45,7 @@ from core.response.ceiling import (
     STOPPED,
     execution_held,
     gated_tools,
+    tool_definition_hash,
     unattended_refusal,
 )
 from core.routing import Auth, RouterMeta
@@ -281,6 +282,18 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
     return SOURCE_SYSTEM if split is None else split[0]
 
 
+def _definition_hash(tool: str, registry: MCPRegistry) -> Optional[str]:
+    """The hash of the definition the registry holds for ``tool``, as the pin hashes it.
+
+    None when nothing is held under that name: no hash is better than a made-up one.
+    """
+    try:
+        held = registry.held_definitions().get(tool)
+    except Exception:  # noqa: BLE001 — a registry that cannot be read holds nothing
+        return None
+    return None if held is None else tool_definition_hash(held)
+
+
 def _norm_args(value: Any) -> Any:
     """A shape two JSON parsers can agree on.
 
@@ -440,7 +453,12 @@ def _outcome(claims: Claims, tool: str, args: Dict[str, Any], outcome: str) -> N
 #
 # call_integration_tool stands for the integration call it names, so that call is
 # what runs, bounded and attributed as if it had been declared itself.
-async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, str]:
+#
+# Answers (result, handled, source, definition hash); the hash only for a call an
+# MCP server served, taken for the tool that ran, so the inner one of an integration call.
+async def _run(
+    body: InvokeRequest, registry: MCPRegistry
+) -> Tuple[Any, bool, str, Optional[str]]:
     seconds = body.bounds.timeout_ms / 1000
     tool, raw = body.tool, body.args
     if tool == CALL_INTEGRATION_TOOL:
@@ -491,7 +509,7 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
         )
         if handled:
             outcome = "failed" if _errored(result) is not None else "done"
-            return result, True, SOURCE_SYSTEM
+            return result, True, SOURCE_SYSTEM, None
         # After the backend, so a Vigil tool is not caught by a verb in its name.
         # The arguments compared are the ones the model sent, before the row cap
         # lowered a limit the approval was not asked about. A run no person
@@ -517,7 +535,8 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, s
             outcome = "failed"
         else:
             outcome = "done"
-        return result, handled, _source_system(tool, registry)
+        served = _definition_hash(tool, registry) if handled else None
+        return result, handled, _source_system(tool, registry), served
     finally:
         if record is not None:
             _outcome(record, tool, raw, outcome)
@@ -632,7 +651,7 @@ async def invoke(
     try:
         # The tool runs in this context (or a copy of it), so it sees the binding.
         with bound_claims(claims), bound:
-            result, handled, source = await _run(body, registry)
+            result, handled, source, definition = await _run(body, registry)
     except Denied as exc:
         return _failure("denied", detail=str(exc))
     except TrailWriteError:
@@ -672,4 +691,6 @@ async def invoke(
         "rowCount": min(len(rows), body.bounds.max_rows),
         "capped": capped,
         "sourceSystem": source,
+        # The definition the call ran against, which joins it to the class row's pin.
+        **({} if definition is None else {"definitionHash": definition}),
     }

@@ -35,7 +35,7 @@ import { unboundCapabilities, type RunSpec, type ToolSpec } from "./spec.js";
 import { hardStop, persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { bridgeHeaders } from "./principal.js";
-import { claimCount, classify, classOf, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, optionalTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
+import { claimCount, classify, classOf, servedBy, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, optionalTools, SKILL_TOOL, starved, type RecordBackend } from "./record.js";
 import { CONFIDENCES, type RunEventKind, type StopCause } from "../contracts/events.js";
 
 // The kernel: streamTurn's loop driven by a plugin, adding what every plugin needs: calls
@@ -584,6 +584,7 @@ async function* work(ctx: PluginContext, held: Ledger, clock: { turn: number }):
           ok: seen.attempt.result.ok,
           failure: seen.attempt.wrapped.failure?.kind ?? null,
           class: classify(seen.attempt.result),
+          ...servedBy(seen.attempt.result),
           // Verbatim, so a transcript rebuilt from the ledger is the bytes the model sent.
           ...(first && thought !== "" ? { thought } : {}),
           ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
@@ -997,6 +998,7 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
       ok: seen.attempt.result.ok,
       failure: seen.attempt.wrapped.failure?.kind ?? null,
       class: classify(seen.attempt.result),
+      ...servedBy(seen.attempt.result),
       role: sub.role,
       ...(seen.attempt.duration_ms === undefined ? {} : { duration_ms: seen.attempt.duration_ms }),
       ...(seen.attempt.redacted === undefined ? {} : { redacted: seen.attempt.redacted }),
@@ -1076,6 +1078,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
         ok: seen.attempt.result.ok,
         failure: seen.attempt.wrapped.failure?.kind ?? null,
         class: classify(seen.attempt.result),
+        ...servedBy(seen.attempt.result),
         ...(seen.attempt.redacted === undefined ? {} : { redacted: seen.attempt.redacted }),
       };
       await harness.state.append(child, [at("call", call)]);

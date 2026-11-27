@@ -286,6 +286,10 @@ export interface CallPayload {
   // In a conversation, the question it was made for, counted from 1. Each question
   // restarts turn, so this is what files a call under the answer it grounded.
   exchange?: number;
+  // An MCP-served call only: the server that answered and the hash of the tool
+  // definition it ran against, which joins the call to the class row's pin.
+  source_system?: string;
+  definition_hash?: string;
 }
 
 // The answer the run ends on, in the shape its plugin declared.
