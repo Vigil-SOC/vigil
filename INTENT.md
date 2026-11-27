@@ -62,10 +62,12 @@ confidence:
 # Each investigate workflow's own tier, keyed by workflow id. Applied only from
 # a declared directory (VIGIL_INTENT_DIR); observe mode ignores this section.
 # tier is act or assist; floor is a whole number 1..100, required with act and
-# refused with assist. Assist and a higher floor are tighter. A workflow not
-# listed follows the console as today. For example:
+# refused with assist. bar, optional under either tier, is the step score
+# (0..1) under which a step waits for a person; leaving it out declares no bar.
+# Assist, a higher floor and a higher bar are tighter. A workflow not listed
+# follows the console as today. For example:
 #   workflows:
-#     full-investigation: {tier: act, floor: 85}
+#     full-investigation: {tier: act, floor: 85, bar: 0.6}
 #     triage-deep-dive: {tier: assist}
 workflows: {}
 ---
@@ -124,11 +126,14 @@ token, accepts pending loosenings with `POST /api/config/intent/accept`
 (`{"revision": ...}`); each store write is audited under their name with the
 revision.
 
-The `workflows` section sets each listed investigate workflow's tier and
-floor, as Limits & autonomy does. Assist, or a higher floor on an Act
-workflow, is written on the next poll; Act, or a lower floor, is pending until
+The `workflows` section sets each listed investigate workflow's tier, floor
+and bar, as Limits & autonomy does. Assist, or a higher floor or bar on an Act
+workflow, is written on the next poll; Act, a lower floor, or a lower or
+removed bar on an Act entry is pending until
 a person accepts it, and the accept stores the investigation model in force
-and its 30-day record, as a console raise does. A console change that would
+and its 30-day record, as a console raise does. An entry that loosens in any
+part waits whole. Under Assist the bar holds nothing, so a declared Assist
+entry writes its bar, or none, on the next poll. A console change that would
 let a managed workflow act where the declared entry would not is refused with
 409; one that narrows it is stored and reported as drift ("narrowed locally"),
 and so is Vigil's own lowering of it, the floor drop or a model change
@@ -136,7 +141,8 @@ and so is Vigil's own lowering of it, the floor drop or a model change
 reset. An id this install does not have, or one that is not an investigate
 workflow, is listed as skipped with its line and the rest of the revision
 applies; a missing `tier`, a `floor` that is not a whole number from 1 to 100,
-a `floor` on Assist or any other key in an entry rejects the revision.
+a `floor` on Assist, a `bar` that is not a number from 0 to 1 (`true`, `"0.5"`
+and `null` included) or any other key in an entry rejects the revision.
 
 A folder with no `INTENT.md` reads intent as `degraded` (the last applied
 revision stays), and an `INTENT.md` whose front matter is empty declares

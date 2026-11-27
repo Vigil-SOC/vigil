@@ -169,6 +169,7 @@ def put_workflow_autonomy(
             else {
                 "tier": body.tier,
                 **({"floor": body.floor} if body.tier == ACT else {}),
+                **({"bar": bar} if bar is not None else {}),
             }
         )
         refused = managed_widening(key, requested, ceiling=current)
@@ -205,7 +206,10 @@ def _put_bar(
     current_user: User,
     session,
 ) -> CeilingResponse:
-    """Move the bar alone. Lowering or clearing it loosens; anything else tightens."""
+    """Move the bar alone. Lowering or clearing it loosens; anything else tightens.
+
+    On a workflow INTENT.md manages, a bar under the declared one is refused (409).
+    """
     if workflow_id not in current.workflows:
         raise HTTPException(
             status_code=422,
@@ -216,8 +220,20 @@ def _put_bar(
         _loosen_gate(current_user, session, "lower or clear a bar", current.stopped)
     else:
         deny_unless(current_user.user_id, "ai_autonomy.stop", session)
+    # The entry as it would be stored: a declared INTENT.md entry may only narrow.
+    entry = current.workflows[workflow_id]
+    key = f"workflows.{workflow_id}"
+    requested = {
+        "tier": entry.get("tier"),
+        **({"floor": entry.get("floor")} if entry.get("tier") == ACT else {}),
+        **({"bar": bar} if bar is not None else {}),
+    }
+    refused = managed_widening(key, requested)
+    if refused:
+        raise HTTPException(status_code=409, detail=refused)
     try:
         set_workflow_bar(workflow_id, bar, str(current_user.user_id), lowers=lowers)
+        settle_pending({key: requested}, str(current_user.user_id))
         return _view()
     except CeilingRefusal as exc:
         raise _http(exc) from exc

@@ -189,19 +189,21 @@ def _apply_workflows(wants: Dict[str, Any], revision: str, pending: Set[str]) ->
             pending.discard(key)
             if verdict == "same":
                 continue
+            # The declared bar, or none, replaces the stored one.
+            bar = want.get("bar")
+            at_bar = f" bar {bar}" if bar is not None else ""
             if want["tier"] == ASSIST:
-                # The bar is not declared here: the stored one stays (#5276).
-                bar = (have or {}).get("bar")
                 workflows[wid] = workflow_entry(ASSIST, None, None, ACTOR, bar=bar)
-                done.append(f"{wid}=assist")
-            else:  # a higher floor: the record and model it was earned on stay
+                done.append(f"{wid}=assist{at_bar}")
+            else:  # a higher floor or bar: the record and model it was earned on stay
                 workflows[wid] = {
                     **have,
                     "floor": want["floor"],
+                    "bar": bar,
                     "by": ACTOR,
                     "at": utcnow().isoformat(),
                 }
-                done.append(f"{wid}=act floor {want['floor']}")
+                done.append(f"{wid}=act floor {want['floor']}{at_bar}")
         return (
             replace(current, workflows=MappingProxyType(workflows)),
             f"INTENT.md revision {revision}: workflows {', '.join(done) or 'no change'}",
@@ -456,23 +458,21 @@ def accept_pending(
             wid = key.split(".", 1)[1]
             entries[wid] = (
                 workflow_entry(
-                    ACT, want["floor"], workflow_evidence(wid, model), user_id, model
+                    ACT,
+                    want["floor"],
+                    workflow_evidence(wid, model),
+                    user_id,
+                    model,
+                    want.get("bar"),
                 )
                 if want.get("tier") == ACT
-                else workflow_entry(ASSIST, None, None, user_id)
+                else workflow_entry(ASSIST, None, None, user_id, bar=want.get("bar"))
             )
 
         def change_flows(current: Ceiling) -> tuple[Ceiling, str]:
             if current.stopped:
                 raise CeilingRefusal(409, "Stopped: resume first")
-            # The bar is not declared in INTENT.md: each keeps the stored one (#5276).
-            workflows = {
-                **current.workflows,
-                **{
-                    wid: {**e, "bar": (current.workflows.get(wid) or {}).get("bar")}
-                    for wid, e in entries.items()
-                },
-            }
+            workflows = {**current.workflows, **entries}
             return (
                 replace(current, workflows=MappingProxyType(workflows)),
                 f"{reason}: {summary(flows)}",

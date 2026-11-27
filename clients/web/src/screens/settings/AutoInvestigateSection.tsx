@@ -226,6 +226,7 @@ function WorkflowBar({
   canRaise,
   machine,
   stopped,
+  managed,
   save,
 }: {
   name: string
@@ -233,6 +234,8 @@ function WorkflowBar({
   canRaise: boolean
   machine: boolean
   stopped: boolean
+  // A declared INTENT.md bar and where it is declared; a value under it is refused.
+  managed?: { bar: number; where: string }
   save: (bar: number | null) => Promise<boolean>
 }) {
   const [draft, setDraft] = useState(stored == null ? '' : barText(stored))
@@ -242,6 +245,8 @@ function WorkflowBar({
   // Why the server would refuse ``to``, said before anyone saves.
   const refusal = (to: number | null): string | null => {
     if (to != null && !(to >= 0 && to <= 1)) return 'A bar is a number from 0 to 1.'
+    if (managed && (to == null || to < managed.bar))
+      return `Managed by ${managed.where}, declared bar ${barText(managed.bar)}: a lower or cleared bar is refused. Change it in the declared directory.`
     if (stored == null || (to != null && to >= stored)) return null
     if (machine) return 'A service account cannot lower or clear a bar.'
     if (!canRaise) return 'Your role can raise the bar. Lowering or clearing it needs permission to loosen autonomy.'
@@ -334,7 +339,7 @@ function stoppedBanner(ceil: Ceiling): string {
 
 type WorkflowChoice = 'fleet' | 'act' | 'assist'
 /** A workflow INTENT.md manages: its declared entry and where it is declared. */
-type ManagedFlow = { declared: { tier: 'act' | 'assist'; floor?: number }; file: string; line: number; revision: string }
+type ManagedFlow = { declared: { tier: 'act' | 'assist'; floor?: number; bar?: number }; file: string; line: number; revision: string }
 const WORKFLOW_CHOICES: { to: WorkflowChoice; label: string }[] = [
   { to: 'fleet', label: 'Follows fleet' },
   { to: 'act', label: 'Act' },
@@ -718,9 +723,17 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     }
   }
 
+  // A raise to Act on a managed workflow also lifts its bar to the declared one, or the server refuses it as a loosening.
+  const declaredBarLift = (w: InvestigateWorkflow): number | null => {
+    const want = flowManaged[w.id]?.declared.bar
+    const have = workflowTier(ceil, w.id)?.bar
+    return want != null && (have == null || have < want) ? want : null
+  }
+
   const setWorkflow = async (w: InvestigateWorkflow, to: WorkflowChoice, floorPct?: number) => {
+    const lift = to === 'act' ? declaredBarLift(w) : null
     try {
-      await ceiling.setWorkflow(w.id, { tier: to === 'fleet' ? null : to, floor: floorPct ?? null })
+      await ceiling.setWorkflow(w.id, { tier: to === 'fleet' ? null : to, floor: floorPct ?? null, ...(lift != null ? { bar: lift } : {}) })
       notify('ok', `${w.name} ${to === 'fleet' ? 'follows the fleet' : to === 'act' ? 'acts on its own' : 'asks first'}.`)
       setIntentRevision((n) => n + 1) // a managed workflow's narrowing shows as drift
     } catch (err) {
@@ -999,7 +1012,11 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
           </span>
           {change && <span title={change}>{change}</span>}
           {managed && (
-            <span title={`Declared ${managed.declared.tier === 'act' ? `Act · floor ${managed.declared.floor}` : 'Assist'}`}>
+            <span
+              title={`Declared ${managed.declared.tier === 'act' ? `Act · floor ${managed.declared.floor}` : 'Assist'}${
+                managed.declared.bar != null ? ` · bar ${barText(managed.declared.bar)}` : ''
+              }`}
+            >
               Managed by {where}
             </span>
           )}
@@ -1051,6 +1068,12 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
               canRaise={canRaise}
               machine={machine}
               stopped={stopped}
+              // Only under Act on both sides does the server judge the bar against the declared one.
+              managed={
+                where && current === 'act' && managed.declared.tier === 'act' && managed.declared.bar != null
+                  ? { bar: managed.declared.bar, where }
+                  : undefined
+              }
               save={(to) => setBar(w, to)}
             />
           )}
@@ -1628,6 +1651,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
               {flowManaged[pending.workflow.id]?.declared.floor && (
                 <p className="text-xs text-tx-3 mt-2">
                   Managed by INTENT.md: at least {flowManaged[pending.workflow.id].declared.floor}%, the declared floor.
+                  {declaredBarLift(pending.workflow) != null &&
+                    ` The bar is raised to the declared ${barText(declaredBarLift(pending.workflow)!)}.`}
                 </p>
               )}
             </>
