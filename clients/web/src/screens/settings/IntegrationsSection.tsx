@@ -4,16 +4,18 @@ import { Icon } from '../../shared/icons'
 import { InfoTip } from '../../shared/InfoTip'
 import { PageHead } from '../../shared/PageHead'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { EmptyState, Toggle } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, Toggle } from '../../shared/ui'
+import { extractApiError } from '../../shared/formKit'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import { getAllIntegrations } from '../../config/integrations'
-import { detectionRulesApi, mcpApi } from '../../services/api'
+import { configApi, detectionRulesApi, mcpApi } from '../../services/api'
 import {
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
-  SERVER_DISPLAY_NAMES,
+  baseServerOf,
   logoForServer,
-  prettyServerName,
+  serverForIntegration,
+  serverTitle,
   INTEGRATIONS_DESC,
   tabFromQuery,
   type IntegrationsTab,
@@ -29,9 +31,9 @@ import IntegrationMark from './IntegrationMark'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
+import type { InstanceCreated } from './useSettings'
 import type { SectionProps } from './types'
 
-const displayName = (name: string) => SERVER_DISPLAY_NAMES.get(name) ?? prettyServerName(name)
 const categoryOf = (name: string) => MCP_CATEGORIES.find((c) => c.servers.includes(name))?.label ?? 'Other'
 const categoryRank = (name: string) => {
   const i = MCP_CATEGORIES.findIndex((c) => c.servers.includes(name))
@@ -40,6 +42,14 @@ const categoryRank = (name: string) => {
 const canConfigure = (r: ServerRow) => !!r.integration?.fields?.length
 /** security-detections' one setup action: fetch its rule repositories */
 const FETCH_RULES = 'fetch_detection_rules'
+
+/** What a new instance's save copied from its base, for the notice. */
+const copiedPhrase = (c?: InstanceCreated) =>
+  !c
+    ? ''
+    : c.not_copied
+      ? ` Its tool classes were not copied, because ${c.not_copied}; its tools ask first.`
+      : ` Copied ${c.classes} tool class${c.classes === 1 ? '' : 'es'} and ${c.bindings} binding${c.bindings === 1 ? '' : 's'} from its integration.`
 
 export default function IntegrationsSection({ notify }: SectionProps) {
   const [searchParams] = useSearchParams()
@@ -50,8 +60,19 @@ export default function IntegrationsSection({ notify }: SectionProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [reloadingServers, setReloadingServers] = useState(false)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
+  // the drawer adds another instance of wizardFor instead of editing it
+  const [addingInstance, setAddingInstance] = useState(false)
+  const [removing, setRemoving] = useState<string | null>(null)
   const { error, reload: reloadMcp, setServerEnabled } = mcp
   const { config: intCfg, custom, reloadCustom, reload: reloadInt, saveIntegration, setIntegrationEnabled } = int
+  const { instances, instances_allowed: instancesAllowed } = intCfg
+  // an instance's row borrows its base's mark, category and description, under its own name
+  const displayName = (name: string) => serverTitle(name, instances)
+  const base = (name: string) => baseServerOf(name, instances)
+  const openWizard = (i: IntegrationMetadata, adding = false) => {
+    setAddingInstance(adding)
+    setWizardFor(i)
+  }
 
   // state lives above the section, so a visit does not refetch: Refresh does
   const reload = () => {
@@ -69,10 +90,10 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       const n = data?.total_servers
       const failed = Object.entries(data?.failed ?? {})
       const parts = [typeof n === 'number' ? `${n} server${n === 1 ? '' : 's'} configured.` : '']
-      if (data?.reconnected?.length) parts.push(`Reconnected ${data.reconnected.map(prettyServerName).join(', ')}.`)
-      if (data?.disconnected?.length) parts.push(`Stopped ${data.disconnected.map(prettyServerName).join(', ')}.`)
+      if (data?.reconnected?.length) parts.push(`Reconnected ${data.reconnected.map(displayName).join(', ')}.`)
+      if (data?.disconnected?.length) parts.push(`Stopped ${data.disconnected.map(displayName).join(', ')}.`)
       if (failed.length) {
-        const why = failed.map(([name, err]) => `${prettyServerName(name)}${err ? ` (${err})` : ''}`).join(', ')
+        const why = failed.map(([name, err]) => `${displayName(name)}${err ? ` (${err})` : ''}`).join(', ')
         notify('err', ['Tool servers reloaded, but not every server came back.', ...parts, `Failed: ${why}.`].filter(Boolean).join(' '))
       } else {
         notify('ok', ['Tool servers reloaded.', ...parts].filter(Boolean).join(' '))
@@ -92,10 +113,20 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     setTab(requested)
   }, [requested])
 
-  const connected = useMemo(
-    () => rows.filter((r) => r.connected).sort((a, b) => categoryRank(a.name) - categoryRank(b.name)),
-    [rows],
-  )
+  // by category, keeping the server list's order; an instance sorts right after its base
+  const connected = useMemo(() => {
+    const order = new Map(rows.map((r, i) => [r.name, i]))
+    const key = (name: string) => {
+      const b = baseServerOf(name, instances)
+      return [categoryRank(b), order.get(b) ?? order.get(name)!, b === name ? 0 : 1, order.get(name)!]
+    }
+    return rows
+      .filter((r) => r.connected)
+      .sort((a, b) => {
+        const [x, y] = [key(a.name), key(b.name)]
+        return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]
+      })
+  }, [rows, instances])
   const catalog = getAllIntegrations()
   const connectedIds = useMemo(
     () => new Set([...intCfg.enabled_integrations, ...connected.flatMap((r) => (r.integration ? [r.integration.id] : []))]),
@@ -111,8 +142,8 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     setBusy(name)
     const res = await setServerEnabled(name, want)
     setBusy(null)
-    if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
-    else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
+    if (res.ok) notify('ok', `${displayName(name)} ${want ? 'enabled' : 'disabled'}.`)
+    else notify('err', `Could not start ${displayName(name)}${res.error ? `: ${res.error}` : ''}.`)
   }
 
   // a server waiting on setup: the fetch restarts it once its rules are on disk
@@ -131,6 +162,22 @@ export default function IntegrationsSection({ notify }: SectionProps) {
     }
   }
 
+  const onRemove = async () => {
+    const name = removing
+    if (!name) return
+    setBusy(name)
+    try {
+      await configApi.deleteIntegration(name)
+      notify('ok', `${displayName(name)} removed: its settings, stored credentials, on/off state and tool classes were deleted, and its server stopped.`)
+    } catch (e) {
+      notify('err', `Could not remove ${displayName(name)}: ${extractApiError(e, 'request failed')}.`)
+    } finally {
+      setBusy(null)
+      setRemoving(null)
+      reload()
+    }
+  }
+
   // master: one switch over both gates. An alert source's integration gate is its
   // collection; switching on never enables collection for a source with no saved settings.
   const onToggleMaster = async (name: string, id: string, want: boolean, collects = false, saved = true) => {
@@ -141,11 +188,11 @@ export default function IntegrationsSection({ notify }: SectionProps) {
       reloadExtensions()
       health.reload()
     } catch {
-      notify('err', `Could not ${want ? 'enable' : 'disable'} ${collects ? `alert collection from ${prettyServerName(name)}` : `the ${id} panel`}.`)
+      notify('err', `Could not ${want ? 'enable' : 'disable'} ${collects ? `alert collection from ${displayName(name)}` : `the ${id} panel`}.`)
     }
     setBusy(null)
-    if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
-    else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
+    if (res.ok) notify('ok', `${displayName(name)} ${want ? 'enabled' : 'disabled'}.`)
+    else notify('err', `Could not start ${displayName(name)}${res.error ? `: ${res.error}` : ''}.`)
   }
 
   // the row the drawer belongs to: a connected one first (Splunk has two servers)
@@ -190,7 +237,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                 {attention.length > 1 && <span className="int-banner-more">{attention.length - 1} more need attention.</span>}
               </span>
               {canConfigure(first) && (
-                <button className="btn primary int-act" onClick={() => setWizardFor(first.integration!)}>Fix</button>
+                <button className="btn primary int-act" onClick={() => openWizard(first.integration!)}>Fix</button>
               )}
             </div>
           )}
@@ -287,12 +334,12 @@ export default function IntegrationsSection({ notify }: SectionProps) {
               <tr key={r.name}>
                 <td>
                   <div className="int-ident">
-                    <IntegrationMark logo={logoForServer(r.name)} category={categoryOf(r.name)} />
+                    <IntegrationMark logo={logoForServer(base(r.name))} category={categoryOf(base(r.name))} />
                     <div>
                       <span className="int-name">
                         {displayName(r.name)}
                       </span>
-                      <span className="int-sub">{categoryOf(r.name)}</span>
+                      <span className="int-sub">{categoryOf(base(r.name))}</span>
                       {facts && <span className="int-sub int-facts"><Clamp text={facts} /></span>}
                     </div>
                   </div>
@@ -311,7 +358,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                     <span>—</span>
                   )}
                 </td>
-                <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || (r.judgement?.kind === 'mcp_source' ? 'Declared source: see Declared sources below.' : 'Custom MCP integration.')} /></td>
+                <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(base(r.name)) || r.integration?.description || (r.judgement?.kind === 'mcp_source' ? 'Declared source: see Declared sources below.' : 'Custom MCP integration.')} /></td>
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
                 <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
                 <td className="col-act">
@@ -319,10 +366,20 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                     <button className="btn primary int-act" disabled={busy === r.name} onClick={() => void onFetchRules(r.name)}>
                       {busy === r.name ? 'Fetching…' : 'Fetch rules'}
                     </button>
-                  ) : canConfigure(r) && (
-                    <button className={`btn int-act${r.level === 'poor' ? ' primary' : ''}`} onClick={() => setWizardFor(r.integration!)}>
-                      {r.level === 'poor' ? 'Fix' : 'Configure'}
-                    </button>
+                  ) : (
+                    <div className="int-acts">
+                      {canConfigure(r) && (
+                        <button className={`btn int-act${r.level === 'poor' ? ' primary' : ''}`} onClick={() => openWizard(r.integration!)}>
+                          {r.level === 'poor' ? 'Fix' : 'Configure'}
+                        </button>
+                      )}
+                      {/* only an instance is removed; an integration's own row never is */}
+                      {instances[r.name] && (
+                        <button className="btn ghost int-act" disabled={busy === r.name} onClick={() => setRemoving(r.name)}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>
@@ -347,7 +404,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         <AddIntegrationTab
           entries={entries}
           busy={busy}
-          onConnect={setWizardFor}
+          onConnect={(i) => openWizard(i)}
           onTurnOn={(name) => onToggleMcp(name, true)}
           onRefresh={reload}
         />
@@ -364,22 +421,52 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 
       {tab === 'surface' && <McpSurfacePanel notify={notify} />}
 
+      <ConfirmDialog
+        open={!!removing}
+        title={`Remove ${removing ? displayName(removing) : ''}?`}
+        confirmLabel="Remove"
+        busy={!!removing && busy === removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => void onRemove()}
+        body={
+          <>
+            Deletes its settings, stored credentials, on/off state and <span className="mono">{removing}_</span> tool classes, and stops its server.
+            The integration it is an instance of is not changed. This cannot be undone.
+          </>
+        }
+      />
+
       {wizardFor && (
         <IntegrationWizard
+          key={`${wizardFor.id}:${addingInstance}`}
           integration={wizardFor}
-          existingConfig={intCfg.integrations[wizardFor.id] || {}}
-          secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
-          lastTest={intCfg.last_test[wizardFor.id]}
-          health={wizardRow?.level}
-          category={categoryOf(wizardRow?.name ?? '')}
+          newInstance={addingInstance}
+          savedIds={Object.keys(intCfg.integrations)}
+          existingConfig={addingInstance ? {} : intCfg.integrations[wizardFor.id] || {}}
+          secretsSet={addingInstance ? {} : intCfg.secrets_set[wizardFor.id] || {}}
+          lastTest={addingInstance ? undefined : intCfg.last_test[wizardFor.id]}
+          health={addingInstance ? undefined : wizardRow?.level}
+          category={categoryOf(addingInstance ? serverForIntegration(wizardFor.id) : base(wizardRow?.name ?? ''))}
+          // a saved integration's own drawer offers another instance, or says why it can't
+          instancesAllowed={!addingInstance && !instances[wizardFor.id] && intCfg.integrations[wizardFor.id] ? instancesAllowed[wizardFor.id] : undefined}
+          onAddAnother={() => openWizard(wizardFor, true)}
           onTested={() => {
             reloadInt()
             health.reload()
           }}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
-            await saveIntegration(id, cfg)
+            const created = (await saveIntegration(id, cfg))?.[id]
+            const title = addingInstance ? serverTitle(id, { [id]: wizardFor.id }) : wizardFor.name
             health.reload()
+            // the save that created an instance (a later save from the same drawer only edits it)
+            if (created) {
+              // load its server now rather than on the next sources pass
+              await mcpApi.reloadServers().catch(() => undefined)
+              reloadMcp()
+              notify('ok', `${title} added.${copiedPhrase(created)} Turn it on with its switch to give agents its tools.`)
+              return
+            }
             // refresh the registry so a URL edit re-reads; saving alone doesn't enable
             const isExtension = wizardFor.fields?.some((f) => f.name === 'connectorUrl')
             if (isExtension) reloadExtensions()
@@ -388,10 +475,10 @@ export default function IntegrationsSection({ notify }: SectionProps) {
             notify(
               'ok',
               isExtension
-                ? `${wizardFor.name} connected. Turn it on with the toggle to enable it.`
+                ? `${title} connected. Turn it on with the toggle to enable it.`
                 : notRunning
-                  ? `${wizardFor.name} configured.`
-                  : `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`,
+                  ? `${title} configured.`
+                  : `${title} configured. Enable it with the toggle if it isn’t already.`,
             )
           }}
         />

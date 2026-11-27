@@ -1273,6 +1273,17 @@ export interface IntegrationsConfig {
   secrets_set: Record<string, Record<string, boolean>>
   // Result of the last Test per integration; untested ids are absent.
   last_test: Record<string, LastTest>
+  // Instance id -> the integration it is an instance of (#5353).
+  instances: Record<string, string>
+  // Per integration: whether it offers another instance, and why not.
+  instances_allowed: Record<string, { allowed: boolean; reason?: string | null }>
+}
+
+/** POST /config/integrations: what a save that created instances copied to each. */
+export interface InstanceCreated {
+  classes: number
+  bindings: number
+  not_copied?: string
 }
 
 export function useIntegrationsConfig() {
@@ -1281,6 +1292,8 @@ export function useIntegrationsConfig() {
     integrations: {},
     secrets_set: {},
     last_test: {},
+    instances: {},
+    instances_allowed: {},
   })
   const [custom, setCustom] = useState<IntegrationMetadata[] | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -1305,6 +1318,8 @@ export function useIntegrationsConfig() {
               integrations: d.integrations || {},
               secrets_set: d.secrets_set || {},
               last_test: d.last_test || {},
+              instances: d.instances || {},
+              instances_allowed: d.instances_allowed || {},
             })
             // the endpoint answers 200 with an `error` when it could not read the store
             setPhase(d.error ? 'error' : 'ready')
@@ -1327,7 +1342,7 @@ export function useIntegrationsConfig() {
         isExtension || config.enabled_integrations.includes(integrationId)
           ? config.enabled_integrations
           : [...config.enabled_integrations, integrationId]
-      await configApi.setIntegrations({ enabled_integrations, integrations })
+      const { data: saved } = await configApi.setIntegrations({ enabled_integrations, integrations })
       // refetch, so no plaintext lingers and a just-entered secret reads as "set"
       try {
         const res = await configApi.getIntegrations()
@@ -1337,10 +1352,13 @@ export function useIntegrationsConfig() {
           integrations: d.integrations ?? {},
           secrets_set: d.secrets_set ?? config.secrets_set,
           last_test: d.last_test ?? config.last_test,
+          instances: d.instances ?? config.instances,
+          instances_allowed: d.instances_allowed ?? config.instances_allowed,
         })
       } catch {
         setConfig({ ...config, enabled_integrations, integrations })
       }
+      return (saved as { instances_created?: Record<string, InstanceCreated> } | undefined)?.instances_created
     },
     [config],
   )

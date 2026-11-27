@@ -41,6 +41,7 @@ export function IntegrationsStateProvider({ children }: { children: ReactNode })
         setups,
         enabledIntegrations: config.enabled_integrations,
         integrations: config.integrations,
+        instances: config.instances,
         health: health.failed ? null : health.sources,
       }), kept.current),
     [phase, servers, statuses, enabled, errors, missingCredentials, setups, config, health.failed, health.sources],

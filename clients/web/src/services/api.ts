@@ -748,6 +748,9 @@ export const configApi = {
     enabled_integrations: string[]
     integrations: Record<string, any>
   }) => api.post('/config/integrations', data),
+  // Removes an instance (#5353): config, credentials, enabled state and tool classes. 400 for an integration's own row.
+  deleteIntegration: (id: string) =>
+    api.delete<{ success: boolean; removed: string }>(`/config/integrations/${encodeURIComponent(id)}`),
   // Probes the stored config, so save first. 400 when nothing is saved.
   testIntegration: (id: string) =>
     api.post<IntegrationTestResult>(`/config/integrations/${encodeURIComponent(id)}/test`),

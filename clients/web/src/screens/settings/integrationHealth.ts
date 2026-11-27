@@ -1,7 +1,7 @@
 import type { Level } from '../../shared/LevelBadge'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { IntegrationHealthSource, IntegrationHealthState, SourceFacts } from '../../services/api'
-import { getIntegrationForServer } from './integrationsData'
+import { getIntegrationForServer, type Instances } from './integrationsData'
 
 /** `last_test` of GET /config/integrations: the result POST .../test stored. The wizard still shows it. */
 export interface LastTest {
@@ -51,6 +51,8 @@ interface HealthInput {
   setups?: Record<string, { reason: string; action?: string }>
   enabledIntegrations: string[]
   integrations: Record<string, Record<string, unknown>>
+  /** instance id -> base: an instance's row has its base's form under its own id */
+  instances?: Instances
   /** null: the health read failed. Rows with an integration then show a failed read. */
   health: IntegrationHealthSource[] | null
 }
@@ -132,7 +134,7 @@ export function buildRows(i: HealthInput): ServerRow[] {
   const byId = new Map((i.health ?? []).map((s) => [s.source_id, s]))
   const failed = i.health === null
   return i.servers.map((name) => {
-    const integration = getIntegrationForServer(name)
+    const integration = getIntegrationForServer(name, i.instances)
     const isEnabled = !!i.enabled[name]
     const isRunning = i.statuses[name] === 'running'
     const configured = integration ? i.enabledIntegrations.includes(integration.id) : false

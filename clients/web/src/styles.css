@@ -4211,6 +4211,9 @@
       -webkit-line-clamp: unset;
    }
 
+   /* Configure and an instance's Remove, stacked to fit the action column */
+   .int-acts { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+
    .int-act {
       height: 28px;
       padding: 0 10px;
