@@ -5,8 +5,9 @@ About once an interval the daemon's scheduler runs :func:`tick`:
 1. One tick at a time, across replicas. A tick that finds another running skips,
    and so does one that finds a check made less than an interval ago.
 2. Medic is read once. The sweep holds and releases suggestions on that read, and
-   every proposal made in this tick is held on the same read. When Medic cannot be
-   read, or the sweep fails, holds stay as they are and new proposals go in open.
+   every proposal made in this tick is held on the same read, even when the sweep
+   fails. When Medic cannot be read, holds stay as they are: a new proposal for a
+   held setting stays held on the same incident, and any other goes in open.
 3. Each registered check runs in turn. A check returns proposals: the keyword
    arguments of :func:`core.supervisory.store.propose`, without ``held_incident``,
    which the tick supplies. A check that raises, or makes a proposal the store
@@ -136,7 +137,14 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
             for proposal in check():
                 try:
                     held = medic_hold.incident_for(proposal["fn"], incidents or [])
-                    if store.propose(**proposal, held_incident=held) is not None:
+                    if (
+                        store.propose(
+                            **proposal,
+                            held_incident=held,
+                            medic_unread=incidents is None,
+                        )
+                        is not None
+                    ):
                         proposed += 1
                 except (
                     Exception
