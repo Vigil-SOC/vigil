@@ -39,7 +39,7 @@ from core.response.config import (
     decision_rule,
     split_decision_rule,
 )
-from core.response.proposal_targets import CONTAINMENT_TOOLS
+from core.response.proposal_targets import DONE_STATE
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
 from core.storage.models import Case, Finding, Investigation, WorkflowRun, case_findings
@@ -53,8 +53,10 @@ _pending_gauge: Any = None
 
 # Rollout acts on these once approved (rollout_approval).
 ROLLOUT_ACTION_TYPES = frozenset({"promote_rule", "deploy_rule"})
-# Kinds the backend carries out on approval through a vendor's tool (#5059).
-CONTAINMENT_TYPES = frozenset(CONTAINMENT_TOOLS)
+# Kinds the backend carries out on approval through a vendor's tool (#5059): each
+# with state words, whether or not a carrier is bound for it (#5313). One with
+# none bound is still resolved, and stays a proposal.
+CONTAINMENT_TYPES = frozenset(DONE_STATE)
 # execution_result.state while the call is out: claimed, so it runs once.
 RUNNING = "running"
 # A claim this old outlived its process: the row may be approved again.
@@ -1007,7 +1009,6 @@ class ApprovalService:
         Raises ``NotUndoable`` unless the original is executed and in its done
         state with no lift of it still open; ``ActionNotFound`` as approving does.
         """
-        from core.response.proposal_targets import DONE_STATE
 
         found = self.get_action(action_id)
         if found is None:

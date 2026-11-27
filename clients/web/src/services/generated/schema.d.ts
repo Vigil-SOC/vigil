@@ -1840,7 +1840,7 @@ export interface paths {
          *
          *     Loosening, or classifying an unclassified or withdrawn name, is a person's
          *     ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
-         *     a capability, or putting back a shipped binding that binds one. Tightening,
+         *     a capability or an act, or putting back a shipped binding that binds one. Tightening,
          *     and binding nothing, is ``ai_autonomy.stop``, which a service account may
          *     hold. A person's classification of a remote server's tool pins the
          *     definition held now.
@@ -9553,7 +9553,7 @@ export interface paths {
          *
          *     Loosening, or classifying an unclassified or withdrawn name, is a person's
          *     ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
-         *     a capability, or putting back a shipped binding that binds one. Tightening,
+         *     a capability or an act, or putting back a shipped binding that binds one. Tightening,
          *     and binding nothing, is ``ai_autonomy.stop``, which a service account may
          *     hold. A person's classification of a remote server's tool pins the
          *     definition held now.
@@ -11645,8 +11645,50 @@ export interface components {
         };
         /** BindingBody */
         BindingBody: {
+            /** Act */
+            act?: string | null;
+            /** Act State */
+            act_state?: {
+                [key: string]: unknown;
+            } | null;
+            /** Address Arg */
+            address_arg?: string | null;
             /** Capability */
             capability?: string | null;
+            /** Carrier */
+            carrier?: string | null;
+            /** Id */
+            id?: string | null;
+            /** Id Arg */
+            id_arg?: string | null;
+            /** Lookup */
+            lookup?: string | null;
+            /** Lookup Arg */
+            lookup_arg?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Note Arg */
+            note_arg?: string | null;
+            /** Read State */
+            read_state?: {
+                [key: string]: unknown;
+            } | null;
+            /** Rows */
+            rows?: string | null;
+            /** State */
+            state?: {
+                [key: string]: unknown;
+            } | null;
+            /** State Read */
+            state_read?: {
+                [key: string]: unknown;
+            } | null;
+            /** Takes */
+            takes?: string[] | null;
+            /** Undo */
+            undo?: string | null;
+            /** Undo From */
+            undo_from?: string | null;
         };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
@@ -19644,8 +19686,14 @@ export interface components {
         };
         /** ToolBinding */
         ToolBinding: {
+            /** Act */
+            act?: string | null;
             /** Capability */
-            capability: string;
+            capability?: string | null;
+            /** Carrier */
+            carrier?: {
+                [key: string]: unknown;
+            } | null;
             /** Server */
             server?: string | null;
         };

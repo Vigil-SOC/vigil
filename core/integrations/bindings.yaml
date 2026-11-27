@@ -55,9 +55,23 @@ opencti:
   opencti_search_entities: intel_entities
   opencti_get_related: intel_relationships
 
-# One account read. Reads only: aad_disable_user is never bound.
+# One account read; aad_disable_user carries disable_user and answers nothing.
 azure-ad:
   aad_get_user: identity_lookup
+  aad_disable_user:
+    act: disable_user
+    id_arg: user_id
+    note_arg: reason
+    lookup: aad_get_user
+    lookup_arg: user
+    id: id
+    name: userPrincipalName
+    state:
+      read: [{field: accountEnabled, map: {true: enabled}}]
+      default: disabled
+    # No state read: the lookup's accountEnabled says when it holds.
+    act_state: {default: requested}
+    undo: aad_enable_user
 # fctr-id/okta-mcp-server's names at the tag mcp-config.json pins.
 okta:
   get_okta_user: identity_lookup
@@ -81,3 +95,88 @@ vstrike:
 
 opensearch:
   opensearch_search_logs: telemetry_search
+
+# Act carriers (#5313, docs/acts.md): what an approved act of each kind calls
+# on the server, keyed by the act tool. Every tool named is the server's own.
+microsoft-defender:
+  mde_isolate:
+    act: isolate_host
+    id_arg: machine_id
+    note_arg: comment
+    lookup: mde_find_machine
+    lookup_arg: hostname
+    address_arg: ip
+    rows: machines
+    id: machine_id
+    name: name
+    # A newer action still out is the state before the last one that succeeded.
+    state:
+      read:
+        - {field: isolation.pending.status, map: {Pending: requested, InProgress: requested}}
+        - {field: isolation.state, map: {isolated: contained}}
+      default: not_contained
+    # The act answers a machine action; its status is the state.
+    act_state: &mde_action
+      read: [{field: status, map: {Pending: requested, InProgress: requested, Succeeded: contained}}]
+      default: failed
+    state_read: {tool: mde_get_machine_action, arg: action_id}
+    read_state: *mde_action
+    undo: mde_release
+carbon-black:
+  cb_quarantine:
+    act: isolate_host
+    id_arg: device_id
+    note_arg: reason
+    lookup: cb_search_device
+    lookup_arg: hostname
+    address_arg: ip
+    rows: devices
+    id: device_id
+    name: name
+    state:
+      read: [{field: quarantined, map: {true: contained}}]
+      default: not_contained
+    # No action read: the lookup's quarantine flag says when it holds.
+    act_state: {default: requested}
+    undo: cb_lift_quarantine
+# Keyless: the target is the vendor's key. Cloudflare answers a refusal with
+# success false and no error, so only success true is done. undo_from names the
+# field of the act's answer the undo is called with.
+cloudflare:
+  cf_waf_block_ip:
+    act: block_ip
+    carrier: Cloudflare WAF
+    takes: [address]
+    id_arg: ip
+    note_arg: reason
+    act_state: {read: [{field: success, map: {true: blocked}}], default: failed}
+    undo: cf_waf_unblock_ip
+    undo_from: rule_id
+  # The domain goes into the rule's expression: only a bare name passes.
+  cf_gateway_block_domain:
+    act: block_domain
+    carrier: Cloudflare Gateway
+    takes: [domain]
+    id_arg: domain
+    note_arg: reason
+    act_state: {read: [{field: success, map: {true: blocked}}], default: failed}
+    undo: cf_gateway_unblock_domain
+    undo_from: rule_id
+  # No undo: Vigil cannot give a session back.
+  cf_access_revoke_session:
+    act: revoke_session
+    carrier: Cloudflare Access
+    takes: [email]
+    id_arg: email
+    note_arg: reason
+    act_state: {read: [{field: success, map: {true: revoked}}], default: failed}
+# The unregister takes the address itself, so no undo_from.
+palo-alto:
+  pan_block_ip:
+    act: block_ip
+    carrier: Palo Alto
+    takes: [address]
+    id_arg: ip
+    note_arg: reason
+    act_state: {read: [{field: success, map: {true: blocked}}], default: failed}
+    undo: pan_unblock_ip

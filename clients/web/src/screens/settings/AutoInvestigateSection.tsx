@@ -98,14 +98,16 @@ const BIND_NOTHING = ''
 const BIND_SHIPPED = ':shipped'
 const bindValue = (t: ToolClass) =>
   t.binding_source === 'file' ? BIND_SHIPPED : (t.binding?.capability ?? BIND_NOTHING)
-// What the tool answers, and whose binding that is
+// An act tool's binding is its carrier (#5313): it carries the act, answering nothing
+const said = (b: NonNullable<ToolClass['binding']>) => (b.act ? `Carries ${b.act}` : `Answers ${b.capability}`)
+// What the tool answers or carries, and whose binding that is
 const bindingNote = (t: ToolClass) => {
-  const shipped = t.shipped_binding?.capability
-  if (t.binding_source === 'file') return `Answers ${shipped}, as shipped`
+  const shipped = t.shipped_binding
+  if (t.binding_source === 'file' && shipped) return `${said(shipped)}, as shipped`
   if (t.binding_source !== 'person') return null
-  const was = shipped ? ` (shipped: ${shipped})` : ''
+  const was = shipped ? ` (shipped: ${shipped.act ?? shipped.capability})` : ''
   // set in Vigil: a person binds; a person or a machine may unbind
-  return t.binding ? `Answers ${t.binding.capability}, bound here${was}` : `Answers nothing, unbound here${was}`
+  return t.binding ? `${said(t.binding)}, bound here${was}` : `Answers nothing, unbound here${was}`
 }
 
 // A tool as its server lists it (#5300): the description, the input schema collapsed.
@@ -949,6 +951,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
 
   // Changing what a tool answers loosens unless it binds nothing; a machine never binds.
   const bindSelect = (t: ToolClass, stopped: boolean) => {
+    // a carrier is set through the API until the act editor lands; its note says what it carries
+    if (t.binding?.act || t.shipped_binding?.act) return null
     const current = bindValue(t)
     const shipped = t.shipped_binding?.capability
     const mayBind = canRaise && !machine && !stopped
