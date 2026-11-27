@@ -15,10 +15,11 @@ from typing import Iterable, Optional
 
 from sqlalchemy import select
 
+from core.integrations.bindings import ever_carries
 from core.response.containment import CEILING_APPROVER
 from core.response.proposal_targets import (
     _UPN,
-    CONTAINMENT_TOOLS,
+    DONE_STATE,
     TARGET_RULES,
     UNDONE_STATE,
     _domain,
@@ -98,7 +99,7 @@ def write_reversal_note(
     from core.memory.notes import write_note
 
     try:
-        if row.action_type not in CONTAINMENT_TOOLS or not by_person(by, principal_id):
+        if row.action_type not in DONE_STATE or not by_person(by, principal_id):
             return
         if not undo_verb and (row.parameters or {}).get("undoes"):
             return  # rejecting a held undo keeps the act: no reversal of it
@@ -143,15 +144,7 @@ def write_reversal_note(
 
 
 def _kind_of_act(tool: str) -> Optional[str]:
-    return next(
-        (
-            kind
-            for kind, entries in CONTAINMENT_TOOLS.items()
-            for e in entries
-            if f"{e['vendor']}_{e['act']}" == tool
-        ),
-        None,
-    )
+    return ever_carries(tool)
 
 
 def _undo_reason(row: ApprovalActionRow) -> Optional[str]:
