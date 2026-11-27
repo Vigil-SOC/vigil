@@ -31,6 +31,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 from sqlalchemy import event, select, text
+from sqlalchemy.orm import Session
 
 from core.config import Settings, get_settings
 from core.response.config import (
@@ -558,8 +559,12 @@ def update_ceiling(
     released_per_hour: Optional[int] = None,
     lowers_only: bool = False,
     locked: Optional[bool] = None,
+    session: Optional[Session] = None,
 ) -> Ceiling:
     """Store a person's edit of the ceiling. Does not execute anything.
+
+    With ``session`` the write joins that transaction, the caller commits, and
+    settling INTENT.md's pending keys is left to the caller once it has.
 
     A service account may lower an act flag. It may not raise one, resume,
     switch four-eyes, turn the crown-jewel hold or a step-score factor off, or
@@ -651,8 +656,9 @@ def update_ceiling(
         } | factors
         return replace(current, **edit), "Autonomy ceiling updated"
 
-    stored = _locked_update(change, user_id)
-    settle_pending(asked, user_id)
+    stored = _locked_update(change, user_id, session=session)
+    if session is None:
+        settle_pending(asked, user_id)
     return stored
 
 
@@ -837,66 +843,69 @@ def _locked_update(
     after: Optional[Callable[[Any], None]] = None,
     *,
     gated: bool = True,
+    session: Optional[Session] = None,
 ) -> Ceiling:
     """Read, change and write the row in one transaction with it locked.
 
     ``change`` sees the row as it is now, so no other write is lost, and the
     write leaves the same ``config.change`` entry as ``set_system_config``.
     ``after`` runs in that transaction, before the write is skipped as a no-op.
-    ``gated=False`` is for a change that only lowers autonomy.
+    ``gated=False`` is for a change that only lowers autonomy. With ``session``
+    that transaction is the caller's.
     """
     try:
-        return _write_locked(change, actor, after, gated)
+        if session is not None:
+            return _write_in(session, change, actor, after, gated)
+        with unit_of_work() as own:
+            return _write_in(own, change, actor, after, gated)
     except CeilingRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
         raise CeilingWriteError("autonomy.ceiling was not stored") from exc
 
 
-def _write_locked(
+def _write_in(
+    session: Session,
     change: Callable[[Ceiling], tuple[Ceiling, str]],
     actor: str,
-    after: Optional[Callable[[Any], None]] = None,
-    gated: bool = True,
-):
-    with unit_of_work() as session:
-        row = session.execute(
-            select(SystemConfig)
-            .where(SystemConfig.key == CEILING_KEY)
-            .with_for_update()
-        ).scalar_one_or_none()
-        current = _parse(row.value) if row is not None else Ceiling()
-        updated, reason = change(current)
-        if after is not None:
-            after(session)
-        if updated == current:
-            return current
-        old = row.value if row is not None else None
-        value = _dump(updated)
-        if row is None:
-            session.add(
-                SystemConfig(
-                    key=CEILING_KEY,
-                    value=value,
-                    description="Autonomy ceiling",
-                    config_type="autonomy",
-                    updated_by=actor,
-                )
+    after: Optional[Callable[[Any], None]],
+    gated: bool,
+) -> Ceiling:
+    row = session.execute(
+        select(SystemConfig).where(SystemConfig.key == CEILING_KEY).with_for_update()
+    ).scalar_one_or_none()
+    current = _parse(row.value) if row is not None else Ceiling()
+    updated, reason = change(current)
+    if after is not None:
+        after(session)
+    if updated == current:
+        return current
+    old = row.value if row is not None else None
+    value = _dump(updated)
+    if row is None:
+        session.add(
+            SystemConfig(
+                key=CEILING_KEY,
+                value=value,
+                description="Autonomy ceiling",
+                config_type="autonomy",
+                updated_by=actor,
             )
-        else:
-            row.value = value
-            row.updated_by = actor
-        config_store.ConfigService(user_id=actor)._create_audit_log(
-            session,
-            config_type="autonomy",
-            config_key=CEILING_KEY,
-            action="create" if old is None else "update",
-            old_value=old,
-            new_value=value,
-            change_reason=reason,
-            gated=gated,
         )
-        return updated
+    else:
+        row.value = value
+        row.updated_by = actor
+    config_store.ConfigService(user_id=actor)._create_audit_log(
+        session,
+        config_type="autonomy",
+        config_key=CEILING_KEY,
+        action="create" if old is None else "update",
+        old_value=old,
+        new_value=value,
+        change_reason=reason,
+        gated=gated,
+    )
+    return updated
 
 
 def set_workflow_tier(

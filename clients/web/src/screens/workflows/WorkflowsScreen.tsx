@@ -602,7 +602,7 @@ interface WfLimits {
   /** absent: optional needs nothing answers. The run goes without them and records no gap. */
   capabilities?: { bound: string[]; unbound: string[]; absent?: string[] }
   budgets?: { max_iterations?: number; max_cost_usd?: number; max_wall_ms?: number }
-  /** Set when WORKFLOW_DEFAULT_WALL_SECONDS is a number outside 60–86400. */
+  /** Set when a limit setting is out of range: WORKFLOW_DEFAULT_WALL_SECONDS, or a HUNT_DEFAULT_* on a hunt. */
   wall_note?: string | null
   /** set when a phase's agent is turned off: the server will refuse the run. */
   roles_note?: string | null
@@ -621,7 +621,7 @@ function turnsHint(asked: string, cost: string, limits: WfLimits | null): string
 }
 
 /** Working time. The cost ceiling is the one this run will actually use. */
-function wallHint(bad: boolean, ceiling: number | undefined, hunt: boolean, investigate: boolean): string {
+function wallHint(bad: boolean, ceiling: number | undefined, hunt: boolean, investigate: boolean, startingMinutes = 90): string {
   if (bad) return 'A whole number of minutes from 1 to 1440.'
   const amount = ceiling !== undefined && Number.isFinite(ceiling) ? ` ($${ceiling.toFixed(2)})` : ''
   const lines = [
@@ -631,7 +631,8 @@ function wallHint(bad: boolean, ceiling: number | undefined, hunt: boolean, inve
   if (investigate) lines.push('The agent also stops at 24 turns.')
   if (hunt) {
     lines.push('Keep going may extend it up to twice that limit or 3 hours, whichever is more.')
-    lines.push('A limit under 90 minutes shortens the hunt\'s starting wall.')
+    // The deployment's hunt wall (HUNT_DEFAULT_WALL_SECONDS), not always 90.
+    lines.push(`A limit under ${startingMinutes} minutes shortens the hunt's starting wall.`)
   }
   return lines.join(' ')
 }
@@ -1263,6 +1264,7 @@ export function RunModal({ wf, agent = false, onStarted, onWatch, onClose }: {
             isHuntLike && !costBad && maxCost.trim() ? cost : limits?.budgets?.max_cost_usd,
             isHuntLike,
             isInvestigate,
+            limits?.budgets?.max_wall_ms != null ? Math.round(limits.budgets.max_wall_ms / 60000) : undefined,
           )}
         />
         {isHuntLike && (
