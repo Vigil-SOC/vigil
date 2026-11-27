@@ -332,7 +332,8 @@ EffectClass = Literal["read", "read_unverified", "reversible", "irreversible"]
 class ToolClassBody(BaseModel):
     effect_class: EffectClass
     # The definition hash the person saw (#5300). On a mismatch the answer is
-    # 409 with the current definition. Without it, what Vigil holds now is pinned.
+    # 409 with the current definition; null says none was shown. Omitted, what
+    # Vigil holds now is pinned.
     definition_hash: Optional[str] = None
 
 
@@ -368,15 +369,31 @@ def _server(name: str, remote: frozenset) -> bool:
     return any(name.startswith(f"{server}_") for server in remote)
 
 
+def _state(
+    row: Optional[ToolEffectClass], held: Optional[dict]
+) -> tuple[bool, Optional[dict]]:
+    """Whether the row is withdrawn, and the tool's current definition.
+
+    A held definition that is not the pin counts as withdrawn before the
+    registry has written it, as the registry already withholds it.
+    """
+    if row is None:
+        return False, held
+    # A withdrawn row with nothing held now shows the definition it changed to.
+    current = held or row.changed_definition
+    withdrawn = row.changed_definition is not None or bool(
+        row.pinned_hash and held and tool_definition_hash(held) != row.pinned_hash
+    )
+    return withdrawn, current if withdrawn else held
+
+
 def _entry(
     row: Optional[ToolEffectClass],
     name: str,
     held: Optional[dict],
     remote: frozenset,
 ) -> ToolClassEntry:
-    withdrawn = row is not None and row.changed_definition is not None
-    # A withdrawn row with nothing held now shows the definition it changed to.
-    current = held or (row.changed_definition if withdrawn else None)
+    withdrawn, current = _state(row, held)
     return ToolClassEntry(
         name=name,
         effect_class=None if row is None or withdrawn else row.effect_class,
@@ -436,8 +453,8 @@ def put_tool_class(
     if row is None and (own or name not in _exposed(registry)):
         raise HTTPException(status_code=404, detail="No outside tool by that name")
     remote = remote_servers()
-    withdrawn = row is not None and row.changed_definition is not None
     held = registry.held_definitions().get(name)
+    withdrawn, current = _state(row, held)
     before = None if row is None or withdrawn else row.effect_class
     after = body.effect_class
     if after == before:
@@ -460,10 +477,8 @@ def put_tool_class(
             raise HTTPException(status_code=409, detail="Stopped: resume first")
     else:
         deny_unless(current_user.user_id, "ai_autonomy.stop", session)
-    current = held or (row.changed_definition if withdrawn else None)
-    if body.definition_hash is not None and (
-        current is None or tool_definition_hash(current) != body.definition_hash
-    ):
+    shown = "definition_hash" in body.model_fields_set
+    if shown and ((current and tool_definition_hash(current)) != body.definition_hash):
         raise HTTPException(
             status_code=409,
             detail={

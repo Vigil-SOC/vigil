@@ -93,6 +93,7 @@ class MCPRegistry:
         return {name: server for server, name, _ in self._named_tools()}
 
     def _named_tools(self):
+        from core.integrations.mcp.surface import VIGIL_SERVER
         from core.response.ceiling import withheld
 
         seen = set()
@@ -101,7 +102,8 @@ class MCPRegistry:
                 continue
             seen.add(tool_name)
             # A pinned tool is offered only while what is held is its pin (#5300).
-            if withheld(tool_name, tool):
+            # Vigil's own tools have no class row, so no pin.
+            if server_name != VIGIL_SERVER and withheld(tool_name, tool):
                 continue
             yield server_name, tool_name, tool
 

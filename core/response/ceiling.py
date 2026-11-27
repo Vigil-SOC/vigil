@@ -1689,40 +1689,47 @@ def tool_definition_hash(definition: Mapping[str, Any]) -> str:
 
 
 _PINS_TTL_SECONDS = 10.0
-# (read at, tool name -> (pinned hash, changed definition's hash)), every row.
-_pins_cache: tuple[float, dict[str, tuple[Optional[str], Optional[str]]]] = (
-    float("-inf"),
-    {},
-)
+Pins = dict[str, tuple[Optional[str], Optional[str]]]
+# (read at, tool name -> (pinned hash, changed definition's hash), whether any
+# read in this process has succeeded), every row.
+_pins_cache: tuple[float, Pins, bool] = (float("-inf"), {}, False)
 
 
-def tool_pins(*, fresh: bool = False) -> dict[str, tuple[Optional[str], Optional[str]]]:
+def _read_pins(names: Optional[list[str]] = None) -> Pins:
+    query = select(
+        ToolEffectClass.tool_name,
+        ToolEffectClass.pinned_hash,
+        ToolEffectClass.changed_definition,
+    )
+    if names is not None:
+        query = query.where(ToolEffectClass.tool_name.in_(names))
+    with unit_of_work() as session:
+        rows = session.execute(query).all()
+    return {
+        name: (pinned, tool_definition_hash(changed) if changed else None)
+        for name, pinned, changed in rows
+    }
+
+
+def tool_pins(*, fresh: bool = False) -> Pins:
     """Each class row's pinned hash and changed hash, through a short cache.
 
     As ``site.applied`` is read: each process re-reads at most every 10 s and a
     failed read keeps the last value. A stale entry only withholds, since
-    ``withheld`` also compares the held definition with the pin itself.
+    ``withheld`` also compares the held definition with the pin itself, and
+    ``check_pins`` reads a remote tool missing here from the store.
     """
     global _pins_cache
     now = time.monotonic()
-    at, value = _pins_cache
+    at, value, ok = _pins_cache
     if fresh or now - at >= _PINS_TTL_SECONDS:
         try:
-            with unit_of_work() as session:
-                rows = session.execute(
-                    select(
-                        ToolEffectClass.tool_name,
-                        ToolEffectClass.pinned_hash,
-                        ToolEffectClass.changed_definition,
-                    )
-                ).all()
-            value = {
-                name: (pinned, tool_definition_hash(changed) if changed else None)
-                for name, pinned, changed in rows
-            }
+            value, ok = _read_pins(), True
         except Exception as exc:  # noqa: BLE001
             logger.debug("tool pins not read; keeping last: %s", exc)
-        _pins_cache = (now, value)
+            if not ok:
+                return value  # never read: not stamped, so the next call retries
+        _pins_cache = (now, value, ok)
     return value
 
 
@@ -1730,9 +1737,12 @@ def withheld(name: str, tool: Mapping[str, Any]) -> bool:
     """Whether the registry must not offer ``tool`` under ``name``.
 
     Withdrawn, or a pinned tool whose held definition is not its pin, however
-    that definition arrived.
+    that definition arrived. Every outside tool, until this process has read
+    the pins once.
     """
     entry = tool_pins().get(name)
+    if not _pins_cache[2]:
+        return True
     if entry is None or entry[0] is None:
         return False
     pinned, changed = entry
@@ -1769,11 +1779,25 @@ def check_pins(server: str, tools: Iterable[Mapping[str, Any]], remote: bool) ->
     """
     from core.auth import trail_events
 
+    global _pins_cache
+    tools = [t for t in tools if t.get("name")]
     pins = tool_pins()
+    missing = [f"{server}_{t['name']}" for t in tools] if remote else []
+    missing = [n for n in missing if n not in pins]
+    if missing:
+        # Classified in another process since this one's cache was read: from
+        # the store now, or withheld until it is (#5300).
+        try:
+            found = _read_pins(missing)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tool pins from %s not read: %s", server, exc)
+            return False
+        if found:
+            at, cached, ok = _pins_cache
+            _pins_cache = (at, {**cached, **found}, ok)
+            pins = {**pins, **found}
     due: dict[str, dict] = {}
     for tool in tools:
-        if not tool.get("name"):
-            continue
         name = f"{server}_{tool['name']}"
         entry = pins.get(name)
         if entry is None:
