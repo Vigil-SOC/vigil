@@ -627,6 +627,17 @@
             ],
             "title": "Carrier"
           },
+          "emulation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emulation"
+          },
           "id": {
             "anyOf": [
               {
@@ -5989,6 +6000,11 @@
               }
             ],
             "title": "Carrier"
+          },
+          "emulation": {
+            "default": false,
+            "title": "Emulation",
+            "type": "boolean"
           },
           "server": {
             "anyOf": [

@@ -96,6 +96,11 @@ vstrike:
 opensearch:
   opensearch_search_logs: telemetry_search
 
+# The emulator the red team loop runs (#5315): held to the hosts listed under
+# Settings -> Limits & autonomy -> Emulators.
+atomic-red-team:
+  atomic_red_team_execute: emulation
+
 # Act carriers (#5313, docs/acts.md): what an approved act of each kind calls
 # on the server, keyed by the act tool. Every tool named is the server's own.
 microsoft-defender:

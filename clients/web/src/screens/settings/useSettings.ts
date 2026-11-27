@@ -1732,7 +1732,7 @@ export function useIngestionJob(dataType: 'finding' | 'history' = 'finding') {
   return { job, attaching, upload, start }
 }
 
-/** The stored emulators and host list (GET/PUT /api/autonomy/emulation), shared with the tool rows' mark. */
+/** The hosts emulators may run on (GET/PUT /api/autonomy/emulation). */
 export function useEmulation() {
   const [data, setData] = useState<Emulation | null>(null)
   const [failed, setFailed] = useState(false)

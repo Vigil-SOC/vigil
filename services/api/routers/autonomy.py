@@ -9,17 +9,16 @@ The ceiling and the tool classes are the frozen contract in
 
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from core.api.v1.autonomy_router import CeilingResponse, _exposed, _http, _view
+from core.api.v1.autonomy_router import CeilingResponse, _http, _view
 from core.auth.current_user import is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
-from core.deps import provide_mcp_registry, provide_workflows
+from core.deps import provide_workflows
 from core.detections.inventory import rollout_limits
-from core.integrations.mcp.registry import MCPRegistry
 from core.response import emulation
 from core.response.ceiling import (
     ACT,
@@ -28,7 +27,6 @@ from core.response.ceiling import (
     CeilingWriteError,
     ModelJudgeError,
     investigation_model,
-    own_tool_names,
     preview_model_change,
     raises_workflow,
     read_ceiling,
@@ -40,7 +38,7 @@ from core.response.ceiling import (
 )
 from core.response.config import managed_widening, settle_pending
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import ToolEffectClass, User
+from core.storage.models import User
 from core.workflows.workflows_service import INVESTIGATE_RUN_KIND, WorkflowsService
 from services.api.middleware.auth import get_current_active_user
 
@@ -372,22 +370,22 @@ def put_rollout_limits(
 
 
 class EmulationBody(BaseModel):
-    """The marked tools and the host list, each replacing what is stored.
+    """The host list, replacing what is stored. A host is one hostname: no
+    whitespace and no leading ``-``.
 
-    An omitted field stays as it is. A host is one hostname: no whitespace and
-    no leading ``-``.
+    ``tools`` is read and ignored (#5315): a tool is an emulator by its binding,
+    set on its classify row (``PUT /api/v1/autonomy/tools/{name}``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    tools: Optional[List[str]] = Field(None, max_length=200)
+    tools: Optional[List[Any]] = None
     hosts: Optional[List[str]] = Field(None, max_length=500)
 
 
 class EmulationResponse(BaseModel):
-    """Which outside tools are emulators, the hosts they may run on, and the defaults."""
+    """The hosts emulators may run on, and the defaults."""
 
-    tools: List[str]
     hosts: List[str]
     defaults: Dict[str, List[str]]
 
@@ -413,16 +411,15 @@ def put_emulation(
     body: EmulationBody,
     session: UnitOfWorkSession,
     current_user: User = Depends(get_current_active_user),
-    registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> EmulationResponse:
-    """Mark or unmark emulators, and edit the hosts they may run on.
+    """Edit the hosts emulators may run on.
 
-    Adding a mark or a host lets an emulator act where it could not: a
-    person's ``ai_autonomy.write``, refused while stopped, as loosening a
-    tool's class is. Removing either is ``ai_autonomy.stop``. One trail entry
-    names who changed what.
+    Adding a host lets an emulator act where it could not: a person's
+    ``ai_autonomy.write``, refused while stopped, as loosening a tool's class
+    is. Removing one is ``ai_autonomy.stop``. One trail entry names who
+    changed what.
     """
-    if body.tools is None and body.hosts is None:
+    if body.hosts is None and "tools" not in body.model_fields_set:
         raise HTTPException(status_code=422, detail="Nothing to change")
     bad = [h for h in body.hosts or [] if not emulation.valid_host(h)]
     if bad:
@@ -437,31 +434,15 @@ def put_emulation(
         raise HTTPException(
             status_code=503, detail="Could not read the emulators"
         ) from exc
-    wanted = emulation.Emulation(
-        tools=current.tools if body.tools is None else tuple(body.tools),
-        hosts=current.hosts if body.hosts is None else tuple(body.hosts),
-    )
-    change = emulation.diff(current, wanted)
-    # A mark names an outside tool a connected server offers, one already
-    # classed, or the Atomic tool, which ships marked.
-    own = own_tool_names()
-    known = set(emulation.ATOMIC_TOOLS)
-    for name in change.tools_added:
-        if name in own or not (
-            name in known
-            or session.get(ToolEffectClass, name) is not None
-            or name in _exposed(registry)
-        ):
-            raise HTTPException(
-                status_code=404, detail=f"No outside tool named {name!r}"
-            )
+    if body.hosts is None:  # only the ignored tools
+        return _emulation_view(current)
+    change = emulation.diff(current, emulation.Emulation(hosts=tuple(body.hosts)))
     if change.adds:
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
         if is_machine_request(current_user):
             raise HTTPException(
                 status_code=403,
-                detail="A service account or API token cannot mark an emulator "
-                "or list a host",
+                detail="A service account or API token cannot list a host",
             )
         try:
             stopped = read_ceiling().stopped
@@ -483,7 +464,6 @@ def put_emulation(
         return _emulation_view(
             emulation.update_emulation(
                 actor=current_user.principal_id,
-                tools=body.tools,
                 hosts=body.hosts,
                 allow=allow,
             )

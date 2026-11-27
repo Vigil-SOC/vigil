@@ -1,16 +1,15 @@
-"""Which outside tools are emulators, and the one host list they may run on (#5061).
+"""The one host list emulators may run on (#5061).
 
 One stored row, ``emulation``, beside ``autonomy.ceiling`` and
-``rollout.limits``: ``tools`` holds the marked outside tool names spelled as
-the registry spells them, ``hosts`` the hostnames every marked tool may act on.
-A tool never marks itself; a person does, here. Read on each use, never at
-import. A missing row is the defaults: both Atomic Red Team spellings marked
-and no hosts. A row that cannot be read is the defaults too, as the issue
-settles: the Atomic tools stay marked and, with no hosts, refused; a tool a
-person marked reads as unmarked until the row can be read again.
+``rollout.limits``: ``hosts`` holds the hostnames every emulator may act on.
+Which tools are emulators is their binding (``core/integrations/bindings.py``,
+#5315): a person binds a tool as an emulator on its classify row, and Atomic
+Red Team's shipped binding is one. Read on each use, never at import. A missing
+row, or one that cannot be read, lists no host, so every emulator call is refused.
+A stored ``tools`` field from before #5315 is ignored.
 
-``refusal`` is the check ``core.agents.tools_router`` makes before a call to a
-marked tool leaves; ``unlisted_hosts`` reads an answer back for steps on hosts
+``refusal`` is the check ``core.agents.tools_router`` makes before a call to an
+emulator leaves; ``unlisted_hosts`` reads an answer back for steps on hosts
 outside the list.
 """
 
@@ -33,8 +32,8 @@ from core.storage.unit_of_work import unit_of_work
 logger = logging.getLogger(__name__)
 
 EMULATION_KEY = "emulation"
-# The Atomic tool's engine id, and the {server}_{tool} spelling a connected
-# server flattens it to.
+# The Atomic tool's {server}_{tool} spelling and its engine id: names a declared
+# source may not take (core/sources.py). Its emulator binding is in bindings.yaml.
 ATOMIC_TOOLS = (
     "atomic-red-team_atomic_red_team_execute",
     "atomic_red_team_execute",
@@ -43,16 +42,11 @@ CHANGED = "autonomy.emulation_changed"
 UNLISTED = "emulation.unlisted_host"
 LIMITS_POINTER = "Settings → Limits & autonomy → Emulators"
 MAX_HOST = 253  # longest DNS name
-MAX_TOOL = 200
 
 
 @dataclass(frozen=True)
 class Emulation:
-    tools: Tuple[str, ...] = ATOMIC_TOOLS
     hosts: Tuple[str, ...] = ()
-
-    def marked(self, tool: str) -> bool:
-        return tool in self.tools
 
     def listed(self, hostname: str) -> Optional[str]:
         """The listed entry ``hostname`` names, ignoring case, or None."""
@@ -86,10 +80,6 @@ def valid_host(entry: Any) -> bool:
     )
 
 
-def valid_tool(name: Any) -> bool:
-    return isinstance(name, str) and 0 < len(name) <= MAX_TOOL and name.strip() == name
-
-
 def _unique(items: Iterable[str], key: Callable[[str], str] = str) -> Tuple[str, ...]:
     seen: Dict[str, str] = {}
     for item in items:
@@ -105,22 +95,14 @@ def _parse(value: Any) -> Emulation:
     if not isinstance(value, dict):
         logger.error("%s is not an object; defaults apply", EMULATION_KEY)
         return DEFAULTS
-    tools, hosts = value.get("tools"), value.get("hosts")
-    if not isinstance(tools, list):
-        logger.error(
-            "%s.tools is not a list; the Atomic tools are marked", EMULATION_KEY
-        )
-        tools = list(ATOMIC_TOOLS)
+    hosts = value.get("hosts")
     if not isinstance(hosts, list):
         logger.error("%s.hosts is not a list; no host is listed", EMULATION_KEY)
         hosts = []
     bad = [h for h in hosts if not valid_host(h)]
     if bad:
         logger.error("%s.hosts ignores %r", EMULATION_KEY, bad)
-    return Emulation(
-        tools=_unique(t for t in tools if valid_tool(t)),
-        hosts=_unique((h for h in hosts if valid_host(h)), str.lower),
-    )
+    return Emulation(hosts=_unique((h for h in hosts if valid_host(h)), str.lower))
 
 
 def read_stored() -> Emulation:
@@ -138,31 +120,27 @@ def read_emulation() -> Emulation:
 
 
 def dump(emulation: Emulation) -> Dict[str, List[str]]:
-    return {"tools": list(emulation.tools), "hosts": list(emulation.hosts)}
+    return {"hosts": list(emulation.hosts)}
 
 
 @dataclass(frozen=True)
 class Change:
-    tools_added: Tuple[str, ...]
-    tools_removed: Tuple[str, ...]
     hosts_added: Tuple[str, ...]
     hosts_removed: Tuple[str, ...]
 
     @property
     def adds(self) -> bool:
-        return bool(self.tools_added or self.hosts_added)
+        return bool(self.hosts_added)
 
     @property
     def removes(self) -> bool:
-        return bool(self.tools_removed or self.hosts_removed)
+        return bool(self.hosts_removed)
 
 
 def diff(current: Emulation, after: Emulation) -> Change:
     low = {h.lower() for h in current.hosts}
     low_after = {h.lower() for h in after.hosts}
     return Change(
-        tools_added=tuple(t for t in after.tools if t not in current.tools),
-        tools_removed=tuple(t for t in current.tools if t not in after.tools),
         hosts_added=tuple(h for h in after.hosts if h.lower() not in low),
         hosts_removed=tuple(h for h in current.hosts if h.lower() not in low_after),
     )
@@ -171,18 +149,15 @@ def diff(current: Emulation, after: Emulation) -> Change:
 def update_emulation(
     *,
     actor: str,
-    tools: Optional[List[str]],
     hosts: Optional[List[str]],
     allow: Callable[[Change], None],
 ) -> Emulation:
-    """Store the marked tools and the host list, and one trail entry, together.
+    """Store the host list and one trail entry together.
 
-    ``tools`` and ``hosts`` replace what is stored; None leaves one as it is.
-    ``allow`` is called with what changes while the row is locked, and raises
-    to refuse it: adding is a person's act, removing is not.
+    ``hosts`` replaces what is stored; None leaves it as it is. ``allow`` is
+    called with what changes while the row is locked, and raises to refuse it:
+    adding is a person's act, removing is not.
     """
-    if tools is not None and not all(valid_tool(t) for t in tools):
-        raise EmulationRefusal(422, "Not an outside tool name")
     if hosts is not None:
         bad = [h for h in hosts if not valid_host(h)]
         if bad:
@@ -192,7 +167,7 @@ def update_emulation(
                 + ", ".join(repr(h) for h in bad),
             )
     try:
-        return _write_locked(actor, tools, hosts, allow)
+        return _write_locked(actor, hosts, allow)
     except EmulationRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -201,7 +176,6 @@ def update_emulation(
 
 def _write_locked(
     actor: str,
-    tools: Optional[List[str]],
     hosts: Optional[List[str]],
     allow: Callable[[Change], None],
 ) -> Emulation:
@@ -215,8 +189,7 @@ def _write_locked(
         ).scalar_one_or_none()
         current = _parse(row.value) if row is not None else DEFAULTS
         updated = Emulation(
-            tools=current.tools if tools is None else _unique(tools),
-            hosts=current.hosts if hosts is None else _unique(hosts, str.lower),
+            hosts=current.hosts if hosts is None else _unique(hosts, str.lower)
         )
         change = diff(current, updated)
         if not (change.adds or change.removes):
@@ -228,7 +201,7 @@ def _write_locked(
                 SystemConfig(
                     key=EMULATION_KEY,
                     value=value,
-                    description="Emulator tools and the hosts they may run on",
+                    description="The hosts emulators may run on",
                     config_type="autonomy",
                     updated_by=actor,
                 )
@@ -241,8 +214,6 @@ def _write_locked(
             session,
             CHANGED,
             actor=actor,
-            tools_added=list(change.tools_added) or None,
-            tools_removed=list(change.tools_removed) or None,
             hosts_added=list(change.hosts_added) or None,
             hosts_removed=list(change.hosts_removed) or None,
         )
@@ -250,9 +221,8 @@ def _write_locked(
 
 
 def refusal(emulation: Emulation, tool: str, args: Dict[str, Any]) -> Optional[str]:
-    """Why a call to ``tool`` may not leave, or None. Only marked tools are held."""
-    if not emulation.marked(tool):
-        return None
+    """Why a call to ``tool``, an emulator, may not leave, or None. The caller
+    asks only for a tool bound as an emulator."""
     if not emulation.hosts:
         return (
             f"{tool} is an emulator and no host is listed for emulation; "

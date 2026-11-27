@@ -36,6 +36,7 @@ from core.auth.principals import SYSTEM_PRINCIPAL_ID
 from core.auth.tool_principal import Claims
 from core.cases.case_access import lost_reader
 from core.deps import provide_mcp_registry
+from core.integrations import bindings
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.mcp.surface import acting_as
 from core.llm.tool_schemas import CALL_INTEGRATION_TOOL
@@ -464,9 +465,11 @@ async def _run(
     if tool == CALL_INTEGRATION_TOOL:
         tool, raw = resolve_integration_call(registry, raw)
     claims = current_claims()
-    # A marked emulator is held to the operator's host list before anything leaves.
-    limits = await asyncio.to_thread(emulation.read_emulation)
-    held = emulation.refusal(limits, tool, raw)
+    # A tool bound as an emulator is held to the host list before anything
+    # leaves; read past the cache, so a binding made elsewhere holds at once.
+    emulator = await asyncio.to_thread(bindings.is_emulator, tool, fresh=True)
+    limits = await asyncio.to_thread(emulation.read_emulation) if emulator else None
+    held = emulation.refusal(limits, tool, raw) if limits is not None else None
     if held is not None:
         if attributed(claims):
             _outcome(claims, tool, raw, "refused")
@@ -484,7 +487,7 @@ async def _run(
                     _outcome(claims, tool, raw, "refused")
                 raise MCPFailure("refused", str(exc)) from exc
     # Into what is sent only: an approval and the trail hold what the model asked.
-    if limits.marked(tool):
+    if limits is not None:
         args = _scoped(args, tool, limits, registry)
 
     denial = None if claims is None else _denial(claims, tool, raw)
@@ -522,7 +525,7 @@ async def _run(
         result, handled = await asyncio.wait_for(
             execute_mcp_tool(tool, args, seconds, registry), timeout=seconds
         )
-        if handled and limits.marked(tool):
+        if handled and limits is not None:
             # The list bounds what Vigil asks, not what the far side does: a
             # step it reports on another host is flagged, the answer unchanged.
             stray = emulation.unlisted_hosts(limits, result)

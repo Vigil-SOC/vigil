@@ -158,11 +158,6 @@ NEED_ALIASES: Dict[str, str] = {"atomic_red_team_execute": EMULATION}
 def candidates_for(capability: str) -> List[Tuple[Optional[str], str]]:
     """(server, catalogue name) of each tool answering a capability; a need that
     is none names one catalogue tool."""
-    if capability == EMULATION:
-        # Every outside tool the stored emulation record marks, read now.
-        from core.response.emulation import read_emulation
-
-        return [(None, tool) for tool in read_emulation().tools]
     if capability in CAPABILITY_NAMES:
         return [(b.server, b.tool) for b in bindings.tools_for(capability)]
     return [(None, capability)]
@@ -489,11 +484,12 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if effect in (REVERSIBLE, IRREVERSIBLE)
     }
     writes = own | outside
-    # A tool the emulation record marks is an emulator wherever it was bound: the
-    # agent layer journals each call to it, and it gets the emulation bounds.
+    # A tool bound as an emulator is one wherever it was bound: the agent layer
+    # journals each call to it, and it gets the emulation bounds.
     from core.response.emulation import read_emulation
 
-    emulation = read_emulation()
+    marked = bindings.emulators()
+    emulation = read_emulation() if marked & set(names) else None
     return [
         {
             **tool,
@@ -504,7 +500,7 @@ def _mark_writes(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "emulator": True,
                     **_name_hosts(tool, emulation.hosts),
                 }
-                if emulation.marked(tool["id"])
+                if emulation is not None and tool["id"] in marked
                 else {}
             ),
         }
