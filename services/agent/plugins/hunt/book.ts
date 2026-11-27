@@ -5,6 +5,7 @@ import { entitiesOf, fromText, key } from "./entities.js";
 import { newId } from "./ids.js";
 import { drain, grantOf, journalNote } from "./inbox.js";
 import type { Journal } from "./journal.js";
+import { checkTechnique } from "./attack.js";
 import { boundBy, boundReason, standingOf, TOOL_FAILURE } from "./opening.js";
 import { buildReport, renderCaseFile } from "./report.js";
 import type { ToolFailure } from "../../contracts/tool.js";
@@ -105,7 +106,7 @@ export class HuntBook {
   // Every evidence source reaches the ledger through sanitize() and entity
   // extraction, whoever wrote it.
   appendEvidence(records: readonly WorkerEvidence[], dispatchId: string | null = null): EvidenceRecord[] {
-    return records.map(sanitize).map(({ supports, weakens, query_failed, ...observed }) => {
+    return records.map(sanitize).map(citeTechnique).map(({ supports, weakens, query_failed, ...observed }) => {
       const evidenceId = newId("ev");
       // A row recording a query that failed or came back empty is a blind spot (#2207),
       // filed the way a failed call is and never linked: it bears on no ruling.
@@ -714,4 +715,17 @@ export class HuntBook {
     this.parkOnRefusal(boundBy(this.hunt) === null ? reason : boundReason(this.hunt));
     return "parked";
   }
+}
+
+// A worker's cited technique, checked against the shipped ATT&CK catalogue as
+// attributeSource checks its source: an id that is not active is not counted, and
+// the record is kept with the refusal on its payload.
+function citeTechnique(record: WorkerEvidence): WorkerEvidence {
+  if (record.provenance !== "worker") return record;
+  // The refusal keys are ours: a worker's payload cannot carry one of its own.
+  const { claimed_attack_technique: _c, technique_refusal: _r, technique_suggestions: _s, ...payload } = record.payload;
+  const { attack_technique, ...rest } = record;
+  if (attack_technique === undefined) return { ...rest, payload };
+  const checked = checkTechnique(attack_technique);
+  return "technique" in checked ? { ...rest, payload, attack_technique: checked.technique } : { ...rest, payload: { ...payload, ...checked } };
 }

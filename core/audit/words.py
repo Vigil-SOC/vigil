@@ -503,6 +503,9 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     "autonomy.tool_withdrawn": lambda p: f"Withdrew {p.get('tool') or 'a tool'}: its "
     "definition no longer matches the one classified",
     "tools.classified": "Classed outside tools on upgrade",
+    "source.credential_deleted": lambda p: f"Deleted {p.get('key') or 'a credential'} "
+    f"of declared source {p.get('source') or 'unknown'}"
+    + (f" ({p['reason']})" if p.get("reason") else ""),
     "autonomy.emulation_changed": _emulation,
     "emulation.unlisted_host": lambda p: f"{p.get('tool') or 'An emulator'} reported steps "
     f"on hosts not listed for emulation: {', '.join(p.get('hosts') or []) or 'unknown'}",

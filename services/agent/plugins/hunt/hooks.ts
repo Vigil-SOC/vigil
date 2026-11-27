@@ -12,6 +12,7 @@ import { narrowFinding, type RunSpec, type ToolSpec } from "../../core/spec.js";
 import { isVisibilityGap } from "../../core/security.js";
 import { toolsFrom } from "../../tools/remote.js";
 import { disconfirmationCritic, evidenceFrom, narrativeWriter, type AdapterOptions } from "./adapters.js";
+import { refusalsOf } from "./attack.js";
 import { pendingCheckpoints } from "./checkpoints.js";
 import { suppressedEntities } from "./frontier.js";
 import { allowanceOf, declaredKeysOf, huntSpec, type HuntSpec } from "./config.js";
@@ -527,13 +528,13 @@ const RESULT_ITEM_FALLBACK = {
     attack_technique: {
       type: "string",
       description:
-        "The ATT&CK technique id the rows show, e.g. T1071.001, chosen from the playbook's list when it declares one. Leave it out when the rows show none.",
+        "The ATT&CK technique or sub-technique id the rows show, e.g. T1071.001. It is checked against the ATT&CK catalogue when recorded. Leave it out when the rows show none.",
     },
   },
 };
 
-// The plugin's finding shape, narrowed at spec build to the playbook's data domains and
-// techniques. A ledger journaled before the spec carried one narrows the fallback here.
+// The plugin's finding shape, narrowed at spec build to the playbook's data domains.
+// A ledger journaled before the spec carried one narrows the fallback here.
 function resultItem(spec: RunSpec): Record<string, unknown> {
   return spec.finding ?? narrowFinding(RESULT_ITEM_FALLBACK, spec.sections);
 }
@@ -607,7 +608,9 @@ function huntTools(ctx: PluginContext, ports: HuntPorts): RegisteredTool[] {
               hypothesis_id: typeof lead.hypothesis_id === "string" && book.projection.hypotheses.has(lead.hypothesis_id) ? lead.hypothesis_id : null,
             });
           });
-          return ok([{ evidence_ids: records.map((one) => one.evidence_id), questions: raised }]);
+          // A cited technique the catalogue refused, so the agent can cite again.
+          const refused = refusalsOf(records);
+          return ok([{ evidence_ids: records.map((one) => one.evidence_id), questions: raised, ...(refused.length > 0 ? { technique_refusals: refused } : {}) }]);
         });
       },
     ),

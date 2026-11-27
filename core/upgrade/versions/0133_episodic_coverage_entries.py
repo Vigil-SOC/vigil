@@ -1,11 +1,11 @@
-"""Pin a remote server's classified tool to the definition a person saw (#5300).
+"""One coverage entry per key per check (#5293).
 
 Chains after ``0132_workflow_run_step_score``.
 """
 
 from core.upgrade.revision import run_sql
 
-revision = "0133_tool_definition_pin"
+revision = "0133_episodic_coverage_entries"
 down_revision = "0132_workflow_run_step_score"
 
 

@@ -633,7 +633,8 @@ def missed_runs_report(
     counted as confirmed: the step is known to have run. One whose steps are all
     ``unknown`` is listed in ``unknown`` with their reasons. Not read for a Case.
     """
-    # Hunt Verdicts store techniques unchecked: an id that is not an active ATT&CK
+    # Hunt evidence is checked against the catalogue when recorded, but Verdicts
+    # written before that check hold unchecked ids: one that is not an active ATT&CK
     # technique never reaches a group, so a made-up one cannot become a Case.
     verdicts = [
         {**v, "techniques": {t for t in v["techniques"] if _is_listable(t)}}

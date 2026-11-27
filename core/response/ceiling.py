@@ -1861,6 +1861,37 @@ def check_pins(server: str, tools: Iterable[Mapping[str, Any]], remote: bool) ->
         return False
 
 
+def delete_tool_classes(session, prefix: str, actor: str) -> list[str]:
+    """Delete every class row whose name starts with the literal ``prefix``.
+
+    Each with a trail entry to unclassified, in the caller's transaction. Only
+    tightens: a name with no row asks first.
+    """
+    from core.auth import trail_events
+
+    rows = [
+        row
+        for row in session.execute(
+            select(ToolEffectClass).where(
+                ToolEffectClass.tool_name.startswith(prefix, autoescape=True)
+            )
+        ).scalars()
+        if row.tool_name.startswith(prefix)  # literal, whatever the LIKE did
+    ]
+    for row in rows:
+        session.delete(row)
+        trail_events.record(
+            session,
+            TOOL_CLASSIFIED,
+            actor=actor,
+            tool=row.tool_name,
+            class_before=row.effect_class,
+            class_after="unclassified",
+        )
+    session.flush()
+    return sorted(row.tool_name for row in rows)
+
+
 def tighten_from_hints(server: str, tools: Iterable[dict]) -> bool:
     """``destructiveHint: true`` raises an existing row to irreversible.
 

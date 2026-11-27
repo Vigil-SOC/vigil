@@ -55,7 +55,6 @@ x-intent-env: &intent-env
   DAEMON_AUTO_TRIAGE: ${DAEMON_AUTO_TRIAGE:-true}
   DAEMON_AUTO_ENRICH: ${DAEMON_AUTO_ENRICH:-true}
   DAEMON_AUTO_RESPONSE: ${DAEMON_AUTO_RESPONSE:-true}
-  DAEMON_CONFIDENCE_THRESHOLD: ${DAEMON_CONFIDENCE_THRESHOLD:-0.90}
   DAEMON_REVIEW_THRESHOLD: ${DAEMON_REVIEW_THRESHOLD:-0.85}
   DAEMON_MONITOR_THRESHOLD: ${DAEMON_MONITOR_THRESHOLD:-0.70}
   DAEMON_FORCE_APPROVAL: ${DAEMON_FORCE_APPROVAL:-false}
@@ -285,6 +284,9 @@ services:
       SSL_CERT_FILE:
       REQUESTS_CA_BUNDLE:
       NODE_EXTRA_CA_CERTS:
+      # Splunk's official MCP server, reached from here over HTTPS (no runner).
+      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-}
+      SPLUNK_MCP_TOKEN: ${SPLUNK_MCP_TOKEN:-}
       # Declared intent directory, read here for the skills API's managed state
       # and revision only; soc-daemon is still the only applier (see there).
       VIGIL_INTENT_DIR: ${VIGIL_INTENT_DIR:-}
@@ -518,6 +520,9 @@ services:
       SPLUNK_URL: ${SPLUNK_URL}
       SPLUNK_USERNAME: ${SPLUNK_USERNAME}
       SPLUNK_PASSWORD: ${SPLUNK_PASSWORD}
+      # Official Splunk MCP server, as for backend.
+      SPLUNK_MCP_URL: ${SPLUNK_MCP_URL:-}
+      SPLUNK_MCP_TOKEN: ${SPLUNK_MCP_TOKEN:-}
       CROWDSTRIKE_CLIENT_ID: ${CROWDSTRIKE_CLIENT_ID}
       CROWDSTRIKE_CLIENT_SECRET: ${CROWDSTRIKE_CLIENT_SECRET}
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}

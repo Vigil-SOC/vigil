@@ -827,6 +827,8 @@ secrets:
 
   # Optional data-source integrations.
   splunkPassword: ""
+  # Bearer for Splunk's official MCP server at config.SPLUNK_MCP_URL.
+  splunkMcpToken: ""
   crowdstrikeClientId: ""
   crowdstrikeClientSecret: ""
   elasticApiKey: ""
@@ -951,6 +953,8 @@ config:
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""
   SPLUNK_VERIFY_SSL: "true"
+  # Splunk's official MCP server (https); its bearer is secrets.splunkMcpToken.
+  SPLUNK_MCP_URL: ""
   CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
   ELASTIC_SIEM_ELASTICSEARCH_URL: ""
   ELASTIC_SIEM_KIBANA_URL: ""
@@ -990,7 +994,6 @@ config:
   DAEMON_AUTO_TRIAGE: "true"
   DAEMON_AUTO_ENRICH: "true"
   DAEMON_AUTO_RESPONSE: "true"
-  DAEMON_CONFIDENCE_THRESHOLD: "0.90"
   DAEMON_REVIEW_THRESHOLD: "0.85"
   DAEMON_MONITOR_THRESHOLD: "0.70"
   DAEMON_FORCE_APPROVAL: "false"

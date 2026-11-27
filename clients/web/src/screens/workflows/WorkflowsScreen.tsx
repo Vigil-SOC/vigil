@@ -3205,6 +3205,12 @@ function HuntEvidenceTable({ found, total }: { found: HuntEvidence[]; total: num
                     {one.is_gap && one.gap_detail && <span className="muted mono break-all">{one.gap_detail}</span>}
                     {one.salience && !one.is_gap && <span className="muted">{one.salience}</span>}
                     {one.attack_technique && <span className="muted mono">{one.attack_technique}</span>}
+                    {one.technique_refusal && (
+                      <span className="muted break-all">
+                        <span className="mono">{one.technique_refusal.claimed_attack_technique}</span> not counted: {one.technique_refusal.technique_refusal}
+                        {one.technique_refusal.technique_suggestions.length > 0 && <>; try <span className="mono">{one.technique_refusal.technique_suggestions.join(', ')}</span></>}
+                      </span>
+                    )}
                     <Attested record={one} />
                     {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
                   </div>
@@ -4081,7 +4087,7 @@ function DeleteModal({ wf, onClose, onDeleted }: { wf: Workflow; onClose: () => 
 }
 
 const CHANGES_LABEL = { read_only: 'Read-only', asks_first: 'Asks first', on_its_own: 'On its own' } as const
-const CHANGES_TIP = 'Its actions wait for you unless Settings lets a high-confidence reversible one through.'
+const CHANGES_TIP = 'Its actions wait for you unless Settings › Limits & autonomy lets the run take them.'
 const SUCCESS_TIP = {
   source: 'Workflow steps and chat turns.',
   calculation: 'The share that ran to the end.',

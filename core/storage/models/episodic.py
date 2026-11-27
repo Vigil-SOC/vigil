@@ -5,8 +5,8 @@ Everything is keyed by investigation_kind + investigation_id and never by
 run_id: a run-keyed schema cannot represent the Case-authored Verdicts that
 follow, which have a Case behind them and no run at all.
 
-No column is nullable. An empty list means known-to-be-none, and there is no
-unknown state to represent.
+No column is nullable (coverage entries aside, see there). An empty list means
+known-to-be-none, and there is no unknown state to represent.
 
 The domains these columns range over are stated once, in
 infra/database/init/26_episodic_memory.sql, as every other table in that
@@ -227,6 +227,44 @@ class EpisodicGap(Base):
         Index("idx_episodic_gaps_recall", text("concluded_at DESC"), "id"),
         Index(
             "idx_episodic_gaps_investigation", "investigation_kind", "investigation_id"
+        ),
+    )
+
+
+class EpisodicCoverageEntry(Base):
+    """One key checked once (#5293): an Entity Key or technique ID, uncapped.
+
+    Unlike the rows above, most columns are nullable. A reopen row names no
+    investigation and has no outcome; a Case has no run; only a Case has a
+    closer. Withdrawn through ``clear_investigation``, not by a foreign key.
+    The DDL (``core/upgrade/versions/0133_episodic_coverage_entries.sql``)
+    states the vocabularies.
+    """
+
+    __tablename__ = "episodic_coverage_entries"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    investigation_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    investigation_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    method: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trust: Mapped[str] = mapped_column(Text, nullable=False)
+    concluded_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    concluded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_episodic_coverage_entries_key", "key", text("concluded_at DESC")),
+        Index(
+            "idx_episodic_coverage_entries_investigation",
+            "investigation_kind",
+            "investigation_id",
         ),
     )
 

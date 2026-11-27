@@ -97,9 +97,11 @@ def _skills_section(
 
 def confidence_band_values(config: ResponseConfig) -> Dict[str, str]:
     """Placeholder values for the band lines. Bands are written half-open
-    (``0.85-<0.90``) so no upper edge has to be derived from the next line."""
+    (``0.70-<0.85``) so no upper edge has to be derived from the next line.
+    ``auto_approve`` is retired; an operator's stored agent that still names it
+    reads ``never``."""
     return {
-        "auto_approve": f"{config.confidence_threshold:.2f}",
+        "auto_approve": "never",
         "review": f"{config.review_threshold:.2f}",
         "monitor": f"{config.monitor_threshold:.2f}",
     }

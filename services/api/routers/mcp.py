@@ -275,16 +275,24 @@ async def set_server_enabled(
     }
 
 
-def _spawn_changed(old, new) -> bool:
+def _spawn_changed(old, new, session=None) -> bool:
     """Whether ``new`` would start differently from ``old``.
 
     Env counts only as mcp-config.json declares it (substituted), plus the
     credentials it names: the rest is resolved from saved integration settings
     at each connect (``runner_env``), stdio child or runner alike. A runner
     launches from its own catalog with only that env, so there command, args
-    and cwd do not count.
+    and cwd do not count. A remote entry changes when its URL or headers,
+    resolved now, differ from what its live ``session`` was opened with.
     """
+    from core.integrations.mcp.client import RemoteParams
     from core.integrations.mcp.runner import runner_url
+
+    if new.url:
+        params = getattr(session, "server_params", None)
+        if not isinstance(params, RemoteParams):
+            return True
+        return (params.url, params.headers) != _service().remote_target(new)
 
     def spawn(server):
         env = server.env or {}
@@ -319,7 +327,8 @@ async def reload_servers(
     * changed spawn config: reconnected on the new config. A stdio child
       compares command, args, cwd and declared env; a server in the MCP runner
       compares only its declared env and credentials, because the runner
-      launches from its own catalog and ignores command, args and cwd;
+      launches from its own catalog and ignores command, args and cwd; a
+      remote (``url``) entry compares its URL and headers as resolved now;
     * unchanged: left alone.
 
     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
@@ -351,7 +360,14 @@ async def reload_servers(
     # Before the swap: disconnect_from_server only stops a server in the runner
     # while its name is still in the catalog.
     for name in live:
-        if name in new_catalog and svc.is_server_enabled(name):
+        # An entry turning remote is dropped here too: after the swap its old
+        # runner process would no longer be stopped.
+        becomes_remote = (
+            name in new_catalog
+            and new_catalog[name].url
+            and not getattr(old_catalog.get(name), "url", None)
+        )
+        if name in new_catalog and svc.is_server_enabled(name) and not becomes_remote:
             continue
         try:
             if await drop(name):
@@ -373,7 +389,11 @@ async def reload_servers(
             # Puts the saved rule paths into security-detections' new entry, as
             # the live one has, so they don't read as a change.
             svc.setup_required(name)
-            if not _spawn_changed(old_catalog[name], new_catalog[name]):
+            if not _spawn_changed(
+                old_catalog[name],
+                new_catalog[name],
+                mcp_client.persistent_sessions.get(name),
+            ):
                 continue
             if not await drop(name):
                 # The old session is still there and would be reused.

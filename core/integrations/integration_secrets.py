@@ -299,6 +299,11 @@ def unstorable_secret_fields(integration_id: str) -> List[str]:
 
 def secret_fields_for(integration_id: str) -> Mapping[str, str]:
     """Return the secret-field map for an integration, empty if unregistered."""
+    if integration_id.startswith("source-"):
+        # A declared source's own fields only (#5302), from the applied row.
+        from core.sources import source_secret_fields
+
+        return source_secret_fields(integration_id)
     return INTEGRATION_SECRET_FIELDS.get(integration_id) or _custom_secret_fields(
         integration_id
     )
