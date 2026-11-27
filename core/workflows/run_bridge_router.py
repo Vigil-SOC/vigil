@@ -619,9 +619,10 @@ def _proposal(raw: Any) -> Union[Dict[str, Any], Tuple[str, str]]:
 # re-sent terminal would withdraw it as a question the run left unanswered. The
 # case ids in parameters are what put it on each case's decisions. Keyed per run,
 # action and target, so a terminal that arrives twice files each one once; and
-# asked once across cases, so a second case's run joins a pending ask, or is told
-# it was already decided, instead of asking again. One page per call that files
-# something new.
+# asked once across cases and people, so a run joins a pending ask, or is told it
+# was already decided, instead of asking again. Nor is it asked when a connected
+# vendor already reports the target in the act's state. One page per call that
+# files something new.
 def _propose_actions(
     case_id: str,
     run_id: str,
@@ -660,13 +661,36 @@ def _propose_actions(
             if match and match.idempotency_key == key and match.status != "failed":
                 filed.append(match.action_id)  # a re-sent terminal
                 continue
-            if match is not None and _already_asked(
-                service, match, case_id, run_id, title
-            ):
-                continue
             # This run's own ask failed before: a re-sent terminal files it again
             # for a person, not for the ceiling.
             resent = match is not None and match.idempotency_key == key
+            # A pending ask, whoever made it, lists this case too: one ask, one answer.
+            if (
+                match is not None
+                and match.status == "pending"
+                and _already_asked(service, match, case_id, run_id, title)
+            ):
+                continue
+            # What the vendor says now, which also sees what was done outside Vigil.
+            vendor = None if resent else _in_force(action_type, target, registry)
+            if vendor is not None and vendor["holds"]:
+                _note_in_force(case_id, run_id, title, action_type, target, vendor)
+                continue
+            # An executed ask the vendor reports in the act's undone state was lifted
+            # outside Vigil (a host released in the EDR's console): asked again. A
+            # vendor still carrying it out ("requested") has not lifted it.
+            lifted = (
+                match is not None
+                and match.status == "executed"
+                and vendor is not None
+                and vendor["state"] == _undone_word(action_type)
+            )
+            if (
+                match is not None
+                and not lifted
+                and _already_asked(service, match, case_id, run_id, title)
+            ):
+                continue
             action, inserted = service._put_action(
                 action_type=ActionType(action_type),
                 title=title,
@@ -699,8 +723,8 @@ def _propose_actions(
 
     if filed:
         _record_proposals(case_id, run_id, filed)
-    # Only what this call created: a re-sent terminal, or an ask another run
-    # already made, pages nobody.
+    # Only what this call created: a re-sent terminal, an ask already made, or an
+    # act the vendor says already holds pages nobody.
     if created:
         page_proposed_containment(case_id, run_id, created)
 
@@ -745,10 +769,82 @@ def _release_under_ceiling(
         return action
 
 
-# True when another run's proposal already covers this one: a pending ask now
-# lists this case too, and an approved or executed one is noted here. A rejected
-# or failed one is not an answer to this run's evidence, so it is asked again;
-# nor is an executed one undone since (a released host, an enabled user).
+# What the connected vendors report about the target for this act (see
+# containment.in_force), asked on the app's loop, where the vendor servers'
+# connections live: this route runs in a worker thread. Any failure leaves the
+# ask to a person.
+def _in_force(
+    action_type: str, target: str, registry: Optional[MCPRegistry]
+) -> Optional[Dict[str, Any]]:
+    from anyio import from_thread
+
+    from core.response.approval_service import CONTAINMENT_TYPES
+    from core.response.containment import in_force, live_registry
+
+    if action_type not in CONTAINMENT_TYPES:
+        return None
+
+    async def read() -> Optional[Dict[str, Any]]:
+        return await in_force(action_type, target, await live_registry(registry))
+
+    try:
+        return from_thread.run(read)
+    except Exception:  # noqa: BLE001 — unread, the ask goes to a person
+        logger.exception("could not read whether %s on %s holds", action_type, target)
+        return None
+
+
+# A vendor lookup's word for a target the act no longer holds on: a released
+# host, an enabled account.
+def _undone_word(action_type: str) -> Optional[str]:
+    from core.response.proposal_targets import UNDONE_LOOKUP, UNDONE_STATE
+
+    return UNDONE_LOOKUP.get(action_type) or UNDONE_STATE.get(action_type)
+
+
+# Once per run, act and target, so a re-sent terminal says nothing new. The same
+# kind of system note as an ask already made, with no action id: nothing was filed.
+def _note_in_force(
+    case_id: str,
+    run_id: str,
+    title: str,
+    action_type: str,
+    target: str,
+    held: Dict[str, Any],
+) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    details = {
+        "run_id": run_id,
+        "action_type": action_type,
+        "target": target,
+        "vendor": held["vendor"],
+        "state": held["state"],
+    }
+    try:
+        case = DatabaseDataService().get_case(case_id) or {}
+        if any(
+            a.get("activity_type") == "action_already_requested"
+            and (a.get("details") or {}).get("run_id") == run_id
+            and (a.get("details") or {}).get("action_type") == action_type
+            and (a.get("details") or {}).get("target") == target
+            for a in case.get("activities") or []
+        ):
+            return
+        _add_activity(
+            case_id,
+            "action_already_requested",
+            f"{title}: {held['vendor']} reports it already {held['state']}",
+            details,
+        )
+    except Exception:  # noqa: BLE001 — nothing was filed either way
+        logger.exception("could not note %s on case %s", title, case_id)
+
+
+# True when an earlier ask already covers this one, a run's or a person's: a
+# pending ask now lists this case too, and an approved or executed one is noted
+# here. A rejected or failed one is not an answer to this run's evidence, so it is
+# asked again; nor is an executed one undone since (a released host, an enabled user).
 def _already_asked(
     service: ApprovalService, match: Any, case_id: str, run_id: str, title: str
 ) -> bool:
