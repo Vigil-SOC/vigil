@@ -454,7 +454,7 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
       return pending.capability == null
         ? {
             title: `Put ${pending.name} back on its shipped binding?`,
-            body: 'Hunts, investigations and root-cause traces that need its shipped capability hold it again from their next run.',
+            body: 'Runs that need what it is shipped to answer hold it again from their next run.',
           }
         : pending.capability === EMULATION
           ? {
