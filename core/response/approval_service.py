@@ -376,34 +376,38 @@ def _host_names(*names: Optional[str]) -> List[str]:
     return sorted(folded)
 
 
+def _asks():
+    """Rows that ask for an act, whoever filed them: a run, a person, a playbook or
+    the retired daemon responder. An undo row (``undoes``) asks for the way back,
+    and a run's question (``workflow_run_id``) is answered by resuming that run, so
+    neither is an ask for the act itself."""
+    return (
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.parameters["undoes"].astext.is_(None))
+        .where(ApprovalActionRow.workflow_run_id.is_(None))
+    )
+
+
 def _isolations_of(names: Sequence[str]):
-    """Isolations of a host named by any of ``names``: the retired daemon
-    responder's (rows remain on installs), which key on the IP when the alert had
-    one and on the hostname when not, and runs' proposals, which name the host as
-    the model did."""
+    """Asks to isolate a host named by any of ``names``: by its IP or its hostname,
+    as the retired responder keyed on either and a run names the host as the model
+    did."""
     target = func.lower(func.trim(ApprovalActionRow.target))
     hostname = func.lower(func.trim(ApprovalActionRow.parameters["hostname"].astext))
     return (
-        select(ApprovalActionRow)
+        _asks()
         .where(ApprovalActionRow.action_type == ActionType.ISOLATE_HOST.value)
-        .where(
-            or_(
-                ApprovalActionRow.idempotency_key.like("isolate_host:%"),
-                ApprovalActionRow.idempotency_key.like("run-proposal:%"),
-            )
-        )
         .where(or_(target.in_(names), hostname.in_(names)))
     )
 
 
 def _same_ask(action_type: str, target: str):
-    """Run proposals of ``action_type`` on ``target``, any status; for an isolation,
-    any isolation of that host."""
+    """Asks for ``action_type`` on ``target``, any status, whoever filed them; for
+    an isolation, any isolation of that host."""
     if action_type == ActionType.ISOLATE_HOST.value:
         return _isolations_of(_host_names(target))
     return (
-        select(ApprovalActionRow)
-        .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+        _asks()
         .where(ApprovalActionRow.action_type == action_type)
         .where(
             func.lower(func.trim(ApprovalActionRow.target)) == target.strip().lower()
@@ -522,8 +526,9 @@ class ApprovalService:
 
         The bool is True when this call inserted. Isolation uses it so a
         reused approved/pending row is not executed again. ``same_host`` is an
-        isolation's IP and hostname: a non-failed isolation of that host under
-        either name, or proposed by a run, is the existing row whatever its key.
+        isolation's IP and hostname: an isolation of that host under either
+        name, asked for by anyone and in any status but failed (a rejected one
+        included), is the existing row whatever its key.
         """
         key = idempotency_key or None
 
@@ -1173,17 +1178,20 @@ class ApprovalService:
         self, key: str, action_type: str, target: str
     ) -> Optional[PendingAction]:
         """The row a run's proposal would repeat: its own (by ``key``) first, else
-        the newest run proposal of the same action on the same target, any status.
-        An isolation also matches a retired responder's isolation of that host,
-        whether its alert named the host by IP or by hostname."""
+        the newest live ask (pending, approved or executed) for the same action on
+        the same target, else the newest of any status, whoever filed it: another
+        run, a person, or the retired responder. An isolation matches the host by
+        IP or by hostname."""
         db = get_db_manager()
         with db.session_scope() as session:
             own = _nonfailed_by_key(session, key)
             if own is not None:
                 return _row_to_pending(own)
+            # A live ask first: a newer rejected or failed one does not hide it.
+            live = ApprovalActionRow.status.in_(_LIVE)
             row = session.execute(
                 _same_ask(action_type, target)
-                .order_by(ApprovalActionRow.created_at.desc())
+                .order_by(live.desc(), ApprovalActionRow.created_at.desc())
                 .limit(1)
             ).scalar_one_or_none()
             return _row_to_pending(row) if row else None

@@ -19,8 +19,8 @@ import logging
 from alembic import op
 from sqlalchemy import text
 
-revision = "0136_emulator_bindings"
-down_revision = "0135_tool_capability_binding"
+revision = "0137_emulator_bindings"
+down_revision = "0136_falcon_host_search_read"
 
 logger = logging.getLogger(__name__)
 
