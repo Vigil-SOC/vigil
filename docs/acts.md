@@ -92,7 +92,8 @@ state is asked whether the target is already in it: a carrier's lookup, and a
 read-only state lookup in `core/integrations/state_reads.yaml` for a server
 that does not carry the act (Falcon's host search, for `isolate_host`). When
 every record found reads as done, nothing is filed and the case notes what the
-vendor reported. A state lookup takes the same reading as a carrier, plus
+vendor reported; when any record is not done, or a lookup can't tell, the
+proposal is filed for a person. A state lookup takes the same reading as a carrier, plus
 `template` and `address_template`, which fill the lookup argument with the
 target quoted (`hostname:'{target}'`). It is never called to act.
 

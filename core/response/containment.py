@@ -104,7 +104,8 @@ def _lookup_done(action: PendingAction) -> str:
 
 
 async def _dial_vendors() -> None:
-    """Connect the containment servers this process has not: a server enabled in
+    """Connect the containment servers this process has not, and the servers of
+    the read-only state lookups: a server enabled in
     another API worker is otherwise not seen here until a restart.
     ``connect_to_server`` skips one that is disabled or has no credentials."""
     from core.integrations.mcp.client import process_mcp_client
@@ -114,7 +115,9 @@ async def _dial_vendors() -> None:
         return
     connected = getattr(client, "tools_cache", None) or {}
     now = time.monotonic()
-    for vendor in {e["server"] for e in bindings.carriers()}:
+    servers = {e["server"] for e in bindings.carriers()}
+    servers |= {e["server"] for e in bindings.state_reads()}
+    for vendor in servers:
         if vendor in connected or now - _dialled.get(vendor, -_DIAL_SECONDS) < (
             _DIAL_SECONDS
         ):
@@ -147,8 +150,11 @@ async def _call(
     args: Dict[str, Any],
     action_id: Optional[str] = None,
     timeout_ms: int = _READ_TIMEOUT_MS,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """(the tool's answer, None) or (None, why it failed), through ``_run``."""
+    every_row: bool = False,
+) -> Tuple[Any, Optional[str]]:
+    """(the tool's answer, None) or (None, why it failed), through ``_run``. The
+    answer is its first row, or with ``every_row`` the list of its rows: an
+    envelope such as ``{"results": [...]}`` arrives already unwrapped to them."""
     from core.agents.attribution import TrailWriteError
     from core.agents.mcp_tools import MCPFailure, row_error
     from core.agents.tools_router import (
@@ -185,6 +191,8 @@ async def _call(
     error = _errored(result) or row_error(rows)
     if error:
         return None, error
+    if every_row:
+        return [r for r in rows if isinstance(r, dict)], None
     answer = next((r for r in rows if isinstance(r, dict)), {})
     return answer, None
 
@@ -402,12 +410,16 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
         return None
     seen: List[Dict[str, Any]] = []
     for entry in _state_lookups(action_type, registry):
-        answer, error = await _call(
-            registry, _flat(entry, "lookup"), bindings.lookup_args(entry, target)
+        answers, error = await _call(
+            registry,
+            _flat(entry, "lookup"),
+            bindings.lookup_args(entry, target),
+            every_row=True,
         )
         if error:
             return None
-        for record in _records(entry, answer or {}):
+        records = [one for answer in answers for one in _records(entry, answer)]
+        for record in records:
             if not _stated(entry["state"], record):
                 return None
             seen.append(

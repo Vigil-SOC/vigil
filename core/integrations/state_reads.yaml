@@ -4,13 +4,14 @@
 # (docs/acts.md); template fills the lookup argument, the target quoted as FQL.
 
 # falcon-mcp has no containment tool; its host search reports each host's status.
+# It answers {"results": [hosts]}, which the tool layer unwraps to one row per
+# host, so no rows field is named.
 crowdstrike:
   falcon_search_hosts:
     reads: isolate_host
     lookup_arg: filter
     template: "hostname:'{target}'"
     address_template: "local_ip:'{target}'"
-    rows: results
     name: hostname
     state:
       read:

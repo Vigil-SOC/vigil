@@ -428,19 +428,34 @@ def _quoted(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def _state_reading(raw: Any, where: str) -> Dict[str, Any]:
+    """A state lookup's reading: a carrier's, with at least one field to read, as
+    a reading with none would read every record as its default."""
+    reading = _reading(raw, f"{where} state")
+    if not reading["read"]:
+        raise InvalidBinding(f"{where}: state needs a field to read")
+    return reading
+
+
 @lru_cache(maxsize=1)
 def state_reads() -> Tuple[Dict[str, Any], ...]:
     """The shipped read-only state lookups (``state_reads.yaml``), each shaped as
     a lookup carrier reads: server, act, lookup, its arguments, rows, name and
     state. A server here carries nothing: none of these is ever called to act."""
-    from core.response.proposal_targets import DONE_STATE
+    from core.response.approval_service import CONTAINMENT_TYPES
 
     doc = yaml.safe_load(STATE_READS_FILE.read_text()) or {}
+    if not isinstance(doc, dict):
+        raise InvalidBinding("state_reads.yaml: servers must be a mapping")
     out: List[Dict[str, Any]] = []
     for server, tools in doc.items():
-        for tool, raw in (tools or {}).items():
+        if not isinstance(tools, dict) or not _name(server):
+            raise InvalidBinding(f"state_reads.yaml: {server} must map its tools")
+        for tool, raw in tools.items():
             where = f"state_reads.yaml: {server}.{tool}"
-            if not isinstance(raw, dict) or raw.get("reads") not in DONE_STATE:
+            if not _name(tool):
+                raise InvalidBinding(f"{where} is not a bare tool name")
+            if not isinstance(raw, dict) or raw.get("reads") not in CONTAINMENT_TYPES:
                 raise InvalidBinding(f"{where} reads no act kind")
             for part in ("lookup_arg", "name"):
                 if not _name(raw.get(part)):
@@ -455,6 +470,13 @@ def state_reads() -> Tuple[Dict[str, Any], ...]:
                     not isinstance(value, str) or "{target}" not in value
                 ):
                     raise InvalidBinding(f"{where}: {part} must hold {{target}}")
+                if value is not None:
+                    try:
+                        value.format(target="x")
+                    except (KeyError, IndexError, ValueError) as exc:
+                        raise InvalidBinding(
+                            f"{where}: {part} has a field besides {{target}}"
+                        ) from exc
                 templates[part] = value
             out.append(
                 {
@@ -466,7 +488,7 @@ def state_reads() -> Tuple[Dict[str, Any], ...]:
                     **templates,
                     "rows": rows,
                     "name": raw["name"],
-                    "state": _reading(raw.get("state"), f"{where} state"),
+                    "state": _state_reading(raw.get("state"), where),
                 }
             )
     return tuple(out)
