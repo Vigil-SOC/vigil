@@ -24,6 +24,7 @@ import AddIntegrationTab from './AddIntegrationTab'
 import AuditFeedCard from './AuditFeedCard'
 import { buildCatalog, savedCustomWithoutServer } from './integrationCatalog'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
+import DeclaredSourcesCard from './DeclaredSourcesCard'
 import IntegrationMark from './IntegrationMark'
 import IntegrationWizard from './IntegrationWizard'
 import McpSurfacePanel from './McpSurfacePanel'
@@ -310,7 +311,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                     <span>—</span>
                   )}
                 </td>
-                <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || 'Custom MCP integration.'} /></td>
+                <td className="col-low"><Clamp text={SERVER_DESCRIPTIONS.get(r.name) || r.integration?.description || (r.judgement?.kind === 'mcp_source' ? 'Declared source: see Declared sources below.' : 'Custom MCP integration.')} /></td>
                 <td className={r.level === 'poor' ? 'int-note poor' : 'int-note'}><Clamp text={r.note} /></td>
                 <td><RowToggle row={r} busy={busy} onMcp={onToggleMcp} onMaster={onToggleMaster} /></td>
                 <td className="col-act">
@@ -330,6 +331,16 @@ export default function IntegrationsSection({ notify }: SectionProps) {
           </tbody>
         </table>
         </div>
+      )}
+
+      {tab === 'connected' && ready && (
+        <DeclaredSourcesCard
+          notify={notify}
+          health={health.sources ?? []}
+          healthFailed={health.failed}
+          saveCredentials={saveIntegration}
+          onChanged={reload}
+        />
       )}
 
       {tab === 'add' && ready && (

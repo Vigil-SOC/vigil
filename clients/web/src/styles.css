@@ -3735,6 +3735,70 @@
       overflow-wrap: anywhere;
    }
 
+   /* Settings > Integrations > Declared sources: one bg2 row per source, a hairline between. */
+   .src-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      background: var(--ln0);
+      border-radius: 10px;
+      overflow: hidden;
+   }
+
+   .src-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      background: var(--bg2);
+      min-width: 0;
+   }
+
+   .src-facts {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 6px 14px;
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.45;
+   }
+
+   .src-facts dt { color: var(--tx2); font-size: 12px; }
+   .src-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--tx1); }
+
+   .src-meta {
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx2);
+      overflow-wrap: anywhere;
+   }
+
+   .src-creds { margin: 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+
+   .src-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+      gap: 10px;
+      max-width: 720px;
+   }
+
+   .src-flag,
+   .src-rejected {
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+   }
+
+   .src-flag { color: var(--fair); }
+
+   .src-rejected {
+      color: var(--poor);
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+   }
+
    .sel-note-row {
       margin: 0;
       padding: 8px 12px;

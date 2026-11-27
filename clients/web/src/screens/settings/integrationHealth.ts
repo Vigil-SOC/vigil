@@ -160,7 +160,9 @@ export function buildRows(i: HealthInput): ServerRow[] {
     const mcpWord = waiting || (stopped ? 'Not running' : '')
     const unconfigured = integration && !configured && !extConfigured && !savedBuiltIn ? 'Not set up' : ''
     const runtime = mcpWord || unconfigured
-    const judgement = !failed && integration ? byId.get(integration.id) ?? null : null
+    // a declared source's server (core.sources) is judged on its source-<name> row, as the Declared sources card shows it
+    const declared = byId.get(`source-${name}`)
+    const judgement = failed ? null : integration ? byId.get(integration.id) ?? null : declared?.kind === 'mcp_source' ? declared : null
     // no integration, or no record, is neutral — never Good
     const level = judgement ? healthLevel(judgement.state) : null
     const phrase = judgement ? healthPhrase(judgement) : ''
