@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Optional
 
 from core.federation.adapters._base import parse_alert_time
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
@@ -19,16 +20,17 @@ def _alert_time(alert):
     return parse_alert_time((alert.get("_source") or {}).get("@timestamp"))
 
 
-def _factory() -> FederationAdapter:
-    def make_service():
+def _factory(instance: Optional[str] = None) -> FederationAdapter:
+    """The base source, or with ``instance`` that instance's own source (#5353)."""
 
-        return ElasticIngestion()
+    def make_service():
+        return ElasticIngestion(instance)
 
     return SIEMIngestionAdapter(
-        name="elastic",
+        name=instance or "elastic",
         # Note: integration_id matches what core.config / settings UI use
         # ("elastic-siem"); the adapter name is shorter for the source_id PK.
-        integration_id="elastic-siem",
+        integration_id=instance or "elastic-siem",
         default_interval=300,  # SIEM cadence
         service_factory=make_service,
         external_id_prefix="elastic",

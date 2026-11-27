@@ -21,7 +21,7 @@ from core.federation.contract import (
 )
 from core.ingestion.ingestion_service import _optional_float
 from core.integrations._base.config import resolve
-from core.integrations._base.ids import FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id, instance_prefix
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
@@ -73,12 +73,17 @@ def crowdstrike_severity(alert: Dict[str, Any]) -> str:
 
 class CrowdStrikeAdapter:
     name = "crowdstrike"
+    integration_id = "crowdstrike"
 
-    def __init__(self) -> None:
+    def __init__(self, instance: Optional[str] = None) -> None:
+        # An instance (#5353) polls as its own source under its own id.
+        self._instance = instance
+        if instance:
+            self.name = self.integration_id = instance
         self._service = None
 
     def is_configured(self) -> bool:
-        return is_integration_enabled("crowdstrike")
+        return is_integration_enabled(self.integration_id)
 
     def default_interval(self) -> int:
         return 60  # EDR cadence — sub-minute matters here
@@ -93,7 +98,7 @@ class CrowdStrikeAdapter:
         # A configured source whose service cannot be built is failing, not
         # empty: let the error reach the runner so the cursor is kept.
         # resolve() reads client_secret from the secrets store; unset fields are None.
-        cfg = resolve(CROWDSTRIKE)
+        cfg = resolve(CROWDSTRIKE, integration_id=self._instance)
         self._service = CrowdStrikeService(
             client_id=cfg["client_id"] or "",
             client_secret=cfg["client_secret"] or "",
@@ -138,7 +143,7 @@ class CrowdStrikeAdapter:
 
         findings = []
         for alert in alerts:
-            finding = _alert_to_finding(alert)
+            finding = _alert_to_finding(alert, self._instance)
             if finding is not None:
                 findings.append(finding)
 
@@ -187,7 +192,9 @@ def _alert_value(alert: Dict[str, Any], name: str) -> Any:
     return None
 
 
-def _alert_to_finding(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _alert_to_finding(
+    alert: Dict[str, Any], instance: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     composite_id = str(alert.get("composite_id") or "")
     if not composite_id:
         return None
@@ -198,8 +205,10 @@ def _alert_to_finding(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     # The whole composite_id. findings.external_id is 255, wide enough to
     # keep it, and (data_source, external_id) dedups on that id.
     return {
-        "finding_id": fit_id("cs-", composite_id, FINDING_ID_MAX),
-        "data_source": "crowdstrike",
+        "finding_id": fit_id(
+            instance_prefix("cs-", instance), composite_id, FINDING_ID_MAX
+        ),
+        "data_source": instance or "crowdstrike",
         "external_id": composite_id,
         "timestamp": alert.get("created_timestamp") or utcnow().isoformat(),
         "severity": crowdstrike_severity(alert),
@@ -217,8 +226,8 @@ def _alert_to_finding(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _factory() -> FederationAdapter:
-    return CrowdStrikeAdapter()
+def _factory(instance: Optional[str] = None) -> FederationAdapter:
+    return CrowdStrikeAdapter(instance)
 
 
 register_adapter(CrowdStrikeAdapter.name, _factory)

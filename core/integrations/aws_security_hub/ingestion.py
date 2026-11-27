@@ -11,7 +11,12 @@ from typing import Any, Dict, List, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
-from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import (
+    EXTERNAL_ID_MAX,
+    FINDING_ID_MAX,
+    fit_id,
+    instance_prefix,
+)
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.time import utcnow
 
@@ -21,11 +26,11 @@ logger = logging.getLogger(__name__)
 class AWSSecurityHubIngestion(SIEMIngestionService):
     """AWS Security Hub ingestion service."""
 
-    def __init__(self):
+    def __init__(self, integration_id: Optional[str] = None):
         """Initialize AWS Security Hub ingestion."""
-        super().__init__()
+        super().__init__(integration_id)
         self.siem_name = "AWS Security Hub"
-        self.config = resolve(AWS_SECURITY_HUB)
+        self.config = resolve(AWS_SECURITY_HUB, integration_id=integration_id)
 
     async def fetch_alerts(
         self,
@@ -138,7 +143,11 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
         try:
             # Extract finding ID
             source_id = str(alert.get("Id") or uuid.uuid4().hex[:12])
-            finding_id = fit_id("aws-sh-", source_id, FINDING_ID_MAX)
+            finding_id = fit_id(
+                instance_prefix("aws-sh-", self.integration_id),
+                source_id,
+                FINDING_ID_MAX,
+            )
 
             # Extract severity
             severity_label = alert.get("Severity", {}).get("Label", "MEDIUM")
@@ -184,7 +193,7 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
                 "title": alert.get("Title", "AWS Security Hub Finding"),
                 "description": alert.get("Description", ""),
                 "severity": severity,
-                "data_source": "aws_security_hub",
+                "data_source": self.integration_id or "aws_security_hub",
                 "timestamp": alert.get("CreatedAt", utcnow().isoformat()),
                 "raw_data": alert,
                 "metadata": {

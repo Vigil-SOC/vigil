@@ -8,6 +8,7 @@ from typing import Mapping, Optional
 from core.federation.registry import get_adapter, is_registered
 from core.integrations._base.config import resolve
 from core.integrations._base.descriptor import IntegrationDescriptor, get_descriptor
+from core.integrations.integration_bridge_service import base_of
 
 _formatter = Formatter()
 
@@ -32,16 +33,23 @@ def descriptor_for_source(source: str) -> Optional[IntegrationDescriptor]:
 
     Stored names (``azure_sentinel``) differ from descriptor ids
     (``azure-sentinel``) for some sources; the federation adapter carries the
-    id. A source with no adapter is looked up by its own name.
+    id. An instance's (#5353) is its base's. A source with no adapter is looked
+    up by its own name.
     """
+    base = base_of(source)
+    if base:
+        return get_descriptor(base)
     adapter = get_adapter(source) if is_registered(source) else None
     return get_descriptor(getattr(adapter, "integration_id", source))
 
 
-def _template_values(descriptor: IntegrationDescriptor) -> dict[str, str]:
-    """Non-secret field values. A secret in the template does not fill."""
+def _template_values(
+    descriptor: IntegrationDescriptor, integration_id: Optional[str] = None
+) -> dict[str, str]:
+    """Non-secret field values, an instance's own when ``integration_id`` names
+    one. A secret in the template does not fill."""
     try:
-        resolved = resolve(descriptor)
+        resolved = resolve(descriptor, integration_id=integration_id)
     except Exception:
         resolved = {}
     values: dict[str, str] = {}
@@ -89,7 +97,10 @@ def resolve_source_link(
     if configs is None:
         configs = {}
     if source not in configs:
-        configs[source] = _template_values(descriptor)
+        # An instance's link is filled from its own tenant's config.
+        configs[source] = _template_values(
+            descriptor, source if base_of(source) else None
+        )
     external = finding.get("external_id")
     values = dict(configs[source])
     if isinstance(external, str) and external:

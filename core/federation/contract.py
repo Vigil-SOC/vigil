@@ -67,11 +67,12 @@ class FederationAdapter(Protocol):
 # ---------------------------------------------------------------------------
 
 # Adapter constructors are registered lazily so importing the registry doesn't
-# pull in every service. The runner calls ``list_adapters()`` once at startup.
-_ADAPTER_FACTORIES: Dict[str, Callable[[], FederationAdapter]] = {}
+# pull in every service. A factory called with an instance id (#5353) builds
+# that instance's adapter; called with nothing, the base source's.
+_ADAPTER_FACTORIES: Dict[str, Callable[..., FederationAdapter]] = {}
 
 
-def register_adapter(name: str, factory: Callable[[], FederationAdapter]) -> None:
+def register_adapter(name: str, factory: Callable[..., FederationAdapter]) -> None:
     """Register an adapter factory under ``name``.
 
     Called once per adapter module at import time. Re-registration overwrites

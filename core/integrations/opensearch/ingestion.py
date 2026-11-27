@@ -24,7 +24,12 @@ from core.integrations._base.config_gap import (
     report_config_complete,
     report_config_gap,
 )
-from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import (
+    EXTERNAL_ID_MAX,
+    FINDING_ID_MAX,
+    fit_id,
+    instance_prefix,
+)
 from core.integrations.opensearch.client import OpenSearchService
 from core.integrations.opensearch.descriptor import OPENSEARCH
 from core.time import utcnow
@@ -127,10 +132,10 @@ def log_type_of(index_name: str) -> str:
 class OpenSearchIngestion(SIEMIngestionService):
     """OpenSearch Security Analytics ingestion service."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, integration_id: Optional[str] = None):
+        super().__init__(integration_id)
         self.siem_name = "OpenSearch"
-        self.config = resolve(OPENSEARCH)
+        self.config = resolve(OPENSEARCH, integration_id=integration_id)
         self._opensearch_service: Optional[OpenSearchService] = None
 
     def _get_opensearch_service(self) -> Optional[OpenSearchService]:
@@ -223,7 +228,11 @@ class OpenSearchIngestion(SIEMIngestionService):
             finding_ref = str(
                 source.get("id") or alert.get("_id") or uuid.uuid4().hex[:12]
             )
-            finding_id = fit_id("opensearch-", finding_ref, FINDING_ID_MAX)
+            finding_id = fit_id(
+                instance_prefix("opensearch-", self.integration_id),
+                finding_ref,
+                FINDING_ID_MAX,
+            )
 
             rule_ids = rule_ids_of(source)
             monitor_id = str(source.get("monitor_id") or "")
@@ -283,7 +292,7 @@ class OpenSearchIngestion(SIEMIngestionService):
             return {
                 "finding_id": finding_id,
                 "external_id": fit_id("", finding_ref, EXTERNAL_ID_MAX),
-                "data_source": "opensearch",
+                "data_source": self.integration_id or "opensearch",
                 "timestamp": (
                     created.isoformat() + "Z" if created else utcnow().isoformat()
                 ),

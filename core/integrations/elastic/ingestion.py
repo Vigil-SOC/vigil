@@ -19,7 +19,12 @@ from core.integrations._base.config_gap import (
     report_config_complete,
     report_config_gap,
 )
-from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import (
+    EXTERNAL_ID_MAX,
+    FINDING_ID_MAX,
+    fit_id,
+    instance_prefix,
+)
 from core.integrations.elastic.client import ElasticService
 from core.integrations.elastic.descriptor import ELASTIC
 from core.time import utcnow
@@ -122,10 +127,10 @@ def _add(bucket: List[str], value: Any) -> None:
 class ElasticIngestion(SIEMIngestionService):
     """Elastic Security ingestion service."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, integration_id: Optional[str] = None):
+        super().__init__(integration_id)
         self.siem_name = "Elastic Security"
-        self.config = resolve(ELASTIC)
+        self.config = resolve(ELASTIC, integration_id=integration_id)
         self.min_rule_level = min_rule_level_from_config(self.config)
         self._elastic_service: Optional[ElasticService] = None
 
@@ -251,7 +256,11 @@ class ElasticIngestion(SIEMIngestionService):
             # fit findings.finding_id. Ids that fit are left as they were; the
             # full id stays in external_id (bounded) and in
             # metadata.elastic_alert_id, which upstream status sync uses.
-            finding_id = fit_id("elastic-", alert_id, FINDING_ID_MAX)
+            finding_id = fit_id(
+                instance_prefix("elastic-", self.integration_id),
+                alert_id,
+                FINDING_ID_MAX,
+            )
 
             if is_wazuh_alert(source):
                 return self._wazuh_finding(alert, source, alert_id, finding_id)
@@ -325,7 +334,7 @@ class ElasticIngestion(SIEMIngestionService):
             return {
                 "finding_id": finding_id,
                 "external_id": fit_id("", alert_id, EXTERNAL_ID_MAX),
-                "data_source": "elastic",
+                "data_source": self.integration_id or "elastic",
                 "timestamp": source.get("@timestamp", utcnow().isoformat()),
                 "severity": severity,
                 "title": title,
@@ -399,7 +408,7 @@ class ElasticIngestion(SIEMIngestionService):
         return {
             "finding_id": finding_id,
             "external_id": fit_id("", alert_id, EXTERNAL_ID_MAX),
-            "data_source": "elastic",
+            "data_source": self.integration_id or "elastic",
             "timestamp": source.get("@timestamp")
             or source.get("timestamp")
             or utcnow().isoformat(),
