@@ -93,10 +93,22 @@ class MCPRegistry:
         return {name: server for server, name, _ in self._named_tools()}
 
     def _named_tools(self):
-        from core.integrations.mcp.surface import VIGIL_SERVER
+        from core.response.ceiling import withheld
 
         seen = set()
-        for server_name in self.get_active_servers():
+        for server_name, tool_name, tool in self._flattened(self.get_active_servers()):
+            if tool_name in seen:
+                continue
+            seen.add(tool_name)
+            # A pinned tool is offered only while what is held is its pin (#5300).
+            if withheld(tool_name, tool):
+                continue
+            yield server_name, tool_name, tool
+
+    def _flattened(self, servers):
+        from core.integrations.mcp.surface import VIGIL_SERVER
+
+        for server_name in servers:
             for tool in self._tools_cache.get(server_name, []):
                 # Prefix tool name with server name (matching ClaudeService
                 # convention). Vigil's own tools are not prefixed: they are the
@@ -108,10 +120,19 @@ class MCPRegistry:
                     if server_name == VIGIL_SERVER
                     else f"{server_name}_{tool['name']}"
                 )
-                if tool_name in seen:
-                    continue
-                seen.add(tool_name)
                 yield server_name, tool_name, tool
+
+    def held_definitions(self) -> Dict[str, Dict[str, Any]]:
+        """Each flattened name's definition as its server lists it, unfiltered.
+
+        Not ``get_all_tools``: that withholds and prefixes the description.
+        """
+        from core.response.ceiling import tool_definition
+
+        held: Dict[str, Dict[str, Any]] = {}
+        for _, tool_name, tool in self._flattened(list(self._tools_cache)):
+            held.setdefault(tool_name, tool_definition(tool))
+        return held
 
     def get_tool_names(self) -> List[str]:
         """Get all tool names (server-prefixed) from active servers."""
@@ -158,15 +179,45 @@ def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
 _hinted: Dict[str, List[Dict]] = {}
 
 
+_catalog_service = None
+
+
+def remote_servers() -> frozenset:
+    """Catalogue servers that reach a remote server: a ``url`` entry, or raw
+    args running ``mcp-remote``. Their classified tools are pinned (#5300)."""
+    global _catalog_service
+    from core.integrations.mcp.client import process_mcp_client
+
+    service = getattr(process_mcp_client(), "mcp_service", None)
+    try:
+        if service is None:
+            if _catalog_service is None:
+                from core.integrations.mcp.service import MCPService
+
+                _catalog_service = MCPService()
+            service = _catalog_service
+        servers = service.servers
+    except Exception as exc:  # noqa: BLE001 — no catalogue, nothing first-pinned
+        logger.warning("MCP catalogue not read for remote servers: %s", exc)
+        return frozenset()
+    return frozenset(
+        name
+        for name, server in servers.items()
+        if getattr(server, "url", None) or getattr(server, "remote", False)
+    )
+
+
 def _register(registry: MCPRegistry, server_name: str, tools: List[Dict]) -> None:
-    """Register a connected server's tools, after its destructiveHints tighten."""
-    from core.response.ceiling import tighten_from_hints
+    """Register a server's tools, after its destructiveHints tighten and its
+    pinned definitions are checked (#5300)."""
+    from core.response.ceiling import check_pins, tighten_from_hints
 
     normalised = [_normalised(t) for t in tools]
     if _hinted.get(server_name) is not tools and tighten_from_hints(
         server_name, normalised
     ):
         _hinted[server_name] = tools
+    check_pins(server_name, normalised, server_name in remote_servers())
     registry.register_server(server_name, normalised)
 
 
@@ -213,7 +264,7 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         if connected and not connected.get(name, False):
             logger.debug("Skipping %s: cached but not connected this boot", name)
             continue
-        registry.register_server(name, [_normalised(t) for t in tools])
+        _register(registry, name, tools)
         registered += 1
 
     logger.info("MCP registry populated from %d server(s)", registered)

@@ -61,7 +61,7 @@ type PendingSave =
   | { kind: 'act' }
   | { kind: 'irreversible' }
   | { kind: 'stop' }
-  | { kind: 'tool'; name: string; to: EffectClass }
+  | { kind: 'tool'; name: string; to: EffectClass; hash?: string | null }
   | { kind: 'workflow'; workflow: InvestigateWorkflow }
 
 // Tighter last, as in core/response/ceiling.py; an unclassified tool loosens to anything
@@ -85,6 +85,29 @@ const splitTool = (name: string) => {
   return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
+
+// A tool as its server lists it (#5300): the description, the input schema collapsed.
+type ToolDef = NonNullable<ToolClass['definition']>
+// Keys sorted, as the hash reads them: the stored pin comes back from JSONB reordered.
+const sortedJson = (v: unknown): string =>
+  JSON.stringify(
+    v,
+    (_, x) =>
+      x && typeof x === 'object' && !Array.isArray(x)
+        ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1)))
+        : x,
+    2,
+  )
+const ToolDefinition = ({ label, def }: { label?: string; def: ToolDef }) => (
+  <div className="lim-tool-def">
+    {label && <b>{label}</b>}
+    <p>{def.description || 'No description'}</p>
+    <details>
+      <summary>Input schema</summary>
+      <pre>{sortedJson(def.inputSchema ?? {})}</pre>
+    </details>
+  </div>
+)
 
 type ManagedSwitch = { declared: unknown; file?: string | null; line?: number | null }
 // The step-score factors (#5277): each on counts in a dismissal's and a containment's score.
@@ -681,12 +704,16 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     }
   }
 
-  const classifyTool = async (name: string, to: EffectClass) => {
+  // Always sends the hash of the definition shown; a 409 reloads the list with the current one, never retries.
+  const classifyTool = async (name: string, to: EffectClass, hash?: string | null) => {
     try {
-      await unverified.classify(name, to)
+      await unverified.classify(name, to, hash)
       notify('ok', `${name} is now ${CLASS_PHRASE[to]}.`)
     } catch (err) {
-      notify('err', errorText(err, 'Failed to save the tool’s class.'))
+      const changed = (err as { response?: { data?: { detail?: { definition?: unknown } } } })?.response?.data?.detail
+      if (changed && typeof changed === 'object' && 'definition' in changed)
+        notify('err', `${name}’s definition changed since it was shown. Review it below and classify it again.`)
+      else notify('err', errorText(err, 'Failed to save the tool’s class.'))
       ceiling.refresh() // a 409 means someone stopped meanwhile
     }
   }
@@ -736,7 +763,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
         stopAll()
         return
       case 'tool':
-        classifyTool(current.name, current.to)
+        classifyTool(current.name, current.to, current.hash)
         return
       case 'workflow':
         setWorkflow(current.workflow, 'act', floorValue)
@@ -858,14 +885,24 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     const { server, tool } = splitTool(t.name)
     const choices = CHOICES.filter((c) => canRaise || (canLower && !loosens(t.effect_class, c.to)))
     return (
-      <div className="lim-row" key={t.name}>
-        <span className="lim-row-title">
+      <div className="lim-row lim-tool" key={t.name}>
+        <div className="lim-row-title">
           <span className="lim-tool-name" title={t.name}>{tool}</span>
           <span title={server}>{server || 'Unknown server'}</span>
-        </span>
+          {/* a withdrawn tool: what was classified, then what its server lists now */}
+          {t.withdrawn && t.pinned_definition && <ToolDefinition label="Classified" def={t.pinned_definition} />}
+          {t.definition && <ToolDefinition label={t.withdrawn ? 'Now' : undefined} def={t.definition} />}
+        </div>
         <span className={`lim-row-tag${t.effect_class ? '' : ' fair'}`}>
           {emulation.data?.tools.includes(t.name) && <span className="lim-emu-mark">Emulator</span>}{' '}
-          {t.effect_class ? 'Runs as a read, unconfirmed' : 'Unclassified, waits for a person'}
+          {t.withdrawn
+            ? 'Withdrawn: its definition changed since it was classified. Agents are not offered it until a person classifies it again'
+            : t.effect_class
+              ? 'Runs as a read, unconfirmed'
+              : 'Unclassified, waits for a person'}
+          {t.remote && !t.withdrawn && (
+            <span className="lim-tool-pin">Classifying pins the definition shown; a change withdraws it</span>
+          )}
         </span>
         <span className="lim-row-ctl">
           {choices.length > 0 && (
@@ -881,7 +918,9 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
                     disabled={blocked}
                     title={blocked ? STOPPED_LOOSEN : undefined}
                     onClick={() =>
-                      loosen ? setPending({ kind: 'tool', name: t.name, to: c.to }) : classifyTool(t.name, c.to)
+                      loosen
+                        ? setPending({ kind: 'tool', name: t.name, to: c.to, hash: t.definition_hash })
+                        : classifyTool(t.name, c.to, t.definition_hash)
                     }
                   >
                     {c.label}

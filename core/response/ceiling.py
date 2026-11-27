@@ -21,7 +21,10 @@ bound on its sampled false closes sits above the complement of that floor.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import time
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import MappingProxyType
@@ -1407,6 +1410,8 @@ EFFECT_CLASSES = (READ, READ_UNVERIFIED, REVERSIBLE, IRREVERSIBLE)
 _READS = frozenset({READ, READ_UNVERIFIED})
 APPROVAL_TOOL = "create_approval_action"
 TOOL_CLASSIFIED = "autonomy.tool_classified"
+TOOL_PINNED = "autonomy.tool_pinned"
+TOOL_WITHDRAWN = "autonomy.tool_withdrawn"
 _SYSTEM = "system"
 
 _own: Optional[frozenset[str]] = None
@@ -1439,10 +1444,11 @@ def own_tool_names() -> frozenset[str]:
 
 
 def stored_classes(session, names: Iterable[str]) -> dict[str, str]:
-    """The rows for ``names``. A name with no row is absent."""
+    """The rows for ``names``. A name with no row, or a withdrawn one, is absent."""
     rows = session.execute(
         select(ToolEffectClass.tool_name, ToolEffectClass.effect_class).where(
-            ToolEffectClass.tool_name.in_(list(names))
+            ToolEffectClass.tool_name.in_(list(names)),
+            ToolEffectClass.changed_definition.is_(None),
         )
     )
     return {name: effect_class for name, effect_class in rows}
@@ -1611,20 +1617,33 @@ def loosens(before: Optional[str], after: str) -> bool:
 
 
 def store_tool_class(
-    session, name: str, before: Optional[str], after: str, actor: str
+    session,
+    name: str,
+    before: Optional[str],
+    after: str,
+    actor: str,
+    pin: Optional[dict] = None,
 ) -> None:
-    """Write one class and its trail entry in the caller's transaction."""
+    """Write one class and its trail entry in the caller's transaction.
+
+    ``pin`` is the definition a person classified against: it is pinned and any
+    withdrawal is cleared. Without it the pin and a withdrawal stay as they are.
+    """
     from core.auth import trail_events
 
     row = session.get(ToolEffectClass, name)
     if row is None:
-        session.add(
-            ToolEffectClass(tool_name=name, effect_class=after, classified_by=actor)
-        )
+        row = ToolEffectClass(tool_name=name, effect_class=after, classified_by=actor)
+        session.add(row)
     else:
         row.effect_class = after
         row.classified_by = actor
         row.classified_at = utcnow()
+    digest = None
+    if pin is not None:
+        digest = tool_definition_hash(pin)
+        row.pinned_definition, row.pinned_hash = pin, digest
+        row.changed_definition = None
     session.flush()
     trail_events.record(
         session,
@@ -1633,13 +1652,196 @@ def store_tool_class(
         tool=name,
         class_before=before or "unclassified",
         class_after=after,
+        definition_hash=digest,
     )
+    if pin is not None:
+        _refresh_pins_after_commit(session)
+
+
+# --- Definition pins (#5300) -------------------------------------------------
+# A remote server's tool is pinned to the name, description and input schema a
+# person classified. A definition that differs withdraws it until a person
+# classifies it again; changing back does not restore it.
+
+
+def tool_definition(tool: Mapping[str, Any]) -> dict:
+    """What a model reads of a tool, as the server lists it: the pinned form."""
+    schema = tool.get("inputSchema", tool.get("input_schema"))
+    return {
+        "name": tool.get("name") or "",
+        "description": tool.get("description") or "",
+        "inputSchema": schema if isinstance(schema, dict) else {},
+    }
+
+
+def tool_definition_hash(definition: Mapping[str, Any]) -> str:
+    """Full SHA-256 hex of the definition's canonical JSON; never shortened.
+
+    The pin and the run ledger's call entry both use it.
+    """
+    canonical = json.dumps(
+        tool_definition(definition),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+_PINS_TTL_SECONDS = 10.0
+# (read at, tool name -> (pinned hash, changed definition's hash)), every row.
+_pins_cache: tuple[float, dict[str, tuple[Optional[str], Optional[str]]]] = (
+    float("-inf"),
+    {},
+)
+
+
+def tool_pins(*, fresh: bool = False) -> dict[str, tuple[Optional[str], Optional[str]]]:
+    """Each class row's pinned hash and changed hash, through a short cache.
+
+    As ``site.applied`` is read: each process re-reads at most every 10 s and a
+    failed read keeps the last value. A stale entry only withholds, since
+    ``withheld`` also compares the held definition with the pin itself.
+    """
+    global _pins_cache
+    now = time.monotonic()
+    at, value = _pins_cache
+    if fresh or now - at >= _PINS_TTL_SECONDS:
+        try:
+            with unit_of_work() as session:
+                rows = session.execute(
+                    select(
+                        ToolEffectClass.tool_name,
+                        ToolEffectClass.pinned_hash,
+                        ToolEffectClass.changed_definition,
+                    )
+                ).all()
+            value = {
+                name: (pinned, tool_definition_hash(changed) if changed else None)
+                for name, pinned, changed in rows
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("tool pins not read; keeping last: %s", exc)
+        _pins_cache = (now, value)
+    return value
+
+
+def withheld(name: str, tool: Mapping[str, Any]) -> bool:
+    """Whether the registry must not offer ``tool`` under ``name``.
+
+    Withdrawn, or a pinned tool whose held definition is not its pin, however
+    that definition arrived.
+    """
+    entry = tool_pins().get(name)
+    if entry is None or entry[0] is None:
+        return False
+    pinned, changed = entry
+    return changed is not None or tool_definition_hash(tool) != pinned
+
+
+_PINS_STALE = "autonomy.pins_stale"
+
+
+def _refresh_pins_after_commit(session) -> None:
+    """Re-read this process's pins once the caller's transaction commits."""
+    if session.info.get(_PINS_STALE):
+        return
+    session.info[_PINS_STALE] = True
+
+    def _done(sess) -> None:
+        if sess.info.pop(_PINS_STALE, None):
+            tool_pins(fresh=True)
+
+    def _undone(sess) -> None:
+        sess.info.pop(_PINS_STALE, None)
+
+    event.listen(session, "after_commit", _done, once=True)
+    event.listen(session, "after_rollback", _undone, once=True)
+
+
+def check_pins(server: str, tools: Iterable[Mapping[str, Any]], remote: bool) -> bool:
+    """Withdraw each pinned tool whose definition changed; pin a remote one first seen.
+
+    Every row carrying a pin is checked, whichever server lists the tool. A row
+    of a remote server with no pin (one set before #5300) is pinned to this
+    definition as ``system``. Each write has a trail entry. Best effort: False
+    when the store could not be written; a connect does not fail on it.
+    """
+    from core.auth import trail_events
+
+    pins = tool_pins()
+    due: dict[str, dict] = {}
+    for tool in tools:
+        if not tool.get("name"):
+            continue
+        name = f"{server}_{tool['name']}"
+        entry = pins.get(name)
+        if entry is None:
+            continue
+        pinned, changed = entry
+        digest = tool_definition_hash(tool)
+        if (pinned is None and remote) or (
+            pinned is not None and digest not in (pinned, changed)
+        ):
+            due[name] = tool_definition(tool)
+    if not due:
+        return True
+    try:
+        with unit_of_work() as session:
+            rows = (
+                session.execute(
+                    select(ToolEffectClass)
+                    .where(ToolEffectClass.tool_name.in_(sorted(due)))
+                    .with_for_update()
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                definition = due[row.tool_name]
+                digest = tool_definition_hash(definition)
+                if row.pinned_hash is None:
+                    if remote and row.changed_definition is None:
+                        row.pinned_definition, row.pinned_hash = definition, digest
+                        trail_events.record(
+                            session,
+                            TOOL_PINNED,
+                            actor=_SYSTEM,
+                            tool=row.tool_name,
+                            effect_class=row.effect_class,
+                            definition_hash=digest,
+                        )
+                elif digest != row.pinned_hash and (
+                    row.changed_definition is None
+                    or tool_definition_hash(row.changed_definition) != digest
+                ):
+                    row.changed_definition = definition
+                    trail_events.record(
+                        session,
+                        TOOL_WITHDRAWN,
+                        actor=_SYSTEM,
+                        tool=row.tool_name,
+                        effect_class=row.effect_class,
+                        pinned_hash=row.pinned_hash,
+                        definition_hash=digest,
+                    )
+                    logger.warning(
+                        "%s withdrawn: its definition no longer matches the one "
+                        "classified",
+                        row.tool_name,
+                    )
+        tool_pins(fresh=True)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tool pins from %s not checked: %s", server, exc)
+        return False
 
 
 def tighten_from_hints(server: str, tools: Iterable[dict]) -> bool:
     """``destructiveHint: true`` raises an existing row to irreversible.
 
     It never inserts a row and never lowers one; ``readOnlyHint`` is not read.
+    A withdrawn row is raised and stays withdrawn.
     Best effort: False when the store could not be written, so the caller can
     try again; a server's connect does not fail on it.
     """

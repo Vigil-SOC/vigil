@@ -72,6 +72,7 @@ class MCPServer:
         env: Dict[str, str],
         required_env_vars: Optional[List[str]] = None,
         declared_env: Optional[List[str]] = None,
+        remote: bool = False,
     ):
         self.name = name
         self.command = command
@@ -84,6 +85,9 @@ class MCPServer:
         # The env names mcp-config.json declares; ``env`` also carries the
         # backend's own environment, which only a stdio child inherits.
         self.declared_env: List[str] = list(declared_env or [])
+        # Reaches a remote server (its raw args run mcp-remote), so its tools'
+        # classified definitions are pinned (#5300).
+        self.remote = remote
 
 
 class MCPService:
@@ -376,6 +380,10 @@ class MCPService:
                         "env": env,
                         "required_env_vars": required_env_vars,
                         "declared_env": list(raw_env_strs),
+                        # Raw args: installed_launch swaps the npx spec for a path.
+                        "remote": any(
+                            str(a).startswith("mcp-remote") for a in raw_args
+                        ),
                     }
                 )
 

@@ -5745,6 +5745,17 @@
       },
       "ToolClassBody": {
         "properties": {
+          "definition_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Definition Hash"
+          },
           "effect_class": {
             "enum": [
               "read",
@@ -5763,7 +5774,7 @@
         "type": "object"
       },
       "ToolClassEntry": {
-        "description": "One outside tool. ``effect_class`` is None while it is unclassified.",
+        "description": "One outside tool. ``effect_class`` is None while it is unclassified or\nwithdrawn.",
         "properties": {
           "classified_at": {
             "anyOf": [
@@ -5787,6 +5798,27 @@
             ],
             "title": "Classified By"
           },
+          "definition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolDefinition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "definition_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Definition Hash"
+          },
           "effect_class": {
             "anyOf": [
               {
@@ -5807,12 +5839,68 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pinned_definition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolDefinition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pinned_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Hash"
+          },
+          "remote": {
+            "default": false,
+            "title": "Remote",
+            "type": "boolean"
+          },
+          "withdrawn": {
+            "default": false,
+            "title": "Withdrawn",
+            "type": "boolean"
           }
         },
         "required": [
           "name"
         ],
         "title": "ToolClassEntry",
+        "type": "object"
+      },
+      "ToolDefinition": {
+        "description": "A tool as its server lists it: what a model reads, and what is pinned.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "inputSchema": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Inputschema",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ToolDefinition",
         "type": "object"
       },
       "UndoRequest": {

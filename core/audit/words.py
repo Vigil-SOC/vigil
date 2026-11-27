@@ -498,6 +498,10 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     + (f": {p['reason']}" if p.get("reason") else ""),
     "autonomy.tool_classified": lambda p: f"Classed {p.get('tool') or 'a tool'} as "
     f"{_word(p.get('class_after')) or 'unclassified'}",
+    "autonomy.tool_pinned": lambda p: f"Pinned {p.get('tool') or 'a tool'} to the "
+    "definition its server lists now",
+    "autonomy.tool_withdrawn": lambda p: f"Withdrew {p.get('tool') or 'a tool'}: its "
+    "definition no longer matches the one classified",
     "tools.classified": "Classed outside tools on upgrade",
     "autonomy.emulation_changed": _emulation,
     "emulation.unlisted_host": lambda p: f"{p.get('tool') or 'An emulator'} reported steps "

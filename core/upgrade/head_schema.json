@@ -5071,6 +5071,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column tool_effect_classes.changed_definition": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
  "column tool_effect_classes.classified_at": {
   "default": "now()",
   "nullable": false,
@@ -5085,6 +5090,16 @@
   "default": null,
   "nullable": false,
   "type": "character varying(20)"
+ },
+ "column tool_effect_classes.pinned_definition": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
+ "column tool_effect_classes.pinned_hash": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
  },
  "column tool_effect_classes.tool_name": {
   "default": null,

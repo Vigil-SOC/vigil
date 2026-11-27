@@ -1975,8 +1975,9 @@ export const autonomyApi = {
   update: (body: Schema<'CeilingBody'>) => api.put<Ceiling>('/autonomy', body),
   resume: () => api.post<Ceiling>('/autonomy/resume'),
   tools: () => api.get<ToolClass[]>('/autonomy/tools'),
-  classifyTool: (name: string, effect_class: EffectClass) =>
-    api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class }),
+  // definition_hash is the definition the person was shown; a changed one answers 409 (#5300)
+  classifyTool: (name: string, effect_class: EffectClass, definition_hash?: string | null) =>
+    api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class, definition_hash }),
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),
