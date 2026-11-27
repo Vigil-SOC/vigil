@@ -18,6 +18,7 @@ doubled per consecutive inconclusive entry since the last other outcome, capped
 at the window. An analyst's proven entry after an agent's disproven one, a
 reopen entry, or no entry at all is due now. An asked technique due by its own
 entries is still covered while a sub-technique under it is (``covered_by``).
+``reopen_for`` says when a covered key's changed feed object earns a reopen.
 
 Entries are read as the caller: hunt entries through ``_hidden_hunts``, Case
 entries through ``case_read_clause``; reopen entries name no investigation and
@@ -150,6 +151,42 @@ def due_at(key: str, entries: Sequence[Any]) -> Optional[datetime]:
         # capped before multiplying: 2**n days overflows timedelta past n≈28
         until = newest.concluded_at + min(RETRY * 2 ** min(run - 1, 16), window)
     return until if until and until > datetime.now(timezone.utc) else None
+
+
+def _at(value: Any) -> Optional[datetime]:
+    """An aware UTC datetime from a datetime or ISO text; None when unreadable."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def reopen_for(
+    key: str, entries: Sequence[Dict[str, Any]], changed_at: Any
+) -> Optional[Dict[str, Any]]:
+    """The check a covered key's feed object postdates, when it should reopen (D5).
+
+    ``entries`` are the key's answered entries (newest first). The key reopens
+    when the object changed after the newest check that covers it, and no
+    reopen entry falls inside the key's window. Else None.
+    """
+    changed = _at(changed_at)
+    covering = next((x for x in entries if x["method"] != "reopen"), None)
+    if changed is None or covering is None:
+        return None
+    concluded = _at(covering["concluded_at"])
+    if concluded is None or changed <= concluded:
+        return None
+    since = datetime.now(timezone.utc) - window_for(key)
+    for x in entries:
+        at = _at(x["concluded_at"])
+        if x["method"] == "reopen" and at is not None and at >= since:
+            return None
+    return covering
 
 
 def _answer(key: str, entries: Sequence[Any]) -> Dict[str, Any]:
