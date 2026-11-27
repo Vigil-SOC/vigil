@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Optional
 
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.contract import FederationAdapter, register_adapter
@@ -18,14 +19,15 @@ def _alert_time(alert):
     return finding_time(alert.get("_source") or {})
 
 
-def _factory() -> FederationAdapter:
-    def make_service():
+def _factory(instance: Optional[str] = None) -> FederationAdapter:
+    """The base source, or with ``instance`` that instance's own source (#5353)."""
 
-        return OpenSearchIngestion()
+    def make_service():
+        return OpenSearchIngestion(instance)
 
     return SIEMIngestionAdapter(
-        name="opensearch",
-        integration_id="opensearch",
+        name=instance or "opensearch",
+        integration_id=instance or "opensearch",
         default_interval=300,  # SIEM cadence
         service_factory=make_service,
         external_id_prefix="opensearch",

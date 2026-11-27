@@ -13,6 +13,8 @@ Design notes (locked decisions from MVP plan):
   beyond ``consecutive_errors`` and ``last_error``.
 * Per-source severity floor honored at ingest time (filter before enqueue).
 * "Poll now" is a Redis flag the loop checks each tick.
+* An instance (#5353) is its own source. One created after startup starts
+  polling, and one removed or disabled stops, within ``RECONCILE_SECONDS``.
 * Live config changes (enable, interval, min_severity) are picked up on the
   next tick — no daemon restart needed. The wait between polls is short
   slices of ``idle_seconds``, re-reading the row each slice, so a shorter
@@ -32,10 +34,14 @@ from core.federation.error_kind import classify_failure
 from core.federation.seed import seed_federation_sources
 from core.ingestion.ack import Pending, new_ack, stored_keys, wait_all
 from core.ingestion.dedup import RedisDedupSet
+from core.integrations.integration_bridge_service import base_of
 from core.redis_client import open_async_redis, open_sync_redis, redact_logged_text
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# How often run() re-reads the saved instances to start or stop their loops.
+RECONCILE_SECONDS = 30.0
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -87,30 +93,84 @@ class FederationRunner:
         except Exception as e:
             logger.warning("Federation seed failed: %s", e)
 
-        # 2. Spawn one task per registered adapter (instantiated once, reused).
+        # 2. Spawn one task per registered adapter and enabled instance
+        # (instantiated once, reused).
         for adapter in registry.list_adapters():
-            self._dedup[adapter.name] = RedisDedupSet(f"federation:{adapter.name}")
-            task = asyncio.create_task(self._adapter_loop(adapter, shutdown_event))
-            self._adapter_tasks[adapter.name] = task
-            if self.watch_loop:
-                self.watch_loop(adapter.name, task, shutdown_event)
+            self._spawn(adapter, shutdown_event)
 
-        if not self._adapter_tasks:
-            # No poll loops to tick. Keep passing until shutdown so an idle
-            # poller is not read as hung. DataPoller.run does not tick.
-            while not shutdown_event.is_set():
+        # 3. Until shutdown: keep instance loops in step with the saved
+        # instances. With no poll loops to tick, pass each second so an idle
+        # poller is not read as hung. DataPoller.run does not tick.
+        last_reconcile = time.monotonic()
+        while not shutdown_event.is_set():
+            if not self._adapter_tasks:
                 self._tick_pass()
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
-                    break
-                except asyncio.TimeoutError:
-                    pass
-            return
+            try:
+                await asyncio.wait_for(
+                    shutdown_event.wait(),
+                    timeout=1.0 if not self._adapter_tasks else RECONCILE_SECONDS,
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
+            # A timer may fire a hair early; a second's slack keeps the cadence.
+            if time.monotonic() - last_reconcile >= RECONCILE_SECONDS - 1:
+                last_reconcile = time.monotonic()
+                self._reconcile_instances(shutdown_event)
 
         try:
             await asyncio.gather(*self._adapter_tasks.values(), return_exceptions=True)
         except asyncio.CancelledError:
             pass
+
+    def _spawn(self, adapter: FederationAdapter, shutdown_event: asyncio.Event) -> None:
+        self._dedup[adapter.name] = RedisDedupSet(f"federation:{adapter.name}")
+        task = asyncio.create_task(self._adapter_loop(adapter, shutdown_event))
+        self._adapter_tasks[adapter.name] = task
+        if self.watch_loop:
+            self.watch_loop(adapter.name, task, shutdown_event)
+
+    def _reconcile_instances(self, shutdown_event: asyncio.Event) -> None:
+        """Start a loop for each new enabled instance; stop removed ones.
+
+        A stopped instance keeps its federation row, cursor and health, so the
+        same instance re-added resumes where it left off.
+        """
+        try:
+            wanted = registry.instance_sources()
+        except Exception as e:  # keep the loops as they are until it reads
+            logger.warning("Federation could not read instances: %s", e)
+            return
+        # Base source names (microsoft_defender) are never an instance id.
+        running = {name for name in self._adapter_tasks if base_of(name)}
+        gone = running - set(wanted)
+        if gone:
+            # The config read falls back to the file, which holds no instances,
+            # when the database is down: stop nothing unless the store reads.
+            try:
+                store.read_global_settings()
+            except Exception as e:
+                logger.warning("Federation store unreadable; instances kept: %s", e)
+                gone = set()
+        for name in sorted(gone):
+            self._adapter_tasks.pop(name).cancel()
+            self._dedup.pop(name, None)
+            logger.info("Federation instance %s removed; its polling stopped", name)
+        added = []
+        for name, key in sorted(wanted.items()):
+            if name in self._adapter_tasks:
+                continue
+            adapter = registry.get_adapter(name)
+            if adapter is None:
+                continue
+            added.append(adapter)
+            self._spawn(adapter, shutdown_event)
+            logger.info("Federation instance %s of %s added", name, key)
+        if added:
+            try:
+                seed_federation_sources(added)
+            except Exception as e:
+                logger.warning("Federation seed failed: %s", e)
 
     def _tick_pass(self) -> None:
         if self.note_pass is not None:

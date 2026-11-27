@@ -38,8 +38,13 @@ def normalize_severity(severity: Any) -> str:
 class SIEMIngestionService(ABC):
     """Base class for SIEM ingestion services."""
 
-    def __init__(self):
-        """Initialize the SIEM ingestion service."""
+    def __init__(self, integration_id: Optional[str] = None):
+        """Initialize the SIEM ingestion service.
+
+        ``integration_id`` names an instance (#5353): its config is read and its
+        findings are stored under that id. None is the base row.
+        """
+        self.integration_id = integration_id
         self.ingestion_service = IngestionService()
         self.siem_name = "Generic SIEM"
 

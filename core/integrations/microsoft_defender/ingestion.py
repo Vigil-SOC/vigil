@@ -19,7 +19,7 @@ from core.integrations._base.config_gap import (
     report_config_complete,
     report_config_gap,
 )
-from core.integrations._base.ids import FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import FINDING_ID_MAX, fit_id, instance_prefix
 from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.time import utcnow
 
@@ -59,11 +59,11 @@ def _push(bucket: List[str], value: Any) -> None:
 class MicrosoftDefenderIngestion(SIEMIngestionService):
     """Microsoft Defender ingestion service."""
 
-    def __init__(self):
+    def __init__(self, integration_id: Optional[str] = None):
         """Initialize Microsoft Defender ingestion."""
-        super().__init__()
+        super().__init__(integration_id)
         self.siem_name = "Microsoft Defender"
-        self.config = resolve(MICROSOFT_DEFENDER)
+        self.config = resolve(MICROSOFT_DEFENDER, integration_id=integration_id)
         self.access_token = None
 
     def _get_access_token(self) -> Optional[str]:
@@ -392,7 +392,11 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             # federation used to strip the prefix, and the portal link and
             # the (data_source, external_id) dedup key both use that form.
             alert_id = str(alert.get("id") or uuid.uuid4().hex[:12])
-            finding_id = fit_id("defender-", alert_id, FINDING_ID_MAX)
+            finding_id = fit_id(
+                instance_prefix("defender-", self.integration_id),
+                alert_id,
+                FINDING_ID_MAX,
+            )
 
             src_ips: List[str] = []
             domains: List[str] = []
@@ -459,7 +463,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             return {
                 "finding_id": finding_id,
                 "external_id": alert_id,
-                "data_source": "microsoft_defender",
+                "data_source": self.integration_id or "microsoft_defender",
                 "timestamp": alert.get("alertCreationTime", utcnow().isoformat()),
                 "severity": self.normalize_severity(alert.get("severity")),
                 "title": title,

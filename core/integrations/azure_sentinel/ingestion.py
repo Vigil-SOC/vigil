@@ -16,7 +16,12 @@ from core.integrations._base.config_gap import (
     report_config_complete,
     report_config_gap,
 )
-from core.integrations._base.ids import EXTERNAL_ID_MAX, FINDING_ID_MAX, fit_id
+from core.integrations._base.ids import (
+    EXTERNAL_ID_MAX,
+    FINDING_ID_MAX,
+    fit_id,
+    instance_prefix,
+)
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.time import utcnow
 
@@ -53,11 +58,11 @@ def _entity_context(entities: List[Any]) -> Dict[str, List[str]]:
 class AzureSentinelIngestion(SIEMIngestionService):
     """Azure Sentinel ingestion service."""
 
-    def __init__(self):
+    def __init__(self, integration_id: Optional[str] = None):
         """Initialize Azure Sentinel ingestion."""
-        super().__init__()
+        super().__init__(integration_id)
         self.siem_name = "Azure Sentinel"
-        self.config = resolve(AZURE_SENTINEL)
+        self.config = resolve(AZURE_SENTINEL, integration_id=integration_id)
 
     def _client(self):
         """(client, resource group, workspace), or None when config is missing.
@@ -386,7 +391,11 @@ class AzureSentinelIngestion(SIEMIngestionService):
         try:
             # Generate finding ID
             source_id = str(alert.get("id") or uuid.uuid4().hex[:12])
-            finding_id = fit_id("sentinel-", source_id, FINDING_ID_MAX)
+            finding_id = fit_id(
+                instance_prefix("sentinel-", self.integration_id),
+                source_id,
+                FINDING_ID_MAX,
+            )
 
             # Extract entities
             entities = self.extract_entities(alert.get("properties", {}))
@@ -399,7 +408,7 @@ class AzureSentinelIngestion(SIEMIngestionService):
                 "title": alert.get("title", "Azure Sentinel Incident"),
                 "description": alert.get("description", ""),
                 "severity": self.normalize_severity(alert.get("severity")),
-                "data_source": "azure_sentinel",
+                "data_source": self.integration_id or "azure_sentinel",
                 "timestamp": alert.get("created_time", utcnow().isoformat()),
                 "raw_data": alert,
                 "metadata": {

@@ -1,6 +1,7 @@
 """Bound connector-built ids to the width of the column they are stored in."""
 
 import hashlib
+from typing import Optional
 
 FINDING_ID_MAX = 50  # findings.finding_id String(50)
 EXTERNAL_ID_MAX = 255  # findings.external_id String(255)
@@ -20,3 +21,11 @@ def fit_id(prefix: str, source_id: str, limit: int) -> str:
     digest = hashlib.sha256(source_id.encode("utf-8")).hexdigest()[:_DIGEST_LEN]
     keep = max(limit - len(prefix) - _DIGEST_LEN - 1, 0)
     return f"{prefix}{source_id[:keep]}-{digest}"[:limit]
+
+
+def instance_prefix(prefix: str, integration_id: Optional[str]) -> str:
+    """``prefix`` plus an instance's label (``defender-eu-``), so two tenants'
+    ids cannot collide. The base row (no integration id) keeps ``prefix``."""
+    if not integration_id:
+        return prefix
+    return f"{prefix}{integration_id.rpartition('-')[2]}-"
