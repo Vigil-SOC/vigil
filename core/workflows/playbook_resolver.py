@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
 from core.agents.enablement import disabled_agent_ids, disabled_message
+from core.agents.run_limits import MAX_COST_USD, MAX_ITERATIONS
 from core.config import get_settings
 from core.integrations import bindings
 from core.llm.defaults import DEFAULT_MODEL
@@ -657,12 +659,97 @@ HUNT_ITERATIONS = 8
 # (services/agent/plugins/hunt/plugin.yaml).
 CALLS_PER_ITERATION = 60
 # 90 minutes of wall: at several minutes an iteration, a half-hour ceiling ends the
-# hunt on the clock with most of its cost budget unspent.
+# hunt on the clock with most of its cost budget unspent. The shipped hunt limits;
+# a hunt runs on hunt_limits(), which a deployment may raise. Root-cause traces
+# borrow cost and wall from here and stay on these.
 HUNT_BUDGETS = {
     "max_calls": HUNT_ITERATIONS * CALLS_PER_ITERATION,
     "max_cost_usd": 15.0,
     "max_wall_ms": 5_400_000,
 }
+
+# The deployment's hunt defaults (#5333): setting, env name, the range it may take
+# (and that range in words), and the shipped value it falls back to. Bounded by the
+# per-run override ceilings, so a default never grants more than a person may ask
+# for on execute.
+_HUNT_SETTINGS = (
+    (
+        "hunt_default_iterations",
+        "HUNT_DEFAULT_ITERATIONS",
+        1,
+        MAX_ITERATIONS,
+        f"1-{MAX_ITERATIONS}",
+        HUNT_ITERATIONS,
+    ),
+    # Cost has no floor but being positive; 0 itself is refused below.
+    (
+        "hunt_default_cost_usd",
+        "HUNT_DEFAULT_COST_USD",
+        0,
+        MAX_COST_USD,
+        f"above 0 and at most {MAX_COST_USD:g} USD",
+        HUNT_BUDGETS["max_cost_usd"],
+    ),
+    (
+        "hunt_default_wall_seconds",
+        "HUNT_DEFAULT_WALL_SECONDS",
+        WALL_SECONDS_MIN,
+        WALL_SECONDS_MAX,
+        f"{WALL_SECONDS_MIN}-{WALL_SECONDS_MAX} seconds",
+        HUNT_BUDGETS["max_wall_ms"] // 1000,
+    ),
+)
+
+
+def _hunt_setting(value: float, low: float, high: float) -> Optional[float]:
+    """The setting's value, or None when it is outside its range."""
+    if math.isfinite(value) and 0 < value and low <= value <= high:
+        return value
+    return None
+
+
+def hunt_limits() -> Tuple[int, float, int]:
+    """(iterations, cost USD, wall ms) for a hunt whose start names none.
+
+    Read when the run starts and by the preflight, so the run form shows what runs.
+    A setting out of range keeps the shipped value.
+    """
+    settings = get_settings()
+    iterations, cost, wall_seconds = (
+        shipped if (v := _hunt_setting(getattr(settings, f), lo, hi)) is None else v
+        for f, _, lo, hi, _, shipped in _HUNT_SETTINGS
+    )
+    return int(iterations), float(cost), int(wall_seconds) * 1000
+
+
+def hunt_setting_warning() -> Optional[str]:
+    """Why a deployment hunt default was ignored, or None when all are in range."""
+    settings = get_settings()
+    ignored = [
+        f"{env} is {getattr(settings, f):g}, not {words}; using {shipped:g}"
+        for f, env, lo, hi, words, shipped in _HUNT_SETTINGS
+        if _hunt_setting(getattr(settings, f), lo, hi) is None
+    ]
+    return "; ".join(ignored) or None
+
+
+def warn_hunt_defaults() -> None:
+    """Log once, at API start, when a deployment hunt default is out of range."""
+    message = hunt_setting_warning()
+    if message:
+        logger.warning("%s", message)
+
+
+def _hunt_config_limits() -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """A hunt config's budgets and thresholds, from the deployment defaults."""
+    iterations, cost, wall_ms = hunt_limits()
+    budgets = {
+        "max_calls": iterations * CALLS_PER_ITERATION,
+        "max_cost_usd": cost,
+        "max_wall_ms": wall_ms,
+    }
+    return budgets, {**HUNT_THRESHOLDS, "max_iterations": iterations}
+
 
 # What a root-cause trace needs from the deployment. record and finish are the
 # trace's own tools; telemetry_search is the one an integration (a SIEM) answers, and
@@ -776,19 +863,20 @@ def resolve_hunt(
         )
         playbook["site_telemetry"] = telemetry
 
+    hunt_budgets, hunt_thresholds = _hunt_config_limits()
     config = {
         "model": model or DEFAULT_MODEL,
         **({"provider": provider} if provider else {}),
         **({"effort": effort} if effort else {}),
         **_instructions(),
-        "budgets": dict(HUNT_BUDGETS),
+        "budgets": hunt_budgets,
         "runtime": DEFAULT_RUNTIME,
         "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))
         + [_expand_tool()],
         # The hunt gates on its own checkpoint classes, which are a property of
         # what it is about to conclude rather than of a tool it happens to call.
         "approvals": [],
-        "thresholds": dict(HUNT_THRESHOLDS),
+        "thresholds": hunt_thresholds,
         "hypothesis_loop": HUNT_HYPOTHESIS_LOOP,
     }
 
