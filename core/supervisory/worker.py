@@ -116,25 +116,38 @@ def _tick(settings: Settings, interval: int) -> dict[str, Any] | None:
     ):
         return None
     proposed, failed = 0, []
+    incidents, swept = None, None
     try:
         incidents = medic_hold.open_incidents(settings)
-        swept = medic_hold.sweep(settings, incidents) if incidents is not None else None
     except Exception:  # noqa: BLE001 - read as Medic unreadable; the checks still run
-        logger.exception("supervisory hold sweep failed")
-        incidents, swept = None, None
+        logger.exception("supervisory could not read Medic")
         failed.append("medic_hold")
+    if incidents is not None:
+        try:
+            swept = medic_hold.sweep(settings, incidents)
+        except Exception:  # noqa: BLE001 - the incidents read still holds new cards
+            logger.exception("supervisory hold sweep failed")
+            failed.append("medic_hold")
     # Importing the package registers the built-in checks.
     import core.supervisory.checks  # noqa: F401
 
     for name, check in list(_CHECKS.items()):
         try:
             for proposal in check():
-                held = medic_hold.incident_for(proposal["fn"], incidents or [])
-                if store.propose(**proposal, held_incident=held) is not None:
-                    proposed += 1
+                try:
+                    held = medic_hold.incident_for(proposal["fn"], incidents or [])
+                    if store.propose(**proposal, held_incident=held) is not None:
+                        proposed += 1
+                except (
+                    Exception
+                ):  # noqa: BLE001 - one bad proposal must not drop the rest
+                    logger.exception("supervisory check %s: a proposal failed", name)
+                    if name not in failed:
+                        failed.append(name)
         except Exception:  # noqa: BLE001 - one check failing must not stop the rest
             logger.exception("supervisory check %s failed", name)
-            failed.append(name)
+            if name not in failed:
+                failed.append(name)
     try:
         judged = followup.follow_up()
     except Exception:  # noqa: BLE001 - the next tick tries again
@@ -186,18 +199,21 @@ def status(
       checking on schedule.
     - on_hold: a related Medic incident is open and holds a suggestion.
     - running: checking on schedule.
+
+    ``failed`` names the parts of the last check that failed: a check, the
+    Medic read (``medic_hold``) or the follow-up (``follow_up``).
     """
     settings = settings or get_settings()
     now = now or datetime.now(UTC)
     if not enabled(settings):
-        return {"state": "off", "last_check_at": None, "next_check_at": None}
+        return {"state": "off", **_UNREAD}
     try:
         state = _read_state()
     except Exception:  # noqa: BLE001 - the page says unknown rather than failing
         logger.exception("could not read the supervisory worker state")
-        return {"state": "unknown", "last_check_at": None, "next_check_at": None}
+        return {"state": "unknown", **_UNREAD}
     if state is None:
-        return {"state": "unknown", "last_check_at": None, "next_check_at": None}
+        return {"state": "unknown", **_UNREAD}
     stale = now - state.last_check_at > 2 * timedelta(
         seconds=interval_seconds(settings)
     )
@@ -211,4 +227,8 @@ def status(
         "state": word,
         "last_check_at": state.last_check_at.isoformat(),
         "next_check_at": state.next_check_at.isoformat(),
+        "failed": [n for n in (state.last_error or "").split(", ") if n],
     }
+
+
+_UNREAD: dict[str, Any] = {"last_check_at": None, "next_check_at": None, "failed": []}
