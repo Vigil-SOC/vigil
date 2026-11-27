@@ -555,7 +555,8 @@ RECENT_INDICATOR_LIMIT = 200
 
 
 def _recent_indicators(limit: int) -> List[Dict[str, Any]]:
-    """The newest ``threat_indicators`` rows by ``last_seen``, dumped."""
+    """The newest ``threat_indicators`` rows by ``last_seen``, dumped, each with
+    its STIX object's ``modified`` (else ``created``) as ``object_time``."""
     try:
         from core.storage.connection import get_db_manager
         from core.storage.models import ThreatIndicator
@@ -573,7 +574,12 @@ def _recent_indicators(limit: int) -> List[Dict[str, Any]]:
             .limit(limit)
             .all()
         )
-        return [ThreatIndicatorSchema.dump(row) for row in rows]
+        out = []
+        for row in rows:
+            stix = row.raw_stix if isinstance(row.raw_stix, dict) else {}
+            object_time = stix.get("modified") or stix.get("created")
+            out.append({**ThreatIndicatorSchema.dump(row), "object_time": object_time})
+        return out
 
 
 def propose_hunts_from_recent_indicators(
@@ -586,44 +592,74 @@ def propose_hunts_from_recent_indicators(
     classifier ``check_hunt_coverage`` uses. Classified per key, not per
     batch -- one in-flight hunt would otherwise make every indicator
     ``running``. Rows whose key is ``running`` or ``concluded`` (covered by a
-    recent coverage entry, #5294) are counted and omitted; types with no Entity Key type are skipped rather than minted
-    off-vocabulary. Nothing here opens a hunt.
+    recent coverage entry, #5294) are counted and omitted; types with no Entity
+    Key type are skipped rather than minted off-vocabulary.
+
+    A ``concluded`` key whose newest STIX object time postdates the check
+    covering it, with no reopen inside its window (``reopen_for``), is proposed
+    with a ``reopen`` field and counted under ``reopened``. Read-only: the
+    caller that puts it on a hunt writes the reopen entry. Nothing here opens a
+    hunt.
     """
     # Deferred: hunt_coverage imports parse_report from this module.
-    from core.memory.hunt_coverage import check_coverage
+    from core.memory.hunt_coverage import _at, check_coverage, reopen_for
 
     limit = max(1, min(int(limit), RECENT_INDICATOR_LIMIT))
     rows = _recent_indicators(limit)
-    counts = {"read": len(rows), "skipped": 0, "running": 0, "concluded": 0}
-    proposals: List[Dict[str, Any]] = []
-    seen: set = set()
+    counts = {
+        "read": len(rows),
+        "skipped": 0,
+        "running": 0,
+        "concluded": 0,
+        "reopened": 0,
+    }
+    # One question per key (the same IOC from two feeds is one), first row
+    # kept; its object time is the newest across every row read for the key.
+    by_key: Dict[str, Dict[str, Any]] = {}
+    newest: Dict[str, tuple] = {}
     for row in rows:
         entity_type = _INDICATOR_TO_ENTITY_TYPE.get(str(row.get("indicator_type")))
-        value = row.get("indicator_value")
         # entity_key() answers "" for a value that defangs to nothing.
-        key = entity_key(entity_type or "", str(value or ""))
+        key = entity_key(entity_type or "", str(row.get("indicator_value") or ""))
         if not key:
             counts["skipped"] += 1
             continue
-        if key in seen:  # the same IOC from two feeds is one question
-            continue
-        seen.add(key)
+        by_key.setdefault(key, row)
+        at = _at(row.get("object_time"))
+        if at is not None and (key not in newest or at > newest[key][0]):
+            newest[key] = (at, row.get("source"))
+
+    proposals: List[Dict[str, Any]] = []
+    for key, row in by_key.items():
         coverage = check_coverage(entity_keys=[key])
         status = coverage["status"]
-        if status != "uncovered":
+        reopen = None
+        if status == "concluded" and key in newest:
+            at, source = newest[key]
+            covering = reopen_for(key, coverage["coverage"][0]["entries"], at)
+            if covering is not None:
+                reopen = {
+                    "source": source,
+                    "object_time": at.isoformat().replace("+00:00", "Z"),
+                    "postdates": covering,
+                }
+        if status != "uncovered" and reopen is None:
             counts[status] += 1
             continue
-        proposals.append(
-            {
-                "entity_key": key,
-                "indicator": {
-                    "indicator_type": row.get("indicator_type"),
-                    "indicator_value": value,
-                    "source": row.get("source"),
-                    "last_seen": row.get("last_seen"),  # ISO text: dump is json-mode
-                },
-                "proposal": coverage["proposal"],
-                "execute": coverage["execute"],
-            }
-        )
-    return {"limit": limit, "checked": len(seen), **counts, "proposals": proposals}
+        if reopen is not None:
+            counts["reopened"] += 1
+        proposal = {
+            "entity_key": key,
+            "indicator": {
+                "indicator_type": row.get("indicator_type"),
+                "indicator_value": row.get("indicator_value"),
+                "source": row.get("source"),
+                "last_seen": row.get("last_seen"),  # ISO text: dump is json-mode
+            },
+            "proposal": coverage["proposal"],
+            "execute": coverage["execute"],
+        }
+        if reopen is not None:
+            proposal["reopen"] = reopen
+        proposals.append(proposal)
+    return {"limit": limit, "checked": len(by_key), **counts, "proposals": proposals}

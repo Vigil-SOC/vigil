@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from sqlalchemy import and_, or_
 
+from core.auth.permissions import builtin_reader
 from core.config import get_settings, is_integration_enabled
 from core.integrations._base.config import resolve
 from core.integrations._base.descriptor import (
@@ -27,28 +28,17 @@ from core.integrations._base.descriptor import (
     iter_descriptors,
 )
 from core.integrations._base.proxy import integration_proxy
-from core.memory.hunt_coverage import build_proposal
+from core.memory.hunt_coverage import RETRY, build_proposal
 from core.storage.connection import get_db_manager
 from core.storage.intake_queue import insert_intake_trigger
 from core.storage.models import IntakeTrigger
+from core.storage.models.episodic import EpisodicCoverageEntry
 from core.threat_intel import threat_feed_service as feed
 from core.time import utcnow
 from core.workflows.enablement import is_enabled
 from core.workflows.routing import SCHEDULED_WORKFLOW
 
 logger = logging.getLogger(__name__)
-
-# How long a key an intel row already named stays spoken for. Coverage cannot
-# answer this: `check_coverage` reads `workflow_runs.trigger_context` for the
-# in-flight arm, and a hunt the orchestrator launches never gets a
-# `workflow_runs` row (it enqueues the job directly and only
-# `agent_runs_router` and `WorkflowsService.execute_workflow` call
-# `begin_run`), while the concluded arm reads `episodic_verdicts` and a hunt
-# that gathered nothing writes an `episodic_gaps` row instead. So a hunted key
-# reads `uncovered` again on the next poll, and without this window the poller
-# would re-launch the same hunt every interval forever. A constant, not a
-# settings field, for the reason #905 gives about its own cap.
-INTEL_RECHECK_AFTER = timedelta(days=7)
 
 
 class _IntelIntake(NamedTuple):
@@ -189,7 +179,9 @@ class ThreatFeedPoller:
 
         Does not open the hunt: the drain tick launches it. One intel row is
         queued at a time, and keys a launched intel row named are skipped for
-        `INTEL_RECHECK_AFTER` after its launch.
+        `RETRY` after its launch. Coverage is read as Vigil (`builtin_reader`),
+        so a hunt on a restricted Case still covers its keys. A covered key the
+        proposal reopens gets a `reopen` coverage entry, written with the row.
         """
         if not is_enabled(SCHEDULED_WORKFLOW):
             return {"inserted": 0, "skipped": "workflow_disabled"}
@@ -201,19 +193,24 @@ class ThreatFeedPoller:
             return {"inserted": 0, "skipped": "intel_row_queued"}
 
         try:
-            result = feed.propose_hunts_from_recent_indicators()
+            with builtin_reader():
+                result = feed.propose_hunts_from_recent_indicators()
         except Exception as e:  # noqa: BLE001
             logger.warning("feed hunt proposals failed: %s", e)
             return {"error": str(e)}
 
         keys: List[str] = []
+        reopens: List[EpisodicCoverageEntry] = []
         skipped = 0
+        now = datetime.now(timezone.utc)
         for proposal in result.get("proposals") or []:
             key = proposal["entity_key"]
             if key in intake.spoken_for:
                 skipped += 1
                 continue
             keys.append(key)
+            if proposal.get("reopen"):
+                reopens.append(_reopen_entry(key, proposal["reopen"], now))
 
         if not keys:
             return {"inserted": 0, "keys": 0, "skipped_recent": skipped}
@@ -224,26 +221,59 @@ class ThreatFeedPoller:
         # to be the same string.
         body = build_proposal(keys, [])
         try:
-            insert_intake_trigger(
-                kind="schedule",
-                priority="low",
-                payload={
-                    "workflow_id": SCHEDULED_WORKFLOW,
-                    "trigger_type": "intel",
-                    "finding_ids": [],
-                    "hypothesis": body["hypothesis"],
-                    "hypothesis_subjects": body["hypothesis_subjects"],
-                },
-            )
+            # The row and its reopen entries commit together or not at all.
+            with get_db_manager().session_scope() as session:
+                insert_intake_trigger(
+                    session=session,
+                    kind="schedule",
+                    priority="low",
+                    payload={
+                        "workflow_id": SCHEDULED_WORKFLOW,
+                        "trigger_type": "intel",
+                        "finding_ids": [],
+                        "hypothesis": body["hypothesis"],
+                        "hypothesis_subjects": body["hypothesis_subjects"],
+                    },
+                )
+                session.add_all(reopens)
         except Exception as e:  # noqa: BLE001 — a refused insert is not a failed poll
             logger.warning("could not offer uncovered indicators to intake: %s", e)
             return {"error": str(e)}
 
         # No `None` to weigh: that is the queued-finding unique index answering,
         # and a schedule row carries no finding_id to collide on.
-        offered = {"inserted": 1, "keys": len(keys), "skipped_recent": skipped}
+        offered = {
+            "inserted": 1,
+            "keys": len(keys),
+            "reopened": len(reopens),
+            "skipped_recent": skipped,
+        }
         logger.info("Uncovered feed indicators offered to intake: %s", offered)
         return offered
+
+
+def _reopen_entry(
+    key: str, reopen: Dict[str, Any], now: datetime
+) -> EpisodicCoverageEntry:
+    """The `reopen` coverage entry for a key whose feed object changed (D5)."""
+    check = reopen.get("postdates") or {}
+    on = check.get("investigation_kind") or "?"
+    if check.get("investigation_id"):
+        on += f" {check['investigation_id']}"
+    return EpisodicCoverageEntry(
+        key=key,
+        method="reopen",
+        investigation_kind=None,
+        investigation_id=None,
+        outcome=None,
+        trust="agent",
+        concluded_at=now,
+        reason=(
+            f"{reopen.get('source')} object changed at {reopen.get('object_time')}, "
+            f"after the {check.get('outcome') or check.get('method')} check on "
+            f"{on} concluded at {check.get('concluded_at')}"
+        ),
+    )
 
 
 def _intel_intake_state() -> _IntelIntake:
@@ -270,7 +300,7 @@ def _intel_intake_state() -> _IntelIntake:
                         IntakeTrigger.state == "queued",
                         and_(
                             IntakeTrigger.state == "launched",
-                            IntakeTrigger.decided_at >= utcnow() - INTEL_RECHECK_AFTER,
+                            IntakeTrigger.decided_at >= utcnow() - RETRY,
                         ),
                     ),
                 )
