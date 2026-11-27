@@ -9,12 +9,9 @@ import { useExtensions } from '../../extensions/ExtensionProvider'
 import { getAllIntegrations } from '../../config/integrations'
 import { detectionRulesApi, mcpApi } from '../../services/api'
 import {
-  EXPERIMENTAL_NOTE,
-  EXPERIMENTAL_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
-  WIP_SERVERS,
   logoForServer,
   prettyServerName,
   INTEGRATIONS_DESC,
@@ -293,8 +290,6 @@ export default function IntegrationsSection({ notify }: SectionProps) {
                     <div>
                       <span className="int-name">
                         {displayName(r.name)}
-                        {WIP_SERVERS.has(r.name) && <span className="chip int-wip">WIP</span>}
-                        {EXPERIMENTAL_SERVERS.has(r.name) && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
                       </span>
                       <span className="int-sub">{categoryOf(r.name)}</span>
                       {facts && <span className="int-sub int-facts"><Clamp text={facts} /></span>}

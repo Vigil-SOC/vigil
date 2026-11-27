@@ -8,7 +8,6 @@ import { InfoTip } from '../../shared/InfoTip'
 import { NumberInput, Toggle, ToggleRow } from '../../shared/ui'
 import { useToast } from '../../shell/toast'
 import { stepUpDetailOf } from '../../services/stepUp'
-import { EXPERIMENTAL_NOTE } from '../settings/integrationsData'
 import { HistorySections } from './HistorySections'
 import { CoverageLayers, comparisonLine, layerNamer, layersBody, measureLines, nameMasker } from './CoverageLayers'
 import { ProductionFigures } from './ProductionFigures'
@@ -791,12 +790,10 @@ function Withheld({ id }: { id: string }) {
 function CheckRow({
   check,
   comparedAt,
-  note,
   cited,
 }: {
   check: Check
   comparedAt: string | null
-  note?: string
   cited?: boolean
 }) {
   const tone = outcomeTone(check.outcome)
@@ -809,11 +806,6 @@ function CheckRow({
       </span>
       <p>{check.reason}</p>
       {cited && <Citation check={check} />}
-      {note && (
-        <p className="d1-facts">
-          <span className="chip int-exp">Experimental</span> {note}
-        </p>
-      )}
       {check.evidence?.fix && <p className="d1-fix">{check.evidence.fix}</p>}
       {line && <p className="d1-facts">{line}</p>}
       <Versus check={check} comparedAt={comparedAt} />
@@ -1739,12 +1731,7 @@ export default function ReportScreen() {
             {estateChecks.length > 0 ? (
               <div className="d1-rows">
                 {estateChecks.map((check) => (
-                  <CheckRow
-                    key={check.id}
-                    check={check}
-                    comparedAt={comparedAt}
-                    note={check.id.startsWith('estate.crowdstrike.') ? EXPERIMENTAL_NOTE : undefined}
-                  />
+                  <CheckRow key={check.id} check={check} comparedAt={comparedAt} />
                 ))}
               </div>
             ) : (
