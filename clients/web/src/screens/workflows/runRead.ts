@@ -83,6 +83,8 @@ export interface HuntEvidence {
   why_notable?: string
   salience?: string
   attack_technique?: string | null
+  /** A cited technique the ATT&CK catalogue refused when the record was written. */
+  technique_refusal?: { claimed_attack_technique: string; technique_refusal: string; technique_suggestions: string[] } | null
   attacker_influenceable?: boolean
   /** Whether anything the finding rests on was attested by the telemetry rather than
    *  authored by the adversary. The projection computes it, so the console shows the

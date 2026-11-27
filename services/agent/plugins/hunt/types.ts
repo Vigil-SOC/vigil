@@ -283,8 +283,8 @@ export interface EvidenceRecord {
   salience: Salience;
   why_notable: string;
   provenance: string;
-  // The worker's own claim about this record, distinct from the playbook author's
-  // label. Absent rather than null, and schema-gated so one cannot be invented.
+  // The worker's own claim about this record. Absent rather than null; an id that is not an active ATT&CK technique is
+  // dropped when recorded, its refusal kept on the payload (attack.ts).
   attack_technique?: string;
   // Set when an adversary could have written the value. Superseded by rests_on, which
   // says which values: kept because the ledger holds it and a run written before the

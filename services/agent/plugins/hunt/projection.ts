@@ -1,4 +1,5 @@
 import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
+import { refusalOf, type TechniqueRefusal } from "./attack.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
 import { callViews, type CallView } from "../../core/call-view.js";
 import { recordRows, type BearsOn, type RecordQuestion, type RecordRows, type RecordStanding } from "../../core/record.js";
@@ -138,6 +139,9 @@ export interface EvidenceView {
   why_notable: string;
   salience: Salience;
   attack_technique: string | null;
+  // A cited technique the ATT&CK catalogue refused when it was recorded: off the
+  // payload, which the view leaves out, as gap_detail is.
+  technique_refusal: TechniqueRefusal | null;
   // A record an adversary could have written cannot carry a verdict alone.
   attacker_influenceable: boolean;
   // Whether anything this finding rests on was attested by the telemetry. Computed
@@ -315,6 +319,7 @@ function evidenceView(record: EvidenceRecord, bearsOn: RecordRows["bears_on"]): 
     why_notable: record.why_notable,
     salience: record.salience,
     attack_technique: record.attack_technique ?? null,
+    technique_refusal: refusalOf(record.payload),
     attacker_influenceable: record.attacker_influenceable,
     sensor_attested: sensorAttested(record),
     rests_on: record.rests_on ?? [],

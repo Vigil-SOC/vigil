@@ -513,10 +513,11 @@ function constrainField(schema: Record<string, unknown>, field: string, values: 
   return { ...schema, properties: { ...properties, [field]: { ...target, enum: [...values] } } };
 }
 
-// A finding narrowed to the run's declared data_domains and attack_techniques, so a
-// citation outside the playbook's lists is refused rather than counted.
+// A finding's source_system narrowed to the run's declared data_domains, as guidance:
+// attributeSource is the check. Its technique is free here and checked against the
+// ATT&CK catalogue when recorded (plugins/hunt/attack.ts).
 export function narrowFinding(schema: Record<string, unknown>, sections: Record<string, unknown>): Record<string, unknown> {
-  return constrainField(constrainField(schema, "source_system", declaredStrings(sections, "data_domains")), "attack_technique", declaredStrings(sections, "attack_techniques"));
+  return constrainField(schema, "source_system", declaredStrings(sections, "data_domains"));
 }
 
 // The vocabulary a playbook declared for a section. Absent constrains nothing.
