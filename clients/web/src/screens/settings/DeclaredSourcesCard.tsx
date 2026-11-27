@@ -137,7 +137,7 @@ export default function DeclaredSourcesCard({
   health: IntegrationHealthSource[]
   healthFailed: boolean
   /** POST /api/config/integrations for source-<name> */
-  saveCredentials: (integrationId: string, values: Record<string, string>) => Promise<void>
+  saveCredentials: (integrationId: string, values: Record<string, string>) => Promise<unknown>
   /** after an accept or a save: the section re-reads servers and health */
   onChanged: () => void
 }) {

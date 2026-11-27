@@ -11,7 +11,27 @@ export const SERVER_TO_INTEGRATION = new Map(Object.entries({
 const INTEGRATION_TO_SERVER = new Map([...SERVER_TO_INTEGRATION].map(([server, id]) => [id, server]))
 export const serverForIntegration = (id: string) => INTEGRATION_TO_SERVER.get(id) ?? id
 
-export function getIntegrationForServer(serverName: string): IntegrationMetadata | undefined {
+/** Instance id -> the integration it is an instance of: `instances` of GET /config/integrations (#5353). */
+export type Instances = Record<string, string>
+
+/** The server whose descriptor, logo, category and description an instance's row borrows: its base's. */
+export const baseServerOf = (serverName: string, instances?: Instances) =>
+  instances?.[serverName] ? serverForIntegration(instances[serverName]) : serverName
+
+/** A row's title; an instance reads `<integration> · <label>`. */
+export function serverTitle(serverName: string, instances?: Instances): string {
+  const base = instances?.[serverName]
+  const title = (s: string) => SERVER_DISPLAY_NAMES.get(s) ?? prettyServerName(s)
+  return base ? `${title(serverForIntegration(base))} · ${serverName.slice(base.length + 1)}` : title(serverName)
+}
+
+export function getIntegrationForServer(serverName: string, instances?: Instances): IntegrationMetadata | undefined {
+  // An instance has its base's form, saved, tested and keyed under its own id.
+  const base = instances?.[serverName]
+  if (base) {
+    const meta = getAllIntegrations().find((i) => i.id === base)
+    return meta && { ...meta, id: serverName, name: serverTitle(serverName, instances) }
+  }
   // Both servers share descriptor id `splunk`. The official card is configured
   // by SPLUNK_MCP_URL; the name fallback would hand it the REST form.
   if (serverName === 'splunk') return undefined
@@ -101,6 +121,10 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   'ip-geolocation': 'Each looked-up address is sent to ip-api.com. Look up geographic location, ISP, and organization info for IP addresses during investigations.',
   'atomic-red-team': 'Invoke one Atomic Red Team technique on a host the operator has listed. Disabled until toggled; saving config does not run the runner.',
 }))
+
+/** An instance label: 1 to 12 lowercase letters and digits, starting with a letter, not `tmp`. Same as valid_label on the server. */
+export const LABEL_RULE = '1 to 12 lowercase letters and digits, starting with a letter; not tmp.'
+export const validLabel = (label: string) => /^[a-z][a-z0-9]{0,11}$/.test(label) && label !== 'tmp'
 
 export function prettyServerName(name: string): string {
   return name

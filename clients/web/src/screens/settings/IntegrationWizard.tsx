@@ -6,6 +6,7 @@ import { configApi, federationApi, type IntegrationTestResult } from '../../serv
 import { Field, NumberInput, OverlayPortal, PasswordInput, Select, TextInput, ToggleRow } from '../../shared/ui'
 import { Banner, extractApiError } from '../../shared/formKit'
 import { healthId, relativeTime, type LastTest } from './integrationHealth'
+import { LABEL_RULE, validLabel } from './integrationsData'
 import {
   SECTION_LABELS,
   fieldsWithProxy,
@@ -27,6 +28,13 @@ interface Props {
   category?: string
   // a test ran in the drawer: the parent refreshes its health read
   onTested?: () => void
+  // adding another instance of `integration` (#5353): asks for a label, saved as <id>-<label>
+  newInstance?: boolean
+  // saved integration ids: a new instance's id must not be one (a save would edit it instead)
+  savedIds?: string[]
+  // a saved integration's drawer: whether it offers another instance, and why not
+  instancesAllowed?: { allowed: boolean; reason?: string | null }
+  onAddAnother?: () => void
 }
 
 const STEPS = ['Add connection', 'Verify a read', 'Collect alerts', 'Automatic investigations'] as const
@@ -50,7 +58,21 @@ export default function IntegrationWizard({
   health,
   category,
   onTested,
+  newInstance = false,
+  savedIds = [],
+  instancesAllowed,
+  onAddAnother,
 }: Props) {
+  const [label, setLabel] = useState('')
+  // the server's refusal of the label (a collision, the base not connected, a long tool name)
+  const [labelRefused, setLabelRefused] = useState<string | null>(null)
+  const [instanceSaved, setInstanceSaved] = useState(false)
+  const id = newInstance ? `${integration.id}-${label}` : integration.id
+  const labelError =
+    !newInstance || instanceSaved
+      ? null
+      : labelRefused ??
+        (label && !validLabel(label) ? `Not a valid label: ${LABEL_RULE}` : savedIds.includes(id) ? `${id} already exists; choose another label.` : null)
   const [config, setConfig] = useState<Record<string, unknown>>(existingConfig)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -153,7 +175,7 @@ export default function IntegrationWizard({
   const runTest = async () => {
     setProbe({ state: 'running' })
     try {
-      const { data } = await configApi.testIntegration(integration.id)
+      const { data } = await configApi.testIntegration(id)
       setProbe({ state: 'done', result: data })
       // not_testable has no probe to record. not_checked did not run the read,
       // so it is not stored as a pass or a failure.
@@ -172,6 +194,10 @@ export default function IntegrationWizard({
   const canVerify = configured && !dirty
 
   const handleSave = async () => {
+    if (newInstance && !instanceSaved && (!validLabel(label) || savedIds.includes(id))) {
+      setLabelRefused(labelError ?? `Enter a label: ${LABEL_RULE}`)
+      return
+    }
     if (missingRequired.length) {
       setError(`Please fill in: ${missingRequired.map((f) => f.label).join(', ')}`)
       return
@@ -179,12 +205,16 @@ export default function IntegrationWizard({
     setSaving(true)
     setError(null)
     try {
-      await onSave(integration.id, config)
+      await onSave(id, newInstance ? { ...config, instance_of: integration.id } : config)
       setSaved(config)
+      setInstanceSaved(newInstance)
       setStep(1)
       void runTest()
     } catch (e) {
-      setError(extractApiError(e, 'Failed to save configuration'))
+      const status = (e as { response?: { status?: number } }).response?.status
+      // a refused instance stores nothing: its reason goes beside the label
+      if (newInstance && !instanceSaved && status === 400) setLabelRefused(extractApiError(e, 'The server refused this label'))
+      else setError(extractApiError(e, 'Failed to save configuration'))
     } finally {
       setSaving(false)
     }
@@ -201,13 +231,13 @@ export default function IntegrationWizard({
         <aside
           className="vg-side-panel"
           role="dialog"
-          aria-label={`Set up ${integration.name}`}
+          aria-label={newInstance ? `Add another ${integration.name}` : `Set up ${integration.name}`}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div className="int-drawer-head">
             <span className="flex flex-col gap-[3px] grow min-w-0">
               <span className="int-drawer-title">
-                {integration.name}
+                {newInstance ? `${integration.name} · ${instanceSaved ? label : 'new instance'}` : integration.name}
                 <LevelBadge level={level} variant="pill" />
               </span>
               <span className="vg-side-hint">{[category, lastRead].filter(Boolean).join(' · ')}</span>
@@ -247,6 +277,22 @@ export default function IntegrationWizard({
               )}
               {error && <Banner kind="err">{error}</Banner>}
 
+              {newInstance && (
+                <Field label="Label" hint={`Names this instance ${integration.id}-${label || '<label>'}. ${LABEL_RULE}`} error={labelError}>
+                  <TextInput
+                    value={label}
+                    placeholder="contoso"
+                    maxLength={12}
+                    disabled={instanceSaved}
+                    aria-invalid={!!labelError}
+                    onChange={(e) => {
+                      setLabel(e.target.value)
+                      setLabelRefused(null)
+                    }}
+                  />
+                </Field>
+              )}
+
               {mainFields.map(renderField)}
 
               {Object.entries(sections).map(([name, secFields]) => (
@@ -262,6 +308,24 @@ export default function IntegrationWizard({
                   {proxyOpen && <div className="card-b flex flex-col gap-3.5">{secFields.map(renderField)}</div>}
                 </div>
               ))}
+
+              {instancesAllowed && (
+                <div className="int-sec">
+                  <span className="int-sec-h">Another instance</span>
+                  {instancesAllowed.allowed ? (
+                    <>
+                      <span className="int-sec-row">Connect a second tenant or account under its own name, credentials and server.</span>
+                      <div>
+                        <button type="button" className="btn" onClick={onAddAnother} disabled={!onAddAnother}>
+                          <Icon name="plus" /> Add another
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <span className="int-sec-row">{instancesAllowed.reason || 'This integration cannot have another instance.'}</span>
+                  )}
+                </div>
+              )}
             </>
           )}
           {step === 1 && <VerifyStep probe={probe} onRun={runTest} />}
