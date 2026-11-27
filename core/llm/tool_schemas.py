@@ -1102,11 +1102,15 @@ MEMORY_TOOLS = [
             "covers it. Pass the report text (STIX bundle or plain text) and/or "
             "already-extracted Entity Keys (`type:value`) and ATT&CK technique ids. "
             "Answers `running` (a hunt is on it now; extend that run via "
-            "POST /api/agent-runs/{run_id}/directives kind `extend`), `concluded` "
-            "(a past hunt reached a Verdict; rows carry outcome, date and "
-            "origin_run_id) or `uncovered`. The last two include a `proposal` body "
-            "for POST /api/workflows/threat-hunt/execute. Matched and unmatched "
-            "keys and techniques are listed. Read-only: this never starts a hunt."
+            "POST /api/agent-runs/{run_id}/directives kind `extend`), `uncovered` "
+            "(at least one key or technique is due for a hunt) or `concluded` "
+            "(every one is covered by a recent hunt or Case). `coverage` lists, "
+            "per key, its entries (outcome, method, trust, concluded_by, "
+            "concluded_at, investigation and run ids) and `due_at`, null when due "
+            "now. The last two statuses include a `proposal` body for "
+            "POST /api/workflows/threat-hunt/execute. Matched (covered) and "
+            "unmatched (due) keys and techniques are listed. Read-only: this "
+            "never starts a hunt."
         ),
         "input_schema": {
             "type": "object",

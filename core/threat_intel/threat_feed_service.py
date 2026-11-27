@@ -585,8 +585,8 @@ def propose_hunts_from_recent_indicators(
     rows the poller upserted, mint one Entity Key per row, and ask the same
     classifier ``check_hunt_coverage`` uses. Classified per key, not per
     batch -- one in-flight hunt would otherwise make every indicator
-    ``running``. Rows whose key is ``running`` or ``concluded`` are counted and
-    omitted; types with no Entity Key type are skipped rather than minted
+    ``running``. Rows whose key is ``running`` or ``concluded`` (covered by a
+    recent coverage entry, #5294) are counted and omitted; types with no Entity Key type are skipped rather than minted
     off-vocabulary. Nothing here opens a hunt.
     """
     # Deferred: hunt_coverage imports parse_report from this module.
