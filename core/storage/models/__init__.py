@@ -84,6 +84,7 @@ from core.storage.models.directory import (
 )
 from core.storage.models.entity_fact import EntityFact
 from core.storage.models.episodic import (
+    EpisodicCoverageEntry,
     EpisodicDistilFailure,
     EpisodicDistilMarker,
     EpisodicGap,
@@ -171,6 +172,7 @@ __all__ = [
     "DetectionRuleStage",
     "DetectionRuleVersion",
     "EntityFact",
+    "EpisodicCoverageEntry",
     "EpisodicDistilFailure",
     "EpisodicDistilMarker",
     "EpisodicGap",

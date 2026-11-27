@@ -2571,6 +2571,61 @@
   "nullable": false,
   "type": "character varying(64)"
  },
+ "column episodic_coverage_entries.concluded_at": {
+  "default": null,
+  "nullable": false,
+  "type": "timestamp with time zone"
+ },
+ "column episodic_coverage_entries.concluded_by": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.id": {
+  "default": "nextval('episodic_coverage_entries_id_seq'::regclass)",
+  "nullable": false,
+  "type": "bigint"
+ },
+ "column episodic_coverage_entries.investigation_id": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.investigation_kind": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.key": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.method": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.outcome": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.reason": {
+  "default": null,
+  "nullable": true,
+  "type": "text"
+ },
+ "column episodic_coverage_entries.run_id": {
+  "default": null,
+  "nullable": true,
+  "type": "uuid"
+ },
+ "column episodic_coverage_entries.trust": {
+  "default": null,
+  "nullable": false,
+  "type": "text"
+ },
  "column episodic_distil_failures.attempts": {
   "default": null,
   "nullable": false,
@@ -5605,6 +5660,11 @@
  "constraint directory_pending.directory_pending_pkey": "PRIMARY KEY (pending_id)",
  "constraint entity_facts.entity_facts_case_id_fkey": "FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE",
  "constraint entity_facts.entity_facts_pkey": "PRIMARY KEY (id)",
+ "constraint episodic_coverage_entries.episodic_coverage_entries_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
+ "constraint episodic_coverage_entries.episodic_coverage_entries_method_check": "CHECK ((method = ANY (ARRAY['hunt'::text, 'case'::text, 'reopen'::text])))",
+ "constraint episodic_coverage_entries.episodic_coverage_entries_outcome_check": "CHECK ((outcome = ANY (ARRAY['proven'::text, 'disproven'::text, 'inconclusive'::text, 'handed_off'::text])))",
+ "constraint episodic_coverage_entries.episodic_coverage_entries_pkey": "PRIMARY KEY (id)",
+ "constraint episodic_coverage_entries.episodic_coverage_entries_trust_check": "CHECK ((trust = ANY (ARRAY['agent'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_attempts_check": "CHECK ((attempts > 0))",
  "constraint episodic_distil_failures.episodic_distil_failures_investigation_kind_check": "CHECK ((investigation_kind = ANY (ARRAY['hunt'::text, 'case'::text, 'analyst'::text])))",
  "constraint episodic_distil_failures.episodic_distil_failures_pkey": "PRIMARY KEY (investigation_kind, failure_key)",
@@ -5930,6 +5990,7 @@
  "index directory_groups_pkey": "CREATE UNIQUE INDEX directory_groups_pkey ON public.directory_groups USING btree (group_id)",
  "index directory_pending_pkey": "CREATE UNIQUE INDEX directory_pending_pkey ON public.directory_pending USING btree (pending_id)",
  "index entity_facts_pkey": "CREATE UNIQUE INDEX entity_facts_pkey ON public.entity_facts USING btree (id)",
+ "index episodic_coverage_entries_pkey": "CREATE UNIQUE INDEX episodic_coverage_entries_pkey ON public.episodic_coverage_entries USING btree (id)",
  "index episodic_distil_failures_pkey": "CREATE UNIQUE INDEX episodic_distil_failures_pkey ON public.episodic_distil_failures USING btree (investigation_kind, failure_key)",
  "index episodic_distil_markers_pkey": "CREATE UNIQUE INDEX episodic_distil_markers_pkey ON public.episodic_distil_markers USING btree (investigation_kind, investigation_id)",
  "index episodic_gaps_pkey": "CREATE UNIQUE INDEX episodic_gaps_pkey ON public.episodic_gaps USING btree (id)",
@@ -6051,6 +6112,8 @@
  "index idx_entity_facts_case": "CREATE INDEX idx_entity_facts_case ON public.entity_facts USING btree (case_id) WHERE (case_id IS NOT NULL)",
  "index idx_entity_facts_expires": "CREATE INDEX idx_entity_facts_expires ON public.entity_facts USING btree (expires_at)",
  "index idx_entity_facts_fetched": "CREATE INDEX idx_entity_facts_fetched ON public.entity_facts USING btree (fetched_at)",
+ "index idx_episodic_coverage_entries_investigation": "CREATE INDEX idx_episodic_coverage_entries_investigation ON public.episodic_coverage_entries USING btree (investigation_kind, investigation_id)",
+ "index idx_episodic_coverage_entries_key": "CREATE INDEX idx_episodic_coverage_entries_key ON public.episodic_coverage_entries USING btree (key, concluded_at DESC)",
  "index idx_episodic_gaps_investigation": "CREATE INDEX idx_episodic_gaps_investigation ON public.episodic_gaps USING btree (investigation_kind, investigation_id)",
  "index idx_episodic_gaps_recall": "CREATE INDEX idx_episodic_gaps_recall ON public.episodic_gaps USING btree (concluded_at DESC, id)",
  "index idx_episodic_gaps_subjects": "CREATE INDEX idx_episodic_gaps_subjects ON public.episodic_gaps USING gin (subject_entities)",
@@ -7581,6 +7644,44 @@
   "sequence": null
  },
  "relation entity_facts_id_seq": {
+  "acl": [
+   "app:SELECT",
+   "app:USAGE",
+   "owner:SELECT",
+   "owner:UPDATE",
+   "owner:USAGE"
+  ],
+  "kind": "S",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": "[\"bigint\", 1, 1, 1, 9223372036854775807, 1, false]"
+ },
+ "relation episodic_coverage_entries": {
+  "acl": [
+   "app:DELETE",
+   "app:INSERT",
+   "app:SELECT",
+   "app:UPDATE",
+   "owner:DELETE",
+   "owner:INSERT",
+   "owner:REFERENCES",
+   "owner:SELECT",
+   "owner:TRIGGER",
+   "owner:TRUNCATE",
+   "owner:UPDATE"
+  ],
+  "kind": "r",
+  "owner": "owner",
+  "row_security": [
+   false,
+   false
+  ],
+  "sequence": null
+ },
+ "relation episodic_coverage_entries_id_seq": {
   "acl": [
    "app:SELECT",
    "app:USAGE",
