@@ -1093,19 +1093,39 @@ export interface WorkflowAgreement extends AgreementTally {
   unattributed: number
 }
 
+/** How one kind of held dismissal's cases stand now. */
+export interface AfterHold {
+  open: number
+  not_real: number
+  real: number
+  no_determination: number
+  by_agent: number
+}
+
+/** One workflow's dismissals in the window, from workflow_runs.step_score (#5276). */
+export interface StepScoreTally {
+  bands: { high: number; medium: number; low: number; unknown: number }
+  held_by_bar: number
+  passed_bar: number
+  held_by_autonomy: number
+  after_hold: { bar: AfterHold; autonomy: AfterHold }
+}
+
 export interface AgentAgreement {
   overall?: AgreementTally
   by_workflow: WorkflowAgreement[]
+  step_scores: Record<string, StepScoreTally>
 }
 
 export const analyticsApi = {
   /** The agent_agreement block of GET /analytics; the route returns an untyped dict, so only this part is typed. */
   getAgreement: (timeRange: '24h' | '7d' | '30d' | 'all' = '30d') =>
     api
-      .get<{ agent_agreement?: { overall?: AgreementTally; by_workflow?: WorkflowAgreement[] } }>('/analytics', { params: { time_range: timeRange } })
+      .get<{ agent_agreement?: Partial<AgentAgreement> }>('/analytics', { params: { time_range: timeRange } })
       .then((res): AgentAgreement => ({
         overall: res.data.agent_agreement?.overall,
         by_workflow: res.data.agent_agreement?.by_workflow ?? [],
+        step_scores: res.data.agent_agreement?.step_scores ?? {},
       })),
 }
 

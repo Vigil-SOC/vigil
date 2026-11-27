@@ -32,7 +32,9 @@ from core.response.ceiling import (
     preview_model_change,
     raises_workflow,
     read_ceiling,
+    set_workflow_bar,
     set_workflow_tier,
+    workflow_bar,
     workflow_entry,
     workflow_evidence,
 )
@@ -62,6 +64,21 @@ class WorkflowAutonomyBody(BaseModel):
 
     tier: Optional[Literal["act", "assist"]] = None
     floor: Optional[int] = None
+    # A step scoring under it waits for a person (#5276). Omitted, the stored bar
+    # stays; null clears it. A body naming ``bar`` and no ``tier`` moves the bar alone.
+    bar: Optional[float] = Field(None, ge=0, le=1)
+
+
+def _loosen_gate(current_user: User, session, what: str, stopped: bool) -> None:
+    """A loosening: a person's ``ai_autonomy.write``, refused while stopped."""
+    deny_unless(current_user.user_id, "ai_autonomy.write", session)
+    if is_machine_request(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"A service account or API token cannot {what}",
+        )
+    if stopped:
+        raise HTTPException(status_code=409, detail="Stopped: resume first")
 
 
 @router.put(
@@ -83,6 +100,11 @@ def put_workflow_autonomy(
     30-day agreement on the workflow beside its floor.
     Anything else is ``ai_autonomy.stop``. A workflow a declared INTENT.md
     manages is refused (409) anything looser than its declared entry.
+
+    The bar (#5276) follows the same split: setting or raising it is
+    ``ai_autonomy.stop``; lowering or clearing it, clearing the tier under it
+    included, is a loosening as a raise is. A bar-only change keeps the rest of
+    the entry as it is.
     """
     workflow = workflows.get_workflow(workflow_id)
     if workflow is None:
@@ -98,6 +120,19 @@ def put_workflow_autonomy(
         raise HTTPException(
             status_code=503, detail="Could not read the autonomy ceiling"
         ) from exc
+    sent = body.model_fields_set
+    stored_bar = workflow_bar(current, workflow_id)
+    if "bar" in sent and "tier" not in sent:
+        return _put_bar(
+            workflow_id, body.bar, stored_bar, current, current_user, session
+        )
+    if body.tier is None and body.bar is not None:
+        raise HTTPException(
+            status_code=422, detail="A workflow that follows the fleet has no bar"
+        )
+    # Kept unless the body names it; following the fleet drops it.
+    bar = (body.bar if "bar" in sent else stored_bar) if body.tier else None
+    lowers_bar = stored_bar is not None and (bar is None or bar < stored_bar)
     candidate = dict(current.workflows)
     candidate.pop(workflow_id, None)
     if body.tier is not None:
@@ -105,15 +140,9 @@ def put_workflow_autonomy(
     after = replace(current, workflows=MappingProxyType(candidate))
     raises = body.tier == ACT or raises_workflow(current, workflow_id, after)
     by = current_user.principal_id
-    if raises:
-        deny_unless(current_user.user_id, "ai_autonomy.write", session)
-        if is_machine_request(current_user):
-            raise HTTPException(
-                status_code=403,
-                detail="A service account or API token cannot raise autonomy",
-            )
-        if current.stopped:
-            raise HTTPException(status_code=409, detail="Stopped: resume first")
+    if raises or lowers_bar:
+        what = "raise autonomy" if raises else "lower or clear a bar"
+        _loosen_gate(current_user, session, what, current.stopped)
     else:
         deny_unless(current_user.user_id, "ai_autonomy.stop", session)
     try:
@@ -126,10 +155,10 @@ def put_workflow_autonomy(
             # (blended, with no model, when the model cannot be resolved).
             model = investigation_model()
             entry = workflow_entry(
-                ACT, body.floor, workflow_evidence(workflow_id, model), by, model
+                ACT, body.floor, workflow_evidence(workflow_id, model), by, model, bar
             )
         elif body.tier == ASSIST:
-            entry = workflow_entry(ASSIST, None, None, by)
+            entry = workflow_entry(ASSIST, None, None, by, bar=bar)
         else:
             entry = None
         # A workflow INTENT.md manages may only narrow; its declared value is the reset.
@@ -145,7 +174,13 @@ def put_workflow_autonomy(
         refused = managed_widening(key, requested, ceiling=current)
         if refused:
             raise HTTPException(status_code=409, detail=refused)
-        set_workflow_tier(workflow_id, entry, str(current_user.user_id), raises=raises)
+        set_workflow_tier(
+            workflow_id,
+            entry,
+            str(current_user.user_id),
+            raises=raises or lowers_bar,
+            keep_bar="bar" not in sent,
+        )
         settle_pending({key: requested}, str(current_user.user_id))
         return _view()
     except CeilingRefusal as exc:
@@ -156,6 +191,40 @@ def put_workflow_autonomy(
         ) from exc
     except HTTPException:
         raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Could not read the autonomy ceiling"
+        ) from exc
+
+
+def _put_bar(
+    workflow_id: str,
+    bar: Optional[float],
+    stored: Optional[float],
+    current,
+    current_user: User,
+    session,
+) -> CeilingResponse:
+    """Move the bar alone. Lowering or clearing it loosens; anything else tightens."""
+    if workflow_id not in current.workflows:
+        raise HTTPException(
+            status_code=422,
+            detail="A workflow that follows the fleet has no bar: give it a tier first",
+        )
+    lowers = stored is not None and (bar is None or bar < stored)
+    if lowers:
+        _loosen_gate(current_user, session, "lower or clear a bar", current.stopped)
+    else:
+        deny_unless(current_user.user_id, "ai_autonomy.stop", session)
+    try:
+        set_workflow_bar(workflow_id, bar, str(current_user.user_id), lowers=lowers)
+        return _view()
+    except CeilingRefusal as exc:
+        raise _http(exc) from exc
+    except CeilingWriteError as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to save the autonomy ceiling"
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=503, detail="Could not read the autonomy ceiling"

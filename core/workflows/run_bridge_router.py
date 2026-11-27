@@ -940,7 +940,15 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
     from core.cases.closure import DISMISSAL_CAUSES, ClosureCategory
-    from core.response.ceiling import close_held, finding_keys
+    from core.response.ceiling import (
+        BarHeld,
+        close_held,
+        finding_keys,
+        read_ceiling,
+        record_bar_hold,
+        workflow_bar,
+        workflow_of,
+    )
     from core.response.step_confidence import DISMISSAL, quote, safe_score
     from core.storage.models import Case
 
@@ -952,12 +960,25 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     # with nothing said about leaving it open.
     if _already_closed(case_id):
         return
-    # Scored whatever the tier (#5275); nothing here reads it to decide.
+    # Scored whatever the tier (#5275); the workflow's bar reads it last (#5276).
     step_score = safe_score(DISMISSAL, case_id, update.standing())
     quoted = quote(step_score)
     # Closing is a reversible act; under Assist a person decides.
-    if held := close_held(run_id, lambda: finding_keys(case_id=case_id)):
+    held = close_held(
+        run_id,
+        lambda: finding_keys(case_id=case_id),
+        (step_score or {}).get("value"),
+    )
+    if isinstance(held, BarHeld):
+        _store_step_score(
+            run_id,
+            step_score,
+            {"check": "held_by_bar", "reason": held, "bar": held.bar},
+        )
+        record_bar_hold(held, DISMISSAL, case_id, run_id)
+    elif held:
         _store_step_score(run_id, step_score, {"check": "held", "reason": held})
+    if held:
         _add_activity(
             case_id,
             "agent_run_left_open",
@@ -971,6 +992,11 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
             },
         )
         return
+    # The bar the close passed, if any, beside the score on the run row.
+    try:
+        passed = workflow_bar(read_ceiling(), workflow_of(run_id))
+    except Exception:  # noqa: BLE001 — close_held read it a moment ago
+        passed = None
     try:
         with service_session() as session:
             case = session.query(Case).filter(Case.case_id == case_id).first()
@@ -989,7 +1015,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 step_score=quoted,
                 **({"false_positive_cause": cause.value} if cause else {}),
             )
-        _store_step_score(run_id, step_score, {"check": "closed"})
+        _store_step_score(run_id, step_score, {"check": "closed", "bar": passed})
         recorded = "expected activity" if cause else "a false positive"
         _add_activity(
             case_id,

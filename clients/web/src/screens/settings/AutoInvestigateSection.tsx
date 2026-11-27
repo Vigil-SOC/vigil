@@ -32,8 +32,10 @@ import {
   approvalsApi,
   configApi,
   detectionRulesApi,
+  type AfterHold,
   type Ceiling,
   type InvestigationReplayResponse,
+  type StepScoreTally,
   type EffectClass,
   type OverlayOnlyRule,
   type ToolClass,
@@ -190,6 +192,105 @@ function ReleaseCap({
       )}
     </div>
   )
+}
+
+const barText = (bar: number) => bar.toFixed(2)
+
+/** One workflow's bar: set or raise it tightens; lower or clear it loosens, as the API judges it. */
+function WorkflowBar({
+  name,
+  stored,
+  canRaise,
+  machine,
+  stopped,
+  save,
+}: {
+  name: string
+  stored: number | null
+  canRaise: boolean
+  machine: boolean
+  stopped: boolean
+  save: (bar: number | null) => Promise<boolean>
+}) {
+  const [draft, setDraft] = useState(stored == null ? '' : barText(stored))
+  // Every read of the ceiling, a refused save's refresh included, resets the field.
+  useEffect(() => setDraft(stored == null ? '' : barText(stored)), [stored])
+  const next = draft.trim() === '' ? null : Number(draft)
+  // Why the server would refuse ``to``, said before anyone saves.
+  const refusal = (to: number | null): string | null => {
+    if (to != null && !(to >= 0 && to <= 1)) return 'A bar is a number from 0 to 1.'
+    if (stored == null || (to != null && to >= stored)) return null
+    if (machine) return 'A service account cannot lower or clear a bar.'
+    if (!canRaise) return 'Your role can raise the bar. Lowering or clearing it needs permission to loosen autonomy.'
+    if (stopped) return `${STOPPED_LOOSEN}: a lower bar is refused; a higher one saves.`
+    return null
+  }
+  const changed = next !== stored
+  const why = changed ? refusal(next) : null
+  const commit = (to: number | null) => {
+    if (refusal(to)) return
+    void save(to).then((ok) => ok || setDraft(stored == null ? '' : barText(stored)))
+  }
+  const id = `lim-bar-${name.replace(/\W+/g, '-')}`
+  return (
+    <span className="lim-wf-bar">
+      <span className="lim-wf-bar-row">
+        <label htmlFor={id}>Bar</label>
+        <NumberInput
+          id={id}
+          aria-label={`Bar of ${name}`}
+          style={{ width: 76 }}
+          min={0}
+          max={1}
+          step={0.05}
+          placeholder="none"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && changed && commit(next)}
+        />
+        <button type="button" className="btn ghost" disabled={!changed || !!why} onClick={() => commit(next)}>
+          Save
+        </button>
+        {stored != null && (
+          <button type="button" className="btn ghost" disabled={!!refusal(null)} title={refusal(null) ?? undefined} onClick={() => commit(null)}>
+            Clear
+          </button>
+        )}
+      </span>
+      {why && (
+        <span className="lim-class-note">
+          <Icon name="alert" size={13} className="shrink-0" /> {why}
+        </span>
+      )}
+    </span>
+  )
+}
+
+const HELD_AFTER: [keyof AfterHold, string][] = [
+  ['not_real', 'closed by a person as not real'],
+  ['real', 'closed by a person as real'],
+  ['no_determination', 'closed by a person without a determination'],
+  ['by_agent', 'closed by an agent'],
+  ['open', 'still open'],
+]
+
+/** "Held by the bar 2: 1 closed by a person as not real, 1 still open"; null when none were held. */
+function heldLine(label: string, n: number, after: AfterHold): string | null {
+  if (!n) return null
+  const parts = HELD_AFTER.filter(([k]) => after[k]).map(([k, said]) => `${after[k]} ${said}`)
+  return `${label} ${n}: ${parts.join(', ')}`
+}
+
+/** The workflow's 30 days of dismissals: scores by band, then what each hold left for people. */
+function stepLines(steps: StepScoreTally | undefined): string[] {
+  if (!steps) return []
+  const { high, medium, low, unknown } = steps.bands
+  return [
+    `Dismissals in 30 days · ${high} high · ${medium} medium · ${low} low · ${unknown} unscored`,
+    steps.passed_bar || steps.held_by_bar ? `Passed the bar ${steps.passed_bar}` : null,
+    heldLine('Held by the bar', steps.held_by_bar, steps.after_hold.bar),
+    heldLine('Held by autonomy', steps.held_by_autonomy, steps.after_hold.autonomy),
+  ].filter((line): line is string => line != null)
 }
 
 /** The ceiling stores a naive UTC stamp; without an offset a browser reads it as local. */
@@ -352,7 +453,8 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   const unverified = useUnverifiedTools()
   const emulation = useEmulation()
   const [allTools, setAllTools] = useState(false)
-  const { hasPermission } = useAuth()
+  const { hasPermission, user } = useAuth()
+  const machine = Boolean(user?.service_account)
   // write raises, resumes and switches four-eyes; stop stops and lowers
   const canRaise = hasPermission('ai_autonomy.write')
   const canLower = canRaise || hasPermission('ai_autonomy.stop')
@@ -599,6 +701,17 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     }
   }
 
+  const setBar = async (w: InvestigateWorkflow, bar: number | null): Promise<boolean> => {
+    try {
+      await ceiling.setWorkflow(w.id, { bar })
+      notify('ok', bar == null ? `${w.name} has no bar.` : `${w.name}’s bar is ${barText(bar)}.`)
+      return true
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to save the bar.'))
+      return false
+    }
+  }
+
   const floorValue = Number(floor)
   // A managed Act workflow may not be raised below its declared floor.
   const floorMin = (pending?.kind === 'workflow' && flowManaged[pending.workflow.id]?.declared.floor) || 1
@@ -787,7 +900,10 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     const entry = workflowTier(ceil, w.id)
     const current: WorkflowChoice = entry?.tier ?? 'fleet'
     const fleetActs = Boolean(ceil?.act_reversible || ceil?.act_irreversible)
-    const raises = (to: WorkflowChoice) => to === 'act' || (to === 'fleet' && current === 'assist' && fleetActs)
+    const bar = entry?.bar ?? null
+    // Following the fleet drops the bar, which loosens as a raise does.
+    const raises = (to: WorkflowChoice) =>
+      to === 'act' || (to === 'fleet' && ((current === 'assist' && fleetActs) || bar != null))
     const managed = flowManaged[w.id]
     const where = managed && `${managed.file}:${managed.line} @ ${managed.revision}`
     // As the server judges it: past an Assist declaration, Act or a fleet that acts is a raise.
@@ -799,6 +915,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     const change = lastChange(entry)
     const unattributed = w.agreement?.unattributed ?? 0
     const replayed = replayLine(replay, w.id)
+    const steps = stepLines(w.steps)
     return (
       <div className={`lim-row lim-wf${choices.length < 2 ? ' lim-wf-static' : ''}`} key={w.id}>
         <span className="lim-row-title">
@@ -829,10 +946,16 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             </span>
           )}
           {replayed && <span className="lim-wf-model">{replayed}</span>}
+          {steps.map((line) => (
+            <span className="lim-wf-model" key={line}>
+              {line}
+            </span>
+          ))}
         </span>
         <span className="lim-wf-tag">
           <span>
             {entry?.floor ? `Floor ${entry.floor}%` : 'No floor'}
+            {bar != null ? ` · Bar ${barText(bar)}` : ' · no bar set'}
             {entry?.model && ` · on ${entry.model}`}
           </span>
           {change && <span title={change}>{change}</span>}
@@ -880,6 +1003,17 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
                 )
               })}
             </div>
+          )}
+          {/* a workflow that follows the fleet has no entry, so no bar to set */}
+          {entry && canLower && (
+            <WorkflowBar
+              name={w.name}
+              stored={bar}
+              canRaise={canRaise}
+              machine={machine}
+              stopped={stopped}
+              save={(to) => setBar(w, to)}
+            />
           )}
         </span>
       </div>
