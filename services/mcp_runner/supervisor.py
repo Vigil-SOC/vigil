@@ -140,6 +140,8 @@ class Child:
     name: str
     env: Dict[str, str]
     uid: int
+    # An instance's base entry (#5353): launched from it, as its uid.
+    of: Optional[str] = None
     stop: anyio.Event = field(default_factory=anyio.Event)
     ready: anyio.Event = field(default_factory=anyio.Event)
     done: anyio.Event = field(default_factory=anyio.Event)
@@ -210,30 +212,40 @@ class Supervisor:
         return child if child is not None and child.state == "running" else None
 
     def status(self) -> Dict[str, Dict[str, Any]]:
+        names = {*self.catalog.names(), *self.children}
         return {
             name: (
                 self.children[name].status()
                 if name in self.children
                 else {"state": "stopped"}
             )
-            for name in self.catalog.names()
+            for name in sorted(names)
         }
 
-    async def put(self, name: str, env: Dict[str, str]) -> tuple[str, Child]:
-        """Start ``name`` with ``env``; a no-op when it already runs with it."""
+    async def put(
+        self, name: str, env: Dict[str, str], of: Optional[str] = None
+    ) -> tuple[str, Child]:
+        """Start ``name`` with ``env``; a no-op when it already runs with it.
+
+        ``of`` makes ``name`` an instance of that catalog entry: the caller has
+        checked ``name == f"{of}-{label}"``.
+        """
+        entry = of or name
         async with self._lock(name):
             if self._closing:
                 raise ShuttingDown
             current = self.running(name)
-            if current is not None and current.env == env:
+            if current is not None and current.env == env and current.of == of:
                 return "unchanged", current
             action = "restarted" if current is not None else "started"
             await self._stop(name)
-            if self.switch_uid and name not in self.uids:
-                child = Child(name, env, -1, state="failed", error="no uid provisioned")
+            if self.switch_uid and entry not in self.uids:
+                child = Child(
+                    name, env, -1, of, state="failed", error="no uid provisioned"
+                )
                 self.children[name] = child
                 return "failed", child
-            child = Child(name, dict(env), self.uids.get(name, os.getuid()))
+            child = Child(name, dict(env), self.uids.get(entry, os.getuid()), of)
             self.children[name] = child
             assert self._tg is not None
             self._tg.start_soon(self._serve, child)
@@ -262,17 +274,51 @@ class Supervisor:
             child.stop.set()
             await child.done.wait()
 
-    def _params(self, child: Child) -> StdioServerParameters:
-        home = self.state_dir / child.name
-        if not self.switch_uid:  # as root, provisioned at image build
+    def _home(self, child: Child) -> Path:
+        """The child's HOME. An instance's sits inside its base's, made as the
+        base's uid: that HOME is 0700 and the runner cannot chown."""
+        if child.of is None:
+            home = self.state_dir / child.name
+            if not self.switch_uid:  # as root, provisioned at image build
+                (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
+            return home
+        home = self.state_dir / child.of / child.name[len(child.of) + 1 :]
+        if not self.switch_uid:
             (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
-        launch = self.catalog.launch(child.name, child.env, str(home))
+            return home
+        done = subprocess.run(
+            [
+                SETPRIV,
+                f"--reuid={child.uid}",
+                f"--regid={child.uid}",
+                "--clear-groups",
+                "--inh-caps=-all",
+                "--",
+                "/bin/mkdir",
+                "-p",
+                "-m",
+                "0700",
+                str(home),
+                str(home / TMP_DIR),
+            ],
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            timeout=10,
+        )
+        if done.returncode != 0:
+            raise OSError(done.stderr.decode("utf-8", "replace").strip())
+        return home
+
+    def _params(self, child: Child) -> StdioServerParameters:
+        home = self._home(child)
+        entry = child.of or child.name
+        launch = self.catalog.launch(entry, child.env, str(home))
         command, args = launch.command, launch.args
-        if self.switch_uid and child.name == SECURITY_LAKE_SERVER:
+        if self.switch_uid and entry == SECURITY_LAKE_SERVER:
             # Only paths from this runner's own env: root must never read a
             # path the request env names (it may override a pointer, and then
             # the child reads that path as its own uid).
-            own = aws_pointer_env(child.name)
+            own = aws_pointer_env(entry)
             for var in AWS_FILE_VARS:
                 if (src := own.get(var)) and launch.env.get(var) == src:
                     dst = str(home / AWS_COPY_DIR / var.lower())
@@ -374,7 +420,8 @@ class Supervisor:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(self._drain, read_fd, child, drained)
                 try:
-                    params = self._params(child)
+                    # Off the loop: an instance's HOME is made by a subprocess.
+                    params = await anyio.to_thread.run_sync(self._params, child)
                     if child.copies:
                         # Off the loop: a slow mount must not stall other servers.
                         await anyio.to_thread.run_sync(self._sync_copies, child)

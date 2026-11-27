@@ -639,6 +639,7 @@ class MCPClient:
             server_name,
             env=lambda: self._runner_env(server_name),
             enabled=lambda: service.is_server_enabled(server_name),
+            of=getattr(server, "instance_of", None),
         )
 
     def _runner_env(self, server_name: str) -> Dict[str, str]:
@@ -652,6 +653,8 @@ class MCPClient:
     def _missing_credentials_for(self, server) -> List[str]:
         # Resolves through get_secret, so a credential saved via the integration
         # wizard (encrypted store, not the process env) does not read as dormant.
+        if getattr(server, "instance_of", None):
+            return self._missing_instance_credentials(server)
         if getattr(server, "name", None) == CROWDSTRIKE.id:
             return _missing_crowdstrike()
         gated = _DESCRIPTOR_GATED.get(getattr(server, "name", None))
@@ -667,6 +670,29 @@ class MCPClient:
                 return list(required)
         required = getattr(server, "required_env_vars", None) or []
         return [var for var in required if not get_secret(var)]
+
+    def _missing_instance_credentials(self, server) -> List[str]:
+        """An instance's gate (#5353): its base's, read under the instance's id."""
+        from core.integrations._base.descriptor import get_descriptor
+        from core.integrations.integration_bridge_service import instance_keys
+
+        base, name = server.instance_of, server.name
+        descriptor = get_descriptor(base)
+        own = instance_keys(name)
+        try:
+            fields = resolve(descriptor, name) if descriptor else {}
+        except Exception as exc:  # noqa: BLE001 - a lookup failure is not configured
+            logger.warning("Config lookup for %s failed: %s", name, type(exc).__name__)
+            fields = {}
+        gated = _DESCRIPTOR_GATED.get(base)
+        if gated:
+            return [own.get(f, f) for f in missing_fields(fields, *gated[1])]
+        by_key = {key: field for field, key in own.items()}
+        return [
+            var
+            for var in server.required_env_vars
+            if not fields.get(by_key.get(var, "")) and not get_secret(var)
+        ]
 
     def setup_required(self, server_name: str) -> Optional[str]:
         """Why ``server_name`` is not set up yet, or None (see ``MCPService``)."""

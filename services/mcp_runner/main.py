@@ -1,6 +1,7 @@
 """MCP runner control API and streamable-HTTP bridge, on port 6991.
 
-    PUT    /servers/{name}      {"env": {...}}  start, restart on changed env, else no-op
+    PUT    /servers/{name}      {"env": {...}, "of"?: entry}  start, restart on changed env, else no-op
+                                ("of": name is the instance <entry>-<label> of a catalog entry)
     DELETE /servers/{name}                      stop
     GET    /servers                             status of every catalog server
     *      /servers/{name}/mcp                  MCP streamable HTTP to the running child
@@ -24,6 +25,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from core.integrations.integration_bridge_service import valid_label
 from core.integrations.mcp.runner import runner_token
 from services.mcp_runner.catalog import Catalog, load_uids
 from services.mcp_runner.supervisor import ShuttingDown, Supervisor
@@ -92,8 +94,17 @@ def create_app(
     supervisor = Supervisor(catalog, state_dir, load_uids(state_dir), switch_uid)
 
     def _unknown(name: str) -> Optional[JSONResponse]:
-        if name not in catalog:
+        # An instance is known once it has been put (#5353).
+        if name not in catalog and name not in supervisor.children:
             return JSONResponse({"detail": f"{name} is not in the catalog"}, 404)
+        return None
+
+    def _instance_refusal(name: str, of: object) -> Optional[str]:
+        if not isinstance(of, str) or of not in catalog:
+            return f"{of!r} is not in the catalog"
+        label = name[len(of) + 1 :] if name.startswith(f"{of}-") else ""
+        if not valid_label(label) or name in catalog:
+            return f"{name} is not an instance name of {of}: {of}-<label>"
         return None
 
     async def list_servers(request: Request) -> JSONResponse:
@@ -101,12 +112,16 @@ def create_app(
 
     async def put_server(request: Request) -> JSONResponse:
         name = request.path_params["name"]
-        if (missing := _unknown(name)) is not None:
-            return missing
         try:
             body = await request.json()
         except ValueError:
             body = {}  # no body: start with no env
+        of = body.get("of") if isinstance(body, dict) else None
+        if of is not None:
+            if refused := _instance_refusal(name, of):
+                return JSONResponse({"detail": refused}, 422)
+        elif name not in catalog:
+            return JSONResponse({"detail": f"{name} is not in the catalog"}, 404)
         # Only env is read; command, args and cwd are the catalog's.
         env = body.get("env", {}) if isinstance(body, dict) else None
         if not isinstance(env, dict) or not all(
@@ -118,7 +133,7 @@ def create_app(
         if unsafe := sorted(k for k in env if _is_root_unsafe(k)):
             return JSONResponse({"detail": f"env may not set {unsafe}"}, 422)
         try:
-            action, child = await supervisor.put(name, env)
+            action, child = await supervisor.put(name, env, of)
         except ShuttingDown:
             return JSONResponse({"detail": "the runner is shutting down"}, 503)
         status = child.status()
@@ -129,7 +144,9 @@ def create_app(
 
     async def delete_server(request: Request) -> JSONResponse:
         name = request.path_params["name"]
-        if (missing := _unknown(name)) is not None:
+        # An instance this runner never started (or lost on restart) is stopped.
+        of = name.rpartition("-")[0]
+        if (missing := _unknown(name)) is not None and _instance_refusal(name, of):
             return missing
         await supervisor.delete(name)
         return JSONResponse({"running": False, "state": "stopped"})

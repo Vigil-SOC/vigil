@@ -17,6 +17,7 @@ integration.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from core.config import get_integration_config
@@ -60,9 +61,22 @@ def resolve_fields(
     return _resolve(integration_id, (IntegrationField(n) for n in field_names))
 
 
-def resolve(descriptor: IntegrationDescriptor) -> Dict[str, Optional[Any]]:
-    """Resolve every field the descriptor declares, typed as it declares it."""
-    return _resolve(descriptor.id, descriptor.fields)
+def resolve(
+    descriptor: IntegrationDescriptor, integration_id: Optional[str] = None
+) -> Dict[str, Optional[Any]]:
+    """Resolve every field the descriptor declares, typed as it declares it.
+
+    Read under ``integration_id`` when given (an instance, #5353), else under
+    ``VIGIL_INTEGRATION_ID`` when that names an instance of this descriptor (the
+    env an instance's server starts with), else under the descriptor's own id.
+    """
+    if integration_id is None:
+        from core.integrations.integration_bridge_service import base_of
+
+        named = os.environ.get("VIGIL_INTEGRATION_ID")  # noqa: ENV001 - set per server
+        if named and base_of(named) == descriptor.id:
+            integration_id = named
+    return _resolve(integration_id or descriptor.id, descriptor.fields)
 
 
 def missing(config: Mapping[str, Any], *required: str) -> tuple[str, ...]:

@@ -250,11 +250,25 @@ async def _note_left_out(svc) -> None:
         await asyncio.to_thread(note_source_health, name, False, reason)
 
 
-def _launches(row: Dict[str, Any]) -> Any:
-    """What of ``sources.applied`` changes the catalog; a body edit does not."""
+def _launches(row: Dict[str, Any], saved: Optional[Dict[str, str]] = None) -> Any:
+    """What of ``sources.applied`` changes the catalog; a body edit does not.
+    The saved integration instances (#5353) change it too."""
     sources = {n: s.get("launch_hash") for n, s in (row.get("sources") or {}).items()}
     accepted = {n: a.get("hash") for n, a in (row.get("accepted") or {}).items()}
-    return sources, accepted
+    return sources, accepted, saved or {}
+
+
+def _instances(svc) -> Dict[str, str]:
+    reader = getattr(getattr(svc, "_integration_bridge", None), "instances", None)
+    try:
+        return reader() if reader is not None else {}
+    except Exception as exc:  # noqa: BLE001 - the last catalog stands
+        logger.debug("Integration instances not read: %s", exc)
+        return {
+            name: server.instance_of
+            for name, server in svc.servers.items()
+            if getattr(server, "instance_of", None)
+        }
 
 
 async def remerge_once(
@@ -266,7 +280,7 @@ async def remerge_once(
 
     svc = mcp_client.mcp_service
     row = await asyncio.to_thread(applied_sources)
-    seen = _launches(row)
+    seen = _launches(row, await asyncio.to_thread(_instances, svc))
     if seen != last:
         new_catalog = await asyncio.to_thread(svc.load_catalog)
         result = await apply_catalog(svc, mcp_client, registry, new_catalog)
