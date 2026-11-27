@@ -337,6 +337,26 @@ class BindingBody(BaseModel):
     # True binds the tool as an emulator (#5315), as capability "emulation" does.
     # A tool has one binding: not with another capability.
     emulation: Optional[bool] = None
+    # An act carrier on the act tool's own row (#5313, docs/acts.md): the act
+    # kind, then the parts that act needs. Its tools are bare names of the
+    # tool's own server; a reading is {read: [{field, map}], default}.
+    act: Optional[str] = None
+    carrier: Optional[str] = None
+    id_arg: Optional[str] = None
+    note_arg: Optional[str] = None
+    lookup: Optional[str] = None
+    lookup_arg: Optional[str] = None
+    address_arg: Optional[str] = None
+    rows: Optional[str] = None
+    id: Optional[str] = None
+    name: Optional[str] = None
+    state: Optional[Dict[str, Any]] = None
+    takes: Optional[List[str]] = None
+    act_state: Optional[Dict[str, Any]] = None
+    state_read: Optional[Dict[str, Any]] = None
+    read_state: Optional[Dict[str, Any]] = None
+    undo: Optional[str] = None
+    undo_from: Optional[str] = None
 
 
 class ToolClassBody(BaseModel):
@@ -346,17 +366,21 @@ class ToolClassBody(BaseModel):
     # 409 with the current definition; null says none was shown. Omitted, what
     # Vigil holds now is pinned.
     definition_hash: Optional[str] = None
-    # The capability it answers (#5312). Omitted leaves it; null puts the shipped
-    # binding back; {} binds nothing; {"capability": name} binds it;
+    # The capability it answers (#5312) or the act it carries (#5313). Omitted
+    # leaves it; null puts the shipped binding back; {} binds nothing;
+    # {"capability": name} or {"act": kind, ...} binds it;
     # {"emulation": true} binds it as an emulator.
     binding: Optional[BindingBody] = None
 
 
 class ToolBinding(BaseModel):
-    # "emulation" for an emulator, which emulation also says.
-    capability: str
+    # A capability, or an act with its carrier as stored (#5313). "emulation"
+    # for an emulator (#5315), which emulation also says.
+    capability: Optional[str] = None
     server: Optional[str] = None
     emulation: bool = False
+    act: Optional[str] = None
+    carrier: Optional[Dict[str, Any]] = None
 
 
 class ToolDefinition(BaseModel):
@@ -396,6 +420,12 @@ class ToolClassEntry(BaseModel):
 def _binding(b: Optional[bindings.Binding]) -> Optional[ToolBinding]:
     if b is None:
         return None
+    if b.carrier:
+        return ToolBinding(
+            server=b.server,
+            act=b.carrier["act"],
+            carrier=bindings.stored_carrier(b.carrier),
+        )
     emulator = b.capability == bindings.EMULATION
     return ToolBinding(capability=b.capability, server=b.server, emulation=emulator)
 
@@ -499,7 +529,7 @@ def put_tool_class(
 
     Loosening, or classifying an unclassified or withdrawn name, is a person's
     ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
-    a capability, or putting back a shipped binding that binds one. Tightening,
+    a capability or an act, or putting back a shipped binding that binds one. Tightening,
     and binding nothing, is ``ai_autonomy.stop``, which a service account may
     hold. A person's classification of a remote server's tool pins the
     definition held now.
@@ -525,6 +555,8 @@ def put_tool_class(
         bind_after = _requested_binding(name, body.binding, bind_before, registry)
     reclass = after != before
     rebind = bind_after != bind_before
+    if rebind:
+        _refuse_clash(name, bind_after)
     if not reclass and not rebind:
         return _entry(row, name, held, remote)
     machine = is_machine_request(current_user)
@@ -536,7 +568,7 @@ def put_tool_class(
             raise HTTPException(
                 status_code=403,
                 detail="A service account or API token cannot loosen a tool's class "
-                "or bind it to a capability",
+                "or bind it to a capability or an act",
             )
         try:
             stopped = read_ceiling().stopped
@@ -579,21 +611,22 @@ def _requested_binding(
     if body is None:
         return None
     if body.emulation:
-        if body.capability not in (None, bindings.EMULATION):
+        if body.capability not in (None, bindings.EMULATION) or body.act:
             raise HTTPException(
                 status_code=422,
-                detail="A tool has one binding: an emulator or a capability",
+                detail="A tool has one binding: an emulator, a capability or a carrier",
             )
         body = BindingBody(capability=bindings.EMULATION)
-    if body.capability is None:
+    if body.act is None and body.capability is None:
         return {}
     try:
-        capability = bindings.validate(body.capability)
+        capability = None if body.act else bindings.validate(body.capability)
     except bindings.InvalidBinding as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     shipped = bindings.shipped().get(name)
+    listed = registry.tool_servers()
     server = (
-        registry.tool_servers().get(name)
+        listed.get(name)
         or (before or {}).get("server")
         or (shipped.server if shipped else None)
     )
@@ -602,4 +635,39 @@ def _requested_binding(
             status_code=409,
             detail="Its server is not connected; connect it to bind the tool",
         )
-    return bindings.stored_form(capability, server)
+    if capability:
+        return bindings.stored_form(capability, server)
+    try:
+        return _requested_carrier(name, server, body, listed)
+    except bindings.InvalidBinding as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _requested_carrier(
+    name: str, server: str, body: BindingBody, listed: Dict[str, str]
+) -> dict:
+    """An act carrier as stored, or InvalidBinding: every part its act needs,
+    every tool its server's own, and no other carrier of that act there."""
+    if not name.startswith(f"{server}_"):
+        raise bindings.InvalidBinding(f"{name} is not a tool of {server}")
+    raw = body.model_dump(exclude_none=True, exclude={"capability", "emulation"})
+    found = bindings.carrier(raw, server, name[len(server) + 1 :])
+    named = [found["lookup"], found["undo"], (found["state_read"] or {}).get("tool")]
+    # Checked against the server's own list while it is connected.
+    connected = server in set(listed.values())
+    for tool in filter(None, named):
+        if connected and listed.get(bindings.catalogue_name(server, tool)) != server:
+            raise bindings.InvalidBinding(f"{tool} is not a tool of {server}")
+    return {"server": server, **bindings.stored_carrier(found)}
+
+
+def _refuse_clash(name: str, after: Optional[dict]) -> None:
+    """422 when ``name``'s binding after the change, the shipped one put back
+    included, makes a second carrier of one act kind on its server."""
+    rows = bindings.stored(fresh=True)
+    rows.pop(name, None)
+    if after is not None:
+        rows[name] = after
+    clash = bindings.carrier_clash(bindings.merged(rows), involving=name)
+    if clash:
+        raise HTTPException(status_code=422, detail=clash)

@@ -206,187 +206,46 @@ def target_kind(target: Any) -> str:
     )
 
 
-# ---- Containment: who carries out an approved containment (#5059, #5234) ----
-# Per kind, each in-repo server that can: the lookup that turns the target into
-# the vendor's ID, the act, the state read and the undo (#5060 builds the way
-# back). Tool names are bare; the server prefixes them as the registry does.
-# ``rows`` names the list a lookup answers in, None for a single record.
-
-
-def _host_lookup(target: str) -> Dict[str, str]:
-    return {"ip": target} if _is_ip(target) else {"hostname": target}
-
-
-def _mde_state(machine: Dict[str, Any]) -> str:
-    isolation = machine.get("isolation") or {}
-    if isolation.get("pending"):
-        return "requested"
-    return "contained" if isolation.get("state") == "isolated" else "not_contained"
-
-
-# A machine action's status, as Defender words it.
-_MDE_ACTION_STATES = {
-    "Pending": "requested",
-    "InProgress": "requested",
-    "Succeeded": "contained",
+# Each word ``target_kind`` answers, as a carrier's ``takes`` refusal names it.
+TARGET_KIND_NOUNS = {
+    "url": "a URL",
+    "address": "one address",
+    "network": "a network",
+    "hash": "a file hash",
+    "path": "a path",
+    "email": "an email address",
+    "account": "a down-level account name",
+    "object_id": "an object ID",
+    "domain": "a domain name",
+    "single_label": "a single-label name",
+    "text": "text",
+    "not_an_address": "a malformed address",
+    "token": "a bare token",
 }
 
 
-def _cf_state(done: str) -> Callable[[Dict[str, Any]], str]:
-    # Cloudflare answers a refusal with success false and no error key, which
-    # _call does not read as a failure: only success true is done.
-    return lambda answer: done if answer.get("success") is True else "failed"
+# ---- Containment: the state words of each act (#5059, #5234, #5313) ---------
+# Who carries an act is a carrier bound on the act tool's row, or shipped in
+# core/integrations/bindings.yaml (docs/acts.md); the words stay here.
 
-
-CONTAINMENT_TOOLS: Dict[str, Tuple[Dict[str, Any], ...]] = {
-    "isolate_host": (
-        {
-            "vendor": "microsoft-defender",
-            "lookup": "mde_find_machine",
-            "lookup_args": _host_lookup,
-            "rows": "machines",
-            "id": "machine_id",
-            "name": "name",
-            "state": _mde_state,
-            "act": "mde_isolate",
-            "id_arg": "machine_id",
-            "note_arg": "comment",
-            # The act answers a machine action; its status is the state.
-            "act_state": lambda answer: _MDE_ACTION_STATES.get(
-                answer.get("status"), "failed"
-            ),
-            "state_read": ("mde_get_machine_action", "action_id"),
-            "read_state": lambda answer: _MDE_ACTION_STATES.get(
-                answer.get("status"), "failed"
-            ),
-            "undo": "mde_release",
-        },
-        {
-            "vendor": "carbon-black",
-            "lookup": "cb_search_device",
-            "lookup_args": _host_lookup,
-            "rows": "devices",
-            "id": "device_id",
-            "name": "name",
-            "state": lambda d: "contained" if d.get("quarantined") else "not_contained",
-            "act": "cb_quarantine",
-            "id_arg": "device_id",
-            "note_arg": "reason",
-            "act_state": lambda answer: "requested",
-            # No action read: the lookup's quarantine flag says when it holds.
-            "state_read": None,
-            "undo": "cb_lift_quarantine",
-        },
-    ),
-    "disable_user": (
-        {
-            "vendor": "azure-ad",
-            "lookup": "aad_get_user",
-            "lookup_args": lambda target: {"user": target},
-            "rows": None,
-            "id": "id",
-            "name": "userPrincipalName",
-            "state": lambda u: "enabled" if u.get("accountEnabled") else "disabled",
-            "act": "aad_disable_user",
-            "id_arg": "user_id",
-            "note_arg": "reason",
-            "act_state": lambda answer: "requested",
-            "state_read": None,
-            "undo": "aad_enable_user",
-        },
-    ),
-    # Keyless (#5234): the target is the vendor's key, so there is no lookup and
-    # one candidate. ``takes`` refuses a target the act can't carry, with the
-    # sentence the row shows; ``undo_from`` names the field of the act's answer
-    # the undo is called with (under the same name).
-    "block_ip": (
-        {
-            "vendor": "cloudflare",
-            "carrier": "Cloudflare WAF",
-            "lookup": None,
-            "takes": lambda t: (
-                None
-                if _is_ip(t)
-                else "Cloudflare's WAF takes one address, not a network"
-            ),
-            "act": "cf_waf_block_ip",
-            "id_arg": "ip",
-            "note_arg": "reason",
-            "act_state": _cf_state("blocked"),
-            "state_read": None,
-            "undo": "cf_waf_unblock_ip",
-            "undo_from": "rule_id",
-        },
-        # No ``undo_from``: the unregister takes the address itself.
-        {
-            "vendor": "palo-alto",
-            "carrier": "Palo Alto",
-            "lookup": None,
-            "takes": lambda t: (
-                None if _is_ip(t) else "Palo Alto takes one address, not a network"
-            ),
-            "act": "pan_block_ip",
-            "id_arg": "ip",
-            "note_arg": "reason",
-            "act_state": _cf_state("blocked"),
-            "state_read": None,
-            "undo": "pan_unblock_ip",
-        },
-    ),
-    "block_domain": (
-        {
-            "vendor": "cloudflare",
-            "carrier": "Cloudflare Gateway",
-            "lookup": None,
-            # The domain goes into the rule's expression: only a bare name passes.
-            "takes": lambda t: (
-                None if _domain(t) is None else "Cloudflare Gateway takes a domain name"
-            ),
-            "act": "cf_gateway_block_domain",
-            "id_arg": "domain",
-            "note_arg": "reason",
-            "act_state": _cf_state("blocked"),
-            "state_read": None,
-            "undo": "cf_gateway_unblock_domain",
-            "undo_from": "rule_id",
-        },
-    ),
-    "revoke_session": (
-        {
-            "vendor": "cloudflare",
-            "carrier": "Cloudflare Access",
-            "lookup": None,
-            "takes": lambda t: (
-                None
-                if _UPN.fullmatch(t)
-                else "Cloudflare Access takes an email address, not another account name"
-            ),
-            "act": "cf_access_revoke_session",
-            "id_arg": "email",
-            "note_arg": "reason",
-            "act_state": _cf_state("revoked"),
-            "state_read": None,
-            "undo": None,
-        },
-    ),
-}
-
-# What the act is for, in the state words above.
+# What the act is for. Its keys are the kinds Vigil carries out on approval.
 DONE_STATE = {
     "isolate_host": "contained",
     "disable_user": "disabled",
     "block_ip": "blocked",
     "block_domain": "blocked",
     "revoke_session": "revoked",
+    "quarantine_file": "quarantined",
 }
 # The way back (#5060): what a row carrying ``undoes`` records once the vendor
-# reports it, and the lookup's word (``state`` above) for that state. A kind
-# with no entry here has no undo.
+# reports it, and the lookup's word (a carrier's ``state``) for that state when
+# it differs. A kind with no entry here has no undo.
 UNDONE_STATE = {
     "isolate_host": "released",
     "disable_user": "enabled",
     "block_ip": "unblocked",
     "block_domain": "unblocked",
+    "quarantine_file": "restored",
 }
 UNDONE_LOOKUP = {"isolate_host": "not_contained", "disable_user": "enabled"}
 # The undo's verb on the case and in its row's title.
@@ -395,6 +254,7 @@ UNDO_VERBS = {
     "disable_user": "Enable",
     "block_ip": "Unblock",
     "block_domain": "Unblock",
+    "quarantine_file": "Restore",
 }
 
 
