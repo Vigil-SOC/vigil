@@ -664,18 +664,26 @@ def _propose_actions(
             # This run's own ask failed before: a re-sent terminal files it again
             # for a person, not for the ceiling.
             resent = match is not None and match.idempotency_key == key
+            # A pending ask, whoever made it, lists this case too: one ask, one answer.
+            if (
+                match is not None
+                and match.status == "pending"
+                and _already_asked(service, match, case_id, run_id, title)
+            ):
+                continue
             # What the vendor says now, which also sees what was done outside Vigil.
             vendor = None if resent else _in_force(action_type, target, registry)
             if vendor is not None and vendor["holds"]:
                 _note_in_force(case_id, run_id, title, action_type, target, vendor)
                 continue
-            # An executed ask the vendor says no longer holds was undone outside
-            # Vigil (a host released in the EDR's console): asked again.
+            # An executed ask the vendor reports in the act's undone state was lifted
+            # outside Vigil (a host released in the EDR's console): asked again. A
+            # vendor still carrying it out ("requested") has not lifted it.
             lifted = (
                 match is not None
                 and match.status == "executed"
                 and vendor is not None
-                and not vendor["holds"]
+                and vendor["state"] == _undone_word(action_type)
             )
             if (
                 match is not None
@@ -762,8 +770,9 @@ def _release_under_ceiling(
 
 
 # What the connected vendors report about the target for this act (see
-# containment.in_force), asked on the app's loop, where the vendor servers' connections live: this route
-# runs in a worker thread. Any failure leaves the ask to a person.
+# containment.in_force), asked on the app's loop, where the vendor servers'
+# connections live: this route runs in a worker thread. Any failure leaves the
+# ask to a person.
 def _in_force(
     action_type: str, target: str, registry: Optional[MCPRegistry]
 ) -> Optional[Dict[str, Any]]:
@@ -783,6 +792,14 @@ def _in_force(
     except Exception:  # noqa: BLE001 — unread, the ask goes to a person
         logger.exception("could not read whether %s on %s holds", action_type, target)
         return None
+
+
+# A vendor lookup's word for a target the act no longer holds on: a released
+# host, an enabled account.
+def _undone_word(action_type: str) -> Optional[str]:
+    from core.response.proposal_targets import UNDONE_LOOKUP, UNDONE_STATE
+
+    return UNDONE_LOOKUP.get(action_type) or UNDONE_STATE.get(action_type)
 
 
 # Once per run, act and target, so a re-sent terminal says nothing new. The same

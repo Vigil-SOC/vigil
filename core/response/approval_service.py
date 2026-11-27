@@ -526,8 +526,9 @@ class ApprovalService:
 
         The bool is True when this call inserted. Isolation uses it so a
         reused approved/pending row is not executed again. ``same_host`` is an
-        isolation's IP and hostname: a non-failed isolation of that host under
-        either name, asked for by anyone, is the existing row whatever its key.
+        isolation's IP and hostname: an isolation of that host under either
+        name, asked for by anyone and in any status but failed (a rejected one
+        included), is the existing row whatever its key.
         """
         key = idempotency_key or None
 
