@@ -63,6 +63,7 @@ from core.storage.models import (
     Case,
     CaseClosureInfo,
     CaseIOC,
+    EpisodicCoverageEntry,
     EpisodicDistilMarker,
     EpisodicVerdict,
     EpisodicVerdictSource,
@@ -79,7 +80,17 @@ logger = logging.getLogger(__name__)
 # investigation, and a change to how a Case maps must not re-offer every hunt.
 # 2: IOC type aliases folded (#4160).
 # 3: POSIX process paths and URL paths keep their case (#4542).
-CASE_DISTIL_MAPPING_VERSION = 3
+# 4: coverage entries, one per IOC key, uncapped (#5293).
+CASE_DISTIL_MAPPING_VERSION = 4
+
+# A closure's outcome as coverage reads it. Not ``CLOSURE_OUTCOMES``: a false
+# positive is a disproven check here, and duplicate checked nothing.
+_COVERAGE_OUTCOMES: Dict[ClosureCategory, str] = {
+    ClosureCategory.RESOLVED: "proven",
+    ClosureCategory.FALSE_POSITIVE: "disproven",
+    ClosureCategory.UNABLE_TO_RESOLVE: "inconclusive",
+    ClosureCategory.UNSPECIFIED: "inconclusive",
+}
 
 # Cases whose episodic rows disagree with their current state, in both
 # directions: closed ones whose Verdict is missing, stale, or derived at another
@@ -235,7 +246,33 @@ def _rationale(closure: Optional[CaseClosureInfo]) -> str:
     return ""
 
 
-def _subjects(session: Session, case_id: str) -> List[str]:
+def _ioc_keys(session: Session, case_id: str) -> List[Tuple[str, bool]]:
+    """Every Entity Key the Case's IOCs name, uncapped, with its false-positive flag.
+
+    How IOC types are folded is stated on ``_subjects``. A key named by several
+    IOCs is a false positive if any of them is marked one.
+    """
+    rows = (
+        session.query(CaseIOC.ioc_type, CaseIOC.value, CaseIOC.is_false_positive)
+        .filter(CaseIOC.case_id == case_id)
+        .order_by(CaseIOC.ioc_id)
+        .all()
+    )
+    keys: Dict[str, bool] = {}
+    for ioc_type, value, false_positive in rows:
+        kind = str(ioc_type or "").strip().lower()
+        kind = TYPE_ALIASES.get(kind, kind)
+        if kind == "hostname":  # correlation's spelling; memory's is `host`
+            kind = "host"
+        if kind not in ENTITY_KEY_TYPES:
+            continue
+        key = entity_key(kind, str(value or ""))
+        if key:
+            keys[key] = keys.get(key, False) or bool(false_positive)
+    return list(keys.items())
+
+
+def _subjects(case_id: str, keys: List[Tuple[str, bool]]) -> List[str]:
     """The entities the Case names, from its IOCs.
 
     Not from the title. ADR 0016 draws a Verdict's subjects from its Hypothesis
@@ -265,26 +302,6 @@ def _subjects(session: Session, case_id: str) -> List[str]:
     a Case names its subjects is an open question with its own issue; this is
     the half of it that is decided, and it is right whenever the IOCs exist.
     """
-    rows = (
-        session.query(CaseIOC.ioc_type, CaseIOC.value)
-        .filter(CaseIOC.case_id == case_id)
-        .order_by(CaseIOC.ioc_id)
-        .all()
-    )
-    keys: List[str] = []
-    seen = set()
-    for ioc_type, value in rows:
-        kind = str(ioc_type or "").strip().lower()
-        kind = TYPE_ALIASES.get(kind, kind)
-        if kind == "hostname":  # correlation's spelling; memory's is `host`
-            kind = "host"
-        if kind not in ENTITY_KEY_TYPES:
-            continue
-        key = entity_key(kind, str(value or ""))
-        if key and key not in seen:
-            seen.add(key)
-            keys.append(key)
-
     if len(keys) > VERDICT_SUBJECT_CAP:
         logger.warning(
             "Case Distil: %s names %s entities, keeping the first %s (ADR 0016)",
@@ -292,7 +309,32 @@ def _subjects(session: Session, case_id: str) -> List[str]:
             len(keys),
             VERDICT_SUBJECT_CAP,
         )
-    return keys[:VERDICT_SUBJECT_CAP]
+    return [key for key, _ in keys[:VERDICT_SUBJECT_CAP]]
+
+
+def _coverage_rows(
+    closed: ClosedCase, category: ClosureCategory, keys: List[Tuple[str, bool]]
+) -> List[Dict[str, object]]:
+    """One ``case`` entry per IOC key; an IOC marked false positive is disproven.
+
+    Only the Case's own IOCs: keys a hunt on the Case checked carry that hunt's
+    entries, and the closure is not spread onto them.
+    """
+    closure = closed.closure
+    closer = (closure.closed_by_text or closure.closed_by) if closure else None
+    return [
+        {
+            "key": key,
+            "investigation_kind": InvestigationKind.CASE.value,
+            "investigation_id": closed.case.case_id,
+            "method": "case",
+            "outcome": "disproven" if false_positive else _COVERAGE_OUTCOMES[category],
+            "trust": closed.trust.value,
+            "concluded_by": closer,
+            "concluded_at": closed.concluded_at,
+        }
+        for key, false_positive in keys
+    ]
 
 
 def _window(
@@ -436,7 +478,7 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
 
     category = closed.category
     outcome = CLOSURE_OUTCOMES.get(category) if category is not None else None
-    if outcome is None:
+    if outcome is None or category is None:
         if category is not ClosureCategory.DUPLICATE:
             logger.warning(
                 "Case Distil: %s closed as %r, which this mapping has no outcome for",
@@ -445,6 +487,7 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
             )
         counts = {"verdicts": 0}
     else:
+        keys = _ioc_keys(session, case_id)
         first, last, window_source = _window(session, closed)
         verdict = EpisodicVerdict(
             investigation_kind=kind.value,
@@ -454,7 +497,7 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
             statement=bounded_prose(closed.case.title or ""),
             outcome=outcome.value,
             rationale=bounded_prose(_rationale(closed.closure)),
-            subject_entities=_subjects(session, case_id),
+            subject_entities=_subjects(case_id, keys),
             # A Case's evidence is its Findings, which are our own telemetry,
             # and a Case with none stands on an analyst's assertion. Neither is
             # adversary-authored, which is the thing this flag exists to mark.
@@ -471,6 +514,9 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
         session.flush()
         for source in _sources(session, case_id):
             session.add(EpisodicVerdictSource(verdict_id=verdict.id, **source))
+        session.bulk_insert_mappings(
+            EpisodicCoverageEntry, _coverage_rows(closed, category, keys)
+        )
         counts = {"verdicts": 1}
 
     write_marker(

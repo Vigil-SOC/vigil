@@ -62,6 +62,7 @@ from core.memory.recall_contract import (
 from core.memory.source_tier import InvestigationKind as TierKind
 from core.memory.source_tier import SourceTier, resolve_source_tier
 from core.storage.models import (
+    EpisodicCoverageEntry,
     EpisodicDistilFailure,
     EpisodicDistilMarker,
     EpisodicGap,
@@ -77,7 +78,8 @@ logger = logging.getLogger(__name__)
 # Re-deriving is delete-then-insert, so a bump that now yields fewer rows leaves
 # none behind. Stamped on the marker, and the poll re-offers everything stamped
 # with any other value.
-DISTIL_MAPPING_VERSION = 3
+# 4: coverage entries, one per checked key, uncapped (#5293).
+DISTIL_MAPPING_VERSION = 4
 
 # The other side's version: the wire schema of the payload this understands,
 # which `DISTIL_SCHEMA_VERSION` in services/agent/plugins/hunt/distil.ts
@@ -428,13 +430,33 @@ def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
 
 
 def _conclusion_rows(
-    concluded: Concluded,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Split the hunt's conclusions into Verdict rows and Gap rows."""
+    concluded: Concluded, run_id: uuid.UUID
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Split the hunt's conclusions into Verdict, Gap and coverage entry rows.
+
+    Coverage entries take every subject, not the capped twelve: the cap is
+    recall's (ADR 0016), and coverage has to account for each key a hunt checked.
+    """
     payload, investigation_id = concluded.payload, concluded.investigation_id
     run_outcome = str(payload.get("outcome") or "")
     verdicts: List[Dict[str, Any]] = []
     gaps: List[Dict[str, Any]] = []
+    entries: List[Dict[str, Any]] = []
+
+    def cover(keys: Sequence[str], outcome: VerdictOutcome) -> None:
+        entries.extend(
+            {
+                "key": key,
+                "investigation_kind": InvestigationKind.HUNT.value,
+                "investigation_id": investigation_id,
+                "run_id": run_id,
+                "method": "hunt",
+                "outcome": outcome.value,
+                "trust": Trust.AGENT.value,
+                "concluded_at": concluded.concluded_at,
+            }
+            for key in keys
+        )
 
     for conclusion in payload.get("conclusions") or []:
         hypothesis_id = str(conclusion.get("hypothesis_id", "")).strip()
@@ -445,11 +467,8 @@ def _conclusion_rows(
             continue
 
         status = str(conclusion.get("status", ""))
-        subjects = _capped(
-            entity_keys(conclusion.get("subject_entities")),
-            investigation_id,
-            hypothesis_id,
-        )
+        all_subjects = entity_keys(conclusion.get("subject_entities"))
+        subjects = _capped(all_subjects, investigation_id, hypothesis_id)
         statement = bounded_prose(conclusion.get("statement", ""))
         rationale = bounded_prose(conclusion.get("rationale", ""))
         outcome = _outcome_of(status)
@@ -461,6 +480,9 @@ def _conclusion_rows(
         # "never looked" nor "failed to conclude" is true of it.
         if outcome is None or (outcome is VerdictOutcome.INCONCLUSIVE and not gathered):
             disposition = _gap_disposition(status, run_outcome)
+            # Not looked at by choice is not a check; not got to is inconclusive.
+            if disposition is not GapDisposition.DEPRIORITISED:
+                cover(all_subjects, VerdictOutcome.INCONCLUSIVE)
             gaps.append(
                 {
                     "investigation_kind": InvestigationKind.HUNT.value,
@@ -477,6 +499,8 @@ def _conclusion_rows(
 
         first = _utc(conclusion.get("first_seen")) or concluded.concluded_at
         last = _utc(conclusion.get("last_seen")) or concluded.concluded_at
+        techniques = _techniques_of(conclusion)
+        cover(all_subjects + techniques, outcome)
         verdicts.append(
             {
                 "row": {
@@ -487,7 +511,7 @@ def _conclusion_rows(
                     "outcome": outcome.value,
                     "rationale": rationale,
                     "subject_entities": subjects,
-                    "techniques": _techniques_of(conclusion),
+                    "techniques": techniques,
                     "attacker_influenceable_only": bool(
                         conclusion.get("attacker_influenceable_only")
                     ),
@@ -507,7 +531,7 @@ def _conclusion_rows(
             }
         )
 
-    return verdicts, gaps
+    return verdicts, gaps, entries
 
 
 def clear_investigation(
@@ -523,7 +547,12 @@ def clear_investigation(
     delete-then-insert, and two implementations of the delete half is two
     definitions of what an investigation owns.
     """
-    for model in (EpisodicSighting, EpisodicVerdict, EpisodicGap):
+    for model in (
+        EpisodicSighting,
+        EpisodicVerdict,
+        EpisodicGap,
+        EpisodicCoverageEntry,
+    ):
         session.execute(
             delete(model).where(
                 model.investigation_kind == kind.value,
@@ -669,10 +698,11 @@ def write_distil(
         clear_investigation(session, kind, concluded.investigation_id)
 
         sightings = _sighting_rows(concluded)
-        verdicts, gaps = _conclusion_rows(concluded)
+        verdicts, gaps, entries = _conclusion_rows(concluded, terminal.run_id)
 
         session.bulk_insert_mappings(EpisodicSighting, sightings)
         session.bulk_insert_mappings(EpisodicGap, gaps)
+        session.bulk_insert_mappings(EpisodicCoverageEntry, entries)
         for verdict in verdicts:
             row = EpisodicVerdict(**verdict["row"])
             session.add(row)
