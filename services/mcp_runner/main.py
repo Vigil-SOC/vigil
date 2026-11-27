@@ -1,7 +1,8 @@
 """MCP runner control API and streamable-HTTP bridge, on port 6991.
 
     PUT    /servers/{name}      {"env": {...}, "of"?: entry}  start, restart on changed env, else no-op
-                                ("of": name is the instance <entry>-<label> of a catalog entry)
+                                ("of": name is an instance <integration-id>-<label>; entry is the
+                                 catalog server that integration launches)
     DELETE /servers/{name}                      stop
     GET    /servers                             status of every catalog server
     *      /servers/{name}/mcp                  MCP streamable HTTP to the running child
@@ -25,7 +26,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from core.integrations.integration_bridge_service import valid_label
+from core.integrations.integration_bridge_service import base_of, launched_server
 from core.integrations.mcp.runner import runner_token
 from services.mcp_runner.catalog import Catalog, load_uids
 from services.mcp_runner.supervisor import ShuttingDown, Supervisor
@@ -102,9 +103,14 @@ def create_app(
     def _instance_refusal(name: str, of: object) -> Optional[str]:
         if not isinstance(of, str) or of not in catalog:
             return f"{of!r} is not in the catalog"
-        label = name[len(of) + 1 :] if name.startswith(f"{of}-") else ""
-        if not valid_label(label) or name in catalog:
-            return f"{name} is not an instance name of {of}: {of}-<label>"
+        # name is <integration-id>-<label>; of is that integration's launched
+        # server, which need not share its id (elastic-siem launches elastic).
+        base = base_of(name)
+        if base is None or launched_server(base) != of or name in catalog:
+            return (
+                f"{name} is not an instance name of {of}: <integration-id>-<label> "
+                f"of the integration that launches {of}"
+            )
         return None
 
     async def list_servers(request: Request) -> JSONResponse:
@@ -145,7 +151,7 @@ def create_app(
     async def delete_server(request: Request) -> JSONResponse:
         name = request.path_params["name"]
         # An instance this runner never started (or lost on restart) is stopped.
-        of = name.rpartition("-")[0]
+        of = launched_server(base_of(name) or "")
         if (missing := _unknown(name)) is not None and _instance_refusal(name, of):
             return missing
         await supervisor.delete(name)

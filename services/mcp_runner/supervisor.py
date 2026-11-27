@@ -228,7 +228,8 @@ class Supervisor:
         """Start ``name`` with ``env``; a no-op when it already runs with it.
 
         ``of`` makes ``name`` an instance of that catalog entry: the caller has
-        checked ``name == f"{of}-{label}"``.
+        checked ``name`` is ``<integration-id>-<label>`` of the integration
+        that launches ``of``.
         """
         entry = of or name
         async with self._lock(name):
@@ -282,7 +283,9 @@ class Supervisor:
             if not self.switch_uid:  # as root, provisioned at image build
                 (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
             return home
-        home = self.state_dir / child.of / child.name[len(child.of) + 1 :]
+        # The label: <integration-id>-<label>, and a label has no hyphen. The
+        # integration id need not be ``of`` (elastic-siem-eu runs elastic).
+        home = self.state_dir / child.of / child.name.rpartition("-")[2]
         if not self.switch_uid:
             (home / TMP_DIR).mkdir(parents=True, exist_ok=True)
             return home

@@ -522,6 +522,7 @@ class MCPService:
         from core.integrations.integration_bridge_service import (
             instance_renames,
             instances_allowed,
+            launched_server,
         )
 
         reader = getattr(self._integration_bridge, "instances", None)
@@ -532,7 +533,8 @@ class MCPService:
             saved = {}
         merged: Dict[str, MCPServer] = {}
         for name, base in saved.items():
-            entry = raw_entries.get(base)
+            # The base entry is the descriptor's launched server, not its id.
+            entry = raw_entries.get(launched_server(base) or "")
             if name in catalog or entry is None or not instances_allowed(base)[0]:
                 logger.warning("Instance %s of %s not merged", name, base)
                 continue

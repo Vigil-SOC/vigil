@@ -50,6 +50,7 @@ from core.integrations.integration_bridge_service import (
     instance_refusal,
     instances,
     instances_allowed,
+    launched_server,
 )
 from core.integrations.integration_secrets import (
     credentials_to_resupply,
@@ -1106,6 +1107,8 @@ def _copy_classes(
     """Copy each base tool's class row and binding to the instance's tool, in
     the caller's transaction, each with a trail entry naming ``actor``.
 
+    ``base`` is the base's launched server, whose ``<server>_`` rows these are.
+
     Once, when a person creates the instance; afterwards the rows are its own.
     A withdrawn base row is not copied, and a binding needs its class row.
     """
@@ -1232,7 +1235,10 @@ def _new_instances(
                 integration_id,
                 asked,
                 base_tools=(
-                    _base_tools(registry, asked) if isinstance(asked, str) else None
+                    # The connected tools are the launched server's.
+                    _base_tools(registry, launched_server(asked) or "")
+                    if isinstance(asked, str)
+                    else None
                 ),
                 taken=taken,
                 other_instances=[*saved, *created],
@@ -1276,7 +1282,7 @@ def _refuse_uncopied_emulators(created: Dict[str, str], why: Optional[str]) -> N
         if b.capability == bindings.EMULATION
     }
     for instance_id, base in created.items():
-        if base in emulating:
+        if launched_server(base) in emulating:
             raise HTTPException(
                 status_code=400,
                 detail=f"Integration '{instance_id}' cannot be added as an instance: "
@@ -1296,12 +1302,14 @@ def _copy_instance_classes(
             out[instance_id] = {"classes": 0, "bindings": 0, "not_copied": why}
             continue
         try:
+            # Rows and bindings are keyed by the launched server, not the id.
+            server = launched_server(base) or base
             with unit_of_work() as session:
                 out[instance_id] = _copy_classes(
                     session,
                     instance_id,
-                    base,
-                    _base_tools(registry, base) or [],
+                    server,
+                    _base_tools(registry, server) or [],
                     current_user.principal_id,
                 )
         except Exception as exc:

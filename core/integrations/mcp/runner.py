@@ -15,7 +15,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Callable, Dict, Optional
 
-from core.integrations.integration_bridge_service import FALCON_ENV, base_of
+from core.integrations.integration_bridge_service import (
+    FALCON_ENV,
+    base_of,
+    launched_server,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,7 @@ def runner_url(server_name: str) -> Optional[str]:
     override = next(
         (
             value
-            for name in (server_name, base_of(server_name))
+            for name in (server_name, launched_server(base_of(server_name) or ""))
             if name
             and (
                 value := os.environ.get(  # noqa: ENV001 - per-server names

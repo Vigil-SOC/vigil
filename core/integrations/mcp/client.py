@@ -35,6 +35,7 @@ from core.integrations._base.config import missing as missing_fields
 from core.integrations._base.config import resolve
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
+from core.integrations.integration_bridge_service import launched_server
 from core.integrations.mcp.child_env import ca_bundle_env, proxy_env, stdio_env
 from core.integrations.mcp.runner import (
     RunnerError,
@@ -639,7 +640,8 @@ class MCPClient:
             server_name,
             env=lambda: self._runner_env(server_name),
             enabled=lambda: service.is_server_enabled(server_name),
-            of=getattr(server, "instance_of", None),
+            # The runner launches the base's catalogue server, not its descriptor id.
+            of=launched_server(getattr(server, "instance_of", None) or ""),
         )
 
     def _runner_env(self, server_name: str) -> Dict[str, str]:
@@ -684,7 +686,7 @@ class MCPClient:
         except Exception as exc:  # noqa: BLE001 - a lookup failure is not configured
             logger.warning("Config lookup for %s failed: %s", name, type(exc).__name__)
             fields = {}
-        gated = _DESCRIPTOR_GATED.get(base)
+        gated = _DESCRIPTOR_GATED.get(launched_server(base) or "")
         if gated:
             return [own.get(f, f) for f in missing_fields(fields, *gated[1])]
         by_key = {key: field for field, key in own.items()}
