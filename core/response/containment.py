@@ -363,6 +363,18 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
     return updated or action
 
 
+def _state_records(
+    entry: Dict[str, Any], answer: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """The records in one row of a lookup's answer. An MCP answer arrives as its
+    envelope (``{"results": [...]}``, named by ``rows``) or, where the tool layer
+    has already unwrapped it, as one record per row: both read the same."""
+    listed = answer.get(entry["rows"]) if entry["rows"] else None
+    if isinstance(listed, list):
+        return [one for one in listed if isinstance(one, dict)]
+    return [] if answer.get("found") is False else [answer]
+
+
 def _stated(reading: Dict[str, Any], record: Dict[str, Any]) -> bool:
     """Whether ``record`` carries any field its state reading reads: a record that
     carries none reads as the reading's default, which says nothing about it."""
@@ -418,7 +430,7 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
         )
         if error:
             return None
-        records = [one for answer in answers for one in _records(entry, answer)]
+        records = [one for answer in answers for one in _state_records(entry, answer)]
         for record in records:
             if not _stated(entry["state"], record):
                 return None
