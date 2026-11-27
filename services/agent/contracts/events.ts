@@ -247,7 +247,6 @@ export interface ProposedAction {
   action_type: string;
   target: string;
   reason: string;
-  confidence?: number;
 }
 
 // What a tool result was: served (an answer, empty or not), visibility_gap (the estate did

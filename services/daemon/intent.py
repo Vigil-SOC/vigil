@@ -94,7 +94,6 @@ def parse_since(text: str) -> timedelta:
 @dataclass(frozen=True)
 class ReplayApproval:
     id: str
-    confidence: float
     # The stored column, replayed as the class it names.
     reversibility: str
 
@@ -129,13 +128,11 @@ def replay_decisions(
         eff_req, eff_rule = approval_requirement(
             effective.force_manual_approval,
             action.reversibility,
-            action.confidence,
             effective,
         )
         dec_req, dec_rule = approval_requirement(
             declared.force_manual_approval,
             action.reversibility,
-            action.confidence,
             declared,
         )
         if eff_req == dec_req:
@@ -201,7 +198,6 @@ def load_replay_rows(since: timedelta) -> List[ReplayApproval]:
             approvals.append(
                 ReplayApproval(
                     id=action.action_id,
-                    confidence=float(action.confidence),
                     reversibility=action.reversibility,
                 )
             )

@@ -72,7 +72,6 @@ def request_promotion(copy: Any, reason: str, proof: Mapping[str, Any]) -> bool:
             "Approving makes it live and opens its deploy pull request."
         ),
         target=str(copy.rule_id),
-        confidence=0.0,
         reason=reason,
         evidence=[],
         parameters={
@@ -135,7 +134,6 @@ def request_deploy(
         title=title,
         description=description,
         target=str(copy.rule_id),
-        confidence=0.0,
         reason=reason,
         evidence=[],
         created_by=requested_by,

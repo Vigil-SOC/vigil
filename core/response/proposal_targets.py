@@ -18,9 +18,6 @@ REASON_SENTENCES = {
     "action_type_unknown": "the action is not one a run may propose",
     "target_missing": "no target was given",
     "reason_missing": "no reason was given",
-    "confidence_missing": "no confidence was given",
-    "confidence_zero": "the confidence is zero, which is no claim",
-    "confidence_out_of_range": "the confidence is not a number between 0 and 1",
     "target_is_placeholder": "the target is a placeholder, not a value",
     "target_too_long": "the target is longer than the action allows",
     "target_not_a_host": "the target is not a host name, address or device id",
@@ -162,22 +159,6 @@ def check_target(action_type: str, target: Any) -> Tuple[Optional[str], Optional
         return None, "target_too_long"
     code = shape(t)
     return (None, code) if code else (t, None)
-
-
-def check_confidence(raw: Dict[str, Any]) -> Optional[str]:
-    """None when ``raw`` states a confidence in (0, 1], else the reason code.
-
-    Absent is not zero: a model that stated no view is told apart from one that
-    stated none.
-    """
-    if "confidence" not in raw or raw["confidence"] is None:
-        return "confidence_missing"
-    c = raw["confidence"]
-    if isinstance(c, bool) or not isinstance(c, (int, float)) or c != c or c > 1:
-        return "confidence_out_of_range"
-    if c <= 0:
-        return "confidence_zero"
-    return None
 
 
 # A word for what a refused target looks like, so the case says what kind of
