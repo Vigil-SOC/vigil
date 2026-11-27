@@ -1026,6 +1026,11 @@ config:
   # 60–86400; outside that the API keeps 1800 and logs it. Autonomous runs
   # keep ORCHESTRATOR_MAX_RUNTIME. Not an intent knob.
   WORKFLOW_DEFAULT_WALL_SECONDS: "1800"
+  # Hunts whose start names no limits: iterations 1–40, cost USD up to 100,
+  # wall 60–86400 s. Outside that the API keeps 8 / 15.0 / 5400 and logs it.
+  HUNT_DEFAULT_ITERATIONS: "8"
+  HUNT_DEFAULT_COST_USD: "15.0"
+  HUNT_DEFAULT_WALL_SECONDS: "5400"
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"

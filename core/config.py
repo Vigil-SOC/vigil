@@ -398,6 +398,14 @@ class Settings(BaseSettings):
     # 30 minutes (core.workflows.playbook_resolver.deployment_wall_ms); it does not
     # stop this process. Autonomous runs keep orchestrator_max_runtime.
     workflow_default_wall_seconds: int = 1800
+    # A hunt whose start names no limits (chat, scheduled, or a blank run form).
+    # Iterations 1–40, cost above 0 up to 100 USD, wall 60–86400 seconds; outside
+    # that the setting is ignored and the shipped value stands
+    # (core.workflows.playbook_resolver.hunt_limits). The hunt's hard ceilings
+    # follow at twice these. A per-run limit on execute still wins.
+    hunt_default_iterations: int = 8
+    hunt_default_cost_usd: float = 15.0
+    hunt_default_wall_seconds: int = 5400
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
