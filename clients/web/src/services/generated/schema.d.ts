@@ -18176,6 +18176,8 @@ export interface components {
             site_questions?: components["schemas"]["SiteQuestion"][];
             /** State */
             state: string;
+            /** Telemetry */
+            telemetry?: components["schemas"]["SiteTelemetry"][];
             /** Zones */
             zones?: components["schemas"]["SiteZone"][];
         };
@@ -18352,6 +18354,17 @@ export interface components {
             name?: string | null;
             /** Question */
             question: string;
+        };
+        /** SiteTelemetry */
+        SiteTelemetry: {
+            /** Covers */
+            covers: string;
+            /** File */
+            file: string;
+            /** Line */
+            line: number;
+            /** Name */
+            name: string;
         };
         /** SiteZone */
         SiteZone: {

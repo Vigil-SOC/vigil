@@ -5,12 +5,17 @@ matcher every reader calls, owner resolution against active teams, and the
 cached read of the ``site.applied`` row the daemon writes all live here;
 readers import from this module and keep no second model of the site.
 
-Each file's YAML front matter may hold four lists:
+Each file's YAML front matter may hold five lists:
 
 - ``zones``: ``name``, ``selectors``, ``description``
 - ``crown_jewels``: ``name``, ``mission``, ``selectors``, ``zone``, ``why``
 - ``owners``: ``selectors``, ``team``
 - ``blind_spots``: ``selectors``, ``what`` (what Vigil cannot see there)
+- ``telemetry``: ``name``, ``covers`` (#5291) -- telemetry this site carries
+  beyond the shipped hunt ``data_domains``. Hunts may file evidence under the
+  name and it grades as telemetry. The name becomes a ``source_system`` value,
+  so it matches ``TELEMETRY_NAME``, is declared once, and is neither
+  ``undeclared`` nor a name already graded ``not_evidence``.
 
 A Selector is ``cidr:<range>`` (matches ``ip:`` keys) or an Entity Key whose
 type is in ``ENTITY_KEY_TYPES``, normalised as ``normalise_key`` mints it,
@@ -59,7 +64,11 @@ KINDS: Dict[str, Dict[str, bool]] = {
     },
     "owners": {"selectors": True, "team": True},
     "blind_spots": {"selectors": True, "what": True},
+    "telemetry": {"name": True, "covers": True},
 }
+
+# A telemetry name is a source_system value other code joins on.
+TELEMETRY_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 NOTHING_DECLARED = "Nothing is declared: VIGIL_INTENT_DIR is not set"
 
@@ -257,8 +266,34 @@ def _parse_file(name: str, content: str) -> Dict[str, List[Dict[str, Any]]]:
                 raise SiteRejected(
                     name, at, f"{kind}[{index}] is missing {', '.join(missing)}"
                 )
+            if kind == "telemetry":
+                _check_telemetry(name, at, item["name"])
             items[kind].append({**item, "file": name, "line": at})
     return items
+
+
+def _check_telemetry(file: str, at: int, telemetry: str) -> None:
+    # Lazy: source_tier reads the applied site back through this module.
+    from core.memory.source_tier import InvestigationKind, SourceTier, shipped_tier
+
+    if not TELEMETRY_NAME.match(telemetry):
+        raise SiteRejected(
+            file,
+            at,
+            f"telemetry name {telemetry!r} must match {TELEMETRY_NAME.pattern}",
+        )
+    if telemetry == "undeclared":
+        raise SiteRejected(
+            file, at, "telemetry name 'undeclared' is reserved for unvouched sources"
+        )
+    # The shipped maps only: the site lookup can only grade telemetry, and
+    # reading it here would put a database read in the parser.
+    if shipped_tier(telemetry, InvestigationKind.HUNT) is SourceTier.NOT_EVIDENCE:
+        raise SiteRejected(
+            file,
+            at,
+            f"telemetry name {telemetry!r} is a source Vigil grades not_evidence",
+        )
 
 
 def parse_site(files: Sequence[Tuple[str, str]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -293,6 +328,17 @@ def parse_site(files: Sequence[Tuple[str, str]]) -> Dict[str, List[Dict[str, Any
                 f"{first['file']}:{first['line']}",
             )
         zones[zone["name"]] = zone
+    telemetry: Dict[str, Dict[str, Any]] = {}
+    for entry in items["telemetry"]:
+        if entry["name"] in telemetry:
+            first = telemetry[entry["name"]]
+            raise SiteRejected(
+                entry["file"],
+                entry["line"],
+                f"telemetry {entry['name']!r} is already declared at "
+                f"{first['file']}:{first['line']}",
+            )
+        telemetry[entry["name"]] = entry
     for jewel in items["crown_jewels"]:
         if "zone" in jewel and jewel["zone"] not in zones:
             raise SiteRejected(
@@ -554,6 +600,7 @@ def _site_items_view(row: Dict[str, Any], *, report: bool) -> Dict[str, Any]:
         "crown_jewels": [owned(j) for j in items.get("crown_jewels") or []],
         "owners": owners,
         "blind_spots": list(items.get("blind_spots") or []),
+        "telemetry": list(items.get("telemetry") or []),
     }
 
 

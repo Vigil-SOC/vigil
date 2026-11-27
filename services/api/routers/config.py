@@ -2031,6 +2031,13 @@ class SiteBlindSpot(BaseModel):
     line: int
 
 
+class SiteTelemetry(BaseModel):
+    name: str
+    covers: str
+    file: str
+    line: int
+
+
 class SiteFile(BaseModel):
     file: str
     text: str
@@ -2119,6 +2126,8 @@ class SiteContextResponse(BaseModel):
     crown_jewels: list[SiteCrownJewel] = Field(default_factory=list)
     owners: list[SiteOwner] = Field(default_factory=list)
     blind_spots: list[SiteBlindSpot] = Field(default_factory=list)
+    # Telemetry the site carries beyond the shipped hunt data domains (#5291).
+    telemetry: list[SiteTelemetry] = Field(default_factory=list)
     files: list[SiteFile] = Field(default_factory=list)
     # The latest Day 1 Report's site checks and evidence; None before one ran.
     report: Optional[Dict[str, Any]] = None

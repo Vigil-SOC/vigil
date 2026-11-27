@@ -95,6 +95,11 @@ data_domains:
   - auth
   - email
   - cloud
+  # An AI agent's own activity (ai-agent-activity skill): its trace spans, the
+  # LLM/MCP gateway in front of it, and the sandbox it executes in.
+  - agent_spans
+  - llm_gateway
+  - agent_sandbox
 
 objectives:
   - "State a hypothesis and the scope that would test it"
