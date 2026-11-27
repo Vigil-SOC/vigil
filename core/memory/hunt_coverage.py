@@ -31,10 +31,18 @@ def _matched(rows: Sequence[Dict[str, Any]], field: str) -> set:
     return {value for row in rows for value in row.get(field) or ()}
 
 
-def _split(asked: Sequence[str], hit: set) -> Dict[str, List[str]]:
+def _split(
+    asked: Sequence[str], hit: set, *, under: bool = False
+) -> Dict[str, List[str]]:
+    # With ``under``, an asked technique is matched by a cited sub-technique too.
+    def found(value: str) -> bool:
+        return value in hit or (
+            under and any(one.startswith(f"{value}.") for one in hit)
+        )
+
     return {
-        "matched": [value for value in asked if value in hit],
-        "unmatched": [value for value in asked if value not in hit],
+        "matched": [value for value in asked if found(value)],
+        "unmatched": [value for value in asked if not found(value)],
     }
 
 
@@ -91,7 +99,7 @@ def check_coverage(
         status, rows = "uncovered", []
 
     key_split = _split(keys, _matched(rows, "matched_keys"))
-    technique_split = _split(t_ids, _matched(rows, "matched_techniques"))
+    technique_split = _split(t_ids, _matched(rows, "matched_techniques"), under=True)
     result: Dict[str, Any] = {
         "status": status,
         "keys": keys,

@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
-"""Write core/threat_intel/attack_techniques.json from MITRE's Enterprise ATT&CK bundle.
+"""Write core/threat_intel/attack_techniques.json from MITRE's ATT&CK bundle and ATLAS release.
 
 One pinned release of MITRE's bundle (mitre-attack/attack-stix-data) is cut down to
 what Vigil reads offline: each technique and sub-technique id with its name, tactics,
 status and, for a revoked one, the active technique that finally replaced it.
 
+One pinned MITRE ATLAS release (mitre-atlas/atlas-data, dist/v6) goes under its own
+"atlas" key with its version: each technique and sub-technique id with its name. ATLAS v6
+carries no revoked or deprecated flag, so every entry is written active.
+
 The script fetches nothing. Download enterprise-attack-<ATTACK_VERSION>.json from
-SOURCE_URL first, then:
+SOURCE_URL and ATLAS-<ATLAS_VERSION>.yaml from ATLAS_SOURCE_URL first, then:
 
-    python scripts/generate_attack_techniques.py --bundle path/to/enterprise-attack-X.json
+    python scripts/generate_attack_techniques.py \
+        --bundle path/to/enterprise-attack-X.json --atlas path/to/ATLAS-Y.yaml
 
-To move to a newer release, change ATTACK_VERSION, download that file, run this and
-commit the result.
+To move to a newer release, change ATTACK_VERSION or ATLAS_VERSION, download that file,
+run this and commit the result (and update ATTACK_NOTICE.md / ATLAS_NOTICE.md).
 """
 
 import argparse
 import json
 from pathlib import Path
 
+import yaml
+
 ATTACK_VERSION = "20.1"
 SOURCE_URL = (
     "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/"
     f"enterprise-attack/enterprise-attack-{ATTACK_VERSION}.json"
+)
+ATLAS_VERSION = "2026.10"
+ATLAS_SOURCE_URL = (
+    "https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/v6/"
+    f"ATLAS-{ATLAS_VERSION}.yaml"
 )
 OUTPUT = (
     Path(__file__).resolve().parent.parent
@@ -101,6 +113,21 @@ def build(bundle: dict) -> dict:
     }
 
 
+def build_atlas(release: dict) -> dict:
+    version = str(release["collection"]["version"])
+    if version != ATLAS_VERSION:
+        raise SystemExit(f"ATLAS file is {version}, expected {ATLAS_VERSION}")
+    # Only the top-level map: the case studies list techniques again.
+    return {
+        "version": version,
+        "techniques": {
+            technique_id: {"name": entry["name"], "status": "active"}
+            for technique_id, entry in release["techniques"].items()
+            if technique_id.startswith("AML.T")
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -109,13 +136,23 @@ def main() -> None:
         type=Path,
         help=f"local enterprise-attack-{ATTACK_VERSION}.json, downloaded from {SOURCE_URL}",
     )
+    parser.add_argument(
+        "--atlas",
+        required=True,
+        type=Path,
+        help=f"local ATLAS-{ATLAS_VERSION}.yaml, downloaded from {ATLAS_SOURCE_URL}",
+    )
     args = parser.parse_args()
     data = build(json.loads(args.bundle.read_text(encoding="utf-8")))
+    data["atlas"] = build_atlas(yaml.safe_load(args.atlas.read_text(encoding="utf-8")))
     OUTPUT.write_text(
         json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
-    print(f"{len(data['techniques'])} techniques -> {OUTPUT}")
+    print(
+        f"{len(data['techniques'])} ATT&CK and {len(data['atlas']['techniques'])} "
+        f"ATLAS techniques -> {OUTPUT}"
+    )
 
 
 if __name__ == "__main__":
