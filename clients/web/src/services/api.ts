@@ -809,6 +809,10 @@ export const configApi = {
   discardSiteProposal: (reason: string) =>
     api.post<Schema<'SiteProposalResponse'>>('/config/site/proposal/discard', { reason }),
   refreshSiteProposal: () => api.post<{ status: string; message: string }>('/config/site/proposal/refresh'),
+  // Declared remote MCP sources (#5304): read, and a person's accept of the pending ones
+  getSources: () => api.get<DeclaredSources>('/config/sources'),
+  acceptSources: (data: Schema<'SourcesAcceptBody'>) =>
+    api.post<DeclaredSources>('/config/sources/accept', data),
   // A person's accept of the applied revision's pending loosenings (#5069)
   acceptIntent: (data: Schema<'IntentAcceptBody'>) =>
     api.post<Schema<'IntentReportResponse'>>('/config/intent/accept', data),
@@ -2198,6 +2202,46 @@ export type IntegrationHealthState =
   | 'not_checked'
   | 'switched_off'
   | 'unknown'
+
+/** GET /api/config/sources (core/sources.py sources_view); the schema leaves the body untyped. Never a value. */
+export interface DeclaredSources {
+  directory: string | null
+  declared: boolean
+  revision: string | null
+  hash: string | null
+  /** none, ok, rejected or degraded */
+  state: string
+  reason: string
+  applied_at: string | null
+  rejected: { revision: string; file: string; line: number | null; reason: string } | null
+  sources: DeclaredSource[]
+}
+
+export interface DeclaredSource {
+  name: string
+  /** source-<name>: its credentials' integration id and its Integration Health row */
+  integration_id: string
+  file: string
+  url: string
+  /** header names only */
+  headers: string[]
+  /** `from`: stored (encrypted store), environment, or null when unset */
+  credentials: { field: string; key: string; set: boolean; from: 'stored' | 'environment' | null }[]
+  body: string
+  launch_hash: string
+  status: 'accepted' | 'pending'
+  pending: {
+    kind: 'new' | 'changed'
+    changes: string[]
+    url_from?: string | null
+    url_to?: string
+    asks_credentials_again?: boolean
+    headers_changed?: string[]
+    credentials_added?: string[]
+    credentials_removed?: string[]
+  } | null
+  accepted: { hash: string; revision: string; by_name: string; at: string } | null
+}
 
 /** One source from GET /api/integration-health. `record` is not read: state, reason and since are the judgement. */
 export interface IntegrationHealthSource {
