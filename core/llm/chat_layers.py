@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from core.integrations.bindings import emulators
 from core.llm.tool_schemas import (
     ALL_TOOLS,
     CALL_INTEGRATION_TOOL,
@@ -16,7 +17,6 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.response.ceiling import gated_tools
-from core.response.emulation import read_emulation
 
 REMOTE = "remote"
 
@@ -40,7 +40,7 @@ def run_id_for(session_id: str) -> str:
 # reversible, irreversible and unclassified tools go through the approval queue
 # and workflows instead. Those sharing a built-in's name are left out too — the
 # backend answers those, and an agent's ``wanted`` list decides whether it may.
-# A marked emulator is left out whatever its class: emulation belongs in a run,
+# A tool bound as an emulator is left out whatever its class: emulation belongs in a run,
 # where it is recorded, so resolve_integration_call refuses it too.
 def integration_tools(
     mcp_tools: Optional[List[Dict[str, Any]]],
@@ -50,8 +50,8 @@ def integration_tools(
     if not named:
         return []
     gated = gated_tools(t["name"] for t in named)
-    marked = read_emulation()
-    return [t for t in named if t["name"] not in gated and not marked.marked(t["name"])]
+    marked = emulators()
+    return [t for t in named if t["name"] not in gated and t["name"] not in marked]
 
 
 def integrations_how(mcp_tools: Optional[List[Dict[str, Any]]]) -> str:

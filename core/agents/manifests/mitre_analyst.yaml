@@ -9,7 +9,7 @@ needs:
   - get_technique_rollup
   - recall_entity
   - read_skill
-  # Every emulator the operator marked (Settings → Limits & autonomy → Emulators).
+  # Every tool bound as an emulator (its row under Settings → Limits & autonomy).
   - emulation
   - identify_gaps
   - emulate_next
