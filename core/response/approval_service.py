@@ -376,34 +376,38 @@ def _host_names(*names: Optional[str]) -> List[str]:
     return sorted(folded)
 
 
+def _asks():
+    """Rows that ask for an act, whoever filed them: a run, a person, a playbook or
+    the retired daemon responder. An undo row (``undoes``) asks for the way back,
+    and a run's question (``workflow_run_id``) is answered by resuming that run, so
+    neither is an ask for the act itself."""
+    return (
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.parameters["undoes"].astext.is_(None))
+        .where(ApprovalActionRow.workflow_run_id.is_(None))
+    )
+
+
 def _isolations_of(names: Sequence[str]):
-    """Isolations of a host named by any of ``names``: the retired daemon
-    responder's (rows remain on installs), which key on the IP when the alert had
-    one and on the hostname when not, and runs' proposals, which name the host as
-    the model did."""
+    """Asks to isolate a host named by any of ``names``: by its IP or its hostname,
+    as the retired responder keyed on either and a run names the host as the model
+    did."""
     target = func.lower(func.trim(ApprovalActionRow.target))
     hostname = func.lower(func.trim(ApprovalActionRow.parameters["hostname"].astext))
     return (
-        select(ApprovalActionRow)
+        _asks()
         .where(ApprovalActionRow.action_type == ActionType.ISOLATE_HOST.value)
-        .where(
-            or_(
-                ApprovalActionRow.idempotency_key.like("isolate_host:%"),
-                ApprovalActionRow.idempotency_key.like("run-proposal:%"),
-            )
-        )
         .where(or_(target.in_(names), hostname.in_(names)))
     )
 
 
 def _same_ask(action_type: str, target: str):
-    """Run proposals of ``action_type`` on ``target``, any status; for an isolation,
-    any isolation of that host."""
+    """Asks for ``action_type`` on ``target``, any status, whoever filed them; for
+    an isolation, any isolation of that host."""
     if action_type == ActionType.ISOLATE_HOST.value:
         return _isolations_of(_host_names(target))
     return (
-        select(ApprovalActionRow)
-        .where(ApprovalActionRow.idempotency_key.like("run-proposal:%"))
+        _asks()
         .where(ApprovalActionRow.action_type == action_type)
         .where(
             func.lower(func.trim(ApprovalActionRow.target)) == target.strip().lower()
@@ -1173,9 +1177,9 @@ class ApprovalService:
         self, key: str, action_type: str, target: str
     ) -> Optional[PendingAction]:
         """The row a run's proposal would repeat: its own (by ``key``) first, else
-        the newest run proposal of the same action on the same target, any status.
-        An isolation also matches a retired responder's isolation of that host,
-        whether its alert named the host by IP or by hostname."""
+        the newest ask for the same action on the same target, any status, whoever
+        filed it: another run, a person, or the retired responder. An isolation
+        matches the host by IP or by hostname."""
         db = get_db_manager()
         with db.session_scope() as session:
             own = _nonfailed_by_key(session, key)

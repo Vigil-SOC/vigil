@@ -355,6 +355,39 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
     return updated or action
 
 
+async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str, Any]]:
+    """What a connected vendor says when ``target`` is already in the state the
+    act would put it in (a host already contained, an account already disabled),
+    or None. Done outside Vigil counts too: the vendor's own lookup is asked.
+
+    Only when every record the lookups found reads as done; a lookup that failed,
+    found nothing, or found one record not yet done leaves the ask to a person.
+    A keyless carrier has no lookup and so says nothing here."""
+    done = DONE_STATE.get(action_type)
+    if done is None or action_type not in CONTAINMENT_TYPES:
+        return None
+    seen: List[Dict[str, Any]] = []
+    for entry in _offered(action_type, registry):
+        if not entry["lookup"] or not entry.get("state"):
+            continue
+        answer, error = await _call(
+            registry, _flat(entry, "lookup"), bindings.lookup_args(entry, target)
+        )
+        if error:
+            return None
+        for record in _records(entry, answer or {}):
+            seen.append(
+                {
+                    "vendor": entry["server"],
+                    "name": record.get(entry["name"]) or target,
+                    "state": bindings.read(entry["state"], record),
+                }
+            )
+    if not seen or any(s["state"] != done for s in seen):
+        return None
+    return seen[0]
+
+
 def choose(action: PendingAction, candidate: Optional[str]) -> Tuple[str, str]:
     """The tool and JSON arguments approving ``action`` runs, or ``Unapprovable``."""
     stored = (action.parameters or {}).get("containment") or {}
