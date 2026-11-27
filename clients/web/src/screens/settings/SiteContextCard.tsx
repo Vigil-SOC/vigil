@@ -20,7 +20,7 @@ type Question = Schema<'SiteQuestion'>
 const SITE_AGENT = { id: 'site_context', name: 'Site context agent' }
 const PROPOSAL_COLOR: Record<string, string> = { open: 'var(--ac)', applied: 'var(--good)', outdated: 'var(--fair)', discarded: 'var(--tx3)' }
 const CHANGE_COLOR: Record<string, string> = { added: 'var(--good)', changed: 'var(--fair)', removed: 'var(--poor)' }
-const LIST_TITLE: Record<string, string> = { zones: 'Zones', crown_jewels: 'Crown jewels', owners: 'Owners', blind_spots: 'Blind spots' }
+const LIST_TITLE: Record<string, string> = { zones: 'Zones', crown_jewels: 'Crown jewels', owners: 'Owners', blind_spots: 'Blind spots', telemetry: 'Telemetry' }
 const QUESTION_TEXT: Record<string, string> = {
   unplaced: 'In no zone',
   contradicted: 'Stated critical, but no crown jewel covers it',
@@ -496,6 +496,7 @@ export default function SiteContextCard({
   const jewels = site.crown_jewels ?? []
   const owners = site.owners ?? []
   const blind = site.blind_spots ?? []
+  const telemetry = site.telemetry ?? []
   const files = site.files ?? []
 
   return (
@@ -577,6 +578,13 @@ export default function SiteContextCard({
             {blind.map((b) => (
               <Item key={`${b.file}:${b.line}`} head={<span className="text-tx">{b.what}</span>} at={b}>
                 <Selectors selectors={b.selectors} />
+              </Item>
+            ))}
+          </Group>
+          <Group title="Telemetry" count={telemetry.length}>
+            {telemetry.map((t) => (
+              <Item key={`${t.file}:${t.line}`} head={<span className="text-tx">{t.name}</span>} at={t}>
+                <span>Covers: {t.covers}</span>
               </Item>
             ))}
           </Group>

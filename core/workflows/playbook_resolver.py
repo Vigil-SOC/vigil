@@ -807,6 +807,20 @@ def _strings(value: Any) -> List[str]:
     return [str(item) for item in value or [] if str(item).strip()]
 
 
+def _site_telemetry() -> List[Dict[str, str]]:
+    """``{name, covers}`` of each telemetry entry the applied site declares."""
+    from core.site import applied_site, declared
+
+    row = applied_site()
+    if not declared(row):
+        return []
+    return [
+        {"name": t["name"], "covers": t["covers"]}
+        for t in (row.get("items") or {}).get("telemetry") or []
+        if t.get("name") and t.get("covers")
+    ]
+
+
 # The two layers a hunt run needs. Same tools and the same dump as a compose one;
 # what differs is that a hunt states beliefs to test where a compose states steps.
 def resolve_hunt(
@@ -840,6 +854,15 @@ def resolve_hunt(
         "data_domains": _strings(definition.metadata.get("data_domains")),
         "narrative": definition.body,
     }
+    # The telemetry the site declares (#5291): nameable as a source, and told to
+    # the lead with what each covers. Absent when it declares none, so the
+    # playbook is then exactly the definition's.
+    telemetry = _site_telemetry()
+    if telemetry:
+        playbook["data_domains"] = list(
+            dict.fromkeys(playbook["data_domains"] + [t["name"] for t in telemetry])
+        )
+        playbook["site_telemetry"] = telemetry
 
     config = {
         "model": model or DEFAULT_MODEL,
