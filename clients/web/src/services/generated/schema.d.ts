@@ -6067,7 +6067,8 @@ export interface paths {
          *     * changed spawn config: reconnected on the new config. A stdio child
          *       compares command, args, cwd and declared env; a server in the MCP runner
          *       compares only its declared env and credentials, because the runner
-         *       launches from its own catalog and ignores command, args and cwd;
+         *       launches from its own catalog and ignores command, args and cwd; a
+         *       remote (``url``) entry compares its URL and headers as resolved now;
          *     * unchanged: left alone.
          *
          *     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report

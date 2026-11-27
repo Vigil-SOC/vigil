@@ -7,7 +7,7 @@ import platform
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
@@ -32,12 +32,15 @@ _PLACEHOLDER_BLACKLIST = {"workspaceFolder", "HOME", "PYTHONPATH", "VIGIL_DIR"}
 
 
 def extract_required_env_vars(
-    raw_env: Dict[str, str], raw_args: List[str]
+    raw_env: Dict[str, str],
+    raw_args: List[str],
+    url: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """Collect every ``${VAR}`` placeholder referenced by a server config.
 
     Scans the raw (pre-substitution) ``env`` values and ``args`` entries
-    from ``mcp-config.json``. Returns a deduplicated, sorted list of
+    from ``mcp-config.json``, and a remote entry's ``url`` and ``headers``. Returns a deduplicated, sorted list of
     placeholder names. These are treated as required by
     ``mcp_client.connect_to_server`` — if any resolve to empty, the
     server is considered dormant-by-design (not a connect failure).
@@ -48,7 +51,8 @@ def extract_required_env_vars(
     and will fall through to the regular connect path.
     """
     found: set[str] = set()
-    for value in list((raw_env or {}).values()) + list(raw_args or []):
+    values = [*(raw_env or {}).values(), *(raw_args or []), url]
+    for value in values + list((headers or {}).values()):
         if not isinstance(value, str):
             continue
         # "$${VAR}" is a literal for the child to expand, not a placeholder.
@@ -72,6 +76,8 @@ class MCPServer:
         env: Dict[str, str],
         required_env_vars: Optional[List[str]] = None,
         declared_env: Optional[List[str]] = None,
+        url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ):
         self.name = name
         self.command = command
@@ -84,6 +90,10 @@ class MCPServer:
         # The env names mcp-config.json declares; ``env`` also carries the
         # backend's own environment, which only a stdio child inherits.
         self.declared_env: List[str] = list(declared_env or [])
+        # A remote entry: no process, reached over streamable HTTP. Both are the
+        # raw ${VAR} templates, resolved at each connect (MCPService.remote_target).
+        self.url = url
+        self.headers: Dict[str, str] = dict(headers or {})
 
 
 class MCPService:
@@ -280,6 +290,19 @@ class MCPService:
 
         return value.replace(_LITERAL_DOLLAR, "$")
 
+    def remote_target(self, server: "MCPServer") -> Tuple[str, Dict[str, str]]:
+        """A remote entry's URL and headers, resolved now.
+
+        Through ``get_secret`` (the store, then the environment), the order the
+        dormancy gate reads them in, so a token saved in Settings after the
+        catalog loaded is the one sent. Not the environment first: a save sets
+        ``os.environ`` only in the worker that took it, so another worker's
+        copy of an earlier value would win there.
+        """
+        return self._substitute_env_vars(server.url or "", {}), {
+            k: self._substitute_env_vars(v, {}) for k, v in server.headers.items()
+        }
+
     def reload_server_configs(self) -> None:
         """Rebuild server configs so a connectorUrl saved after startup is
         re-substituted into the init-time-cached spawn args."""
@@ -321,6 +344,29 @@ class MCPService:
             for server_name, server_config in mcp_config.get("mcpServers", {}).items():
                 # Skip comment keys
                 if server_name.startswith("_comment"):
+                    continue
+
+                if "url" in server_config:
+                    # Remote: no process, so no command, args, cwd or launcher.
+                    url = str(server_config["url"])
+                    headers = {
+                        str(k): str(v)
+                        for k, v in (server_config.get("headers") or {}).items()
+                    }
+                    server_configs.append(
+                        {
+                            "name": server_name,
+                            "command": "",
+                            "args": [],
+                            "cwd": project_path_str,
+                            "env": {},
+                            "required_env_vars": extract_required_env_vars(
+                                {}, [], url, headers
+                            ),
+                            "url": url,
+                            "headers": headers,
+                        }
+                    )
                     continue
 
                 # Convert config format from mcp-config.json to our internal format

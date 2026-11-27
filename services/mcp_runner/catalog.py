@@ -64,8 +64,9 @@ class Launch:
 
 def read_entries(root: Path) -> Dict[str, dict]:
     raw = json.loads((Path(root) / "mcp-config.json").read_text())["mcpServers"]
-    # String values are the file's _comment_* section headers.
-    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+    # String values are the file's _comment_* section headers. A url entry is
+    # reached by the backend itself: nothing to launch, no uid.
+    return {k: v for k, v in raw.items() if isinstance(v, dict) and "url" not in v}
 
 
 class Catalog:
