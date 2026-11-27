@@ -153,8 +153,9 @@ async def _call(
     every_row: bool = False,
 ) -> Tuple[Any, Optional[str]]:
     """(the tool's answer, None) or (None, why it failed), through ``_run``. The
-    answer is its first row, or with ``every_row`` the list of its rows: an
-    envelope such as ``{"results": [...]}`` arrives already unwrapped to them."""
+    answer is its first row, or with ``every_row`` the list of its rows. An MCP
+    tool's envelope (``{"results": [...]}``) may arrive as one of those rows, or
+    already unwrapped to one row per record (``_state_records`` reads both)."""
     from core.agents.attribution import TrailWriteError
     from core.agents.mcp_tools import MCPFailure, row_error
     from core.agents.tools_router import (
