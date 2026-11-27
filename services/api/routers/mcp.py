@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
+from core.integrations.integration_bridge_service import base_of
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
 from core.integrations.mcp.reload import apply_catalog
 from core.integrations.mcp.service import MCPService
@@ -179,6 +180,10 @@ async def set_server_enabled(
     the toggle back off and surface the real reason (e.g. missing creds,
     bad binary) when the connect attempt fails.
     """
+    # An instance just saved may not be merged here yet: the sources pass that
+    # merges it runs every few seconds (#5353).
+    if server_name not in mcp_service.servers and base_of(server_name):
+        await run_in_threadpool(mcp_service.reload_server_configs)
     _validate_known_server(server_name)
 
     # On the trail before the switch: a refused entry leaves the switch as it was.

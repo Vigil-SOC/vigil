@@ -124,10 +124,10 @@ def _half_set(config: Mapping[str, Any], *names: str) -> Tuple[str, ...]:
     return absent if len(absent) < len(names) else ()
 
 
-async def _splunk() -> Outcome:
+async def _splunk(iid: Optional[str] = None) -> Outcome:
     from core.integrations.splunk.client import SplunkService
 
-    config = resolve(SPLUNK)
+    config = resolve(SPLUNK, iid)
     absent = missing(config, "server_url", "username", "password")
     if absent:
         return _absent(absent)
@@ -146,10 +146,10 @@ async def _splunk() -> Outcome:
             service._session.close()
 
 
-async def _elastic() -> Outcome:
+async def _elastic(iid: Optional[str] = None) -> Outcome:
     from core.integrations.elastic.client import ElasticService
 
-    config = resolve(ELASTIC)
+    config = resolve(ELASTIC, iid)
     if missing(config, "elasticsearch_url"):
         return _absent(("elasticsearch_url",))
     verify = True if config.get("verify_ssl") is None else config["verify_ssl"]
@@ -169,10 +169,10 @@ async def _elastic() -> Outcome:
         await service.close()
 
 
-async def _opensearch() -> Outcome:
+async def _opensearch(iid: Optional[str] = None) -> Outcome:
     from core.integrations.opensearch.client import OpenSearchService
 
-    config = resolve(OPENSEARCH)
+    config = resolve(OPENSEARCH, iid)
     if missing(config, "opensearch_url"):
         return _absent(("opensearch_url",))
     # A cluster without the security plugin takes no login; half of one is a
@@ -197,10 +197,10 @@ async def _opensearch() -> Outcome:
         await service.close()
 
 
-async def _wazuh() -> Outcome:
+async def _wazuh(iid: Optional[str] = None) -> Outcome:
     from core.integrations.wazuh.client import WazuhService
 
-    config = resolve(WAZUH)
+    config = resolve(WAZUH, iid)
     absent = missing(config, *WAZUH_REQUIRED)
     if absent:
         return _absent(absent)
@@ -221,10 +221,10 @@ async def _wazuh() -> Outcome:
         await service.close()
 
 
-async def _opencti() -> Outcome:
+async def _opencti(iid: Optional[str] = None) -> Outcome:
     from core.integrations.opencti.client import OpenCTIService
 
-    config = resolve(OPENCTI)
+    config = resolve(OPENCTI, iid)
     absent = missing(config, *OPENCTI_REQUIRED)
     if absent:
         return _absent(absent)
@@ -245,14 +245,14 @@ async def _opencti() -> Outcome:
     feed = OPENCTI.taxii_feed(config)  # type: ignore[misc]
     if not outcome[0] or feed is None:
         return outcome
-    taxii = await _taxii_check("OpenCTI", OPENCTI.id, feed)
+    taxii = await _taxii_check("OpenCTI", iid or OPENCTI.id, feed)
     if not taxii[0]:
         return taxii
     return True, f"{outcome[1]}; {taxii[1]}"
 
 
-async def _sentinel() -> Outcome:
-    config = resolve(AZURE_SENTINEL)
+async def _sentinel(iid: Optional[str] = None) -> Outcome:
+    config = resolve(AZURE_SENTINEL, iid)
     absent = missing(
         config,
         "tenant_id",
@@ -342,8 +342,8 @@ async def _sentinel() -> Outcome:
     return True, f"Read incidents from workspace {config['workspace_name']}"
 
 
-async def _security_hub() -> Outcome:
-    config = resolve(AWS_SECURITY_HUB)
+async def _security_hub(iid: Optional[str] = None) -> Outcome:
+    config = resolve(AWS_SECURITY_HUB, iid)
     absent = _half_set(config, "access_key_id", "secret_access_key")
     if absent:
         return _absent(absent)
@@ -411,10 +411,10 @@ def _env_keys() -> bool:
     return resolver.get_provider("env").load() is not None
 
 
-async def _security_lake() -> Outcome:
+async def _security_lake(iid: Optional[str] = None) -> Outcome:
     from core.integrations.amazon_security_lake import lake
 
-    config = resolve(AMAZON_SECURITY_LAKE)
+    config = resolve(AMAZON_SECURITY_LAKE, iid)
     # Static keys in this backend's environment win its chain and are never
     # forwarded to the server: whatever they can read, the server cannot.
     # Checked on the base chain, not the session a role_arn wraps as "assume-role".
@@ -432,13 +432,13 @@ async def _security_lake() -> Outcome:
     return lake.summary(found, lake.parse_regions(config.get("allowed_regions")))
 
 
-async def _defender() -> Outcome:
+async def _defender(iid: Optional[str] = None) -> Outcome:
     from core.integrations._base.aad_token import (
         TokenError,
         fetch_client_credentials_token,
     )
 
-    config = resolve(MICROSOFT_DEFENDER)
+    config = resolve(MICROSOFT_DEFENDER, iid)
     absent = missing(config, "tenant_id", "client_id", "client_secret")
     if absent:
         return _absent(absent)
@@ -485,10 +485,10 @@ async def _defender() -> Outcome:
     return True, "Read Microsoft Defender alerts"
 
 
-async def _crowdstrike() -> Outcome:
+async def _crowdstrike(iid: Optional[str] = None) -> Outcome:
     from core.integrations.crowdstrike.client import CrowdStrikeService
 
-    config = resolve(CROWDSTRIKE)
+    config = resolve(CROWDSTRIKE, iid)
     absent = missing(config, "client_id", "client_secret")
     if absent:
         return _absent(absent)
@@ -581,24 +581,24 @@ async def _taxii_check(name: str, integration_id: str, feed: TaxiiFeed) -> Outco
     return True, f"{name} TAXII listed {len(feed.collection_ids)} collection(s)"
 
 
-async def _cloudforce_one() -> Outcome:
+async def _cloudforce_one(iid: Optional[str] = None) -> Outcome:
     # Same declaration the poller reads, so Test and the poll see one config.
-    config = resolve(CLOUDFORCE_ONE)
+    config = resolve(CLOUDFORCE_ONE, iid)
     feed = CLOUDFORCE_ONE.taxii_feed(config)  # type: ignore[misc]
     absent = missing(config, "api_token", "taxii_server_url")
     if feed is None:
         absent = (*absent, "collection_ids")
     if absent:
         return _absent(absent)
-    return await _taxii_check("Cloudforce One", CLOUDFORCE_ONE.id, feed)
+    return await _taxii_check("Cloudforce One", iid or CLOUDFORCE_ONE.id, feed)
 
 
-async def _palo_alto() -> Outcome:
+async def _palo_alto(iid: Optional[str] = None) -> Outcome:
     """Reads the running config only: blocking works once a dynamic address
     group on the vigil-block tag is used by an enabled deny/drop rule."""
     from core.integrations.palo_alto import tool as pan
 
-    config = resolve(PALO_ALTO)
+    config = resolve(PALO_ALTO, iid)
     absent = missing(config, "hostname", "api_key")
     if absent:
         return _absent(absent)
@@ -641,7 +641,7 @@ async def _palo_alto() -> Outcome:
     return True, f"Palo Alto can block: {detail}"
 
 
-_CHECKS: Dict[str, Callable[[], Awaitable[Outcome]]] = {
+_CHECKS: Dict[str, Callable[[Optional[str]], Awaitable[Outcome]]] = {
     SPLUNK.id: _splunk,
     ELASTIC.id: _elastic,
     OPENSEARCH.id: _opensearch,
@@ -761,17 +761,25 @@ def _from_mcp(label: str, kind: str) -> Outcome:
     return _rejected(label)
 
 
+def _kind(integration_id: str) -> str:
+    """The integration whose check an id runs: an instance runs its base's
+    (#5353), read under the instance's own id."""
+    from core.integrations.integration_bridge_service import base_of
+
+    return base_of(integration_id) or integration_id
+
+
 def _no_credential(integration_id: str) -> bool:
     """True when a fixed call has nothing saved to authenticate with."""
     from core.integrations._base.descriptor import get_descriptor
 
-    if integration_id == "jira":
+    if _kind(integration_id) == "jira":
         return False
-    desc = get_descriptor(integration_id)
+    desc = get_descriptor(_kind(integration_id))
     if desc is None or not desc.secret_fields:
         return desc is not None and not desc.secret_fields
     try:
-        config = resolve(desc)
+        config = resolve(desc, integration_id)
     except Exception as exc:  # noqa: BLE001 - a failed read is not "no credential"
         logger.warning(
             "Could not read credentials for %s (%s)",
@@ -784,10 +792,12 @@ def _no_credential(integration_id: str) -> bool:
 
 def not_checked_reason(integration_id: str) -> Optional[str]:
     """Why this id is not checked, or ``None`` when a check exists or might."""
-    reason = _NO_READ_ONLY.get(integration_id)
+    reason = _NO_READ_ONLY.get(_kind(integration_id))
     if reason:
         return reason
-    if integration_id in _NO_CREDENTIAL_UNCHECKED and _no_credential(integration_id):
+    if _kind(integration_id) in _NO_CREDENTIAL_UNCHECKED and _no_credential(
+        integration_id
+    ):
         return "no read-only call exists"
     return None
 
@@ -797,7 +807,10 @@ async def _mcp_read(integration_id: str) -> Check:
     from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, row_error
     from core.integrations.entity_facts import Source, _connect
 
-    call = _READ_ONLY[integration_id]
+    call = _READ_ONLY[_kind(integration_id)]
+    if integration_id != _kind(integration_id):
+        # An instance's own server answers its call.
+        call = FixedCall(integration_id, call.tool, call.args, call.label)
     deadline = time.monotonic() + CHECK_TIMEOUT
     registry, reason = await _connect(Source(call.server, "", (), ()), deadline)
     if registry is None:
@@ -834,12 +847,15 @@ async def check_credentials(integration_id: str) -> Optional[Check]:
     skipped = not_checked_reason(integration_id)
     if skipped is not None:
         return NotChecked(f"not checked: {skipped}")
-    if integration_id not in _CHECKS and integration_id not in _READ_ONLY:
+    kind = _kind(integration_id)
+    if kind not in _CHECKS and kind not in _READ_ONLY:
         return None
 
     async def run() -> Check:
-        if integration_id in _CHECKS:
-            return await _CHECKS[integration_id]()
+        if kind in _CHECKS:
+            return await _CHECKS[kind](
+                None if kind == integration_id else integration_id
+            )
         return await _mcp_read(integration_id)
 
     try:
@@ -859,4 +875,4 @@ async def check_credentials(integration_id: str) -> Optional[Check]:
 
 def has_check(integration_id: str) -> bool:
     """True when Test makes a real read for this integration."""
-    return integration_id in _CHECKS or integration_id in _READ_ONLY
+    return _kind(integration_id) in _CHECKS or _kind(integration_id) in _READ_ONLY

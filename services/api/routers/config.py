@@ -6,13 +6,14 @@ import logging
 import os
 import re
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from core import site_proposal
 from core.api.v1.findings_router import data_service as findings_data_service
@@ -41,7 +42,15 @@ from core.integrations._base.descriptor import iter_descriptors
 from core.integrations.credential_check import NotChecked, check_credentials, has_check
 from core.integrations.darktrace.darktrace_webhook_router import darktrace_enabled
 from core.integrations.extension import session_service as extension_sessions
-from core.integrations.integration_bridge_service import IntegrationBridgeService
+from core.integrations.integration_bridge_service import (
+    INSTANCE_OF,
+    MAX_TOOL_NAME,
+    IntegrationBridgeService,
+    base_of,
+    instance_refusal,
+    instances,
+    instances_allowed,
+)
 from core.integrations.integration_secrets import (
     credentials_to_resupply,
     redact_secrets,
@@ -1091,6 +1100,220 @@ def _last_tests(integrations: dict) -> dict:
     return out
 
 
+def _copy_classes(
+    session, instance_id: str, base: str, tools: Iterable[str], actor: str
+) -> Dict[str, int]:
+    """Copy each base tool's class row and binding to the instance's tool, in
+    the caller's transaction, each with a trail entry naming ``actor``.
+
+    Once, when a person creates the instance; afterwards the rows are its own.
+    A withdrawn base row is not copied, and a binding needs its class row.
+    """
+    from core.integrations import bindings
+    from core.response.ceiling import (
+        store_tool_binding,
+        store_tool_class,
+        stored_classes,
+    )
+    from core.storage.models import ToolEffectClass
+
+    base_bound = {n: b for n, b in bindings.merged().items() if b.server == base}
+    names = {f"{base}_{t}" for t in tools} | set(base_bound)
+    copied = bound = 0
+    for name, effect in sorted(stored_classes(session, sorted(names)).items()):
+        target = f"{instance_id}_{name[len(base) + 1 :]}"
+        if len(target) > MAX_TOOL_NAME:
+            continue
+        source = session.get(ToolEffectClass, name)
+        existing = session.get(ToolEffectClass, target)
+        store_tool_class(
+            session,
+            target,
+            existing.effect_class if existing is not None else None,
+            effect,
+            actor,
+            pin=source.pinned_definition if source is not None else None,
+        )
+        copied += 1
+        binding = base_bound.get(name)
+        if binding is None:
+            continue
+        after = (
+            {**bindings.stored_carrier(binding.carrier), "server": instance_id}
+            if binding.carrier
+            else bindings.stored_form(binding.capability or "", instance_id)
+        )
+        before = existing.binding if existing is not None else None
+        store_tool_binding(session, target, before, after, actor)
+        bound += 1
+    return {"classes": copied, "bindings": bound}
+
+
+def _remove_instance(session, instance_id: str, actor: str, user_id: str) -> List[str]:
+    """Delete an instance's config row and class rows, and record its stored
+    credentials' deletes, in the caller's transaction; each with a trail entry.
+
+    Returns the credential keys for the caller to delete (``core.sources.
+    delete_stored``) once every entry is in, then its enabled state.
+    """
+    from core.sources import record_credential_deletes
+    from core.storage.models import IntegrationConfig
+
+    row = session.get(IntegrationConfig, instance_id)
+    if row is not None:
+        write_config_audit(
+            session,
+            config_type="integration",
+            config_key=instance_id,
+            action="delete",
+            old_value={**(row.config or {}), "enabled": bool(row.enabled)},
+            new_value=None,
+            changed_by=user_id,
+            change_reason="instance removed",
+        )
+        session.delete(row)
+    delete_tool_classes(session, f"{instance_id}_", actor)
+    # Only what the store holds: a value from the environment is not the instance's.
+    store = get_secrets_manager().write_backend
+    keys = [k for k in secret_fields_for(instance_id).values() if store.get(k)]
+    return record_credential_deletes(
+        session, instance_id, actor, "instance removed", keys=keys
+    )
+
+
+def _instances_allowed() -> Dict[str, Dict[str, Any]]:
+    """Each integration's ``{allowed, reason}``: whether it offers a second
+    instance, and why not when it doesn't."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for descriptor in iter_descriptors():
+        allowed, reason = instances_allowed(descriptor.id)
+        out[descriptor.id] = {"allowed": allowed, "reason": reason}
+    return out
+
+
+def _base_tools(registry: Any, base: str) -> Optional[List[str]]:
+    """The base server's tool names as connected in this process, or None."""
+    if registry is None or base not in registry.get_active_servers():
+        return None
+    tools = getattr(registry, "_tools_cache", {}).get(base) or []
+    return [t["name"] for t in tools if t.get("name")]
+
+
+def _new_instances(
+    config: "IntegrationsConfig", stored: Dict[str, Any], registry: Any
+) -> Dict[str, str]:
+    """The instances this save creates, id -> base; 400 naming why when one
+    cannot be. A saved instance keeps its ``instance_of``."""
+    saved = instances(stored)
+    try:
+        taken = list((applied_sources().get("sources") or {}))
+    except Exception:  # noqa: BLE001 - the catalog merge refuses a clash too
+        taken = []
+    created: Dict[str, str] = {}
+    for integration_id, raw in list(config.integrations.items()):
+        raw = dict(raw or {})
+        asked = raw.get(INSTANCE_OF)
+        if integration_id in saved:
+            if asked not in (None, saved[integration_id]):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Integration '{integration_id}' is an instance of "
+                    f"{saved[integration_id]}; that cannot change",
+                )
+            raw[INSTANCE_OF] = saved[integration_id]
+            config.integrations[integration_id] = raw
+            continue
+        if asked is None and base_of(integration_id) is None:
+            continue
+        refused = (
+            f"{integration_id} is taken: an integration has this id"
+            if integration_id in stored
+            else instance_refusal(
+                integration_id,
+                asked,
+                base_tools=(
+                    _base_tools(registry, asked) if isinstance(asked, str) else None
+                ),
+                taken=taken,
+                other_instances=[*saved, *created],
+            )
+        )
+        if refused:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Integration '{integration_id}' cannot be added as an "
+                f"instance: {refused}",
+            )
+        created[integration_id] = str(asked)
+    return created
+
+
+def _no_copy_reason(current_user: User) -> Optional[str]:
+    """Why a new instance's classes and bindings would not be copied: the rule
+    for loosening a tool's class (PUT /api/v1/autonomy/tools/{name})."""
+    from core.auth.permissions import missing_permission
+
+    if is_machine_request(current_user):
+        return "a service account or API token created it"
+    if missing_permission(str(current_user.user_id), "ai_autonomy.write"):
+        return "its creator does not hold ai_autonomy.write"
+    try:
+        return "autonomy is stopped" if read_ceiling().stopped else None
+    except Exception:  # noqa: BLE001
+        return "the autonomy ceiling could not be read"
+
+
+def _refuse_uncopied_emulators(created: Dict[str, str], why: Optional[str]) -> None:
+    """400 when an instance whose base runs emulations would start unbound:
+    only an emulator binding holds its tools to the Emulators host list."""
+    from core.integrations import bindings
+
+    if not created or not why:
+        return
+    emulating = {
+        b.server
+        for b in bindings.merged().values()
+        if b.capability == bindings.EMULATION
+    }
+    for instance_id, base in created.items():
+        if base in emulating:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Integration '{instance_id}' cannot be added as an instance: "
+                f"{base} runs emulations, and its tools would not be bound as "
+                f"emulators because {why}",
+            )
+
+
+def _copy_instance_classes(
+    created: Dict[str, str], registry: Any, current_user: User, why: Optional[str]
+) -> Dict[str, Any]:
+    """Copy each new instance's base classes and bindings, unless ``why``
+    says they are not copied; then its tools ask first."""
+    out: Dict[str, Any] = {}
+    for instance_id, base in created.items():
+        if why:
+            out[instance_id] = {"classes": 0, "bindings": 0, "not_copied": why}
+            continue
+        try:
+            with unit_of_work() as session:
+                out[instance_id] = _copy_classes(
+                    session,
+                    instance_id,
+                    base,
+                    _base_tools(registry, base) or [],
+                    current_user.principal_id,
+                )
+        except Exception as exc:
+            logger.exception("Classes of %s not copied", instance_id)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Instance '{instance_id}' was saved, but its tool classes "
+                f"were not copied ({type(exc).__name__})",
+            ) from exc
+    return out
+
+
 @router.get("/integrations", dependencies=_INTEGRATIONS_READ)
 def get_integrations_config():
     """
@@ -1127,6 +1350,9 @@ def get_integrations_config():
                 if iid != AUDIT_FEED_INTEGRATION_ID
             ],
             "integrations": redacted,
+            # Each saved instance -> the integration it is an instance of (#5353).
+            "instances": instances(redacted),
+            "instances_allowed": _instances_allowed(),
             "secrets_set": _secrets_set_map(redacted),
             # {id: {at, success, error}} from POST .../test; untested ids absent
             "last_test": _last_tests(redacted),
@@ -1147,9 +1373,14 @@ def set_integrations_config(
     config: IntegrationsConfig,
     current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
+    registry: Any = Depends(provide_mcp_registry),
 ):
     """
     Set integrations configuration.
+
+    A new id ``<integration-id>-<label>`` with ``instance_of`` adds an instance
+    of a launched integration (#5353), checked before anything is written; a
+    person's creation copies its base's tool classes and bindings.
 
     Secret-typed fields (registered in ``core.integrations.integration_secrets``) are
     routed to the encrypted secrets store via ``set_secret`` and stripped
@@ -1185,6 +1416,12 @@ def set_integrations_config(
                 config.integrations[integration_id] = kept
             else:
                 del config.integrations[integration_id]
+
+    created = _new_instances(
+        config, load_integrations_config(config_service)["integrations"], registry
+    )
+    no_copy = _no_copy_reason(current_user) if created else None
+    _refuse_uncopied_emulators(created, no_copy)
 
     # A stored credential is sent to whatever destination is saved, so moving
     # one requires the caller to supply the credential again. Checked for every
@@ -1298,7 +1535,85 @@ def set_integrations_config(
     except Exception as e:
         logger.warning(f"Could not derive remote MCP env vars: {e}")
 
-    return {"success": True, "message": "Integrations configuration saved"}
+    result: Dict[str, Any] = {
+        "success": True,
+        "message": "Integrations configuration saved",
+    }
+    if created:
+        # Every process merges it into its catalog on its next sources pass.
+        result["instances_created"] = _copy_instance_classes(
+            created, registry, current_user, no_copy
+        )
+    return result
+
+
+@router.delete("/integrations/{integration_id}", dependencies=_INTEGRATIONS_WRITE)
+async def delete_integration_instance(
+    integration_id: str,
+    current_user: User = Depends(get_current_active_user),
+    mcp_client=Depends(provide_mcp_client),
+    registry: Any = Depends(provide_mcp_registry),
+):
+    """Remove an integration instance (#5353): its config row, stored
+    credentials, enabled state and ``<id>_`` class rows, each with a trail
+    entry. Only an instance: an integration's own row is not removed here."""
+    from core.integrations.mcp.reload import apply_catalog
+    from core.integrations.mcp.runner import RunnerServer, runner_url
+    from core.integrations.mcp.service import MCPService
+    from core.sources import delete_stored
+
+    saved = await run_in_threadpool(instances)
+    if integration_id not in saved:
+        raise HTTPException(
+            status_code=404 if base_of(integration_id) else 400,
+            detail=f"'{integration_id}' is not an integration instance; only an "
+            "instance can be removed",
+        )
+    svc = getattr(mcp_client, "mcp_service", None)
+
+    def remove() -> None:
+        with unit_of_work() as session:
+            keys = _remove_instance(
+                session,
+                integration_id,
+                current_user.principal_id,
+                str(current_user.user_id),
+            )
+            write_config_audit(
+                session,
+                config_type="mcp",
+                config_key=f"mcp.server:{integration_id}",
+                action="delete",
+                old_value={"enabled": MCPService.is_server_enabled(integration_id)},
+                new_value=None,
+                changed_by=str(current_user.user_id),
+                change_reason="instance removed",
+            )
+            try:
+                delete_stored(keys)  # last, after every trail entry is in
+            except SourcesRefused as exc:
+                raise HTTPException(exc.status_code, exc.detail) from exc
+            state = MCPService.enabled_state()
+            if state.pop(integration_id, None) is not None:
+                MCPService._save_enabled_state(svc or MCPService, state)  # type: ignore[arg-type]
+
+    await run_in_threadpool(remove)
+
+    # This process drops it now; the others on their next sources pass.
+    if svc is not None and mcp_client is not None:
+        try:
+            catalog = await run_in_threadpool(svc.load_catalog)
+            await apply_catalog(svc, mcp_client, registry, catalog)
+        except Exception as exc:  # noqa: BLE001 - removed either way
+            logger.warning(
+                "Catalog not reapplied after removing %s: %s", integration_id, exc
+            )
+    if url := runner_url(integration_id):
+        try:
+            await RunnerServer(url, integration_id, dict, lambda: False).stop()
+        except Exception as exc:  # noqa: BLE001 - not running, or the runner is down
+            logger.debug("Runner stop for %s: %s", integration_id, exc)
+    return {"success": True, "removed": integration_id}
 
 
 def _connected_session(mcp_client: Any, server_name: str) -> Any:

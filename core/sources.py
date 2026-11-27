@@ -491,15 +491,18 @@ def stored_credential_keys(name: str) -> List[str]:
     return sorted(k for k in backend._load_cache() if pattern.fullmatch(k))
 
 
-def record_credential_deletes(session, name: str, actor: str, why: str) -> List[str]:
+def record_credential_deletes(
+    session, name: str, actor: str, why: str, keys: Optional[Sequence[str]] = None
+) -> List[str]:
     """One trail entry per stored credential of ``name`` (never a value).
 
-    The keys are returned for :func:`delete_stored`, which runs once every
-    entry is recorded, so a refused trail deletes nothing.
+    ``keys`` defaults to the source's own; an integration instance passes its
+    own (#5353). The keys are returned for :func:`delete_stored`, which runs
+    once every entry is recorded, so a refused trail deletes nothing.
     """
     from core.auth import trail_events
 
-    keys = stored_credential_keys(name)
+    keys = stored_credential_keys(name) if keys is None else sorted(keys)
     for key in keys:
         trail_events.record(
             session,

@@ -11,7 +11,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
-from core.integrations.integration_bridge_service import IntegrationBridgeService
+from core.integrations.integration_bridge_service import (
+    PATH_PLACEHOLDERS,
+    VAR_NAME,
+    IntegrationBridgeService,
+)
 from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
@@ -28,7 +32,7 @@ _ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
 # Placeholders that are path sentinels, not credentials — never treat as
 # required env vars.
-_PLACEHOLDER_BLACKLIST = {"workspaceFolder", "HOME", "PYTHONPATH", "VIGIL_DIR"}
+_PLACEHOLDER_BLACKLIST = PATH_PLACEHOLDERS
 
 
 def extract_required_env_vars(
@@ -80,6 +84,7 @@ class MCPServer:
         url: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
         source: bool = False,
+        instance_of: Optional[str] = None,
     ):
         self.name = name
         self.command = command
@@ -102,6 +107,8 @@ class MCPServer:
         # A declared source (core.sources): its headers hold {{field}}
         # templates over its own credentials, not ${VAR}.
         self.source = source
+        # An instance (#5353): launched from this catalogue entry's launch.
+        self.instance_of = instance_of
 
 
 class MCPService:
@@ -192,6 +199,8 @@ class MCPService:
     # Declared sources merged by this process's last load_catalog. On by
     # default, since a person accepted each; a switch-off is saved as any other.
     _sources_on: frozenset = frozenset()
+    # Instances merged by this process's last load_catalog (#5353).
+    _instances: frozenset = frozenset()
 
     @classmethod
     def enabled_state(cls) -> Dict[str, bool]:
@@ -376,6 +385,8 @@ class MCPService:
         # Load servers from mcp-config.json
         mcp_config_path = self.project_root / "mcp-config.json"
         server_configs = []
+        # Launched entries as written, for instances to copy (#5353).
+        raw_entries: Dict[str, dict] = {}
 
         if mcp_config_path.exists():
             with open(mcp_config_path, "r") as f:
@@ -409,65 +420,10 @@ class MCPService:
                     )
                     continue
 
-                # Convert config format from mcp-config.json to our internal format
-                command = server_config.get("command", "python")
-
-                # Use venv python if command is just "python" or "python3"
-                if command in ["python", "python3"]:
-                    command = python_exe_str
-
-                # Get cwd, replace ${workspaceFolder} with actual path
-                cwd = server_config.get("cwd", project_path_str)
-                if "${workspaceFolder}" in cwd:
-                    cwd = cwd.replace("${workspaceFolder}", project_path_str)
-
-                # Get environment variables and substitute ${VAR_NAME} patterns
-                raw_env_strs = {
-                    k: str(v)
-                    for k, v in (server_config.get("env") or {}).items()
-                    if not k.startswith("_")
-                }
-                # Substitution reads this process's environment; the server
-                # keeps only its declared keys. The rest of the child's env is
-                # built at connect time (child_env.stdio_env).
-                source = dict(os.environ)  # noqa: ENV001 - substitution source
-                # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
-                # would substitute to "" and root child paths at "/".
-                source.setdefault("VIGIL_DIR", str(vigil_path()))
-                env = {
-                    k: self._substitute_env_vars(v, source)
-                    for k, v in raw_env_strs.items()
-                }
-
-                # Get args and perform environment variable substitution
-                raw_args = list(server_config.get("args") or [])
-                args = [self._substitute_env_vars(arg, source) for arg in raw_args]
-
-                # Capture declared credential placeholders *before*
-                # substitution collapses missing vars to empty strings
-                # — used by mcp_client to short-circuit connect when
-                # required credentials aren't set.
-                required_env_vars = extract_required_env_vars(raw_env_strs, raw_args)
-
-                # Launch the image's baked copy of a pinned npx/uvx entry
-                # instead of downloading it; anything not baked is as declared.
-                command, args = installed_launch(command, args)
-
                 server_configs.append(
-                    {
-                        "name": server_name,
-                        "command": command,
-                        "args": args,
-                        "cwd": cwd,
-                        "env": env,
-                        "required_env_vars": required_env_vars,
-                        "declared_env": list(raw_env_strs),
-                        # Raw args: installed_launch swaps the npx spec for a path.
-                        "remote": any(
-                            str(a).startswith("mcp-remote") for a in raw_args
-                        ),
-                    }
+                    self._launched(server_name, server_config, python_exe_str)
                 )
+                raw_entries[server_name] = server_config
 
             logger.info(f"Loaded {len(server_configs)} servers from mcp-config.json")
         else:
@@ -479,8 +435,113 @@ class MCPService:
             if config["name"] == "security-detections":
                 config = self._enrich_security_detections_env(config)
             servers[config["name"]] = MCPServer(**config)
+        servers.update(self._merge_instances(servers, raw_entries, python_exe_str))
         servers.update(self._merge_sources(servers, project_path_str))
         return servers
+
+    def _launched(
+        self,
+        server_name: str,
+        server_config: Dict[str, Any],
+        python_exe_str: str,
+        renames: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """A launched entry as MCPServer kwargs. ``renames`` rewrites each
+        ``${VAR}`` it names before substitution, so an instance reads its own."""
+        project_path_str = str(self.project_root)
+
+        def raw(value: Any) -> str:
+            if not renames:
+                return str(value)
+            return VAR_NAME.sub(
+                lambda m: "${" + renames.get(m.group(1), m.group(1)), str(value)
+            )
+
+        # Convert config format from mcp-config.json to our internal format
+        command = server_config.get("command", "python")
+
+        # Use venv python if command is just "python" or "python3"
+        if command in ["python", "python3"]:
+            command = python_exe_str
+
+        # Get cwd, replace ${workspaceFolder} with actual path
+        cwd = server_config.get("cwd", project_path_str)
+        if "${workspaceFolder}" in cwd:
+            cwd = cwd.replace("${workspaceFolder}", project_path_str)
+
+        # Get environment variables and substitute ${VAR_NAME} patterns
+        raw_env_strs = {
+            k: raw(v)
+            for k, v in (server_config.get("env") or {}).items()
+            if not k.startswith("_")
+        }
+        # Substitution reads this process's environment; the server
+        # keeps only its declared keys. The rest of the child's env is
+        # built at connect time (child_env.stdio_env).
+        source = dict(os.environ)  # noqa: ENV001 - substitution source
+        # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
+        # would substitute to "" and root child paths at "/".
+        source.setdefault("VIGIL_DIR", str(vigil_path()))
+        env = {k: self._substitute_env_vars(v, source) for k, v in raw_env_strs.items()}
+
+        # Get args and perform environment variable substitution
+        raw_args = [raw(a) for a in server_config.get("args") or []]
+        args = [self._substitute_env_vars(arg, source) for arg in raw_args]
+
+        # Capture declared credential placeholders *before*
+        # substitution collapses missing vars to empty strings
+        # — used by mcp_client to short-circuit connect when
+        # required credentials aren't set.
+        required_env_vars = extract_required_env_vars(raw_env_strs, raw_args)
+
+        # Launch the image's baked copy of a pinned npx/uvx entry
+        # instead of downloading it; anything not baked is as declared.
+        command, args = installed_launch(command, args)
+
+        return {
+            "name": server_name,
+            "command": command,
+            "args": args,
+            "cwd": cwd,
+            "env": env,
+            "required_env_vars": required_env_vars,
+            "declared_env": list(raw_env_strs),
+            # Raw args: installed_launch swaps the npx spec for a path.
+            "remote": any(str(a).startswith("mcp-remote") for a in raw_args),
+        }
+
+    def _merge_instances(
+        self,
+        catalog: Dict[str, "MCPServer"],
+        raw_entries: Dict[str, dict],
+        python_exe_str: str,
+    ) -> Dict[str, "MCPServer"]:
+        """One server per saved instance (#5353): a copy of its base entry's
+        launch under the instance's name, reading the instance's own settings.
+        A failed read merges none."""
+        from core.integrations.integration_bridge_service import (
+            instance_renames,
+            instances_allowed,
+        )
+
+        reader = getattr(self._integration_bridge, "instances", None)
+        try:
+            saved = reader() if reader is not None else {}
+        except Exception as exc:  # noqa: BLE001 - an instance never stops the catalog
+            logger.warning("Integration instances not read: %s", exc)
+            saved = {}
+        merged: Dict[str, MCPServer] = {}
+        for name, base in saved.items():
+            entry = raw_entries.get(base)
+            if name in catalog or entry is None or not instances_allowed(base)[0]:
+                logger.warning("Instance %s of %s not merged", name, base)
+                continue
+            config = self._launched(
+                name, entry, python_exe_str, renames=instance_renames(name)
+            )
+            merged[name] = MCPServer(**config, instance_of=base)
+        MCPService._instances = frozenset(merged)
+        return merged
 
     def _merge_sources(
         self, catalog: Dict[str, "MCPServer"], cwd: str
@@ -500,6 +561,8 @@ class MCPService:
         # server under a source's name, and the catalog entry wins.
         reserved = {"vigil": "Vigil's own server"}
         reserved.update({n: "a catalogue server" for n in catalog})
+        # Merged instances are in ``catalog`` too; name them as what they are.
+        reserved.update({n: "an integration instance" for n in self._instances})
         for name, source in sorted((row.get("sources") or {}).items()):
             if name in catalog:
                 states[name] = (

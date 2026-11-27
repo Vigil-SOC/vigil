@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Callable, Dict, Optional
 
+from core.integrations.integration_bridge_service import FALCON_ENV, base_of
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,8 +40,20 @@ def runner_url(server_name: str) -> Optional[str]:
     """The runner serving ``server_name``, or None to run it as a stdio child."""
     from core.config import get_settings
 
-    key = "MCP_RUNNER_URL_" + server_name.upper().replace("-", "_")
-    override = os.environ.get(key)  # noqa: ENV001 - per-server names, built here
+    # An instance (#5353) runs where its base does unless named itself.
+    override = next(
+        (
+            value
+            for name in (server_name, base_of(server_name))
+            if name
+            and (
+                value := os.environ.get(  # noqa: ENV001 - per-server names
+                    "MCP_RUNNER_URL_" + name.upper().replace("-", "_")
+                )
+            )
+        ),
+        None,
+    )
     url = override or get_settings().mcp_runner_url
     return url.rstrip("/") or None
 
@@ -52,7 +66,7 @@ def _env_value(value) -> str:
 # falcon-mcp reads these. env_var_for stays CROWDSTRIKE_* so Helm, Compose and
 # env.example still resolve; a saved client id and base URL are copied here.
 # An empty base URL leaves the catalog's https://api.crowdstrike.com literal.
-_FALCON_ENV = {"client_id": "FALCON_CLIENT_ID", "base_url": "FALCON_BASE_URL"}
+_FALCON_ENV = FALCON_ENV
 
 
 def runner_env(server) -> Dict[str, str]:
@@ -76,6 +90,10 @@ def runner_env(server) -> Dict[str, str]:
     for var in server.required_env_vars:
         if value := get_secret(var):
             env[var] = value
+    base = getattr(server, "instance_of", None)
+    if base:
+        _instance_env(server.name, base, env)
+        return env
     for descriptor in iter_descriptors():
         if server.name not in descriptor.mcp_server_names:
             continue
@@ -97,6 +115,30 @@ def runner_env(server) -> Dict[str, str]:
                 if value is not None and value != "":
                     env[target] = _env_value(value)
     return env
+
+
+def _instance_env(name: str, base: str, env: Dict[str, str]) -> None:
+    """An instance's settings (#5353): under its own names, and again under
+    every name its base's launch reads, in this process's env only."""
+    from core.integrations._base.config import resolve
+    from core.integrations._base.descriptor import get_descriptor
+    from core.integrations.integration_bridge_service import (
+        instance_keys,
+        launch_fields,
+    )
+
+    env["VIGIL_INTEGRATION_ID"] = name
+    descriptor = get_descriptor(base)
+    try:
+        fields = resolve(descriptor, name) if descriptor else {}
+    except Exception as exc:  # noqa: BLE001 - one integration must not block the start
+        logger.warning("Could not resolve %s: %s", name, exc)
+        return
+    own = instance_keys(name)
+    for var, field in [*((v, f) for f, v in own.items()), *launch_fields(base).items()]:
+        value = fields.get(field)
+        if value is not None and value != "":
+            env[var] = _env_value(value)
 
 
 class RunnerError(RuntimeError):
@@ -133,8 +175,11 @@ class RunnerServer:
         name: str,
         env: Callable[[], Dict[str, str]],
         enabled: Callable[[], bool],
+        of: Optional[str] = None,
     ):
         self.url, self.name = url, name
+        # An instance's base entry: the runner launches that, under its uid.
+        self.of = of
         self._env, self._enabled = env, enabled
         # What the last PUT did: started, restarted, unchanged.
         self.last_action: Optional[str] = None
@@ -147,10 +192,11 @@ class RunnerServer:
         import asyncio
 
         env = await asyncio.to_thread(self._env)
+        body: Dict[str, object] = {"env": env}
+        if self.of:
+            body["of"] = self.of
         async with _http() as http:
-            response = await http.put(
-                f"{self.url}/servers/{self.name}", json={"env": env}
-            )
+            response = await http.put(f"{self.url}/servers/{self.name}", json=body)
         if response.status_code != 200:
             raise RunnerError(_detail(response))
         self.last_action = response.json().get("action")

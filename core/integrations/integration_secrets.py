@@ -304,6 +304,14 @@ def secret_fields_for(integration_id: str) -> Mapping[str, str]:
         from core.sources import source_secret_fields
 
         return source_secret_fields(integration_id)
+    from core.integrations.integration_bridge_service import base_of
+
+    if base := base_of(integration_id):
+        # An instance (#5353): the base's secret fields under <ID>_<FIELD>,
+        # never an _ENV_VAR_OVERRIDES name, which would collide with the base's.
+        return {
+            field: default_env_var(integration_id, field) for field in _fields_for(base)
+        }
     return INTEGRATION_SECRET_FIELDS.get(integration_id) or _custom_secret_fields(
         integration_id
     )

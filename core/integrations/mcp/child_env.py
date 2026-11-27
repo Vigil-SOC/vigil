@@ -186,11 +186,13 @@ def stdio_env(server, project_root: str) -> Dict[str, str]:
     ]
     if any(_IN_REPO_ARG.fullmatch(arg) for arg in server.args):
         extra += _IN_REPO_VARS
-    if server.name.startswith("gcp-") or server.name == "aws-security":
+    # An instance (#5353) runs its base's launch, with what that launch needs.
+    launched = getattr(server, "instance_of", None) or server.name
+    if launched.startswith("gcp-") or launched == "aws-security":
         extra += _CLOUD_FILE_VARS
     for name in extra:
         if value := os.environ.get(name):  # noqa: ENV001 - MCP child process env
             env.setdefault(name, value)
-    for name, value in aws_pointer_env(server.name).items():
+    for name, value in aws_pointer_env(launched).items():
         env.setdefault(name, value)
     return env
