@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from core.integrations.bindings import emulators
 from core.llm.tool_schemas import (
     ALL_TOOLS,
     CALL_INTEGRATION_TOOL,
@@ -16,7 +17,6 @@ from core.llm.tool_schemas import (
     INTEGRATION_TOOLS,
 )
 from core.response.ceiling import gated_tools
-from core.integrations.bindings import emulators
 
 REMOTE = "remote"
 
