@@ -355,14 +355,28 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
     return updated or action
 
 
-async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str, Any]]:
-    """What a connected vendor says when ``target`` is already in the state the
-    act would put it in (a host already contained, an account already disabled),
-    or None. Done outside Vigil counts too: the vendor's own lookup is asked.
+def _stated(reading: Dict[str, Any], record: Dict[str, Any]) -> bool:
+    """Whether ``record`` carries any field its state reading reads: a record that
+    carries none reads as the reading's default, which says nothing about it."""
+    for entry in reading["read"]:
+        value: Any = record
+        for step in entry["field"].split("."):
+            value = value.get(step) if isinstance(value, dict) else None
+        if value is not None:
+            return True
+    return False
 
-    Only when every record the lookups found reads as done; a lookup that failed,
-    found nothing, or found one record not yet done leaves the ask to a person.
-    A keyless carrier has no lookup and so says nothing here."""
+
+async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str, Any]]:
+    """What the connected vendors' lookups say about ``target`` for this act,
+    done outside Vigil or in it: ``holds`` True when every record found reads as
+    the state the act puts it in (a host contained, an account disabled), False
+    when every record states its state and one is not that, with the vendor,
+    the name it found and the state word of the first record that decided it.
+
+    None when nothing can be told: no connected carrier has a lookup that reads
+    state (a keyless one has none), a lookup failed or found nothing, or a
+    record carries none of the fields its state is read from."""
     done = DONE_STATE.get(action_type)
     if done is None or action_type not in CONTAINMENT_TYPES:
         return None
@@ -376,6 +390,8 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
         if error:
             return None
         for record in _records(entry, answer or {}):
+            if not _stated(entry["state"], record):
+                return None
             seen.append(
                 {
                     "vendor": entry["server"],
@@ -383,9 +399,10 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
                     "state": bindings.read(entry["state"], record),
                 }
             )
-    if not seen or any(s["state"] != done for s in seen):
+    if not seen:
         return None
-    return seen[0]
+    not_done = next((one for one in seen if one["state"] != done), None)
+    return {**(not_done or seen[0]), "holds": not_done is None}
 
 
 def choose(action: PendingAction, candidate: Optional[str]) -> Tuple[str, str]:

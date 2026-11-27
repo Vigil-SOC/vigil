@@ -661,18 +661,27 @@ def _propose_actions(
             if match and match.idempotency_key == key and match.status != "failed":
                 filed.append(match.action_id)  # a re-sent terminal
                 continue
-            if match is not None and _already_asked(
-                service, match, case_id, run_id, title
-            ):
-                continue
             # This run's own ask failed before: a re-sent terminal files it again
             # for a person, not for the ceiling.
             resent = match is not None and match.idempotency_key == key
-            # Done outside Vigil, or by an ask the list no longer shows as live:
-            # the vendor says the target is already in the state the act wants.
-            held = None if resent else _in_force(action_type, target, registry)
-            if held is not None:
-                _note_in_force(case_id, run_id, title, action_type, target, held)
+            # What the vendor says now, which also sees what was done outside Vigil.
+            vendor = None if resent else _in_force(action_type, target, registry)
+            if vendor is not None and vendor["holds"]:
+                _note_in_force(case_id, run_id, title, action_type, target, vendor)
+                continue
+            # An executed ask the vendor says no longer holds was undone outside
+            # Vigil (a host released in the EDR's console): asked again.
+            lifted = (
+                match is not None
+                and match.status == "executed"
+                and vendor is not None
+                and not vendor["holds"]
+            )
+            if (
+                match is not None
+                and not lifted
+                and _already_asked(service, match, case_id, run_id, title)
+            ):
                 continue
             action, inserted = service._put_action(
                 action_type=ActionType(action_type),
@@ -706,8 +715,8 @@ def _propose_actions(
 
     if filed:
         _record_proposals(case_id, run_id, filed)
-    # Only what this call created: a re-sent terminal, or an ask another run
-    # already made, pages nobody.
+    # Only what this call created: a re-sent terminal, an ask already made, or an
+    # act the vendor says already holds pages nobody.
     if created:
         page_proposed_containment(case_id, run_id, created)
 
@@ -752,8 +761,8 @@ def _release_under_ceiling(
         return action
 
 
-# What a connected vendor reports when the target is already in the act's state,
-# asked on the app's loop, where the vendor servers' connections live: this route
+# What the connected vendors report about the target for this act (see
+# containment.in_force), asked on the app's loop, where the vendor servers' connections live: this route
 # runs in a worker thread. Any failure leaves the ask to a person.
 def _in_force(
     action_type: str, target: str, registry: Optional[MCPRegistry]
@@ -776,8 +785,8 @@ def _in_force(
         return None
 
 
-# Once per run, act and target, so a re-sent terminal says nothing new. Written as
-# the same system note as an ask another run already made: nothing is filed.
+# Once per run, act and target, so a re-sent terminal says nothing new. The same
+# kind of system note as an ask already made, with no action id: nothing was filed.
 def _note_in_force(
     case_id: str,
     run_id: str,

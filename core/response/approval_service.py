@@ -527,7 +527,7 @@ class ApprovalService:
         The bool is True when this call inserted. Isolation uses it so a
         reused approved/pending row is not executed again. ``same_host`` is an
         isolation's IP and hostname: a non-failed isolation of that host under
-        either name, or proposed by a run, is the existing row whatever its key.
+        either name, asked for by anyone, is the existing row whatever its key.
         """
         key = idempotency_key or None
 
@@ -1177,17 +1177,20 @@ class ApprovalService:
         self, key: str, action_type: str, target: str
     ) -> Optional[PendingAction]:
         """The row a run's proposal would repeat: its own (by ``key``) first, else
-        the newest ask for the same action on the same target, any status, whoever
-        filed it: another run, a person, or the retired responder. An isolation
-        matches the host by IP or by hostname."""
+        the newest live ask (pending, approved or executed) for the same action on
+        the same target, else the newest of any status, whoever filed it: another
+        run, a person, or the retired responder. An isolation matches the host by
+        IP or by hostname."""
         db = get_db_manager()
         with db.session_scope() as session:
             own = _nonfailed_by_key(session, key)
             if own is not None:
                 return _row_to_pending(own)
+            # A live ask first: a newer rejected or failed one does not hide it.
+            live = ApprovalActionRow.status.in_(_LIVE)
             row = session.execute(
                 _same_ask(action_type, target)
-                .order_by(ApprovalActionRow.created_at.desc())
+                .order_by(live.desc(), ApprovalActionRow.created_at.desc())
                 .limit(1)
             ).scalar_one_or_none()
             return _row_to_pending(row) if row else None
