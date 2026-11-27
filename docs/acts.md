@@ -89,13 +89,17 @@ quarantine stays a proposal for a person.
 
 Before a run's proposal is filed, each connected lookup that reads the act's
 state is asked whether the target is already in it: a carrier's lookup, and a
-read-only state lookup in `core/integrations/state_reads.yaml` for a server
-that does not carry the act (Falcon's host search, for `isolate_host`). When
+read-only state lookup in `core/integrations/state_reads.yaml` on a server
+that carries none of the act (Falcon's host search, for `isolate_host`). When
 every record found reads as done, nothing is filed and the case notes what the
 vendor reported; when any record is not done, or a lookup can't tell, the
-proposal is filed for a person. A state lookup takes the same reading as a carrier, plus
-`template` and `address_template`, which fill the lookup argument with the
-target quoted (`hostname:'{target}'`). It is never called to act.
+proposal is filed for a person.
+
+A state lookup takes the same reading as a carrier. Its `template` and
+`address_template` fill the lookup argument with the target quoted, as in
+`hostname:'{target}'`. Falcon matches the name exactly: a short name against
+a host Falcon knows by its full name finds nothing, and the proposal is filed.
+A state lookup is never called to act.
 
 ## Changes
 
