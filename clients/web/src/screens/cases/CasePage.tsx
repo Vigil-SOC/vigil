@@ -591,13 +591,13 @@ function CaseNeedRow(props: NeedProps) {
         </div>
       </div>
       <CallArgs tool={item.tool} args={item.args} />
+      {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
       {item.step_score && (
         <div className="needs-row-score">
           <span className="needs-row-score-label">Step score</span>
           <StepScore score={item.step_score} />
         </div>
       )}
-      {containment && <ContainmentTargets containment={containment} picked={picked} onPick={setPicked} group={item.source_id} />}
       {rejecting && <RejectForm {...props} />}
     </li>
   )
