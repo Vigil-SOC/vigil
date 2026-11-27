@@ -7,8 +7,9 @@ is anything hunting them now?" -- so this is a separate read (epic #886).
 
 Concluded hunts come from ``episodic_verdicts``: a Verdict is a hit when its
 ``subject_entities`` overlaps the keys *or* its ``techniques`` overlaps the
-T-IDs. A dimension the caller did not ask about adds no predicate, so a
-key-only query never needs a technique match. ``origin_run_id`` comes from the
+T-IDs (ATT&CK or ATLAS) or any sub-technique under one. A dimension the caller
+did not ask about adds no predicate, so a key-only query never needs a
+technique match. ``origin_run_id`` comes from the
 Distil marker of the same investigation, never from ``agent_events``.
 
 In-flight hunts are ``workflow_runs`` in a non-terminal status, matched on what
@@ -43,7 +44,8 @@ from core.workflows.workflow_run_service import (
 
 Row = Dict[str, Any]
 
-_T_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$")
+# An ATT&CK or ATLAS technique / sub-technique id.
+_T_ID = re.compile(r"^(?:AML\.)?T\d{4}(?:\.\d{3})?$")
 
 # The same overlap idiom recall.py uses, which is what the GIN indexes answer.
 _KEYS_OVERLAP = "v.subject_entities && CAST(:keys AS text[])"
@@ -95,6 +97,23 @@ def normalise_techniques(techniques: Iterable[str]) -> List[str]:
     return seen
 
 
+def expand_techniques(techniques: Sequence[str]) -> List[str]:
+    """Each asked id plus every catalogue id under it (ATT&CK and ATLAS), so T1078
+    reaches T1078.004 and AML.T0051 reaches AML.T0051.000. A sub-technique does
+    not expand to its parent."""
+    from core.threat_intel.mitre_lookup import atlas_techniques, attack_techniques
+
+    catalogue = [*attack_techniques(), *atlas_techniques()[1]]
+    expanded = list(techniques)
+    for asked in techniques:
+        expanded.extend(
+            one
+            for one in catalogue
+            if one.startswith(f"{asked}.") and one not in expanded
+        )
+    return expanded
+
+
 def _iso(value: Any) -> Any:
     """ISO-8601 in UTC with ``Z``, whether the tier hands back a datetime or a
     string (``list_runs`` has already serialised its rows)."""
@@ -130,7 +149,8 @@ def _concluded(
     statement = _CONCLUDED[(bool(keys), bool(techniques))]
     params = {
         "keys": list(keys),
-        "techniques": list(techniques),
+        # matched_techniques intersects with this, so it stays what was cited.
+        "techniques": expand_techniques(techniques),
         "hidden": _hidden_hunts(session),
         "cap": LIST_RUNS_MAX,
     }

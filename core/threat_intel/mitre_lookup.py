@@ -73,6 +73,13 @@ def attack_techniques() -> dict[str, dict]:
     return _attack_data()["techniques"]
 
 
+def atlas_techniques() -> tuple[str, dict[str, dict]]:
+    """The pinned MITRE ATLAS release and its technique and sub-technique ids
+    (``AML.T...``), as (version, {id: {"name", "status"}}). Every entry is active."""
+    atlas = _attack_data()["atlas"]
+    return atlas["version"], atlas["techniques"]
+
+
 def attack_tactics() -> list[str]:
     """The pinned release's Enterprise tactics as labels, in the matrix's kill-chain
     order (Reconnaissance ... Impact)."""

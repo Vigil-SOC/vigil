@@ -1793,7 +1793,8 @@ export interface paths {
         };
         /**
          * List Tool Classes
-         * @description Every stored class, and each unclassified name a connected server exposes.
+         * @description Every stored class, and each unclassified name a connected server exposes,
+         *     with the definition the registry holds for it.
          */
         get: operations["get_api_autonomy_tools"];
         put?: never;
@@ -1816,9 +1817,10 @@ export interface paths {
          * Put Tool Class
          * @description Set one tool's class. The permission depends on the direction.
          *
-         *     Loosening, or classifying an unclassified name, is a person's
+         *     Loosening, or classifying an unclassified or withdrawn name, is a person's
          *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
-         *     ``ai_autonomy.stop``, which a service account may hold.
+         *     ``ai_autonomy.stop``, which a service account may hold. A person's
+         *     classification of a remote server's tool pins the definition held now.
          */
         put: operations["put_api_autonomy_tools_name"];
         post?: never;
@@ -9481,7 +9483,8 @@ export interface paths {
         };
         /**
          * List Tool Classes
-         * @description Every stored class, and each unclassified name a connected server exposes.
+         * @description Every stored class, and each unclassified name a connected server exposes,
+         *     with the definition the registry holds for it.
          */
         get: operations["get_api_v1_autonomy_tools"];
         put?: never;
@@ -9504,9 +9507,10 @@ export interface paths {
          * Put Tool Class
          * @description Set one tool's class. The permission depends on the direction.
          *
-         *     Loosening, or classifying an unclassified name, is a person's
+         *     Loosening, or classifying an unclassified or withdrawn name, is a person's
          *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
-         *     ``ai_autonomy.stop``, which a service account may hold.
+         *     ``ai_autonomy.stop``, which a service account may hold. A person's
+         *     classification of a remote server's tool pins the definition held now.
          */
         put: operations["put_api_v1_autonomy_tools_name"];
         post?: never;
@@ -19589,6 +19593,8 @@ export interface components {
         };
         /** ToolClassBody */
         ToolClassBody: {
+            /** Definition Hash */
+            definition_hash?: string | null;
             /**
              * Effect Class
              * @enum {string}
@@ -19597,15 +19603,52 @@ export interface components {
         };
         /**
          * ToolClassEntry
-         * @description One outside tool. ``effect_class`` is None while it is unclassified.
+         * @description One outside tool. ``effect_class`` is None while it is unclassified or
+         *     withdrawn.
          */
         ToolClassEntry: {
             /** Classified At */
             classified_at?: string | null;
             /** Classified By */
             classified_by?: string | null;
+            definition?: components["schemas"]["ToolDefinition"] | null;
+            /** Definition Hash */
+            definition_hash?: string | null;
             /** Effect Class */
             effect_class?: ("read" | "read_unverified" | "reversible" | "irreversible") | null;
+            /** Name */
+            name: string;
+            pinned_definition?: components["schemas"]["ToolDefinition"] | null;
+            /** Pinned Hash */
+            pinned_hash?: string | null;
+            /**
+             * Remote
+             * @default false
+             */
+            remote: boolean;
+            /**
+             * Withdrawn
+             * @default false
+             */
+            withdrawn: boolean;
+        };
+        /**
+         * ToolDefinition
+         * @description A tool as its server lists it: what a model reads, and what is pinned.
+         */
+        ToolDefinition: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Inputschema
+             * @default {}
+             */
+            inputSchema: {
+                [key: string]: unknown;
+            };
             /** Name */
             name: string;
         };
