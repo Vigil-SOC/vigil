@@ -13,13 +13,14 @@ type IntentRow = Schema<'IntentDiffRow'>
 
 const isFlow = (row: IntentRow) => row.key.startsWith('workflows.')
 
-/** A workflow entry as the console says it: "Act · floor 85", "Assist", "Follows fleet". */
+/** A workflow entry as the console says it: "Act · floor 85 · bar 0.60", "Assist · bar 0.60", "Follows fleet". */
 function showFlow(value: unknown): string {
   if (value === 'fleet') return 'Follows fleet'
   if (value == null || typeof value !== 'object') return '—'
-  const entry = value as { tier?: string; floor?: number | null }
-  if (entry.tier === 'act') return `Act · floor ${entry.floor ?? '?'}`
-  return entry.tier === 'assist' ? 'Assist' : JSON.stringify(value)
+  const entry = value as { tier?: string; floor?: number | null; bar?: number | null }
+  const bar = typeof entry.bar === 'number' ? ` · bar ${entry.bar.toFixed(2)}` : ''
+  if (entry.tier === 'act') return `Act · floor ${entry.floor ?? '?'}${bar}`
+  return entry.tier === 'assist' ? `Assist${bar}` : JSON.stringify(value)
 }
 
 function show(value: unknown): string {

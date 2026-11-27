@@ -192,6 +192,8 @@ def _workflow_row(
         effective = {"tier": stored.get("tier")}
         if stored.get("tier") == "act":
             effective["floor"] = stored.get("floor")
+        if stored.get("bar") is not None:
+            effective["bar"] = stored.get("bar")
         verdict = workflow_label(declared, stored)
     # Unread ceiling: a listed key stays pending, so the accept still offers it.
     pending = key in listed and verdict != "same"
@@ -211,8 +213,12 @@ def _workflow_row(
         "drift": drift,
         "drift_reason": (
             (
+                # Vigil lowers a workflow only by dropping a declared Act to Assist; a
+                # person's bar-only write keeps the entry's ``by``, the applier's included.
                 "lowered by Vigil"
                 if (stored or {}).get("by") == "system"
+                and (stored or {}).get("tier") == "assist"
+                and declared.get("tier") == "act"
                 else "narrowed locally"
             )
             if drift
