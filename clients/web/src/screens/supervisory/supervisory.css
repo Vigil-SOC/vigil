@@ -8,6 +8,7 @@
 .spv-quiet { color: var(--tx3); font-size: 12px; font-weight: 400; }
 .spv-note { font-size: 12px; color: var(--tx2); }
 .spv-num { color: var(--tx1); }
+.spv-status-warn { display: block; color: var(--fair); }
 .spv-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; color: var(--tx1); }
 .spv-link {
   background: none; border: 0; padding: 0; font: inherit; color: var(--ac); cursor: pointer; text-align: left;

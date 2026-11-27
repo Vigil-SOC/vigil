@@ -13,6 +13,8 @@ export interface SupervisorStatus {
   functions_watched: number
   /** Medic incidents open that hold a suggestion; 0 when none */
   medic_open_related: number
+  /** Parts of the last check that failed: a check's name, `medic_hold` or `follow_up` */
+  failed: string[]
 }
 
 /** One function's labelled examples against the floor. `state` is the server's read, never derived here. */
