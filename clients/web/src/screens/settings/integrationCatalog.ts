@@ -1,10 +1,8 @@
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import {
-  EXPERIMENTAL_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
-  WIP_SERVERS,
   logoForServer,
   prettyServerName,
   serverForIntegration,
@@ -20,7 +18,6 @@ export interface CatalogEntry {
   category: string
   description: string
   connected: boolean
-  experimental: boolean
   /** Saved custom integration with no MCP server row. `connected` is left as
    *  computed: clearing it would show Available and Connect and count the card
    *  as available to add. The chip reads Not running instead. */
@@ -45,7 +42,7 @@ const OTHER_CATEGORY = 'Other'
 const categoryOf = (server: string) => MCP_CATEGORIES.find((c) => c.servers.includes(server))?.label ?? OTHER_CATEGORY
 
 /** What the console really offers: the client catalog plus servers that have no
- *  descriptor, minus work-in-progress servers, in category order. */
+ *  descriptor, in category order. */
 export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], connectedIds: Set<string>): CatalogEntry[] {
   const fromCatalog = catalog.map((i): CatalogEntry => {
     const server = serverForIntegration(i.id)
@@ -56,7 +53,6 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
       category: categoryOf(server),
       description: SERVER_DESCRIPTIONS.get(server) ?? i.description,
       connected: connectedIds.has(i.id) || !!rows.find((r) => r.name === server)?.connected,
-      experimental: EXPERIMENTAL_SERVERS.has(server),
       notRunning: savedCustomWithoutServer(i, rows),
       logo: i.logo,
       integration: i.fields?.length ? i : undefined,
@@ -72,7 +68,6 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
       category: categoryOf(r.name),
       description: SERVER_DESCRIPTIONS.get(r.name) ?? 'Custom MCP integration.',
       connected: r.connected,
-      experimental: EXPERIMENTAL_SERVERS.has(r.name),
       notRunning: false,
       logo: logoForServer(r.name),
     }))
@@ -81,7 +76,6 @@ export function buildCatalog(catalog: IntegrationMetadata[], rows: ServerRow[], 
     return i < 0 ? MCP_CATEGORIES.length : i
   }
   return [...fromCatalog, ...serverOnly]
-    .filter((e) => !WIP_SERVERS.has(e.server))
     // an entry with no descriptor fields is only offered if its server exists to switch on
     .filter((e) => e.integration || rows.some((r) => r.name === e.server))
     .sort((a, b) => rank(a) - rank(b))

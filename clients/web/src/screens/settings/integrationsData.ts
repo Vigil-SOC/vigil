@@ -24,24 +24,6 @@ export function getIntegrationForServer(serverName: string): IntegrationMetadata
 export const logoForServer = (serverName: string) =>
   getAllIntegrations().find((i) => i.id === (SERVER_TO_INTEGRATION.get(serverName) ?? serverName))?.logo
 
-export const WIP_SERVERS = new Set([
-  'carbon-black', 'hybrid-analysis', 'anyrun',
-  'alienvault-otx', 'palo-alto',
-  'slack', 'misp', 'ip-geolocation', 'url-analysis',
-  'microsoft-defender', 'azure-ad', 'microsoft-teams',
-])
-
-/** Offered, but never run against a live instance: the vendor sells no free
- *  tier the project can test on, so only the client side is covered. A server
- *  leaves this set when it gains a live test, not on a user's say-so. */
-export const EXPERIMENTAL_SERVERS = new Set([
-  'crowdstrike', 'sentinelone', 'azure-sentinel', 'splunk',
-  'gcp-secops', 'gcp-threat-intel', 'joe-sandbox', 'vstrike',
-  'atomic-red-team', 'cape-sandbox', 'amazon-security-lake',
-])
-
-export const EXPERIMENTAL_NOTE = 'Not yet tested against a live instance. It may not work; please report what you find.'
-
 /** Card-title overrides for `prettyServerName`. Fix casing/branding here rather
  *  than renaming the server id, which is load-bearing (mcp-config.json, backend
  *  registration, persisted enabled-state store). */

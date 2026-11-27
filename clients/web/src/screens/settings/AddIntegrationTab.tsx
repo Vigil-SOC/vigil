@@ -5,7 +5,6 @@ import { EmptyState, TextInput } from '../../shared/ui'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import { categoryLabels, type CatalogEntry } from './integrationCatalog'
 import IntegrationMark from './IntegrationMark'
-import { EXPERIMENTAL_NOTE } from './integrationsData'
 
 /** Local copy. Not the integration-health line, which is a different fact. */
 const NOT_RUNNING_REASON =
@@ -81,20 +80,16 @@ export default function AddIntegrationTab({ entries, busy, onConnect, onTurnOn, 
                 </div>
                 <p className="int-card-line" title={`${e.category} · ${e.description}`}>{e.category} · {e.description}</p>
                 {e.notRunning && <p className="int-card-reason">{NOT_RUNNING_REASON}</p>}
-                {/* the chip sits by the action, so the name keeps the head's width */}
-                {(offerSetup || offerConnect || e.experimental) && (
+                {(offerSetup || offerConnect) && (
                   <div className="int-card-foot">
-                    {(offerSetup || offerConnect) && (
-                      <button
-                        className="btn int-act"
-                        disabled={busy === e.server}
-                        aria-label={`${offerSetup ? 'Set up' : e.integration ? 'Connect' : 'Turn on'} ${e.name}`}
-                        onClick={() => (e.integration ? onConnect(e.integration) : onTurnOn(e.server))}
-                      >
-                        {offerSetup ? 'Set up' : e.integration ? 'Connect' : 'Turn on'}
-                      </button>
-                    )}
-                    {e.experimental && <span className="chip int-exp" title={EXPERIMENTAL_NOTE}>Experimental</span>}
+                    <button
+                      className="btn int-act"
+                      disabled={busy === e.server}
+                      aria-label={`${offerSetup ? 'Set up' : e.integration ? 'Connect' : 'Turn on'} ${e.name}`}
+                      onClick={() => (e.integration ? onConnect(e.integration) : onTurnOn(e.server))}
+                    >
+                      {offerSetup ? 'Set up' : e.integration ? 'Connect' : 'Turn on'}
+                    </button>
                   </div>
                 )}
               </div>
