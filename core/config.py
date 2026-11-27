@@ -336,8 +336,7 @@ class Settings(BaseSettings):
     # Measured from when Vigil stored the finding, not its event time
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
-    daemon_confidence_threshold: float = 0.90
-    # The rest of the confidence band (#916); see core.response.config.
+    # The confidence band (#916); see core.response.config.
     daemon_review_threshold: float = 0.85
     daemon_monitor_threshold: float = 0.70
     daemon_force_approval: bool = False

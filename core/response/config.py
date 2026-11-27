@@ -153,7 +153,7 @@ def applied_values() -> Dict[str, Any]:
 def decision_rule(field: str, value: Any, observed: Optional[float] = None) -> str:
     """Render the rule a decision fired on, keyed on the config field (#917).
 
-    Numeric thresholds render as ``response.confidence_threshold=0.90 met (0.92)``
+    Numeric thresholds render as ``response.review_threshold=0.85 met (0.92)``
     — the field, the value it held when the decision was made, whether the
     observed confidence reached it, and that confidence. Branches with no
     comparison (``effect_class=irreversible``, ``approval.force_manual_approval=True``)
@@ -190,10 +190,6 @@ def split_decision_rule(reason: Optional[str]) -> tuple[str, Optional[str]]:
 @dataclass
 class ResponseConfig:
     auto_response_enabled: bool = True
-    # Routing and prompt band. A confidence at or above this used to
-    # auto-approve a reversible row; the approval gate no longer does that
-    # (#2918).
-    confidence_threshold: float = 0.90
     # The "quick review" line: the processor offers a finding to intake at or
     # above it.
     review_threshold: float = 0.85
@@ -213,9 +209,6 @@ class ResponseConfig:
         return cls(
             auto_response_enabled=applied.get(
                 "respond.auto_response", s.daemon_auto_response
-            ),
-            confidence_threshold=applied.get(
-                "respond.confidence_threshold", s.daemon_confidence_threshold
             ),
             review_threshold=applied.get(
                 "respond.review_threshold", s.daemon_review_threshold
@@ -237,8 +230,8 @@ def approval_requirement(
     """Whether an approval row waits for a human, and the rule that decided it.
 
     A confidence never marks a row approved: every class waits. ``config``
-    stays in the signature so callers and the intent replay keep one
-    function; the threshold it carries is a routing knob, not a release. An
+    stays in the signature so callers keep one function; the thresholds it
+    carries are routing knobs, not a release. An
     act flag does not release a row either (#2931).
 
     ``forced`` is ``environment_locks_act()`` on the live path.

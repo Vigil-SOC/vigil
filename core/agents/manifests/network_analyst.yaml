@@ -1,4 +1,4 @@
-# $auto_approve, $review and $monitor are filled from the response thresholds,
+# $review and $monitor are filled from the response thresholds,
 # and $memory and $skills from what needs grants, wherever this prompt reaches
 # a model.
 id: network_analyst

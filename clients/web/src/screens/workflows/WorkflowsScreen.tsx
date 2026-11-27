@@ -4081,7 +4081,7 @@ function DeleteModal({ wf, onClose, onDeleted }: { wf: Workflow; onClose: () => 
 }
 
 const CHANGES_LABEL = { read_only: 'Read-only', asks_first: 'Asks first', on_its_own: 'On its own' } as const
-const CHANGES_TIP = 'Its actions wait for you unless Settings lets a high-confidence reversible one through.'
+const CHANGES_TIP = 'Its actions wait for you unless Settings › Limits & autonomy lets the run take them.'
 const SUCCESS_TIP = {
   source: 'Workflow steps and chat turns.',
   calculation: 'The share that ran to the end.',

@@ -70,12 +70,6 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         LOWER_TIGHTER,
     ),
     IntentField(
-        "respond.confidence_threshold",
-        "response.confidence_threshold",
-        "daemon_confidence_threshold",
-        HIGHER_TIGHTER,
-    ),
-    IntentField(
         "respond.review_threshold",
         "response.review_threshold",
         "daemon_review_threshold",
@@ -150,10 +144,14 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
 
 FIELDS_BY_KEY: Dict[str, IntentField] = {f.key: f for f in INTENT_FIELDS}
 
+# Keys that once had a reader. A file that still names one is not rejected:
+# the key is dropped with one warning, and a stored applied row that holds one
+# is read past (#5279).
+RETIRED_KEYS = frozenset({"respond.confidence_threshold"})
+
 # Keys whose value is a number; every other key is a boolean.
 NUMERIC_KEYS = frozenset(
     {
-        "respond.confidence_threshold",
         "respond.review_threshold",
         "respond.monitor_threshold",
         "investigate.max_cost_per_investigation",
@@ -166,7 +164,6 @@ NUMERIC_KEYS = frozenset(
 # the Settings card enforces (OrchestratorSettingsConfig), so an applied value
 # never makes the console's next save invalid.
 NUMERIC_BOUNDS: Dict[str, Tuple[float, float]] = {
-    "respond.confidence_threshold": (0.0, 1.0),
     "respond.review_threshold": (0.0, 1.0),
     "respond.monitor_threshold": (0.0, 1.0),
     "investigate.max_cost_per_investigation": (0.5, 100.0),
@@ -265,6 +262,7 @@ def read_intent(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     front = dict(front)
     front.pop(WORKFLOWS, None)  # enforced mode only (VIGIL_INTENT_DIR)
     declared = _flatten(front)
+    _drop_retired(declared, path)
     for key in sorted(set(declared) - set(FIELDS_BY_KEY)):
         logger.warning("INTENT.md key %r has no reader in the daemon; ignored", key)
         declared.pop(key)
@@ -274,13 +272,27 @@ def read_intent(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     return declared
 
 
+def _drop_retired(declared: Dict[str, Any], where: Any) -> None:
+    """Remove retired keys from ``declared``, with one warning for them all."""
+    retired = sorted(RETIRED_KEYS & set(declared))
+    for key in retired:
+        declared.pop(key)
+    if retired:
+        logger.warning(
+            "%s names retired key(s) %s; ignored, nothing reads them",
+            where,
+            ", ".join(retired),
+        )
+
+
 def parse_intent_strict(
     content: str, name: str = INTENT_FILE_NAME
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Declared values and the line each key is on, or :class:`IntentRejected`.
 
     Enforced mode: unlike :func:`read_intent`, an unknown key or a value of the
-    wrong type rejects the whole file instead of being dropped.
+    wrong type rejects the whole file instead of being dropped. A retired key
+    (:data:`RETIRED_KEYS`) is dropped with one warning instead.
     """
     try:
         front, _ = split_frontmatter(content)
@@ -295,6 +307,7 @@ def parse_intent_strict(
     front = dict(front)
     workflows = _parse_workflows(front.pop(WORKFLOWS, None), lines, name)
     declared = _flatten(front)
+    _drop_retired(declared, name)
     for key in sorted(declared, key=lambda k: lines.get(k, 0)):
         value = declared[key]
         if key not in FIELDS_BY_KEY:

@@ -36,6 +36,7 @@ from core.daemon_config import DaemonConfig
 from core.intent import (
     FIELDS_BY_KEY,
     INTENT_FILE_NAME,
+    RETIRED_KEYS,
     IntentRejected,
     declared_dir,
     effective_values,
@@ -291,7 +292,10 @@ def apply_once(directory: Path) -> None:
 
     previous: Dict[str, Any] = row.get("keys") or {}
     pending: Set[str] = set(row.get("pending") or []) & set(declared)
-    values: Dict[str, Any] = dict(row.get("values") or {})
+    # A retired key an earlier revision applied is dropped from the row (#5279).
+    values: Dict[str, Any] = {
+        k: v for k, v in (row.get("values") or {}).items() if k not in RETIRED_KEYS
+    }
     changed = {
         key: value
         for key, value in declared.items()
