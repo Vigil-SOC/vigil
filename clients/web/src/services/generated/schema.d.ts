@@ -6116,8 +6116,13 @@ export interface paths {
          *       remote (``url``) entry compares its URL and headers as resolved now;
          *     * unchanged: left alone.
          *
-         *     ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
-         *     what happened; ``success`` is false if any reconnect or disconnect failed.
+         *     Accepted declared sources (``sources/``) are merged into the catalog as
+         *     remote entries, and an enabled one with no session is connected; the same
+         *     apply runs on its own as ``sources.applied`` changes.
+         *
+         *     ``reconnected``, ``disconnected``, ``connected`` and ``failed`` (name →
+         *     error) report what happened; ``success`` is false if any reconnect,
+         *     disconnect or source connect failed.
          */
         post: operations["post_api_mcp_servers_reload"];
         delete?: never;

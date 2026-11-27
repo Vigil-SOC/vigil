@@ -756,6 +756,13 @@ async def _startup(app: FastAPI):
         )
     else:
         await _connect_external_services(app.state.mcp_client, app.state.mcp_registry)
+        if app.state.mcp_client is not None:
+            # Accepted declared sources connect, change and leave with no restart.
+            from core.integrations.mcp.reload import run_declared_sources
+
+            app.state.sources_task = asyncio.create_task(
+                run_declared_sources(app.state.mcp_client, app.state.mcp_registry)
+            )
         _start_medic_poller(app)
         _start_audit_feed(app)
 
@@ -795,6 +802,7 @@ async def _stop_setup_code(app) -> None:
         "opencti_facts_task",
         "skill_sweep_task",
         "token_sweep_task",
+        "sources_task",
     ):
         task = getattr(app.state, name, None)
         if task is None:

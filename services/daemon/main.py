@@ -187,6 +187,18 @@ class SOCDaemon:
 
         start("metrics", self._metrics_server, "Metrics server")
 
+        # The daemon's own MCP client re-merges accepted declared sources too.
+        from core.integrations.mcp.client import process_mcp_client
+        from core.integrations.mcp.reload import run_declared_sources
+
+        if process_mcp_client() is not None:
+            task = asyncio.create_task(
+                run_declared_sources(process_mcp_client(), None, self._shutdown_event),
+                name="sources",
+            )
+            task.add_done_callback(lambda t: self._on_task_done("sources", t))
+            tasks.append(task)
+
         # A declared directory (VIGIL_INTENT_DIR): this daemon is its only applier.
         from services.daemon.intent_apply import (
             clear_site,

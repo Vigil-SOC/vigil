@@ -211,6 +211,51 @@ daemon:
           - {key: site-zones.md, path: site/zones.md}
 ```
 
+### Remote MCP sources in the declared directory
+
+Each `sources/<name>.md` in the same directory names one remote MCP server
+reached over streamable HTTP; format and rules are in the "Remote MCP sources"
+section of the repo's `INTENT.md`. The daemon applies `sources/` in the same
+poll, to the `sources.applied` row. A new source, or a change to its URL,
+headers or credential names, connects nothing until a person holding
+`integrations.install` accepts it (Settings, or
+`POST /api/config/sources/accept`); a removal applies at once.
+
+- **No restart.** The backend and the daemon re-read `sources.applied` every
+  10 seconds and connect an accepted source themselves, with or without the
+  MCP runner; nothing is launched for it. A pending change or a removal
+  disconnects it and withdraws its tools. Its tools start unclassified, so
+  they ask first and never reach chat until a person classifies them.
+- **On by default.** An accepted source starts switched on; switching it off
+  in Settings persists across later commits.
+- **Credentials.** Header templates `{{field}}` fill from
+  `SOURCE_<NAME>_<FIELD>` (hyphens as underscores) at each connect, the
+  encrypted store first, then the environment. With this chart's default
+  emptyDir State Directory, Settings refuses to store them, so put the keys in
+  `secrets.existingSecret` (or the ExternalSecret), which the backend and
+  daemon read as environment. A missing one leaves the source unconnected.
+- **Health.** Each source has one Integration Health row, `source-<name>`,
+  written at every connect attempt with the client's error, the missing
+  credential, or why it is not connected (pending, or a catalogue server of
+  the same name, which always wins).
+- **Egress.** Vigil enforces no egress for a source: it connects to whatever
+  https URL a person accepted, through the proxy and CA bundle the catalog's
+  servers get. Limit where the backend and daemon may reach with your proxy's
+  allowlist or a NetworkPolicy you add.
+
+```yaml
+daemon:
+  extraVolumes:
+    - name: intent
+      configMap:
+        name: vigil-intent
+        items:
+          - {key: REVISION, path: REVISION}
+          - {key: sources-acme.md, path: sources/acme.md}
+secrets:
+  existingSecret: vigil-secrets   # carries SOURCE_ACME_TOKEN beside the rest
+```
+
 ### Skills in the declared directory
 
 Keep skills in the same checkout (`skills/<name>/SKILL.md`) and point

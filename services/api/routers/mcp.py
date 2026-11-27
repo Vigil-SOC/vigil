@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from core.auth.permissions import permission_gate
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
+from core.integrations.mcp.reload import apply_catalog
 from core.integrations.mcp.service import MCPService
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
@@ -275,41 +276,6 @@ async def set_server_enabled(
     }
 
 
-def _spawn_changed(old, new, session=None) -> bool:
-    """Whether ``new`` would start differently from ``old``.
-
-    Env counts only as mcp-config.json declares it (substituted), plus the
-    credentials it names: the rest is resolved from saved integration settings
-    at each connect (``runner_env``), stdio child or runner alike. A runner
-    launches from its own catalog with only that env, so there command, args
-    and cwd do not count. A remote entry changes when its URL or headers,
-    resolved now, differ from what its live ``session`` was opened with.
-    """
-    from core.integrations.mcp.client import RemoteParams
-    from core.integrations.mcp.runner import runner_url
-
-    if new.url:
-        params = getattr(session, "server_params", None)
-        if not isinstance(params, RemoteParams):
-            return True
-        return (params.url, params.headers) != _service().remote_target(new)
-
-    def spawn(server):
-        env = server.env or {}
-        declared = {k: env.get(k) for k in server.declared_env}
-        if runner_url(server.name) is not None:
-            return declared, server.required_env_vars
-        return (
-            declared,
-            server.required_env_vars,
-            server.command,
-            server.args,
-            server.cwd,
-        )
-
-    return spawn(old) != spawn(new)
-
-
 @router.post("/servers/reload", dependencies=_INTEGRATIONS_WRITE)
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
@@ -331,8 +297,13 @@ async def reload_servers(
       remote (``url``) entry compares its URL and headers as resolved now;
     * unchanged: left alone.
 
-    ``reconnected``, ``disconnected`` and ``failed`` (name → error) report
-    what happened; ``success`` is false if any reconnect or disconnect failed.
+    Accepted declared sources (``sources/``) are merged into the catalog as
+    remote entries, and an enabled one with no session is connected; the same
+    apply runs on its own as ``sources.applied`` changes.
+
+    ``reconnected``, ``disconnected``, ``connected`` and ``failed`` (name →
+    error) report what happened; ``success`` is false if any reconnect,
+    disconnect or source connect failed.
     """
     logger.info("User %s requested MCP server reload", current_user.user_id)
     svc = _service()
@@ -345,69 +316,8 @@ async def reload_servers(
             detail=f"mcp-config.json did not load: {type(exc).__name__}: {exc}",
         )
 
-    old_catalog = dict(svc.servers)
-    live = list(mcp_client.persistent_sessions) if mcp_client is not None else []
-    reconnected: List[str] = []
-    disconnected: List[str] = []
-    failed: Dict[str, Optional[str]] = {}
-
-    async def drop(name: str) -> bool:
-        ok = await mcp_client.disconnect_from_server(name)
-        # Else connect_to_server short-circuits on the cached tools.
-        mcp_client.tools_cache.pop(name, None)
-        return ok
-
-    # Before the swap: disconnect_from_server only stops a server in the runner
-    # while its name is still in the catalog.
-    for name in live:
-        # An entry turning remote is dropped here too: after the swap its old
-        # runner process would no longer be stopped.
-        becomes_remote = (
-            name in new_catalog
-            and new_catalog[name].url
-            and not getattr(old_catalog.get(name), "url", None)
-        )
-        if name in new_catalog and svc.is_server_enabled(name) and not becomes_remote:
-            continue
-        try:
-            if await drop(name):
-                disconnected.append(name)
-            else:
-                failed[name] = "disconnect failed"
-        except Exception as exc:  # noqa: BLE001 - one server must not stop the rest
-            failed[name] = f"{type(exc).__name__}: {exc}"
-        deactivate(registry, name)
-
-    # In place: MCPClient and the runner closures hold this same dict.
-    svc.servers.clear()
-    svc.servers.update(new_catalog)
-
-    for name in live:
-        if name in disconnected or name in failed or name not in old_catalog:
-            continue
-        try:
-            # Puts the saved rule paths into security-detections' new entry, as
-            # the live one has, so they don't read as a change.
-            svc.setup_required(name)
-            if not _spawn_changed(
-                old_catalog[name],
-                new_catalog[name],
-                mcp_client.persistent_sessions.get(name),
-            ):
-                continue
-            if not await drop(name):
-                # The old session is still there and would be reused.
-                failed[name] = "disconnect failed"
-                continue
-            if await mcp_client.connect_to_server(name, persistent=True):
-                register_connected(registry, mcp_client, name)
-                reconnected.append(name)
-                continue
-            failed[name] = mcp_client.get_last_error(name) or "connect failed"
-        except Exception as exc:  # noqa: BLE001 - one server must not stop the rest
-            failed[name] = f"{type(exc).__name__}: {exc}"
-        deactivate(registry, name)
-
+    result = await apply_catalog(svc, mcp_client, registry, new_catalog)
+    failed = result["failed"]
     servers = list(svc.servers)
     return {
         "success": not failed,
@@ -418,9 +328,7 @@ async def reload_servers(
         ),
         "total_servers": len(servers),
         "servers": servers,
-        "reconnected": reconnected,
-        "disconnected": disconnected,
-        "failed": failed,
+        **result,
     }
 
 

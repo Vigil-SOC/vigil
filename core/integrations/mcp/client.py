@@ -48,6 +48,7 @@ from core.integrations.opensearch.descriptor import OPENSEARCH, OPENSEARCH_REQUI
 from core.integrations.splunk.descriptor import SPLUNK, SPLUNK_SELFHOSTED_REQUIRED
 from core.integrations.wazuh.descriptor import WAZUH, WAZUH_REQUIRED
 from core.secrets import get_secret
+from core.sources import TEMPLATE, credential_key
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,23 @@ def _describe(e: BaseException, server_name: Optional[str] = None) -> str:
     msg = str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
     status = _remote_refusals.pop(server_name, None) if server_name else None
     return f"{msg} (HTTP {status})" if status else msg
+
+
+# Declared source -> the last failure this process wrote to its health, so a
+# source retried every few seconds on one missing credential writes it once.
+_source_health_written: Dict[str, str] = {}
+
+
+def note_source_health(name: str, ok: bool, error: Optional[str]) -> None:
+    """Integration Health for declared source ``name``, keyed ``source-<name>``:
+    a connect attempt and its outcome. A repeat of the same failure is skipped."""
+    from core.integrations.health import record_test
+    from core.sources import integration_id
+
+    if not ok and _source_health_written.get(name) == error:
+        return
+    _source_health_written[name] = "" if ok else (error or "connect failed")
+    record_test(integration_id(name), success=ok, error=None if ok else error)
 
 
 @dataclass(frozen=True)
@@ -389,6 +407,41 @@ class MCPClient:
         self.last_setup_required: Dict[str, str] = {}
 
     async def connect_to_server(
+        self,
+        server_name: str,
+        persistent: bool = True,
+        skip_enabled_check: bool = False,
+    ) -> bool:
+        """Connect, and for a declared source write its Integration Health
+        (``source-<name>``) with the outcome. See ``_connect_to_server``."""
+        server = self.mcp_service.servers.get(server_name)
+        if not getattr(server, "source", False):
+            return await self._connect_to_server(
+                server_name, persistent, skip_enabled_check
+            )
+        session = self.persistent_sessions.get(server_name)
+        was_live = bool(
+            session and session.is_connected and server_name in self.tools_cache
+        )
+        ok = await self._connect_to_server(server_name, persistent, skip_enabled_check)
+        if ok and was_live:
+            return ok  # nothing was attempted
+        missing = self.last_missing_credentials.get(server_name)
+        error = self.last_errors.get(server_name)
+        if missing:
+            # Name the field the file declares, beside the key that holds it.
+            fields = {
+                credential_key(server_name, f): f
+                for f in TEMPLATE.findall(" ".join(server.headers.values()))
+            }
+            error = "missing credential: " + ", ".join(
+                f"{fields.get(k, k)} ({k})" for k in missing
+            )
+        if ok or error:  # else switched off: no attempt
+            await asyncio.to_thread(note_source_health, server_name, ok, error)
+        return ok
+
+    async def _connect_to_server(
         self,
         server_name: str,
         persistent: bool = True,

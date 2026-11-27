@@ -213,6 +213,40 @@ while stopped or while the declared directory declares it on; switching it on
 needs only `ai_autonomy.stop`. The switches sit beside the hold on Settings ›
 Limits & autonomy.
 
+### Remote MCP sources: `sources/*.md`
+
+Each `sources/<name>.md` declares one remote MCP server Vigil reaches over
+streamable HTTP. The file stem is the name: lowercase letters, digits and
+hyphens, never a catalogue server's name or `vigil`. The front matter holds
+only these keys; the body is for people, including who owns the source:
+
+```yaml
+---
+url: https://mcp.example.com/mcp        # https, literal
+headers:
+  Authorization: "Bearer {{token}}"     # {{field}} names one of credentials
+credentials: [token]                    # stored as SOURCE_<NAME>_<FIELD>
+---
+```
+
+The daemon applies `sources/` in the same poll to `sources.applied`; a file
+that does not parse refuses the whole revision with file and line and the last
+applied entries stay. A removal or a body edit applies at once. A new source,
+or a change to its URL, headers or credential names, is pending until a person
+holding `integrations.install` accepts it (`POST /api/config/sources/accept`);
+until then it is not connected, and its Integration Health says why.
+
+Once accepted, the backend and the daemon connect to it within about ten
+seconds, with no rebuild or restart and with or without the MCP runner, and
+it starts switched on. Headers fill their templates at each connect from the
+source's credentials (Settings, or the environment, e.g.
+`secrets.existingSecret` on Helm); a missing one leaves it unconnected, naming
+the field. A pending change or a removal disconnects it and withdraws its
+tools. A catalogue server of the same name always wins. Its tools start
+unclassified: they ask first and are not offered in chat until a person
+classifies them, and their output is input, never instruction. Vigil enforces
+no egress for a source; the operator's proxy allowlist or NetworkPolicy does.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the
