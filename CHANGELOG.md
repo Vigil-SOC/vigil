@@ -224,6 +224,253 @@
 * **desktop:** Bifrost's runtime settings (provider keys, virtual keys, budgets, rate limits) now persist in a `bifrost_data` named volume, so they survive quitting the app ([#1452](https://github.com/Vigil-SOC/vigil/issues/1452)). Earlier versions kept them in an anonymous volume that every quit orphaned; those are not migrated, so re-enter any Bifrost settings made in its UI once. Providers seeded from environment variables come back on their own. Reclaim the orphaned volumes with `docker volume prune`.
 * **compose:** Bifrost's request log (`logs.db`) now lives in the `bifrost_data` volume, so gateway log history, cost time series and `recalculate-cost` survive a container recreate ([#1454](https://github.com/Vigil-SOC/vigil/issues/1454)). It was written to `/app/logs.db` in the container's writable layer. Applies to the server and desktop standalone stacks. The config store is untouched, so no volume reset is needed. History already in `/app/logs.db` is not migrated: the first recreate drops it, as every recreate did before. Snapshots still leave `logs.db` out, and a restore moves the live one aside into `.pre-restore-<stamp>` in the Bifrost data directory rather than restoring it.
 
+## 1.2.0 (2026-11-27)
+
+## What's Changed
+* Clear invite addresses when an account is erased by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4858
+* Index a finding's single src_ip, dst_ip or hostname as the plain value by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4856
+* Fence the answer under review in a vigil:answer block by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4854
+* Judge federation stall and silence against each source's poll interval by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4864
+* Keep directory sync from pushing reserved usernames by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4860
+* Delete notices other people received about an erased person by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4862
+* Send an intake-merged alert back to intake when it is taken off the case by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4867
+* Link or unlink one case alert without dropping a concurrent attach by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4865
+* Bind SSO account lookups to identifiers a provider user can't steer by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4863
+* Keep Custom Integration secrets out of the platform's secret names by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4879
+* Delete erased people's notices when a restore re-applies the erasure by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4882
+* Keep one Integration Health record per source by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4883
+* Keep refused directory deactivations and role changes listed until applied by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4881
+* Say when a saved custom integration is not running by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4889
+* Test threat-intel, sandbox, and lookup credentials with one fixed read by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4894
+* Refuse side-effecting SPL in Splunk searches by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4888
+* Keep erasures in start.sh backups and out of the restore notice by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4897
+* Keep every closed ticket of a history import in its own record by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4898
+* Count a dismissal's independent sources in code before a case can close as benign by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4899
+* docs(readme): GA status, badges, and What Vigil is not section by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/4906
+* Rewrite an erased person's username in every record that stores it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4902
+* Show a history import's full result, and offer it on "Connect your data" by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4905
+* Merge hunt sightings that mint the same Entity Key before the Distil writes them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4907
+* Keep usernames out of the principal-id namespace, and name trail actors by principal id by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4908
+* Show Install Readiness live on Home by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4904
+* Push sources write Integration Health by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4896
+* Fixed read-only Test calls for identity, EDR, network and notification integrations by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4895
+* Console health displays read the server's Integration Health by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4900
+* Let Stop and floor demotions land during a restore's write pause by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4909
+* Record alert-source, MCP server and custom-integration changes on the audit trail by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4910
+* Stamp the cases list's last_activity as UTC by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4920
+* Ask "Confirm it's you" in the setup wizard instead of a raw 403 by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4921
+* Deployment-wide operator instructions for every agent run by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4922
+* Let agents page through a finding's stored evidence records by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4923
+* Move the instance signing key out of the proof card into core.auth.signing_key by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4931
+* Add the cases.export permission by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4932
+* Stage host inputs before restic reads them (macOS VirtioFS EIO) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4933
+* File no proposals when a guard holds the answer by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4942
+* Fold verdict bursts before recall's per-key cap by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4943
+* skills: install and update from private Git repos on allowed HTTPS hosts by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4944
+* Count returned, stored and filtered records per federation window (#4940) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4945
+* cases: one headline for an agent close, the report once as Markdown (#4946) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4947
+* Land Dependabot bumps (#4948–#4959) with regenerated requirements.lock by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4960
+* agents: a suspicious conclusion passes the escalation guard, and no guard falls back to an alarm (#4961) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4968
+* cases: a capped, failed or uncited run no longer becomes the case's run over one that stands (#4962) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4969
+* cases: record false_positive_cause=expected when an agent closes on benign (#4964) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4970
+* approvals: a proposal's target must fit its action type, and a zero confidence is not a claim (#4963) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4971
+* agents: name folded tool results by ref or call id, tool and subject (#4966) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4972
+* proposal_targets: linear-time path/URL patterns and a length cap in target_kind by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4973
+* fix(#4974): OpenCTI get_related also lists the relationships that point at the entity by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4975
+* fix(#4976): the integration setup panel offers Collect alerts and Automatic investigations only for an alert source by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4979
+* fix(#4977): an integration whose server is switched off reads Off, not Good by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4980
+* test(#4978): a weekly live check runs OpenCTI's tools against a local platform by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4981
+* fix(#4977): a switched-off alert source's row says its collection is still on by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/4982
+* Store the Day 1 Report and show what Vigil can see by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4917
+* Store Splunk and CrowdStrike informational findings as info by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4913
+* Clear a source severity floor when Alert collection sends null by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4911
+* Say what Alert collection's master switch actually stops by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4912
+* Pin the Alembic head so two revision PRs cannot both merge by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4988
+* Check Vigil's own settings against their cited values by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4989
+* Report detection coverage gaps on the Day 1 Report by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4990
+* Start CrowdStrike's tool server from credentials saved in Settings by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4993
+* Medic sees each source's floor, cap, interval, and floor skips by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4994
+* Day 1 Report: module switches, comparison, and a one-page summary by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/4991
+* Read CrowdStrike alerts through the Alerts API by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5005
+* Keep a collection failure run through a successful lookup or re-check by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5003
+* Suggest a dedicated Wazuh API user instead of wazuh-wui by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5004
+* Bound memory and event-loop use in file and string ingestion by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5006
+* feat(#4983): the person who closes a case owns it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/4984
+* Enforce platform DB proxy TLS and require the DB login to move the proxy by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5014
+* Keep alert-supplied user names inside one Graph path segment and one OData literal in the Entra ID tools by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5020
+* Tell operators the Falcon API client also serves agent tools by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5013
+* Count hosts CrowdStrike, Defender, and Wazuh have not heard from by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5017
+* Day 1 Report: cost forecast against the saved limits by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5018
+* Day 1 Report: the customer's before, re-check list, and tuning candidates by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5019
+* Declare production start as one audited setting on Home by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5023
+* Fold estate counts into the Day 1 summary by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5022
+* Show a gated tool call's arguments on the Home and case approval cards by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5021
+* Read Slack, PagerDuty, Cloudflare, VirusTotal, and Shodan credentials from the secret store by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5027
+* Let the Cloudforce One poller read its API token by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5028
+* Day 1 Report: record the jurisdictions and data or organisation kinds that apply by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5031
+* Require an integration's stored login again when its TLS trust is loosened by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5025
+* Record AI provider, gateway, database and demo-mode changes on the audit trail by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5029
+* Install Readiness: judge the assigned provider by its type, not its id by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5030
+* Production Start Report: one automatic run, on demand, and the first three checks by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5032
+* Production Start Report: every alert since the start, and sources gone quiet by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5037
+* Send a stored model-provider key only to the host it was entered for by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5033
+* Record workflow, skill, detection source and run-hide changes on the audit trail by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5034
+* Day 1 Report: score the settings checks against the selection by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5035
+* Production Start Report: how sure the investigations were, and early agreement by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5038
+* Read the gaps report and the Day 1 Report over /mcp, and start a report run there by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5052
+* AI models: one server-side home for where each provider's calls go, and one label for it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5053
+* Day 1 Report: run again on a cadence, notify only when a setting regressed by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5055
+* Atomic Red Team runs only on hosts the operator lists by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5065
+* An emulated step is scored within the hour; a lost catch fails; a miss becomes a confirmed gap by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5066
+* Day 1 Report: Provider Statements, and the "where model processing runs" check by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5067
+* Coverage shows caught beside proven, and lists what to emulate next, in the console and on /mcp by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5073
+* Defender, Carbon Black and Entra servers: look a target up, report its containment state, undo the act by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5074
+* Emulating a technique again proves a rule in shadow (#5049) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5075
+* Emulate a technique from the console, on the coverage map, the rule and the gap, under a shipped skill that states the goal by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5076
+* Apply a declared directory's INTENT.md without a restart: one applier in the daemon, live reads in every process by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5078
+* Emulators are marked, and limited to one host list, in one stored record checked where every agent call leaves by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5080
+* An approved isolation or account disable runs through the invoke path on the vendor's own ID (#5059) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5079
+* Skills under the declared directory: report their revision and refuse Vigil's own installs into it (#5070) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5081
+* A marked emulator is held by the MITRE analyst, runs to the runner's limit, and is scored step by step whoever started the run (#5062) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5084
+* Production Start Report: the first tuning list by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5041
+* Production Start Report: Day 1 settings checks again, and what changed by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5054
+* Managed settings in the console, API and /mcp: revision, drift, pending a person accepts, widening refused (#5069) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5082
+* OpenCTI's Integration Health record carries its version, newest intelligence and ingest backlog (#5071) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5083
+* A compose step resumed after an approval runs the call that was approved (#5077) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5085
+* Release a host and enable an account from the executed action, and show the target and its state on the case card (#5060) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5086
+* Production Start Report: time to first verdict and time to close by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5039
+* Refuse a single sign-on save that keeps the old client secret by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5090
+* Production Start Report: spend since the start, beside the Day 1 forecast by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5087
+* Print the production summary on the existing report page by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5098
+* Let operators raise the wall budget on investigate and compose runs by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5099
+* Medic opens an incident when OpenCTI's intelligence goes stale or its ingest backlog keeps growing (#5072) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5097
+* Check the bastion's SSH host key on the platform database tunnel by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5100
+* Name the listed hosts on an emulator's tool spec by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5101
+* Count Ollama models as chat; bind Splunk ports to loopback (#9) by @johnvanlowe in https://github.com/Vigil-SOC/vigil/pull/5105
+* chore(medic): bundle medic-core 0.9.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4868
+* Keep each file-imported alert and drop every other column by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5102
+* Stop polling a switched-off source without a daemon restart by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5104
+* Keep restricted cases out of investigation replay by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5108
+* Settle a closed case's unanswered asks, and ask them again on reopen by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5109
+* Re-decide one pre-install closure with the live investigation agent by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5111
+* Cap request bodies before the API reads them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5112
+* Erase re-decision ledgers only after the import is gone by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5121
+* Record an integration's on/off switch and replaced secret in its audit entry by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5120
+* Make a built-in alert source's Integrations switch stop its collection by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5123
+* Read only files that hold a query, Sentinel analytics techniques, Sigma correlations and multi-document Sigma by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5124
+* Run a capped re-check of the Day 1 list under a ceiling by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5122
+* Rule libraries: read rule repos through the skill reader; import, update and remove them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5126
+* Detections › Import rules: Read repo, pick by folder, import; Update library and Remove library by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5133
+* Hold new repo rule versions from coverage until lint passes and a SIEM holds their data, or a person approves them by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5128
+* Coverage by layer: per-layer state, combined row and measures on the coverage read by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5138
+* Console: show rules held from coverage, Approve them, and Propose a repo Sigma rule by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5147
+* Publish Medic's images, a signed packaged chart and a signed list of every required image by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5149
+* Compose runs released images from one variable per service, builds each image once, and mints secrets without a virtualenv by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5150
+* Run with no route out: local Bifrost sheets, English OCR data in the image, a rule-library error that names the local route by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5151
+* Chart: one registry value moves every image; Postgres/Redis/Bifrost pinned by digest; helm test from the backend image by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5148
+* Detections, Coverage: a By layer view with measures, cell and row evidence, and technique scope by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5152
+* Day 1 Report: coverage by layer stored with each run, compared run to run, source names hideable on print by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5153
+* Detections: a Sentinel incident names the analytic rule that raised it, from a read-only inventory by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5155
+* Let a password confirm privileged changes when Require MFA is off by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5129
+* Let each idle limit be 0 to 12 hours, set on its own by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5130
+* Show the capped re-check in the Day 1 Report by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5131
+* Confirm a re-decision blind, and open a Case only from that confirmation by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5132
+* chore(medic): bundle medic-core 0.10.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/4995
+* chore(medic): bundle medic-core 0.11.0 by @vigil-release-please[bot] in https://github.com/Vigil-SOC/vigil/pull/5103
+* Password minimum 3–255 and a strength score of 0–4 by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5168
+* Supervisory model: count the judgements it has to learn from, per function by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5177
+* Let a failed run's stop_cause decide whether the case retry relaunches it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5188
+* Name the Defender custom detection behind a finding, from Graph v1.0 by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5189
+* Supervisory model: list the settings it watches, with value, source and who can change them by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5178
+* Show a saved, switched-off integration as switched off by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5176
+* Say when a re-decision's evidence was erased with its import by @craig-dt in https://github.com/Vigil-SOC/vigil/pull/5183
+* Supervisory model: store suggestions, and let a person dismiss one with a reason by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5180
+* Supervisory model: count why investigations stopped early, and how their Cases were closed after by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5179
+* Supervisory model: apply a suggestion in one click, and undo it by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5181
+* Supervisory model: hold a suggestion while a related Medic incident is open by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5182
+* Supervisory model: run its checks on a schedule, and say on the page whether it is by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5184
+* Supervisory model: check review_threshold against how people judged the findings it alone decided by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5190
+* Supervisory model: check investigation limits against stopped runs that were real attacks by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5191
+* Supervisory model: judge how each agent run was done, per kind and model, and suggest a better model by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5192
+* Cases: name the workflow that closed a case on the Closed line, not its run id by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5197
+* hunt: an optional capability's failure records no gap and does not starve the hunt by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5198
+* Workflows: store the resolved workflow name on runs started by the daemon and the agent-runs API by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5199
+* env.example: leave BIFROST_URL and OLLAMA_URL unset so Compose containers reach the gateway and Ollama by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5204
+* An investigation reads OpenCTI when it is connected, as a hunt does by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5205
+* Built-in agents ask for capabilities, not vendor tools (#5201) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5215
+* Threat feeds: any integration can declare a TAXII feed; OpenCTI declares one beside Cloudforce One by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5219
+* Declared site context: site/*.md in the declared directory, applied beside INTENT.md by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5226
+* Intake takes a crown-jewel finding first within its severity band, and Triage says what raised it by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5230
+* Triage and investigation fact reads carry Declared rows from the applied site revision (#5211) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5233
+* Wazuh: list agent groups with counts, and page and filter wazuh_list_agents (#5220) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5238
+* Settings shows the applied site revision read-only beside the intent card (#5214) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5240
+* Supervisory model: say whether results got better after an applied change by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5193
+* Day 1 Report site module: crown jewels seen and placed, owners resolved, undeclared hosts counted, read from Wazuh (#5213) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5239
+* A hunt opens with its declared site rows, carries matching blind spots as operator gaps, and may start on a zone (#5212) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5241
+* Agreement per model: split by the model that ran it, stamp it on Act, floor drop reads that model's record (#5222) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5242
+* Investigation replay reports per workflow (#5223) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5244
+* agents: report the case shell's total stdout, and end the cut on a character boundary by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5246
+* A declared crown jewel holds a model's close, and an unattended run's exception, dismissal and outside call on it (#5227) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5247
+* Judge a model change per Act workflow: at handoff, after an assignment write, and as a preview (#5224) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5248
+* Engine eval: run the labelled cases at other budgets by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5250
+* Supervisory model: record the 30-case check on an investigation limit suggestion by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5252
+* Console: each model's record per workflow on Limits & autonomy, and a model change on AI models previews what it would drop (#5225) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5253
+* Ask Vigil runs under a named agent from its drawer; chat and compose number tool results (#5221) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5254
+* Site proposal: save_site_proposal with provenance checks, the proposal and site questions on the site read, download and discard (#5229) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5255
+* An admin can turn off the crown-jewel hold: ceiling field, /api/v1/autonomy, INTENT.md key and the Settings switch (#5228) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5256
+* Palo Alto: block by User-ID tag registration, add unblock, Test reads the block setup (#5232) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5257
+* Case view: a case write is no longer served stale by the 60-second render cache (#5243) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5261
+* After an undo, a run's proposal of the same act is filed again, and reopen asks a settled one again (#5237) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5264
+* Delete the daemon's approval door that filed proposals from a list nothing writes (#5236) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5267
+* Carry out a proposal from a run no person started when the autonomy ceiling lets that run take the act (#5235) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5268
+* Day 1 Report site module reads CrowdStrike and Defender host lists beside Wazuh (#5245) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5269
+* Supervisory model: off by default for 1.2, until its page and its hold land (#5158) by @epowell101 in https://github.com/Vigil-SOC/vigil/pull/5270
+* Approved block_ip, block_domain and revoke_session run through Cloudflare's WAF, Gateway and Access (#5234) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5266
+* Site agent: the site_context built-in, sources not evaluated, and the refresh (#5259) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5280
+* block_ip runs through Palo Alto: pan_block_ip carries an approved address block and Unblock runs pan_unblock_ip (#5258) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5281
+* Cap the acts the autonomy ceiling releases per hour (#5274) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5283
+* Declared per-workflow autonomy: a workflows section in INTENT.md (#5272) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5284
+* A person's undo or rejection of a containment holds that act on that target, and is written as an analyst note (#5273) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5285
+* Sigma libraries read .yaml rules as well as .yml, and a source's rule count walks the readers' files by @epowell101 in https://github.com/Vigil-SOC/vigil/pull/5282
+* Supervisory model: a dismissal or an undo holds the same change back for 30 days by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5263
+* Supervisory model: a page under More shows its suggestions, the evidence behind each, and what was applied by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5166
+* Each investigation dismissal and containment carries a step score from stored records (#5275) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5288
+* Settings: show the site proposal with its diff, provenance, questions and sources not evaluated; Download, Discard, Refresh, and Describe this site with Vigil by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5289
+* Step-score factors switch on and off in INTENT.md and on Limits & autonomy (#5277) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5296
+* A bar on an investigate workflow leaves open a dismissal, or holds a containment release, that scores below it (#5276) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5298
+* A site declares the telemetry it carries; hunts name agent spans, LLM/MCP gateway and agent sandbox telemetry (#5291) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5306
+* The person deciding a containment sees its step score; the proposer's confidence is gone (#5278) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5308
+* Retire respond.confidence_threshold, the $auto_approve band, the confidence-release tip and the intent replay (#5279) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5305
+* Hunt evidence checks its cited technique against the shipped ATT&CK catalogue; playbook technique lists and their enum are deleted by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5307
+* Hunt and Case Distils write one coverage entry per checked key, uncapped; existing hunts and closed Cases gain theirs (#5293) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5309
+* Catalogue MCP entries can name a remote server by url and headers; loglm and splunk move off mcp-remote (#5299) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5310
+* Remote MCP sources declared in sources/: parse, apply, accept, credentials (#5302) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5318
+* A remote server's classified tool is pinned to the definition a person saw, and withdrawn when it changes (#5300) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5317
+* Ship MITRE ATLAS techniques in the catalogue; accept ATLAS IDs and match sub-techniques (#5292) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5320
+* Hunt coverage answers per key from coverage entries, with windows and retry; the console lists each key's entries (#5294) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5321
+* Accepted declared sources connect without a restart, merge into the catalogue, write Integration Health (#5303) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5322
+* Each MCP-served call names its server and definition hash on the invoke answer and its ledger entry (#5301) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5323
+* A tool's class row says which capability it answers; shipped bindings come from one file and CAPABILITIES is deleted (#5312) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5324
+* A workflow's step-score bar is declared in INTENT.md beside its tier and floor (#5319) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5326
+* Add Integration offers every catalogue server; WIP_SERVERS and EXPERIMENTAL_SERVERS are deleted (#5316) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5325
+* Feed poller reads coverage as Vigil, holds launched keys for RETRY, reopens a covered key once when its feed object changes (#5295) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5327
+* Settings shows each declared source with its URL, credentials, acceptance and connection state, and an Accept control (#5304) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5328
+* Approved containment runs through carriers declared as bindings; CONTAINMENT_TOOLS is deleted and quarantine_file can be carried (#5313) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5329
+* A run doesn't ask to contain what is already asked for or already contained by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5338
+* Ask Falcon whether a host is already contained before a run proposes isolating it by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5340
+* Console binds an act carrier on a tool's row in the declared form, and marks each tool's role in an act (#5314) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5337
+* Emulator marks become emulation bindings on class rows; the emulation record keeps only its host list (#5315) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5330
+* Let an operator raise hunt turn, cost and wall defaults deployment-wide (#5333) by @samarmstrong in https://github.com/Vigil-SOC/vigil/pull/5341
+* An investigation's call budget comes from its own record, as cost and runtime do by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5343
+* A supervisory apply or undo saves the setting and its History entry together by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5345
+* The supervisory check keeps good suggestions and the Medic read when one part fails, and reports what failed by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5347
+* The supervisory page names the parts of the last check that failed by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5349
+* A held supervisory suggestion stays held when its check suggests it again while Medic can't be read by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5352
+* The supervisory page says when a reload failed, with a Retry by @G-r-ay in https://github.com/Vigil-SOC/vigil/pull/5350
+
+
+**Full Changelog**: https://github.com/Vigil-SOC/vigil/compare/v1.1.4...v1.2.0
+
 ## 1.1.4 (2026-11-19)
 
 ## What's Changed
