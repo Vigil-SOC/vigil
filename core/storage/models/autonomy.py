@@ -1,8 +1,10 @@
 """The stored effect class of each outside tool (#3304)."""
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import CheckConstraint, DateTime, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.storage.models.base import Base
@@ -24,6 +26,18 @@ class ToolEffectClass(Base):
     classified_by: Mapped[str] = mapped_column(Text, nullable=False)
     classified_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
+    )
+    # A remote server's tool: the name, description and input schema it was
+    # classified against, and that definition's hash (#5300, revision 0133).
+    # none_as_null: clearing writes SQL NULL, which the gates' IS NULL reads, not JSON null.
+    pinned_definition: Mapped[Optional[dict]] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    pinned_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # A later definition that differs from the pin. Set means withdrawn: the
+    # gates read the tool as unclassified until a person classifies it again.
+    changed_definition: Mapped[Optional[dict]] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
     )
 
     __table_args__ = (
