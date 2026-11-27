@@ -1,40 +1,174 @@
-"""Is a threat report already covered by a hunt? (#903)
+"""Is a threat report already covered by a hunt? (#903, #5294)
 
-One answer in three shapes, composed from two existing reads and nothing else:
-``parse_report`` turns the report into Entity Keys and T-IDs, ``list_prior_hunts``
-says what has hunted them. In-flight wins over concluded (epic #886, decision 2):
+``parse_report`` turns the report into Entity Keys and T-IDs; each is answered
+from its ``episodic_coverage_entries`` under the one rule below, which lives
+here and nowhere else. Status, in-flight first (epic #886, decision 2):
 
-- ``running``   -- a hunt is on it now; extend that run rather than start another.
-- ``concluded`` -- a distilled Verdict already covers it; the rows say what was
-  found, and a proposal is still offered should the operator want a fresh look.
-- ``uncovered`` -- nobody has hunted it; the proposal is a body
+- ``running``   -- a hunt is on one of them now; extend that run rather than
+  start another (the in-flight half of ``list_prior_hunts``).
+- ``uncovered`` -- at least one is due; the proposal is a body
   ``POST /api/workflows/threat-hunt/execute`` accepts as-is. ``with_claim``
   swaps its template hypothesis for the report's own claim (#1918).
+- ``concluded`` -- every one is covered by a recent entry; a proposal is still
+  offered should the operator want a fresh look.
 
-Nothing here starts a hunt or files a directive. Both the ``check_hunt_coverage``
-backend tool and the ``/workflows/threat-hunt/coverage`` route call this.
+The rule: the newest entry decides. proven, disproven and handed_off cover for
+the key type's window from ``concluded_at``; inconclusive covers for ``RETRY``
+doubled per consecutive inconclusive entry since the last other outcome, capped
+at the window. An analyst's proven entry after an agent's disproven one, a
+reopen entry, or no entry at all is due now.
+
+Entries are read as the caller: hunt entries through ``_hidden_hunts``, Case
+entries through ``case_read_clause``; reopen entries name no investigation and
+are visible to all. Nothing here starts a hunt or files a directive. Both the
+``check_hunt_coverage`` backend tool and the ``/workflows/threat-hunt/coverage``
+route call this.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session
+
+from core.memory.entity_keys import normalise_keys
 from core.memory.hunt_claim import claim_from
-from core.memory.prior_hunts import list_prior_hunts
+from core.memory.prior_hunts import (
+    _hidden_hunts,
+    _iso,
+    in_flight_hunts,
+    normalise_techniques,
+)
+from core.storage.models import Case
+from core.storage.models.episodic import EpisodicCoverageEntry
+from core.storage.unit_of_work import unit_of_work
 from core.threat_intel.threat_feed_service import parse_report
 
 EXECUTE_PATH = "/api/workflows/threat-hunt/execute"
 EXTEND_PATH = "/api/agent-runs/{run_id}/directives"
 
+# Defaults, not settings (epic #5286, D2/D3): how long a clean answer stands per
+# Entity Key type, and the first retry after an inconclusive one. RETRY is also
+# the feed poller's hold on a launched intel row's keys.
+WINDOWS = {
+    "ip": timedelta(days=14),
+    "url": timedelta(days=14),
+    "domain": timedelta(days=30),
+    "hash": timedelta(days=180),
+}
+TECHNIQUE_WINDOW = timedelta(days=30)
+DEFAULT_WINDOW = timedelta(days=30)
+RETRY = timedelta(days=3)
 
-def _matched(rows: Sequence[Dict[str, Any]], field: str) -> set:
-    return {value for row in rows for value in row.get(field) or ()}
+# Entries returned per key; the rule reads them all.
+ENTRIES_SHOWN = 20
+
+_TERMINAL = {"proven", "disproven", "handed_off"}
+_RANK = {"proven": 0, "disproven": 1, "handed_off": 2, "inconclusive": 3}
 
 
-def _split(asked: Sequence[str], hit: set) -> Dict[str, List[str]]:
+def window_for(key: str) -> timedelta:
+    """A T-ID's window, else the window of the key's ``type:`` prefix."""
+    if normalise_techniques([key]) == [key]:
+        return TECHNIQUE_WINDOW
+    return WINDOWS.get(key.split(":", 1)[0], DEFAULT_WINDOW)
+
+
+def _entries(session: Session, asked: Sequence[str]) -> Dict[str, List[Any]]:
+    """Every visible entry for the asked keys and T-IDs, newest first, in one read."""
+    from core.auth.permissions import case_read_clause  # deferred, as prior_hunts does
+
+    e = EpisodicCoverageEntry
+    hidden = _hidden_hunts(session)
+    hunt = and_(e.investigation_kind == "hunt", e.investigation_id.notin_(hidden))
+    statement = (
+        select(e)
+        .outerjoin(
+            Case,
+            and_(e.investigation_kind == "case", Case.case_id == e.investigation_id),
+        )
+        .where(
+            e.key.in_(asked),
+            or_(
+                e.method == "reopen",
+                hunt if hidden else e.investigation_kind == "hunt",
+                and_(e.investigation_kind == "case", case_read_clause()),
+                e.investigation_kind == "analyst",
+            ),
+        )
+        .order_by(e.concluded_at.desc(), e.id.desc())
+    )
+    by_key: Dict[str, List[Any]] = {key: [] for key in asked}
+    for entry in session.scalars(statement):
+        by_key[entry.key].append(entry)
+    return by_key
+
+
+def _checks(entries: Sequence[Any]) -> List[Any]:
+    """One entry per check, newest first. A hunt writes an entry per hypothesis
+    naming the key, all at one ``concluded_at``; it is one check, and its
+    strongest outcome speaks for it (proven, disproven, handed off, inconclusive)."""
+    checks: Dict[tuple, Any] = {}
+    for entry in entries:
+        at = (entry.method, entry.investigation_kind, entry.investigation_id)
+        at += (entry.concluded_at,)
+        held = checks.get(at)
+        if held is None or _RANK.get(entry.outcome, 9) < _RANK.get(held.outcome, 9):
+            checks[at] = entry
+    return list(checks.values())  # dicts keep first-seen order: newest first
+
+
+def due_at(key: str, entries: Sequence[Any]) -> Optional[datetime]:
+    """When ``key`` falls due from its entries (newest first); None is due now."""
+    checks = _checks(entries)
+    if not checks or checks[0].method == "reopen":
+        return None
+    newest = checks[0]
+    window = window_for(key)
+    if newest.outcome in _TERMINAL:
+        earlier = next((x for x in checks[1:] if x.method != "reopen"), None)
+        reversed_ = (
+            newest.outcome == "proven"
+            and newest.trust == "analyst"
+            and earlier is not None
+            and earlier.outcome == "disproven"
+            and earlier.trust == "agent"
+        )
+        until = None if reversed_ else newest.concluded_at + window
+    else:
+        # inconclusive: count the run back to the last terminal check
+        run = 0
+        for check in checks:
+            if check.outcome in _TERMINAL:
+                break
+            if check.outcome == "inconclusive":
+                run += 1
+        # capped before multiplying: 2**n days overflows timedelta past n≈28
+        until = newest.concluded_at + min(RETRY * 2 ** min(run - 1, 16), window)
+    return until if until and until > datetime.now(timezone.utc) else None
+
+
+def _answer(key: str, entries: Sequence[Any]) -> Dict[str, Any]:
     return {
-        "matched": [value for value in asked if value in hit],
-        "unmatched": [value for value in asked if value not in hit],
+        "key": key,
+        "due_at": _iso(due_at(key, entries)),
+        "entries": [
+            {
+                "outcome": x.outcome,
+                "method": x.method,
+                "trust": x.trust,
+                "concluded_by": x.concluded_by,
+                "concluded_at": _iso(x.concluded_at),
+                "investigation_kind": x.investigation_kind,
+                "investigation_id": x.investigation_id,
+                "run_id": str(x.run_id) if x.run_id else None,
+                "reason": x.reason,
+            }
+            for x in entries[:ENTRIES_SHOWN]
+        ],
+        "entries_total": len(entries),
     }
 
 
@@ -67,51 +201,53 @@ def check_coverage(
     report: Optional[str] = None,
     entity_keys: Iterable[str] = (),
     techniques: Iterable[str] = (),
+    *,
+    session: Optional[Session] = None,
 ) -> Dict[str, Any]:
     """Classify a report (and/or already-parsed keys and T-IDs) as
-    ``running``, ``concluded`` or ``uncovered``.
+    ``running``, ``concluded`` or ``uncovered``, with each key's entries.
 
     Raises ``ValueError`` when there is nothing to ask about: an empty report
     with no keys is a caller mistake, not a coverage answer.
     """
     parsed = parse_report(report) if report else {"entity_keys": [], "techniques": []}
-    prior = list_prior_hunts(
-        [*parsed["entity_keys"], *entity_keys],
-        [*parsed["techniques"], *techniques],
-    )
-    keys, t_ids = prior["keys"], prior["techniques"]
+    keys = normalise_keys([*parsed["entity_keys"], *entity_keys])
+    t_ids = normalise_techniques([*parsed["techniques"], *techniques])
     if not keys and not t_ids:
         raise ValueError("nothing to check: no entity keys or techniques were found")
 
-    if prior["in_flight"]:
-        status, rows = "running", prior["in_flight"]
-    elif prior["concluded"]:
-        status, rows = "concluded", prior["concluded"]
-    else:
-        status, rows = "uncovered", []
+    with unit_of_work(session) as db:
+        found = _entries(db, [*keys, *t_ids])
+        coverage = [_answer(key, found[key]) for key in [*keys, *t_ids]]
+    covered = {row["key"] for row in coverage if row["due_at"]}
+    in_flight = in_flight_hunts(keys, t_ids)
 
-    key_split = _split(keys, _matched(rows, "matched_keys"))
-    technique_split = _split(t_ids, _matched(rows, "matched_techniques"))
+    if in_flight:
+        status = "running"
+    elif len(covered) < len(coverage):
+        status = "uncovered"
+    else:
+        status = "concluded"
+
     result: Dict[str, Any] = {
         "status": status,
         "keys": keys,
         "techniques": t_ids,
-        "matched_keys": key_split["matched"],
-        "unmatched_keys": key_split["unmatched"],
-        "matched_techniques": technique_split["matched"],
-        "unmatched_techniques": technique_split["unmatched"],
+        "matched_keys": [k for k in keys if k in covered],
+        "unmatched_keys": [k for k in keys if k not in covered],
+        "matched_techniques": [t for t in t_ids if t in covered],
+        "unmatched_techniques": [t for t in t_ids if t not in covered],
+        "coverage": coverage,
     }
     if status == "running":
-        result["in_flight"] = rows
+        result["in_flight"] = in_flight
         result["extend"] = {
             "method": "POST",
             "path": EXTEND_PATH,
             "kind": "extend",
-            "run_ids": [row["run_id"] for row in rows],
+            "run_ids": [row["run_id"] for row in in_flight],
         }
     else:
-        if status == "concluded":
-            result["concluded"] = rows
         result["proposal"] = build_proposal(keys, t_ids)
         result["execute"] = {"method": "POST", "path": EXECUTE_PATH}
     return result

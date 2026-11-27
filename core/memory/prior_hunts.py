@@ -5,6 +5,11 @@
 operator's question "what has already hunted these keys or this technique, and
 is anything hunting them now?" -- so this is a separate read (epic #886).
 
+Coverage (``core/memory/hunt_coverage.py``) reads only the in-flight half, as
+the daemon's lead attachment does; since #5294 it answers what has concluded
+from ``episodic_coverage_entries``. The concluded half stays for the detection
+catalogue's list of past hunts per technique, which decides nothing.
+
 Concluded hunts come from ``episodic_verdicts``: a Verdict is a hit when its
 ``subject_entities`` overlaps the keys *or* its ``techniques`` overlaps the
 T-IDs. A dimension the caller did not ask about adds no predicate, so a
@@ -225,6 +230,15 @@ def _in_flight(
     return hits[:LIST_RUNS_MAX]
 
 
+def in_flight_hunts(
+    keys: Sequence[str],
+    techniques: Sequence[str],
+    runs: Optional[WorkflowRunService] = None,
+) -> List[Row]:
+    """The in-flight half alone, for keys and T-IDs already normalised."""
+    return _in_flight(runs or WorkflowRunService(), keys, techniques)
+
+
 def list_prior_hunts(
     entity_keys: Iterable[str],
     techniques: Iterable[str] = (),
@@ -252,5 +266,5 @@ def list_prior_hunts(
 
     with unit_of_work(session) as db:
         result["concluded"] = _concluded(db, keys, t_ids)
-    result["in_flight"] = _in_flight(runs or WorkflowRunService(), keys, t_ids)
+    result["in_flight"] = in_flight_hunts(keys, t_ids, runs)
     return result
