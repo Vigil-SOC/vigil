@@ -85,6 +85,17 @@ on it, `failed` when it refused, or the act's own words below.
 `quarantine_file` ships with no carrier: until one is bound, a proposed
 quarantine stays a proposal for a person.
 
+## Already in force
+
+Before a run's proposal is filed, each connected lookup that reads the act's
+state is asked whether the target is already in it: a carrier's lookup, and a
+read-only state lookup in `core/integrations/state_reads.yaml` for a server
+that does not carry the act (Falcon's host search, for `isolate_host`). When
+every record found reads as done, nothing is filed and the case notes what the
+vendor reported. A state lookup takes the same reading as a carrier, plus
+`template` and `address_template`, which fill the lookup argument with the
+target quoted (`hostname:'{target}'`). It is never called to act.
+
 ## Changes
 
 This form changes only by addition: a field is never removed or given a new

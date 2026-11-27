@@ -367,6 +367,25 @@ def _stated(reading: Dict[str, Any], record: Dict[str, Any]) -> bool:
     return False
 
 
+def _state_lookups(action_type: str, registry) -> List[Dict[str, Any]]:
+    """The connected lookups that read this act's state: each carrier's that has
+    one, then each read-only state lookup (``bindings.state_reads``) on a server
+    that carries none of this act."""
+    names = set(registry.get_tool_names())
+    carried = [
+        e for e in _offered(action_type, registry) if e["lookup"] and e.get("state")
+    ]
+    servers = {e["server"] for e in bindings.carriers(action_type)}
+    reads = [
+        e
+        for e in bindings.state_reads()
+        if e["act"] == action_type
+        and e["server"] not in servers
+        and _flat(e, "lookup") in names
+    ]
+    return carried + reads
+
+
 async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str, Any]]:
     """What the connected vendors' lookups say about ``target`` for this act,
     done outside Vigil or in it: ``holds`` True when every record found reads as
@@ -374,16 +393,15 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
     when every record states its state and one is not that, with the vendor,
     the name it found and the state word of the first record that decided it.
 
-    None when nothing can be told: no connected carrier has a lookup that reads
-    state (a keyless one has none), a lookup failed or found nothing, or a
-    record carries none of the fields its state is read from."""
+    None when nothing can be told: no connected lookup reads this act's state (a
+    carrier's, or a read-only one in ``state_reads.yaml``; a keyless carrier has
+    none), a lookup failed or found nothing, or a record carries none of the
+    fields its state is read from."""
     done = DONE_STATE.get(action_type)
     if done is None or action_type not in CONTAINMENT_TYPES:
         return None
     seen: List[Dict[str, Any]] = []
-    for entry in _offered(action_type, registry):
-        if not entry["lookup"] or not entry.get("state"):
-            continue
+    for entry in _state_lookups(action_type, registry):
         answer, error = await _call(
             registry, _flat(entry, "lookup"), bindings.lookup_args(entry, target)
         )
