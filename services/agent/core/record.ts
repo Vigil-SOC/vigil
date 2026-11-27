@@ -59,6 +59,12 @@ export function classify(result: ToolResult): CallClass {
   return isVisibilityGap(result.failure) ? "visibility_gap" : "defect";
 }
 
+// The server and definition a call ran against, for its ledger entry. Only an
+// MCP-served answer carries a definition hash, so nothing else gets either field.
+export function servedBy(result: ToolResult): { source_system?: string; definition_hash?: string } {
+  return result.ok && result.definitionHash !== undefined ? { source_system: result.sourceSystem, definition_hash: result.definitionHash } : {};
+}
+
 // For a call journaled before calls carried their class.
 export function classOf(call: CallPayload): CallClass {
   if (call.class !== undefined) return call.class;

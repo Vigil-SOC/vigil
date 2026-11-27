@@ -166,7 +166,7 @@ async def _call(
         action_id=action_id,
     )
     try:
-        result, handled, _source = await _run(body, registry)
+        result, handled, _source, _definition = await _run(body, registry)
     except Denied as exc:
         return None, str(exc)
     except MCPFailure as exc:

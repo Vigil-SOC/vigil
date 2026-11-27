@@ -22,8 +22,10 @@ export type ToolFailure =
   | { kind: "unavailable"; detail: string }
   | { kind: "backend_error"; detail: string };
 
+// definitionHash: the SHA-256 of the definition an MCP server's tool ran against, the
+// same hash its class row pins. Absent for whatever Vigil or this process answers.
 export type ToolResult =
-  | { ok: true; rows: readonly unknown[]; rowCount: number; capped: boolean; sourceSystem: string }
+  | { ok: true; rows: readonly unknown[]; rowCount: number; capped: boolean; sourceSystem: string; definitionHash?: string }
   | { ok: false; failure: ToolFailure };
 
 // What an adapter author writes. Receives the bounds and must enforce them at
