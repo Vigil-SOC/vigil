@@ -2,10 +2,10 @@
 
 Each built-in is a plugin manifest shipped in ``manifests/``, built into a
 profile by ``core.agents.manager.profile_from_manifest`` exactly as an operator
-agent's stored manifest is. Its ``system`` may carry the ``$auto_approve``,
-``$review``, ``$monitor``, ``$memory`` and ``$skills`` placeholders; they are
-filled by ``core.agents.prompts.render_system`` wherever the prompt reaches a
-model, so the agent is told the lines the approval gate enforces (#916).
+agent's stored manifest is. Its ``system`` may carry the ``$review``,
+``$monitor``, ``$memory`` and ``$skills`` placeholders; they are filled by
+``core.agents.prompts.render_system`` wherever the prompt reaches a model, so
+the agent is told the lines the approval gate enforces (#916).
 """
 
 from dataclasses import dataclass

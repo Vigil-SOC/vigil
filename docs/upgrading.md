@@ -266,6 +266,15 @@ REST closes are unchanged: `POST /api/v1/cases/{id}/close`, a `PATCH` to status 
 
 The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for a close that passed this check, `person` for a console close, `api` for everything else. The closure row's channel is unchanged, so nothing is migrated.
 
+## The confidence threshold is retired
+
+`respond.confidence_threshold` and `DAEMON_CONFIDENCE_THRESHOLD` released no approval since #2918, and from this release nothing reads them (#5279).
+
+- **The variable** is ignored. An `.env`, Compose override or Helm `config:` value that still sets it starts as before; remove it when convenient.
+- **A declared `INTENT.md`** (`VIGIL_INTENT_DIR`) that still names `respond.confidence_threshold` is not rejected: its other keys apply, and the daemon logs one warning naming the retired key. An applied revision that already recorded the key keeps working; the next revision that changes the file drops it from the stored row. Delete the key from the file to stop the warning.
+- **Agent prompts** no longer carry an auto-approve band. An operator's stored agent whose system prompt still names `$auto_approve` renders it as `never`; edit the prompt to drop the line.
+- **`python -m services.daemon.intent --replay`** (and `--since`) is gone, and passing it is a usage error. Without flags the command still prints declared values beside effective ones.
+
 ## An approval's confidence is its step score
 
 From this release `confidence` on an approval, in `/api/v1` and in `/mcp`, carries the step score an investigation filed with its containment (`parameters.step_score.value`, a number from 0 to 1), or null (#5278). It used to carry the proposer's own claim, which is still in the `approval_actions.confidence` column but is no longer read or written. Rows filed before the upgrade, and rows no investigation filed (workflow checkpoints, rule deploys, undos, `create_approval_action`), read null. A score that is unknown also reads null; `parameters.step_score.band` tells it apart (`unknown`), and band `none` means every factor was switched off. A client that compared `confidence` with a threshold should treat null as "no score", not 0.
