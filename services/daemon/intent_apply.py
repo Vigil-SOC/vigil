@@ -57,10 +57,12 @@ from core.response.ceiling import (
     delete_tool_classes,
     environment_locks_act,
     investigation_model,
+    own_tool_names,
     workflow_entry,
     workflow_evidence,
 )
 from core.response.config import INTENT_APPLIED_KEY, applied_intent
+from core.response.emulation import ATOMIC_TOOLS
 from core.site import (
     NOTHING_DECLARED,
     SITE_APPLIED_KEY,
@@ -688,7 +690,7 @@ def sources_apply_once(directory: Path) -> None:
         return
 
     try:
-        sources = parse_sources(files)
+        sources = parse_sources(files, (*own_tool_names(), *ATOMIC_TOOLS))
     except SourceRejected as exc:
         reason = f"sources revision {revision} rejected: {exc}"
         logger.warning("sources: %s", reason)

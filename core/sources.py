@@ -29,7 +29,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
 import yaml
@@ -108,15 +108,16 @@ def catalogue_names() -> frozenset[str]:
     return frozenset(k for k, v in raw.items() if isinstance(v, dict))
 
 
-def reserved_names() -> Dict[str, str]:
+def reserved_names(own_tools: Iterable[str]) -> Dict[str, str]:
     """Name -> why a source may not take it: a catalogue server, ``vigil``, or
-    the leading segment of a tool Vigil answers itself or emulates with."""
-    from core.response.ceiling import own_tool_names
-    from core.response.emulation import ATOMIC_TOOLS
+    the leading segment of a tool Vigil answers itself or emulates with.
 
+    ``own_tools`` is ``own_tool_names()`` and ``ATOMIC_TOOLS``, passed in by
+    the caller: core.response reaches the integrations core.sources serves.
+    """
     reserved = {
         n.split("_", 1)[0]: f"the leading segment of Vigil's own tool {n!r}"
-        for n in sorted((*own_tool_names(), *ATOMIC_TOOLS), reverse=True)
+        for n in sorted(own_tools, reverse=True)
     }
     reserved["vigil"] = "Vigil's own server"
     reserved.update({n: "a catalogue server" for n in catalogue_names()})
@@ -306,10 +307,13 @@ def parse_file(name: str, content: str, reserved: Dict[str, str]) -> Dict[str, A
     }
 
 
-def parse_sources(files: Sequence[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]:
+def parse_sources(
+    files: Sequence[Tuple[str, str]], own_tools: Iterable[str]
+) -> Dict[str, Dict[str, Any]]:
     """Name -> source of one revision, or :class:`SourceRejected` for all of it.
 
-    ``files`` is ``(sources/<stem>.md, text)`` in name order.
+    ``files`` is ``(sources/<stem>.md, text)`` in name order; ``own_tools`` as
+    :func:`reserved_names` takes them.
     """
     if len(files) > MAX_SOURCES_FILES:
         raise SourceRejected(
@@ -324,7 +328,7 @@ def parse_sources(files: Sequence[Tuple[str, str]]) -> Dict[str, Dict[str, Any]]
             1,
             f"{size} bytes is over the ceiling of {MAX_SOURCES_BYTES} bytes",
         )
-    reserved = reserved_names() if files else {}
+    reserved = reserved_names(own_tools) if files else {}
     sources: Dict[str, Dict[str, Any]] = {}
     for name, text in files:
         source = parse_file(name, text, reserved)
@@ -535,15 +539,19 @@ def source_secret_fields(integration: str) -> Dict[str, str]:
 
 
 def accept_sources(
-    names: Sequence[str], revision: str, digest: str, user_id: str, who: str
+    names: Sequence[str],
+    revision: str,
+    digest: str,
+    user_id: str,
+    who: str,
+    delete_tool_classes: Callable[[Any, str, str], List[str]],
 ) -> Dict[str, Any]:
     """A person's accept of pending sources, checked again on the locked row.
 
     A new source drops any class row and stored credential under its name; an
     accepted URL move drops its stored credentials. Each with a trail entry.
+    ``delete_tool_classes`` is :func:`core.response.ceiling.delete_tool_classes`.
     """
-    from core.response.ceiling import delete_tool_classes
-
     wanted = sorted(set(names))
 
     def change(current: Dict[str, Any], session) -> Tuple[Dict[str, Any], str]:

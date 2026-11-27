@@ -54,7 +54,12 @@ from core.llm.defaults import DEFAULT_MODEL
 from core.llm.security import MAX_SYSTEM_PROMPT_BYTES
 from core.llm.system_prompt import OPERATOR_INSTRUCTIONS_KEY, validate_system_prompt
 from core.platform.process_health import ProcessHealth
-from core.response.ceiling import CeilingRefusal, CeilingWriteError, read_ceiling
+from core.response.ceiling import (
+    CeilingRefusal,
+    CeilingWriteError,
+    delete_tool_classes,
+    read_ceiling,
+)
 from core.response.config import applied_intent, managed_widening, settle_pending
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import (
@@ -2354,7 +2359,12 @@ def accept_sources_pending(
     who = current_user.username or str(current_user.user_id)
     try:
         accept_sources(
-            body.sources, body.revision, body.hash, str(current_user.user_id), who
+            body.sources,
+            body.revision,
+            body.hash,
+            str(current_user.user_id),
+            who,
+            delete_tool_classes,
         )
     except SourcesRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
