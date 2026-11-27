@@ -208,10 +208,16 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not read MCP connection status: %s", exc)
 
+    # A declared source pending or removed since the cache was written is not
+    # in the catalog any more; its cached tools must not come back.
+    catalog = getattr(getattr(mcp_client, "mcp_service", None), "servers", None)
     registered = 0
     for name, tools in tools_dict.items():
         if connected and not connected.get(name, False):
             logger.debug("Skipping %s: cached but not connected this boot", name)
+            continue
+        if catalog is not None and name not in catalog:
+            logger.debug("Skipping %s: cached but not in the catalog", name)
             continue
         registry.register_server(name, [_normalised(t) for t in tools])
         registered += 1

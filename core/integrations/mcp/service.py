@@ -7,7 +7,7 @@ import platform
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
@@ -78,6 +78,7 @@ class MCPServer:
         declared_env: Optional[List[str]] = None,
         url: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        source: bool = False,
     ):
         self.name = name
         self.command = command
@@ -94,6 +95,9 @@ class MCPServer:
         # raw ${VAR} templates, resolved at each connect (MCPService.remote_target).
         self.url = url
         self.headers: Dict[str, str] = dict(headers or {})
+        # A declared source (core.sources): its headers hold {{field}}
+        # templates over its own credentials, not ${VAR}.
+        self.source = source
 
 
 class MCPService:
@@ -109,6 +113,7 @@ class MCPService:
         project_root: Optional[Path] = None,
         integration_bridge: Optional[IntegrationBridgeService] = None,
         detection_rules: Optional[DetectionRulesService] = None,
+        declared_sources: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
         """
         Initialize the MCP service.
@@ -116,6 +121,9 @@ class MCPService:
         Args:
             project_root: Optional project root path. Defaults to the repo root,
                 which is where ``mcp-config.json`` and ``venv/`` live.
+            declared_sources: Returns the ``sources.applied`` row. The runner
+                and ``verify_catalog`` pass one returning ``{}``, so neither
+                reads the database.
         """
         if project_root is None:
             # core/integrations/mcp/service.py -> repo root is four levels up.
@@ -123,6 +131,10 @@ class MCPService:
 
         self._integration_bridge = integration_bridge or IntegrationBridgeService()
         self._detection_rules = detection_rules or DetectionRulesService()
+        self._declared_sources = declared_sources or _applied_sources
+        # Declared source -> why it is not in the catalog (pending, refused,
+        # named like a catalog server), as of the last load_catalog.
+        self.source_states: Dict[str, str] = {}
         self.project_root = Path(project_root)
         self.venv_path = self.project_root / "venv"
 
@@ -173,6 +185,10 @@ class MCPService:
         "splunk-selfhosted",
     }
 
+    # Declared sources merged by this process's last load_catalog. On by
+    # default, since a person accepted each; a switch-off is saved as any other.
+    _sources_on: frozenset = frozenset()
+
     @classmethod
     def enabled_state(cls) -> Dict[str, bool]:
         """Every saved server switch, read once, for a caller asking about many
@@ -192,7 +208,10 @@ class MCPService:
         """
         if state is None:
             state = cls._load_enabled_state()
-        return state.get(server_name, server_name in cls._DEFAULT_ENABLED)
+        return state.get(
+            server_name,
+            server_name in cls._DEFAULT_ENABLED or server_name in cls._sources_on,
+        )
 
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
         """
@@ -298,7 +317,24 @@ class MCPService:
         catalog loaded is the one sent. Not the environment first: a save sets
         ``os.environ`` only in the worker that took it, so another worker's
         copy of an earlier value would win there.
+
+        A declared source's URL is literal, and its headers fill ``{{field}}``
+        from its own credentials (``SOURCE_<NAME>_<FIELD>``) the same way.
         """
+        if server.source:
+            from core.sources import TEMPLATE, credential_key
+
+            def credential(field: str) -> str:
+                value = (get_secret(credential_key(server.name, field)) or "").strip()
+                # Never into a header (h11 would echo it in its error).
+                if any(ord(c) < 32 or ord(c) == 127 for c in value):
+                    raise ValueError(f"credential {field} holds control characters")
+                return value
+
+            def fill(value: str) -> str:
+                return TEMPLATE.sub(lambda m: credential(m.group(1)), value)
+
+            return server.url or "", {k: fill(v) for k, v in server.headers.items()}
         return self._substitute_env_vars(server.url or "", {}), {
             k: self._substitute_env_vars(v, {}) for k, v in server.headers.items()
         }
@@ -435,7 +471,78 @@ class MCPService:
             if config["name"] == "security-detections":
                 config = self._enrich_security_detections_env(config)
             servers[config["name"]] = MCPServer(**config)
+        servers.update(self._merge_sources(servers, project_path_str))
         return servers
+
+    def _merge_sources(
+        self, catalog: Dict[str, "MCPServer"], cwd: str
+    ) -> Dict[str, "MCPServer"]:
+        """Accepted declared sources as ``url`` entries; ``source_states`` says
+        why each other one is left out. A failed read merges none."""
+        from core import sources as declared
+
+        try:
+            row = self._declared_sources() or {}
+        except Exception as exc:  # noqa: BLE001 - a source never stops the catalog
+            logger.warning("Declared sources not read: %s", exc)
+            row = {}
+        merged: Dict[str, MCPServer] = {}
+        states: Dict[str, str] = {}
+        # Checked again here as at parse: a later release may add a catalog
+        # server under a source's name, and the catalog entry wins.
+        reserved = {"vigil": "Vigil's own server"}
+        reserved.update({n: "a catalogue server" for n in catalog})
+        for name, source in sorted((row.get("sources") or {}).items()):
+            if name in catalog:
+                states[name] = (
+                    f"not connected: the catalogue server {name!r} has this "
+                    "name and wins"
+                )
+                continue
+            if not declared.is_accepted(name, row):
+                change = declared.pending_change(name, row) or {}
+                what = ", ".join(change.get("changes") or ["its launch"])
+                states[name] = (
+                    "not connected: a new source waits for a person to accept it"
+                    if change.get("kind") == "new"
+                    else f"not connected: a change to {what} waits for a person "
+                    "to accept it"
+                )
+                continue
+            fields = list(source.get("credentials") or [])
+            headers = dict(source.get("headers") or {})
+            refused = (
+                declared.name_refusal(name, reserved)
+                or declared._check_url(source.get("url"))
+                or next(
+                    (
+                        r
+                        for h, v in headers.items()
+                        if (r := declared._check_header(h, v, fields))
+                    ),
+                    None,
+                )
+            )
+            if refused:
+                states[name] = f"not connected: refused at merge: {refused}"
+                continue
+            used = {f for v in headers.values() for f in declared.TEMPLATE.findall(v)}
+            merged[name] = MCPServer(
+                name=name,
+                command="",
+                args=[],
+                cwd=cwd,
+                env={},
+                required_env_vars=[
+                    declared.credential_key(name, f) for f in sorted(used)
+                ],
+                url=source["url"],
+                headers=headers,
+                source=True,
+            )
+        self.source_states = states
+        MCPService._sources_on = frozenset(merged)
+        return merged
 
     def _enrich_security_detections_env(self, config: Dict) -> Dict:
         """
@@ -470,3 +577,9 @@ class MCPService:
             List of server names.
         """
         return list(self.servers.keys())
+
+
+def _applied_sources() -> Dict[str, Any]:
+    from core.sources import applied_sources
+
+    return applied_sources()

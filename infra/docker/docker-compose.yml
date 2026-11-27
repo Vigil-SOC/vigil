@@ -559,6 +559,12 @@ services:
       # it in a post-merge hook: git rev-parse HEAD > REVISION
       # Skills kept in the checkout load when VIGIL_SKILLS_PATH points under the
       # mount (/etc/vigil/intent/skills); backend and llm-worker mount it too.
+      # Remote MCP sources (sources/<name>.md, INTENT.md "Remote MCP sources")
+      # need no mount elsewhere: once a person accepts one in Settings, backend
+      # and daemon connect to it within ~10s, no restart. Its credentials are
+      # SOURCE_<NAME>_<FIELD>: save them in Settings (the shared State
+      # Directory), or add them to both services' environment. Vigil enforces
+      # no egress for a source; your proxy allowlist or firewall does.
       #   - ${VIGIL_INTENT_SOURCE}:/etc/vigil/intent:ro
     depends_on:
       mcp-runner:

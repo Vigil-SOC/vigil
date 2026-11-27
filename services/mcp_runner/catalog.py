@@ -78,7 +78,10 @@ class Catalog:
         )
         with _no_secret_fallback():
             self._service = MCPService(
-                project_root=self.root, integration_bridge=stub, detection_rules=stub
+                project_root=self.root,
+                integration_bridge=stub,
+                detection_rules=stub,
+                declared_sources=lambda: {},
             )
 
     def __contains__(self, name: str) -> bool:

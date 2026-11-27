@@ -16,7 +16,9 @@ a drop, and it is not read here.
 
 Keys are integration ids, plus prefixed ids for Vigil's own inputs that cannot
 collide with one: ``kafka``, ``webhook:<name>`` and
-``detection_source:<id from detection_sources.json>``.
+``detection_source:<id from detection_sources.json>``. A declared MCP source
+(``core.sources``) is ``source-<name>``, the id its credentials use; the MCP
+client writes it at each connect attempt, with the reason it is left out.
 """
 
 from __future__ import annotations
@@ -115,8 +117,8 @@ def judge(
 ) -> Dict[str, Any]:
     """The one state of a source, from its record and how it is set up.
 
-    ``kind`` is ``integration``, ``pulled``, ``kafka``, ``receiver`` or
-    ``detection_source``. ``interval_seconds`` is set only while scheduled
+    ``kind`` is ``integration``, ``pulled``, ``kafka``, ``receiver``,
+    ``detection_source`` or ``mcp_source``. ``interval_seconds`` is set only while scheduled
     collection polls the source; a record older than that interval allows
     (backoff included) is no longer believed and reads "unknown".
     ``unchecked`` is the reason an integration is not checked (no read-only
@@ -304,6 +306,8 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     from core.detections.detection_rules_service import read_saved_sources
     from core.federation import store as fed_store
     from core.integrations.credential_check import has_check, not_checked_reason
+    from core.sources import INTEGRATION_PREFIX as SOURCE_PREFIX
+    from core.sources import applied_sources, catalogue_names
 
     now = now or utcnow()
     records = read_all()
@@ -331,6 +335,8 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         iid = row["integration_id"]
         if iid in (INTEGRATION_ID, WEBHOOK_INTEGRATION_ID):
             continue  # the audit feed has its own health (GET /api/audit/feed)
+        if iid.startswith(SOURCE_PREFIX):
+            continue  # a declared source's credentials; its row is below
         fed_id = LEGACY_POLLED.get(iid)
         fed_row = fed_rows.get(fed_id) if fed_id else None
         scheduled = bool(fed_on and fed_row and fed_row.get("enabled"))
@@ -353,4 +359,10 @@ def collect(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         add(source_id, kind, on)
     for source in read_saved_sources():
         add(f"{DETECTION_PREFIX}{source['id']}", "detection_source", True)
+    # One row per applied declared source. Accepted, it starts switched on.
+    catalogue = catalogue_names()
+    for name in sorted(applied_sources().get("sources") or {}):
+        # A catalogue server of this name wins; its switch is not the source's.
+        on = switches is None or name in catalogue or bool(switches.get(name, True))
+        add(f"{SOURCE_PREFIX}{name}", "mcp_source", on)
     return out
