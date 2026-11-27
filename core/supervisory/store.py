@@ -102,8 +102,13 @@ def propose(
     card: dict[str, Any],
     widens_autonomy: bool = False,
     held_incident: dict[str, Any] | None = None,
+    medic_unread: bool = False,
 ) -> str | None:
     """Store a suggestion, replacing the live one for the same setting.
+
+    ``medic_unread``: Medic could not be read, so nothing is known about its
+    incidents. A held suggestion this replaces passes its hold on, rather than
+    the new one coming in open.
 
     Returns None, storing nothing, when a person dismissed or undid this same
     change (same setting, same from and to values, see ``same_value``) within
@@ -128,6 +133,8 @@ def propose(
         card = {k: card.get(k) for k in _CARD_FIELDS}
         if card.get("check") is None:
             card["check"] = _kept_check(session, key, from_value, to_value)
+        if held_incident is None and medic_unread:
+            held_incident = _kept_hold(session, key)
         session.execute(
             update(SupervisorySuggestion)
             .where(
@@ -152,6 +159,16 @@ def propose(
             )
         )
     return suggestion_id
+
+
+def _kept_hold(session: Session, key: str) -> dict[str, Any] | None:
+    """The incident holding the live suggestion for ``key``; None when it is open."""
+    return session.execute(
+        select(SupervisorySuggestion.held_incident).where(
+            SupervisorySuggestion.setting_key == key,
+            SupervisorySuggestion.state == "held",
+        )
+    ).scalar_one_or_none()
 
 
 def _kept_check(
