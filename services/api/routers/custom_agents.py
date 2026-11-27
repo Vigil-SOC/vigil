@@ -22,7 +22,7 @@ from core.llm.tool_schemas import ALL_TOOLS
 from core.response.ceiling import asks_first
 from core.routing import Auth, RouterMeta
 from core.storage.models import User
-from core.workflows.playbook_resolver import CAPABILITIES, candidates_for
+from core.workflows.playbook_resolver import CAPABILITY_NAMES, candidates_for
 from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
@@ -141,8 +141,8 @@ def list_available_tools(
     asking = asks_first(rows)
     return {
         "capabilities": [
-            {"name": name, "tools": [t for c in candidates_for(name) for t in c.tools]}
-            for name in CAPABILITIES
+            {"name": name, "tools": [tool for _, tool in candidates_for(name)]}
+            for name in CAPABILITY_NAMES
         ],
         "tools": tools,
         "changes": {

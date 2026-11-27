@@ -6,7 +6,7 @@ import { DurationPicker } from '../../shared/DurationPicker'
 import { formatDuration } from '../../shared/duration'
 import { Icon } from '../../shared/icons'
 import { ScrubField } from '../../shared/ScrubField'
-import { ConfirmDialog, Field, NumberInput, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import { ConfirmDialog, Field, NumberInput, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import { NotMeasured } from '../../shared/NotMeasured'
 import { utcDayClock } from '../../shared/utc'
 import { agreementText, dropWhy, falseCloseText, modelsInOrder, workflowTier, type WorkflowTier } from '../../shared/autonomy'
@@ -16,7 +16,7 @@ import {
   useEmulation,
   useInvestigateWorkflows,
   useOrchestrator,
-  useUnverifiedTools,
+  useOutsideTools,
   type InvestigateWorkflow,
   type InvestigationProfileValues,
   type OrchestratorBound,
@@ -62,6 +62,8 @@ type PendingSave =
   | { kind: 'irreversible' }
   | { kind: 'stop' }
   | { kind: 'tool'; name: string; to: EffectClass; hash?: string | null }
+  // a capability, or null to put the shipped binding back
+  | { kind: 'bind'; name: string; capability: string | null }
   | { kind: 'workflow'; workflow: InvestigateWorkflow }
 
 // Tighter last, as in core/response/ceiling.py; an unclassified tool loosens to anything
@@ -85,6 +87,26 @@ const splitTool = (name: string) => {
   return at > 0 ? { server: name.slice(0, at), tool: name.slice(at + 1) } : { server: '', tool: name }
 }
 const STOPPED_LOOSEN = 'Stopped: resume first'
+const CLASS_TAG: Record<EffectClass, string> = {
+  read: 'Read',
+  read_unverified: 'Runs as a read, unconfirmed',
+  reversible: 'Reversible',
+  irreversible: 'Cannot be undone',
+}
+// The capability select's values beside the capability names (#5312)
+const BIND_NOTHING = ''
+const BIND_SHIPPED = ':shipped'
+const bindValue = (t: ToolClass) =>
+  t.binding_source === 'file' ? BIND_SHIPPED : (t.binding?.capability ?? BIND_NOTHING)
+// What the tool answers, and whose binding that is
+const bindingNote = (t: ToolClass) => {
+  const shipped = t.shipped_binding?.capability
+  if (t.binding_source === 'file') return `Answers ${shipped}, as shipped`
+  if (t.binding_source !== 'person') return null
+  const was = shipped ? ` (shipped: ${shipped})` : ''
+  // set in Vigil: a person binds; a person or a machine may unbind
+  return t.binding ? `Answers ${t.binding.capability}, bound here${was}` : `Answers nothing, unbound here${was}`
+}
 
 // A tool as its server lists it (#5300): the description, the input schema collapsed.
 type ToolDef = NonNullable<ToolClass['definition']>
@@ -419,6 +441,16 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
         }; ${close}. Below the floor, Vigil puts it back on Assist.`,
       }
     }
+    case 'bind':
+      return pending.capability == null
+        ? {
+            title: `Put ${pending.name} back on its shipped binding?`,
+            body: 'Hunts, investigations and root-cause traces that need its shipped capability hold it again from their next run.',
+          }
+        : {
+            title: `Bind ${pending.name} to ${pending.capability}?`,
+            body: `The next hunt, investigation or root-cause trace that needs ${pending.capability} holds it and may call it.`,
+          }
     case 'tool':
       return pending.to === 'read'
         ? {
@@ -473,7 +505,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     aiConfigApi.getInvestigationReplay().then((r) => setReplay(r.data), () => setReplay(null))
   }, [])
   const [floor, setFloor] = useState('')
-  const unverified = useUnverifiedTools()
+  const outsideTools = useOutsideTools()
   const emulation = useEmulation()
   const [allTools, setAllTools] = useState(false)
   const { hasPermission, user } = useAuth()
@@ -707,7 +739,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   // Always sends the hash of the definition shown; a 409 reloads the list with the current one, never retries.
   const classifyTool = async (name: string, to: EffectClass, hash?: string | null) => {
     try {
-      await unverified.classify(name, to, hash)
+      await outsideTools.classify(name, to, hash)
       notify('ok', `${name} is now ${CLASS_PHRASE[to]}.`)
     } catch (err) {
       const changed = (err as { response?: { data?: { detail?: { definition?: unknown } } } })?.response?.data?.detail
@@ -764,6 +796,9 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
         return
       case 'tool':
         classifyTool(current.name, current.to, current.hash)
+        return
+      case 'bind':
+        bindTool(current.name, current.capability)
         return
       case 'workflow':
         setWorkflow(current.workflow, 'act', floorValue)
@@ -881,6 +916,50 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   }
 
   // write may loosen (confirm first, refused while stopped); stop may only tighten
+  // Binding nothing saves at once for anyone who can lower; binding one, or the shipped one back, confirms first.
+  const bindTool = async (name: string, capability: string | null) => {
+    try {
+      await outsideTools.bind(name, capability === BIND_NOTHING ? {} : capability == null ? null : { capability })
+      notify(
+        'ok',
+        capability == null
+          ? `${name} is back on its shipped binding.`
+          : capability
+            ? `${name} now answers ${capability}.`
+            : `${name} answers no capability.`,
+      )
+    } catch (err) {
+      notify('err', errorText(err, 'Failed to save the tool’s capability.'))
+      ceiling.refresh() // a 409 means someone stopped meanwhile
+    }
+  }
+
+  // Changing what a tool answers loosens unless it binds nothing; a machine never binds.
+  const bindSelect = (t: ToolClass, stopped: boolean) => {
+    const current = bindValue(t)
+    const shipped = t.shipped_binding?.capability
+    const mayBind = canRaise && !machine && !stopped
+    const options = [
+      ...(shipped ? [{ value: BIND_SHIPPED, label: `${shipped} · shipped` }] : []),
+      { value: BIND_NOTHING, label: 'Nothing' },
+      // the shipped capability once, unless a person bound it again by name
+      ...outsideTools.capabilities.filter((c) => c !== shipped || c === current).map((c) => ({ value: c, label: c })),
+    ].filter((o) => o.value === current || (o.value === BIND_NOTHING ? canLower : mayBind))
+    // the server binds only a classified tool
+    if (!canLower || t.effect_class == null || options.length < 2) return null
+    const pick = (value: string) => {
+      if (value === current) return
+      if (value === BIND_NOTHING) bindTool(t.name, BIND_NOTHING)
+      else setPending({ kind: 'bind', name: t.name, capability: value === BIND_SHIPPED ? null : value })
+    }
+    return (
+      <span className="lim-bind">
+        <span>Answers</span>
+        <Select label={`Capability of ${t.name}`} value={current} options={options} onSelect={pick} />
+      </span>
+    )
+  }
+
   const toolRow = (t: ToolClass, stopped: boolean) => {
     const { server, tool } = splitTool(t.name)
     const choices = CHOICES.filter((c) => canRaise || (canLower && !loosens(t.effect_class, c.to)))
@@ -893,32 +972,36 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
           {t.withdrawn && t.pinned_definition && <ToolDefinition label="Classified" def={t.pinned_definition} />}
           {t.definition && <ToolDefinition label={t.withdrawn ? 'Now' : undefined} def={t.definition} />}
         </div>
-        <span className={`lim-row-tag${t.effect_class ? '' : ' fair'}`}>
+        <span className={`lim-row-tag${t.effect_class && t.effect_class !== 'read_unverified' ? '' : ' fair'}`}>
           {emulation.data?.tools.includes(t.name) && <span className="lim-emu-mark">Emulator</span>}{' '}
           {t.withdrawn
             ? 'Withdrawn: its definition changed since it was classified. Agents are not offered it until a person classifies it again'
             : t.effect_class
-              ? 'Runs as a read, unconfirmed'
+              ? CLASS_TAG[t.effect_class]
               : 'Unclassified, waits for a person'}
           {t.remote && !t.withdrawn && (
             <span className="lim-tool-pin">Classifying pins the definition shown; a change withdraws it</span>
           )}
+          {bindingNote(t) && <span className="lim-tool-bound">{bindingNote(t)}</span>}
         </span>
-        <span className="lim-row-ctl">
+        <span className="lim-row-ctl lim-tool-ctl">
           {choices.length > 0 && (
             <div className="lim-seg" role="group" aria-label={`Class of ${t.name}`}>
               {choices.map((c) => {
                 const loosen = loosens(t.effect_class, c.to)
                 const blocked = loosen && stopped
+                const on = t.effect_class === c.to
                 return (
                   <button
                     key={c.to}
                     type="button"
-                    aria-pressed={false}
+                    aria-pressed={on}
                     disabled={blocked}
                     title={blocked ? STOPPED_LOOSEN : undefined}
                     onClick={() =>
-                      loosen
+                      on
+                        ? undefined
+                        : loosen
                         ? setPending({ kind: 'tool', name: t.name, to: c.to, hash: t.definition_hash })
                         : classifyTool(t.name, c.to, t.definition_hash)
                     }
@@ -929,6 +1012,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
               })}
             </div>
           )}
+          {bindSelect(t, stopped)}
         </span>
       </div>
     )
@@ -1082,22 +1166,30 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
   )
 
   const toolList = (stopped: boolean) => {
-    const tools = (unverified.phase === 'ready' && unverified.tools) || []
+    const tools = (outsideTools.phase === 'ready' && outsideTools.tools) || []
+    const unconfirmed = tools.filter((t) => t.withdrawn || t.effect_class == null || t.effect_class === 'read_unverified')
     const shown = allTools ? tools : tools.slice(0, TOOLS_SHOWN)
     return (
       <div className="lim-tools mt-3">
         <div className="lim-tools-head">
           <h4>
-            Tools nobody has confirmed{' '}
-            {unverified.phase === 'ready' && <span className="lim-tools-count">{tools.length}</span>}
+            Outside tools{' '}
+            {outsideTools.phase === 'ready' && (
+              <span className="lim-tools-count" title="Nobody has confirmed these">
+                {unconfirmed.length} unconfirmed
+              </span>
+            )}
           </h4>
           <span>
-            Each outside tool’s class decides when it may act on its own. These were guessed to be reads, or have
-            no class yet.
+            Each outside tool’s class decides when it may act on its own; what it answers decides which hunts,
+            investigations and root-cause traces hold it. Tools guessed to be reads, or with no class yet, come first.
           </span>
           {!canLower && tools.length > 0 && <span>Your role can see these but not change them.</span>}
           {canLower && !canRaise && tools.length > 0 && (
-            <span>Your role can mark a tool reversible or cannot be undone. Confirming a read, or classing a new tool, needs permission to loosen autonomy.</span>
+            <span>
+              Your role can mark a tool reversible or cannot be undone, or make it answer nothing. Confirming a read,
+              classing a new tool, or binding one to a capability needs permission to loosen autonomy.
+            </span>
           )}
           {stopped && canRaise && tools.length > 0 && (
             <span className="lim-class-note">
@@ -1105,12 +1197,12 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             </span>
           )}
         </div>
-        {unverified.phase === 'loading' && <span className="text-xs text-tx-3">Loading tools…</span>}
-        {unverified.phase === 'error' && (
+        {outsideTools.phase === 'loading' && <span className="text-xs text-tx-3">Loading tools…</span>}
+        {outsideTools.phase === 'error' && (
           <span className="text-xs text-tx-3">Could not load the tools. Reload to try again.</span>
         )}
-        {unverified.phase === 'ready' && tools.length === 0 && (
-          <span className="text-xs text-tx-3">Every outside tool has a confirmed class.</span>
+        {outsideTools.phase === 'ready' && tools.length === 0 && (
+          <span className="text-xs text-tx-3">No outside tool is connected.</span>
         )}
         {shown.map((t) => toolRow(t, stopped))}
         {tools.length > TOOLS_SHOWN && (
@@ -1643,7 +1735,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             ? overlayOnly.length
               ? `Stop · ${overlayOnly.length === 1 ? '1 rule goes' : `${overlayOnly.length} rules go`} dark`
               : 'Stop'
-            : pending?.kind === 'tool'
+            : pending?.kind === 'tool' || pending?.kind === 'bind'
               ? 'Confirm'
               : 'Save'
         }

@@ -160,9 +160,9 @@ class AgentAIGenerator:
         return "\n".join(lines) or "(no existing agents)"
 
     def _capabilities_context(self) -> str:
-        from core.workflows.playbook_resolver import CAPABILITIES
+        from core.workflows.playbook_resolver import CAPABILITY_NAMES
 
-        return ", ".join(f"`{c}`" for c in CAPABILITIES)
+        return ", ".join(f"`{c}`" for c in CAPABILITY_NAMES)
 
     def _tools_context(self) -> str:
         from core.llm.tool_schemas import ALL_TOOLS

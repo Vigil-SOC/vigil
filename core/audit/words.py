@@ -273,6 +273,16 @@ def _emulation(p: Mapping[str, Any]) -> str:
     return "Emulators: " + "; ".join(parts) if parts else "Changed the emulators"
 
 
+def _tool_bound(p: Mapping[str, Any]) -> str:
+    tool = p.get("tool") or "a tool"
+    after = p.get("binding_after")
+    if not isinstance(after, dict):  # "shipped"
+        return f"Put {tool} back on its shipped binding"
+    if not after.get("capability"):
+        return f"Bound {tool} to no capability"
+    return f"Bound {tool} to {after['capability']}"
+
+
 def _proof_export(p: Mapping[str, Any]) -> str:
     n = p.get("rule_count")
     if not p.get("kind"):
@@ -500,6 +510,7 @@ _SAID: dict[str, str | Callable[[Mapping[str, Any]], str]] = {
     f"{_word(p.get('class_after')) or 'unclassified'}",
     "autonomy.tool_pinned": lambda p: f"Pinned {p.get('tool') or 'a tool'} to the "
     "definition its server lists now",
+    "autonomy.tool_bound": _tool_bound,
     "autonomy.tool_withdrawn": lambda p: f"Withdrew {p.get('tool') or 'a tool'}: its "
     "definition no longer matches the one classified",
     "tools.classified": "Classed outside tools on upgrade",

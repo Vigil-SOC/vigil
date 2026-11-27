@@ -1646,6 +1646,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/autonomy/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Capabilities
+         * @description The capabilities a person may bind an outside tool to.
+         */
+        get: operations["get_api_autonomy_capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/autonomy/emulation": {
         parameters: {
             query?: never;
@@ -1815,12 +1835,15 @@ export interface paths {
         get?: never;
         /**
          * Put Tool Class
-         * @description Set one tool's class. The permission depends on the direction.
+         * @description Set one tool's class, its binding, or both. The permission depends on
+         *     the direction.
          *
          *     Loosening, or classifying an unclassified or withdrawn name, is a person's
-         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
-         *     ``ai_autonomy.stop``, which a service account may hold. A person's
-         *     classification of a remote server's tool pins the definition held now.
+         *     ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
+         *     a capability, or putting back a shipped binding that binds one. Tightening,
+         *     and binding nothing, is ``ai_autonomy.stop``, which a service account may
+         *     hold. A person's classification of a remote server's tool pins the
+         *     definition held now.
          */
         put: operations["put_api_autonomy_tools_name"];
         post?: never;
@@ -9405,6 +9428,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/autonomy/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Capabilities
+         * @description The capabilities a person may bind an outside tool to.
+         */
+        get: operations["get_api_v1_autonomy_capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/autonomy/held/release": {
         parameters: {
             query?: never;
@@ -9500,12 +9543,15 @@ export interface paths {
         get?: never;
         /**
          * Put Tool Class
-         * @description Set one tool's class. The permission depends on the direction.
+         * @description Set one tool's class, its binding, or both. The permission depends on
+         *     the direction.
          *
          *     Loosening, or classifying an unclassified or withdrawn name, is a person's
-         *     ``ai_autonomy.write`` and is refused while stopped. Tightening is
-         *     ``ai_autonomy.stop``, which a service account may hold. A person's
-         *     classification of a remote server's tool pins the definition held now.
+         *     ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
+         *     a capability, or putting back a shipped binding that binds one. Tightening,
+         *     and binding nothing, is ``ai_autonomy.stop``, which a service account may
+         *     hold. A person's classification of a remote server's tool pins the
+         *     definition held now.
          */
         put: operations["put_api_v1_autonomy_tools_name"];
         post?: never;
@@ -11591,6 +11637,11 @@ export interface components {
         AutostartRequest: {
             /** Services */
             services: string[];
+        };
+        /** BindingBody */
+        BindingBody: {
+            /** Capability */
+            capability?: string | null;
         };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
@@ -19586,15 +19637,20 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ToolBinding */
+        ToolBinding: {
+            /** Capability */
+            capability: string;
+            /** Server */
+            server?: string | null;
+        };
         /** ToolClassBody */
         ToolClassBody: {
+            binding?: components["schemas"]["BindingBody"] | null;
             /** Definition Hash */
             definition_hash?: string | null;
-            /**
-             * Effect Class
-             * @enum {string}
-             */
-            effect_class: "read" | "read_unverified" | "reversible" | "irreversible";
+            /** Effect Class */
+            effect_class?: ("read" | "read_unverified" | "reversible" | "irreversible") | null;
         };
         /**
          * ToolClassEntry
@@ -19602,6 +19658,9 @@ export interface components {
          *     withdrawn.
          */
         ToolClassEntry: {
+            binding?: components["schemas"]["ToolBinding"] | null;
+            /** Binding Source */
+            binding_source?: ("file" | "person") | null;
             /** Classified At */
             classified_at?: string | null;
             /** Classified By */
@@ -19621,6 +19680,7 @@ export interface components {
              * @default false
              */
             remote: boolean;
+            shipped_binding?: components["schemas"]["ToolBinding"] | null;
             /**
              * Withdrawn
              * @default false
@@ -23000,6 +23060,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_autonomy_capabilities: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
             /** @description Validation Error */
@@ -37102,6 +37193,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CeilingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_v1_autonomy_capabilities: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
             /** @description Validation Error */

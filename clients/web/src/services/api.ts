@@ -1954,6 +1954,7 @@ export const workflowApi = {
 export type Ceiling = Schema<'CeilingResponse'>
 export type ToolClass = Schema<'ToolClassEntry'>
 export type EffectClass = NonNullable<ToolClass['effect_class']>
+export type ToolBindingBody = Schema<'BindingBody'>
 // What Vigil holds from Entra, Okta and Falcon (#4743): read only, findings.read.
 export type EntityFacts = Schema<'EntityFactsResponse'>
 export const entityFactsApi = {
@@ -1978,6 +1979,10 @@ export const autonomyApi = {
   // definition_hash is the definition the person was shown; a changed one answers 409 (#5300)
   classifyTool: (name: string, effect_class: EffectClass, definition_hash?: string | null) =>
     api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { effect_class, definition_hash }),
+  // The capability a tool answers (#5312): null puts the shipped binding back, {} binds nothing
+  bindTool: (name: string, binding: ToolBindingBody | null) =>
+    api.put<ToolClass>(`/autonomy/tools/${encodeURIComponent(name)}`, { binding }),
+  capabilities: () => api.get<string[]>('/autonomy/capabilities'),
   // tier null follows the fleet; the server decides whether the change is a raise
   setWorkflow: (id: string, body: Schema<'WorkflowAutonomyBody'>) =>
     api.put<Ceiling>(`/autonomy/workflows/${encodeURIComponent(id)}`, body),

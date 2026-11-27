@@ -47,7 +47,7 @@ from core.secrets import get_secret
 from core.storage.models import User
 from core.telemetry import inject_traceparent
 from core.workflows.playbook_resolver import (
-    CAPABILITIES,
+    CAPABILITY_NAMES,
     _bound_capabilities,
     _tool_catalogue,
 )
@@ -391,7 +391,7 @@ async def chat_stream(
             needs = [
                 n
                 for n in agent.recommended_tools
-                if n in CAPABILITIES or n in catalogue
+                if n in CAPABILITY_NAMES or n in catalogue
             ]
             tools = [t["id"] for t in _bound_capabilities(needs, catalogue)]
 
