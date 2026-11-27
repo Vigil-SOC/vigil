@@ -191,8 +191,7 @@ export async function startHunt(
         hypothesis_id: newId("h", 4),
         statement,
         status: "active",
-        // attack_techniques is the vocabulary a citation is gated against, not a
-        // per-hypothesis label: what a hypothesis is about is what its evidence cited.
+        // No per-hypothesis label: what a hypothesis is about is what its evidence cited.
         attack_technique: null,
         provenance: "hunt_spec",
         resolution_reason: null,

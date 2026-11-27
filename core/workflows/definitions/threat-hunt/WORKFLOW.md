@@ -24,62 +24,10 @@ run_kind: hunt
 # benign account needs no stating: the controller seeds it as the base rate on
 # every hunt, because it is the claim to beat rather than an objection to raise.
 hypotheses: []
-# The vocabulary the agent's technique citation is gated against, and nothing else.
-# It labels no hypothesis: pairing this list against `hypotheses` by position made
-# their order load-bearing and asserted a technique nobody had checked. What a
-# belief is about is what its evidence cited.
-#
-# A citation outside this list is refused at schema level, so the list has to span
-# what a hunt over the data_domains below could legitimately find, not just what
-# one scenario expects. Add to it rather than working around it. Empty declares no
-# vocabulary at all, which gates nothing.
-attack_techniques:
-  # Command and control, and the channels it hides in
-  - T1071.001   # Web protocols
-  - T1071.004   # DNS
-  - T1568.002   # Domain generation algorithms
-  - T1573       # Encrypted channel
-  - T1090       # Proxy
-  # Getting data out
-  - T1041       # Exfiltration over C2 channel
-  - T1048       # Exfiltration over alternative protocol
-  - T1567       # Exfiltration over web service
-  - T1537       # Transfer data to cloud account
-  - T1052       # Exfiltration over physical medium (USB)
-  - T1213       # Data from information repositories (SharePoint, Confluence)
-  # Getting in
-  - T1190       # Exploit public-facing application
-  - T1566.001   # Spearphishing attachment
-  - T1566.002   # Spearphishing link
-  - T1133       # External remote services
-  # Credentials and the accounts they open
-  - T1078       # Valid accounts
-  - T1110       # Brute force
-  - T1003       # OS credential dumping
-  - T1550.002   # Pass the hash
-  - T1098       # Account manipulation
-  - T1552.005   # Cloud instance metadata API
-  # Moving through the estate
-  - T1021.001   # RDP
-  - T1021.002   # SMB / admin shares
-  - T1570       # Lateral tool transfer
-  # Running code, and staying
-  - T1059.001   # PowerShell
-  - T1059.003   # Windows command shell
-  - T1053.005   # Scheduled task
-  - T1543.003   # Windows service
-  - T1547.001   # Run keys / startup folder
-  - T1055       # Process injection
-  # Looking around
-  - T1046       # Network service discovery
-  - T1018       # Remote system discovery
-  - T1087       # Account discovery
-  # Covering tracks, and what it was all for
-  - T1562.001   # Disable or modify tools
-  - T1070.004   # File deletion
-  - T1530       # Data from cloud storage
-  - T1486       # Data encrypted for impact
-  - T1496       # Resource hijacking
+# No technique list. The agent may cite any ATT&CK technique or sub-technique; each
+# cited id is checked against the shipped catalogue (core/threat_intel/
+# attack_techniques.json) when evidence is recorded, and one that is not active is
+# not counted.
 # The telemetry vocabulary, and a contract rather than a hint: the agent's
 # source_system is constrained to this list at spec build, and corroboration is
 # counted over distinct entries. A domain missing here is one the agent cannot name,

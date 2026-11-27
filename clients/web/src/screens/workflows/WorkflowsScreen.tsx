@@ -3205,6 +3205,12 @@ function HuntEvidenceTable({ found, total }: { found: HuntEvidence[]; total: num
                     {one.is_gap && one.gap_detail && <span className="muted mono break-all">{one.gap_detail}</span>}
                     {one.salience && !one.is_gap && <span className="muted">{one.salience}</span>}
                     {one.attack_technique && <span className="muted mono">{one.attack_technique}</span>}
+                    {one.technique_refusal && (
+                      <span className="muted break-all">
+                        <span className="mono">{one.technique_refusal.claimed_attack_technique}</span> not counted: {one.technique_refusal.technique_refusal}
+                        {one.technique_refusal.technique_suggestions.length > 0 && <>; try <span className="mono">{one.technique_refusal.technique_suggestions.join(', ')}</span></>}
+                      </span>
+                    )}
                     <Attested record={one} />
                     {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
                   </div>

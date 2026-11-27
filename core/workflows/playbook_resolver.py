@@ -836,7 +836,6 @@ def resolve_hunt(
         "scope": dict(definition.metadata.get("scope") or {}),
         "directives": dict(definition.metadata.get("directives") or {}),
         "hypotheses": hypotheses,
-        "attack_techniques": _strings(definition.metadata.get("attack_techniques")),
         "data_domains": _strings(definition.metadata.get("data_domains")),
         "narrative": definition.body,
     }
