@@ -80,7 +80,7 @@ class IntegrationBridgeService:
             if current and current != _DERIVED_MCP_URLS.get(env_key):
                 continue  # operator-set (or externally changed) value wins
             # Trailing slash: the connector mounts streamable-HTTP at /mcp/, and
-            # /mcp (no slash) 307-redirects — which mcp-remote won't follow.
+            # /mcp (no slash) 307-redirects; the slash saves every request that hop.
             value = str(connector_url).rstrip("/") + "/mcp/"
             _DERIVED_MCP_URLS[env_key] = value
             if current == value:

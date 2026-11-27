@@ -2,9 +2,13 @@
 
 import asyncio
 import logging
+import ssl
 import threading
+import urllib.request
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -31,7 +35,7 @@ from core.integrations._base.config import missing as missing_fields
 from core.integrations._base.config import resolve
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.integrations.elastic.descriptor import ELASTIC, ELASTIC_REQUIRED
-from core.integrations.mcp.child_env import stdio_env
+from core.integrations.mcp.child_env import ca_bundle_env, proxy_env, stdio_env
 from core.integrations.mcp.runner import (
     RunnerError,
     RunnerServer,
@@ -80,16 +84,81 @@ def _missing_crowdstrike() -> List[str]:
     return missing
 
 
+@dataclass(frozen=True)
+class RemoteParams:
+    """A remote catalog entry as resolved for one connect."""
+
+    name: str
+    url: str
+    headers: Dict[str, str]
+
+
+def _remote_http_client(params: RemoteParams):
+    """An HTTP client carrying only the entry's headers.
+
+    ``trust_env`` off, so TLS trust and the proxy come only from what a spawned
+    server would get (``ca_bundle_env`` / ``proxy_env``), never from anything
+    else in this process's environment (``.netrc``, stray SSL variables).
+    """
+    import httpx2
+    from mcp.shared._httpx_utils import (
+        MCP_DEFAULT_SSE_READ_TIMEOUT,
+        MCP_DEFAULT_TIMEOUT,
+    )
+
+    parts = urlsplit(params.url)
+    if parts.scheme != "https" or not parts.hostname:
+        # Never the URL itself: it may carry a credential.
+        raise ValueError(
+            f"{params.name}: url must resolve to an https URL with a host "
+            f"(got scheme {parts.scheme or 'none'!r}"
+            f"{', no host' if not parts.hostname else ''})"
+        )
+    bundle = ca_bundle_env()
+    verify: Any = True
+    if "SSL_CERT_FILE" in bundle:
+        verify = ssl.create_default_context(cafile=bundle["SSL_CERT_FILE"])
+    elif "SSL_CERT_DIR" in bundle:
+        verify = ssl.create_default_context(capath=bundle["SSL_CERT_DIR"])
+    env = proxy_env()
+
+    def var(name: str) -> str:  # lower-case first, as curl and urllib read them
+        return env.get(name.lower()) or env.get(name) or ""
+
+    proxy = var("HTTPS_PROXY") or var("ALL_PROXY")
+    if proxy and urllib.request.proxy_bypass_environment(
+        parts.hostname, {"no": var("NO_PROXY")}
+    ):
+        proxy = None
+    if proxy and "://" not in proxy:
+        proxy = f"http://{proxy}"
+    return httpx2.AsyncClient(
+        headers=params.headers,
+        timeout=httpx2.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+        verify=verify,
+        proxy=proxy,
+        trust_env=False,
+    )
+
+
 @asynccontextmanager
 async def open_transport(
     server_params, runner: Optional[RunnerServer] = None, *, recheck: bool = False
 ):
-    """The (read, write) streams to one server: the runner's, or a stdio child's.
+    """The (read, write) streams to one server: remote, the runner's, or a stdio child's.
 
     In runner mode this PUTs the server first, so a reconnect also restarts one
     that stopped. ``recheck`` refuses a server disabled since the session opened:
     a reconnect must not start what another process turned off.
     """
+    if isinstance(server_params, RemoteParams):
+        from mcp.client.streamable_http import streamable_http_client
+
+        async with _remote_http_client(server_params) as http, streamable_http_client(
+            server_params.url, http_client=http
+        ) as (read, write):
+            yield read, write
+        return
     if runner is None:
         async with stdio_client(server_params) as (read, write):
             yield read, write
@@ -394,7 +463,12 @@ class MCPClient:
             # what stdio_env builds and nothing else from the backend. Built here
             # so a setting changed since the catalog loaded is picked up.
             server_params = None
-            if runner is None:
+            if server.url:
+                url, headers = await asyncio.to_thread(
+                    self.mcp_service.remote_target, server
+                )
+                server_params = RemoteParams(server_name, url, headers)
+            elif runner is None:
                 env = await asyncio.to_thread(
                     stdio_env, server, str(self.mcp_service.project_root)
                 )
@@ -479,7 +553,11 @@ class MCPClient:
             return False
 
     def _runner_for(self, server_name: str) -> Optional[RunnerServer]:
-        """The runner serving ``server_name``, or None for a stdio child."""
+        """The runner serving ``server_name``, or None for a stdio child or a
+        remote entry, which this process reaches itself."""
+        server = self.mcp_service.servers.get(server_name)
+        if server is not None and server.url:
+            return None
         url = runner_url(server_name)
         if url is None:
             return None
@@ -632,7 +710,10 @@ class MCPClient:
                 attributes={
                     "mcp.server.name": server_name,
                     "mcp.transport": (
-                        "streamable-http" if runner_url(server_name) else "stdio"
+                        "streamable-http"
+                        if self.mcp_service.servers[server_name].url
+                        or runner_url(server_name)
+                        else "stdio"
                     ),
                     "vigil.tool.name": tool_name,
                     "vigil.tool.input_size": len(_json.dumps(arguments, default=str)),

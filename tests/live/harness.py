@@ -58,6 +58,10 @@ def transport(client, server: str) -> Optional[str]:
     session = client.persistent_sessions.get(server)
     if session is None:
         return None
+    from core.integrations.mcp.client import RemoteParams
+
+    if isinstance(session.server_params, RemoteParams):
+        return "remote"
     return "runner" if session.runner is not None else "stdio"
 
 

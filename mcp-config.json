@@ -28,14 +28,11 @@
     },
 
     "loglm": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.7", "${LOGLM_MCP_URL}", "--header", "Authorization:$${LOGLM_AUTH_HEADER}"],
-      "env": {
-        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
-        "_header_note": "$$ is a literal $: mcp-remote expands ${LOGLM_AUTH_HEADER} from its own env, keeping the token off the command line, which other server uids in the runner can read.",
-        "LOGLM_MCP_URL": "${LOGLM_MCP_URL}",
-        "LOGLM_AUTH_HEADER": "Bearer ${LOGLM_MCP_TOKEN}"
-      }
+      "url": "${LOGLM_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${LOGLM_MCP_TOKEN}"
+      },
+      "_note": "Remote: the backend and daemon connect over streamable HTTP themselves (https only), no process and no runner. LOGLM_MCP_URL is derived from the LogLM connector URL; LOGLM_MCP_TOKEN is saved from the LogLM card."
     },
 
     "_comment_tier1": "--- Tier 1: Official Vendor MCP Servers (replacing legacy tools/*) ---",
@@ -69,13 +66,11 @@
     },
 
     "splunk": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote@0.16.7", "${SPLUNK_MCP_URL}"],
-      "env": {
-        "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html",
-        "_security_note": "mcp-remote pinned to exactly 0.16.7. CVE-2025-6514 (GHSA-6xpm-ggf7-wc3p, affects >=0.0.5 <0.1.16) is fixed in 0.1.16; keep an exact pin at or above it.",
-        "SPLUNK_MCP_URL": "${SPLUNK_MCP_URL}"
-      }
+      "url": "${SPLUNK_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${SPLUNK_MCP_TOKEN}"
+      },
+      "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed, then set SPLUNK_MCP_URL (https) and SPLUNK_MCP_TOKEN, the bearer it accepts. Remote: the backend and daemon connect over streamable HTTP themselves, no process and no runner. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html"
     },
 
     "splunk-selfhosted": {

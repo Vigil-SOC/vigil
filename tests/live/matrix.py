@@ -38,8 +38,10 @@ def _servers() -> dict[str, dict]:
 
 def connector_version(server: str) -> str:
     """What ``mcp-config.json`` pins for ``server``: an upstream version, ``in-repo``,
-    ``hosted`` (a vendor's remote server, reached through mcp-remote), or ``unpinned``."""
+    ``hosted`` (a vendor's remote server, reached by url or through mcp-remote), or ``unpinned``."""
     entry = _servers()[server]
+    if "url" in entry:
+        return "hosted"
     args = entry.get("args", [])
     if any(arg.startswith("mcp-remote@") for arg in args):  # its pin is the proxy's, not the vendor's
         return "hosted"
