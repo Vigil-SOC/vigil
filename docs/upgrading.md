@@ -275,6 +275,12 @@ The `case.close` audit-trail entry gains `category` and `closed_as`: `model` for
 - **Agent prompts** no longer carry an auto-approve band. An operator's stored agent whose system prompt still names `$auto_approve` renders it as `never`; edit the prompt to drop the line.
 - **`python -m services.daemon.intent --replay`** (and `--since`) is gone, and passing it is a usage error. Without flags the command still prints declared values beside effective ones.
 
+## An approval's confidence is its step score
+
+From this release `confidence` on an approval, in `/api/v1` and in `/mcp`, carries the step score an investigation filed with its containment (`parameters.step_score.value`, a number from 0 to 1), or null (#5278). It used to carry the proposer's own claim, which is still in the `approval_actions.confidence` column but is no longer read or written. Rows filed before the upgrade, and rows no investigation filed (workflow checkpoints, rule deploys, undos, `create_approval_action`), read null. A score that is unknown also reads null; `parameters.step_score.band` tells it apart (`unknown`), and band `none` means every factor was switched off. A client that compared `confidence` with a threshold should treat null as "no score", not 0.
+
+`create_approval_action` no longer takes `confidence`; one a caller still sends is ignored, and the action files. An agent you wrote that asks for it in its prompt can drop that line.
+
 ## One image registry for the Helm chart
 
 From this release `global.imageRegistry` moves every image the chart renders, not only Vigil's own: Postgres, Redis, Bifrost, pgAdmin, Splunk, the `helm test` pod, and the Bitnami and OpenTelemetry subcharts. Its default is now empty. Unset, Vigil's images still come from `ghcr.io/vigil-soc/vigil-<component>` and the others from Docker Hub.

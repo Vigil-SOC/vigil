@@ -89,6 +89,10 @@ ignore_imports =
     ; stopped (#4540). It reads only the stored ceiling; the ceiling reaches
     ; federation through approval_service imports inside other functions.
     core.auth.permissions -> core.response.ceiling
+    ; Hunt grading reads the applied site's telemetry names (#5291) through
+    ; applied_site(), a config row; the import sits inside that lookup, and
+    ; core.site reaches federation only through its report view.
+    core.memory.source_tier -> core.site
 
 [importlinter:contract:tools]
 name = core reaches tools/ at exactly one place, and that place is named here

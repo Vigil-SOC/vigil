@@ -63,6 +63,7 @@ LABEL = {
     "crown_jewels": "name",
     "owners": "team",
     "blind_spots": "what",
+    "telemetry": "name",
 }
 # Lists whose items only a person can state.
 PERSON_ONLY = frozenset({"crown_jewels", "owners", "blind_spots"})

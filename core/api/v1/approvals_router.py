@@ -106,7 +106,13 @@ class PendingActionResponse(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     target: Optional[Any] = None
-    confidence: Optional[float] = None
+    confidence: Optional[float] = Field(
+        default=None,
+        description=(
+            "The step score's value (parameters.step_score.value) on a containment "
+            "an investigation filed; null on a row without one."
+        ),
+    )
     reason: Optional[str] = None
     evidence: Optional[Any] = None
     created_at: Optional[str] = None
@@ -206,6 +212,14 @@ class NeedsYouItem(BaseModel):
         description=(
             "An isolation or account disable: the vendor IDs its target resolved "
             "to (candidates), or which tool is missing (missing)."
+        ),
+    )
+    step_score: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "A containment an investigation filed: its step score's value, band "
+            "('none' when no factor is in force, 'unknown' when value is null), "
+            "lowest factor, the line on what would raise it, and the factors."
         ),
     )
     restricted: bool = Field(

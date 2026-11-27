@@ -23,7 +23,7 @@ it is reading.
 
 import logging
 from enum import Enum
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 from core.integrations._base.descriptor import iter_descriptors
 
@@ -137,6 +137,13 @@ _HUNT_TIERS: Dict[str, SourceTier] = {
     "cloud_audit": SourceTier.TELEMETRY,
     "identity": SourceTier.TELEMETRY,
     "endpoint_process": SourceTier.TELEMETRY,
+    # An AI agent's own activity (#5291): its trace spans, the LLM/MCP gateway
+    # it talks through, and the sandbox it executes in. An agent sandbox
+    # observes our estate; a detonation sandbox (`_KNOWN_DEFAULTED`) observes an
+    # artifact, and stays a feed.
+    "agent_spans": SourceTier.TELEMETRY,
+    "llm_gateway": SourceTier.TELEMETRY,
+    "agent_sandbox": SourceTier.TELEMETRY,
     # The collapse already decided this source could not be vouched for, so it
     # takes the default rather than the tier of the domains around it.
     "undeclared": SourceTier.FEED,
@@ -244,6 +251,23 @@ _TIERS_BY_KIND: Dict[InvestigationKind, Dict[str, SourceTier]] = {
 }
 
 
+def _site_telemetry() -> Set[str]:
+    """The telemetry names the applied site declares (#5291); empty on any failure."""
+    try:
+        from core.site import applied_site, declared  # lazy: site imports this module
+
+        row = applied_site()
+        if not declared(row):
+            return set()
+        return {
+            str(t.get("name", "")).lower()
+            for t in (row.get("items") or {}).get("telemetry") or []
+        }
+    except Exception as exc:  # noqa: BLE001 - an unread site grades as the default
+        logger.debug("Source Tier: site telemetry not read: %s", exc)
+        return set()
+
+
 def resolve_source_tier(
     source_system: str, investigation_kind: InvestigationKind
 ) -> SourceTier:
@@ -268,6 +292,31 @@ def resolve_source_tier(
         )
         return DEFAULT_TIER
 
+    tier = shipped_tier(name, investigation_kind)
+    if tier is None and investigation_kind is InvestigationKind.HUNT:
+        # After every shipped map, so a site can add telemetry but never regrade.
+        if name in _site_telemetry():
+            return SourceTier.TELEMETRY
+    if tier is None:
+        logger.warning(
+            "Source Tier: unknown source %r on a %s, defaulting to %s",
+            source_system,
+            investigation_kind.value,
+            DEFAULT_TIER.value,
+        )
+        return DEFAULT_TIER
+
+    return tier
+
+
+def shipped_tier(
+    name: str, investigation_kind: InvestigationKind
+) -> Optional[SourceTier]:
+    """The tier the shipped maps give a lower-cased name; ``None`` when none does.
+
+    No site read and no log, so the site parser can ask it of a name it is
+    about to accept (#5291).
+    """
     if name in _NOT_EVIDENCE:
         return SourceTier.NOT_EVIDENCE
 
@@ -280,14 +329,4 @@ def resolve_source_tier(
     ):
         return DEFAULT_TIER
 
-    tier = _TIERS_BY_KIND[investigation_kind].get(name)
-    if tier is None:
-        logger.warning(
-            "Source Tier: unknown source %r on a %s, defaulting to %s",
-            source_system,
-            investigation_kind.value,
-            DEFAULT_TIER.value,
-        )
-        return DEFAULT_TIER
-
-    return tier
+    return _TIERS_BY_KIND[investigation_kind].get(name)
