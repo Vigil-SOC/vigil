@@ -2115,9 +2115,12 @@ class Orchestrator:
             # as the ceilings the budget seam refuses the next call at.
             "overrides": {
                 "budgets": {
-                    "max_calls": self.config.max_iterations_per_agent,
-                    # The run's own budgets, set from the live settings at
-                    # creation; a record without them reads the live ones.
+                    # The run's own budgets, set at creation; a record without
+                    # them reads today's. The limits check reads the same record.
+                    "max_calls": (
+                        inv_record.get("max_iterations")
+                        or self.config.max_iterations_per_agent
+                    ),
                     "max_cost_usd": (
                         inv_record.get("max_cost_usd") or self._max_cost()
                     ),
