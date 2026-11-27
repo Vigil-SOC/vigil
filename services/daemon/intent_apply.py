@@ -19,7 +19,8 @@ until a commit changes that key. A missing directory keeps the last applied
 revision with state ``degraded``.
 
 The same poll applies ``<dir>/site/*.md`` (:mod:`core.site`) to its own
-``site.applied`` row, in its own ``try``, with or without INTENT.md.
+``site.applied`` row, in its own ``try``, with or without INTENT.md, and
+``<dir>/sources/*.md`` (:mod:`core.sources`) to ``sources.applied`` in a third.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from core.response.ceiling import (
     Ceiling,
     CeilingRefusal,
     _locked_update,
+    delete_tool_classes,
     environment_locks_act,
     investigation_model,
     workflow_entry,
@@ -66,6 +68,15 @@ from core.site import (
     SiteRejected,
     applied_site,
     parse_site,
+)
+from core.sources import NOTHING_DECLARED as SOURCES_NOTHING
+from core.sources import (
+    SOURCES_APPLIED_KEY,
+    SOURCES_DIR_NAME,
+    SourceRejected,
+    is_accepted,
+    parse_sources,
+    update_applied,
 )
 from core.storage.config_service import get_config_service
 from core.time import utcnow
@@ -513,15 +524,17 @@ def _write_site(row: Dict[str, Any], reason: str) -> None:
     applied_site(fresh=True)
 
 
-def _site_snapshot(directory: Path) -> tuple[str, str, List[tuple[str, str]]]:
-    """``(hash, revision, [(site/<name>, text)])`` in name order.
+def _site_snapshot(
+    directory: Path, sub: str = SITE_DIR_NAME
+) -> tuple[str, str, List[tuple[str, str]]]:
+    """``(hash, revision, [(<sub>/<name>, text)])`` in name order.
 
     Raises ``OSError`` when the directory cannot be read. A readable directory
-    with no ``site/`` is an empty declaration. INTENT.md plays no part.
+    with no ``<sub>/`` is an empty declaration. INTENT.md plays no part.
     """
     next(directory.iterdir(), None)  # listable, not just present
     marker, revision = read_revision(directory)
-    site = directory / SITE_DIR_NAME
+    site = directory / sub
     paths = (
         sorted(p for p in site.iterdir() if p.suffix == ".md" and p.is_file())
         if site.is_dir()
@@ -531,7 +544,7 @@ def _site_snapshot(directory: Path) -> tuple[str, str, List[tuple[str, str]]]:
     files: List[tuple[str, str]] = []
     for path in paths:
         content = path.read_bytes()
-        name = f"{SITE_DIR_NAME}/{path.name}"
+        name = f"{sub}/{path.name}"
         digest.update(name.encode() + b"\0" + content + b"\0")
         files.append((name, content.decode("utf-8-sig", "replace")))
     digest.update(b"\0" + marker)
@@ -627,6 +640,126 @@ def clear_site() -> None:
         )
 
 
+def sources_apply_once(directory: Path) -> None:
+    """One poll of ``sources/`` (#5302), to ``sources.applied`` alone.
+
+    Every write goes through :func:`core.sources.update_applied`, under the row
+    lock, carrying ``accepted`` forward from the row as it is then, so a poll
+    never drops a person's accept. A refused or unreadable revision keeps the
+    last entries and their acceptances. A removed source's class rows go at
+    once, each with a trail entry. An unchanged hash writes nothing.
+    """
+    row: Dict[str, Any] = (
+        get_config_service(ACTOR).read_system_config(SOURCES_APPLIED_KEY) or {}
+    )
+    try:
+        digest, revision, files = _site_snapshot(directory, SOURCES_DIR_NAME)
+    except OSError as exc:
+        reason = f"{directory} not readable ({exc.strerror or exc}); kept sources revision {row.get('revision') or 'none'}"
+        if row.get("state") != "degraded" or row.get("reason") != reason:
+            logger.warning("sources: %s", reason)
+            update_applied(
+                lambda cur, _s: (
+                    {
+                        **cur,
+                        "directory": str(directory),
+                        "state": "degraded",
+                        "reason": reason,
+                    },
+                    reason,
+                ),
+                ACTOR,
+            )
+        return
+
+    if digest == row.get("hash") and row.get("directory") == str(directory):
+        if row.get("state") == "degraded":
+            rejected = row.get("rejected")
+            reason = (
+                rejected["reason"]
+                if rejected
+                else f"sources revision {row.get('revision')} applied"
+            )
+            state = "rejected" if rejected else "ok"
+            update_applied(
+                lambda cur, _s: ({**cur, "state": state, "reason": reason}, reason),
+                ACTOR,
+            )
+        return
+
+    try:
+        sources = parse_sources(files)
+    except SourceRejected as exc:
+        reason = f"sources revision {revision} rejected: {exc}"
+        logger.warning("sources: %s", reason)
+        rejected = {
+            "revision": revision,
+            "file": exc.file,
+            "line": exc.line,
+            "reason": reason,
+        }
+        update_applied(
+            lambda cur, _s: (
+                {
+                    **cur,
+                    "directory": str(directory),
+                    "hash": digest,
+                    "state": "rejected",
+                    "reason": reason,
+                    "rejected": rejected,
+                },
+                reason,
+            ),
+            ACTOR,
+        )
+        return
+
+    def change(current: Dict[str, Any], session) -> tuple[Dict[str, Any], str]:
+        before = current.get("sources") or {}
+        removed = sorted(set(before) - set(sources))
+        cleared = [
+            tool
+            for name in removed
+            for tool in delete_tool_classes(session, f"{name}_", ACTOR)
+        ]
+        accepted = {
+            n: a for n, a in (current.get("accepted") or {}).items() if n in sources
+        }
+        updated = {
+            "directory": str(directory),
+            "revision": revision,
+            "hash": digest,
+            "state": "ok",
+            "applied_at": utcnow().isoformat(),
+            "sources": sources,
+            "accepted": accepted,
+            "rejected": None,
+        }
+        pending = sorted(n for n in sources if not is_accepted(n, updated))
+        reason = f"sources revision {revision} applied ({len(sources)} source(s)"
+        reason += f", {len(pending)} pending: {', '.join(pending)})" if pending else ")"
+        if removed:
+            reason += f"; removed {', '.join(removed)} and {len(cleared)} class row(s)"
+        return {**updated, "reason": reason}, reason
+
+    written = update_applied(change, ACTOR)
+    logger.info("sources: %s", written.get("reason"))
+
+
+def clear_sources() -> None:
+    """With no declared directory: clear ``sources.applied`` once, at daemon start."""
+    row = get_config_service(ACTOR).read_system_config(SOURCES_APPLIED_KEY)
+    if row and row.get("directory"):
+        logger.info("sources: VIGIL_INTENT_DIR is unset; clearing declared sources")
+        update_applied(
+            lambda _c, _s: (
+                {"directory": None, "state": "none", "reason": SOURCES_NOTHING},
+                SOURCES_NOTHING,
+            ),
+            ACTOR,
+        )
+
+
 async def run_applier(directory: Path, shutdown_event: asyncio.Event) -> None:
     """Poll until shutdown. A failed poll is logged and retried next time."""
     logger.info("intent: applying %s every %ds", directory, POLL_SECONDS)
@@ -639,6 +772,10 @@ async def run_applier(directory: Path, shutdown_event: asyncio.Event) -> None:
             await asyncio.to_thread(site_apply_once, directory)
         except Exception:  # noqa: BLE001 - never stops the daemon
             logger.exception("site: poll of %s failed; retrying", directory)
+        try:  # and sources/ in a third, after site/
+            await asyncio.to_thread(sources_apply_once, directory)
+        except Exception:  # noqa: BLE001 - never stops the daemon
+            logger.exception("sources: poll of %s failed; retrying", directory)
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=POLL_SECONDS)
         except asyncio.TimeoutError:

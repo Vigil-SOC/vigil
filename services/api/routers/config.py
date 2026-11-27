@@ -18,7 +18,7 @@ from core.api.v1.findings_router import data_service as findings_data_service
 from core.audit.feed import INTEGRATION_ID as AUDIT_FEED_INTEGRATION_ID
 from core.auth import tool_principal
 from core.auth.current_user import is_machine_request
-from core.auth.permissions import permission_gate
+from core.auth.permissions import deny_unless, permission_gate
 from core.config import (
     _load_json_config,
     get_settings,
@@ -72,6 +72,7 @@ from core.skills.skill_library import (
     operator_skills_root,
     skill_roots,
 )
+from core.sources import SourcesRefused, accept_sources, applied_sources, sources_view
 from core.storage.config_service import get_config_service, write_config_audit
 from core.storage.models import (
     AIModelConfig,
@@ -1164,6 +1165,21 @@ def set_integrations_config(
     """
     config_service = _for_user(current_user)
 
+    # A declared source keeps only its declared credentials (#5302): anything
+    # else would land in plaintext, and a source not accepted stores nothing.
+    for integration_id in list(config.integrations):
+        if integration_id.startswith("source-"):
+            declared = secret_fields_for(integration_id)
+            kept = {
+                f: v
+                for f, v in (config.integrations[integration_id] or {}).items()
+                if f in declared
+            }
+            if kept:
+                config.integrations[integration_id] = kept
+            else:
+                del config.integrations[integration_id]
+
     # A stored credential is sent to whatever destination is saved, so moving
     # one requires the caller to supply the credential again. Checked for every
     # integration before anything is written.
@@ -2221,6 +2237,35 @@ async def refresh_site_proposal(
     return JSONResponse(outcome, status_code=code)
 
 
+def refuse_unreviewed(
+    current_user: User,
+    read: Any,
+    revision: str,
+    digest: Optional[str],
+    *,
+    machine: str,
+    then: Any = None,
+) -> Dict[str, Any]:
+    """The checks every declared-directory accept makes: a person, not a machine
+    (403), then ``then`` (the route's own gate), then the applied revision and
+    hash are the ones the person reviewed (409). Returns what ``read`` read."""
+    if is_machine_request(current_user):
+        raise HTTPException(status_code=403, detail=machine)
+    if then is not None:
+        then()
+    applied = read()
+    if not applied.get("directory"):
+        raise HTTPException(status_code=409, detail="No declared directory is applied")
+    if applied.get("revision") != revision or (
+        digest is not None and digest != applied.get("hash")
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"The applied revision is now {applied.get('revision')}; review it again",
+        )
+    return applied
+
+
 class IntentAcceptBody(BaseModel):
     """The revision (and hash) the person reviewed; a newer one is a 409."""
 
@@ -2240,29 +2285,25 @@ def accept_intent_pending(
     Each key's declared value goes into its store under the person's name,
     with the revision on the audit entry. No timer, and not over /mcp.
     """
-    if is_machine_request(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="A service account or API token cannot raise autonomy",
-        )
-    try:
-        stopped = read_ceiling().stopped
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503, detail="Could not read the autonomy ceiling"
-        ) from exc
-    if stopped:
-        raise HTTPException(status_code=409, detail="Stopped: resume first")
-    report = intent_body()
-    if not report["directory"]:
-        raise HTTPException(status_code=409, detail="No declared directory is applied")
-    if report["revision"] != body.revision or (
-        body.hash is not None and body.hash != report["hash"]
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=f"The applied revision is now {report['revision']}; review it again",
-        )
+
+    def not_stopped() -> None:
+        try:
+            stopped = read_ceiling().stopped
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail="Could not read the autonomy ceiling"
+            ) from exc
+        if stopped:
+            raise HTTPException(status_code=409, detail="Stopped: resume first")
+
+    report = refuse_unreviewed(
+        current_user,
+        intent_body,
+        body.revision,
+        body.hash,
+        machine="A service account or API token cannot raise autonomy",
+        then=not_stopped,
+    )
     if not report["pending"]:
         raise HTTPException(status_code=409, detail="Nothing is pending")
     who = current_user.username or str(current_user.user_id)
@@ -2277,6 +2318,47 @@ def accept_intent_pending(
             status_code=500, detail="The pending keys were not all stored"
         ) from exc
     return intent_body()
+
+
+@router.get("/sources", dependencies=_INTEGRATIONS_READ)
+def get_sources() -> Dict[str, Any]:
+    """Declared remote MCP sources (#5302): each one's URL, credential fields
+    and where each is set, accepted or pending and what a pending change
+    alters, and the rejection if any. Never a header or credential value."""
+    return sources_view()
+
+
+class SourcesAcceptBody(BaseModel):
+    """The revision, hash and sources the person reviewed; a mismatch is a 409."""
+
+    revision: str
+    hash: str
+    sources: List[str] = Field(min_length=1)
+
+
+@router.post("/sources/accept")
+def accept_sources_pending(
+    body: SourcesAcceptBody,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """Accept new or changed declared sources. A person's act, allowed while
+    stopped: it widens reach, not autonomy; each new tool still asks first."""
+    refuse_unreviewed(
+        current_user,
+        lambda: applied_sources(fresh=True),
+        body.revision,
+        body.hash,
+        machine="A service account or API token cannot accept a declared source",
+        then=lambda: deny_unless(current_user.user_id, "integrations.install"),
+    )
+    who = current_user.username or str(current_user.user_id)
+    try:
+        accept_sources(
+            body.sources, body.revision, body.hash, str(current_user.user_id), who
+        )
+    except SourcesRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return sources_view()
 
 
 def refuse_managed_widening(values: Dict[str, Any]) -> None:
