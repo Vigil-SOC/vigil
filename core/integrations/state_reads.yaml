@@ -1,0 +1,24 @@
+# Lookups that read whether an act already holds on a target, on a server that
+# does not carry the act itself (core/response/containment.py, in_force). Read
+# only: nothing here is ever called to act. The state reading is a carrier's
+# (docs/acts.md); template fills the lookup argument, the target quoted as FQL.
+
+# falcon-mcp has no containment tool; its host search reports each host's status.
+# It answers {"results": [hosts], "pagination": ...}.
+crowdstrike:
+  falcon_search_hosts:
+    reads: isolate_host
+    lookup_arg: filter
+    template: "hostname:'{target}'"
+    address_template: "local_ip:'{target}'"
+    rows: results
+    name: hostname
+    state:
+      read:
+        - field: status
+          map:
+            contained: contained
+            containment_pending: requested
+            lift_containment_pending: requested
+            normal: not_contained
+      default: not_contained

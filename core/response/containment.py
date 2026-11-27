@@ -104,7 +104,8 @@ def _lookup_done(action: PendingAction) -> str:
 
 
 async def _dial_vendors() -> None:
-    """Connect the containment servers this process has not: a server enabled in
+    """Connect the containment servers this process has not, and the servers of
+    the read-only state lookups: a server enabled in
     another API worker is otherwise not seen here until a restart.
     ``connect_to_server`` skips one that is disabled or has no credentials."""
     from core.integrations.mcp.client import process_mcp_client
@@ -114,7 +115,9 @@ async def _dial_vendors() -> None:
         return
     connected = getattr(client, "tools_cache", None) or {}
     now = time.monotonic()
-    for vendor in {e["server"] for e in bindings.carriers()}:
+    servers = {e["server"] for e in bindings.carriers()}
+    servers |= {e["server"] for e in bindings.state_reads()}
+    for vendor in servers:
         if vendor in connected or now - _dialled.get(vendor, -_DIAL_SECONDS) < (
             _DIAL_SECONDS
         ):
@@ -147,8 +150,12 @@ async def _call(
     args: Dict[str, Any],
     action_id: Optional[str] = None,
     timeout_ms: int = _READ_TIMEOUT_MS,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """(the tool's answer, None) or (None, why it failed), through ``_run``."""
+    every_row: bool = False,
+) -> Tuple[Any, Optional[str]]:
+    """(the tool's answer, None) or (None, why it failed), through ``_run``. The
+    answer is its first row, or with ``every_row`` the list of its rows. An MCP
+    tool's envelope (``{"results": [...]}``) may arrive as one of those rows, or
+    already unwrapped to one row per record (``_state_records`` reads both)."""
     from core.agents.attribution import TrailWriteError
     from core.agents.mcp_tools import MCPFailure, row_error
     from core.agents.tools_router import (
@@ -185,6 +192,8 @@ async def _call(
     error = _errored(result) or row_error(rows)
     if error:
         return None, error
+    if every_row:
+        return [r for r in rows if isinstance(r, dict)], None
     answer = next((r for r in rows if isinstance(r, dict)), {})
     return answer, None
 
@@ -355,6 +364,18 @@ async def resolve(action: PendingAction, registry) -> PendingAction:
     return updated or action
 
 
+def _state_records(
+    entry: Dict[str, Any], answer: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """The records in one row of a lookup's answer. An MCP answer arrives as its
+    envelope (``{"results": [...]}``, named by ``rows``) or, where the tool layer
+    has already unwrapped it, as one record per row: both read the same."""
+    listed = answer.get(entry["rows"]) if entry["rows"] else None
+    if isinstance(listed, list):
+        return [one for one in listed if isinstance(one, dict)]
+    return [] if answer.get("found") is False else [answer]
+
+
 def _stated(reading: Dict[str, Any], record: Dict[str, Any]) -> bool:
     """Whether ``record`` carries any field its state reading reads: a record that
     carries none reads as the reading's default, which says nothing about it."""
@@ -367,6 +388,25 @@ def _stated(reading: Dict[str, Any], record: Dict[str, Any]) -> bool:
     return False
 
 
+def _state_lookups(action_type: str, registry) -> List[Dict[str, Any]]:
+    """The connected lookups that read this act's state: each carrier's that has
+    one, then each read-only state lookup (``bindings.state_reads``) on a server
+    that carries none of this act."""
+    names = set(registry.get_tool_names())
+    carried = [
+        e for e in _offered(action_type, registry) if e["lookup"] and e.get("state")
+    ]
+    servers = {e["server"] for e in bindings.carriers(action_type)}
+    reads = [
+        e
+        for e in bindings.state_reads()
+        if e["act"] == action_type
+        and e["server"] not in servers
+        and _flat(e, "lookup") in names
+    ]
+    return carried + reads
+
+
 async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str, Any]]:
     """What the connected vendors' lookups say about ``target`` for this act,
     done outside Vigil or in it: ``holds`` True when every record found reads as
@@ -374,22 +414,25 @@ async def in_force(action_type: str, target: str, registry) -> Optional[Dict[str
     when every record states its state and one is not that, with the vendor,
     the name it found and the state word of the first record that decided it.
 
-    None when nothing can be told: no connected carrier has a lookup that reads
-    state (a keyless one has none), a lookup failed or found nothing, or a
-    record carries none of the fields its state is read from."""
+    None when nothing can be told: no connected lookup reads this act's state (a
+    carrier's, or a read-only one in ``state_reads.yaml``; a keyless carrier has
+    none), a lookup failed or found nothing, or a record carries none of the
+    fields its state is read from."""
     done = DONE_STATE.get(action_type)
     if done is None or action_type not in CONTAINMENT_TYPES:
         return None
     seen: List[Dict[str, Any]] = []
-    for entry in _offered(action_type, registry):
-        if not entry["lookup"] or not entry.get("state"):
-            continue
-        answer, error = await _call(
-            registry, _flat(entry, "lookup"), bindings.lookup_args(entry, target)
+    for entry in _state_lookups(action_type, registry):
+        answers, error = await _call(
+            registry,
+            _flat(entry, "lookup"),
+            bindings.lookup_args(entry, target),
+            every_row=True,
         )
         if error:
             return None
-        for record in _records(entry, answer or {}):
+        records = [one for answer in answers for one in _state_records(entry, answer)]
+        for record in records:
             if not _stated(entry["state"], record):
                 return None
             seen.append(
