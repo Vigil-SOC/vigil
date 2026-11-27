@@ -4,6 +4,10 @@ Shipped bindings come from ``bindings.yaml`` beside this file; a person's,
 stored on the tool's class row (``tool_effect_classes.binding``), replaces the
 shipped one for that tool. The resolver binds every bound tool a deployment
 carries, with no preference order.
+
+A tool bound to ``emulation`` is an emulator (#5315): stored as
+``{"emulation": true, "server": ...}``, held to the host list in
+``core/response/emulation.py``. A tool has one binding, emulation or a capability.
 """
 
 from __future__ import annotations
@@ -24,8 +28,7 @@ SHIPPED_FILE = Path(__file__).with_name("bindings.yaml")
 VIGIL = "vigil"
 EMULATION = "emulation"
 
-# Every capability a need may name. Emulation names no tool: a person's emulator
-# mark is its binding (core/response/emulation.py), so it is never bound here.
+# Every capability a need may name, and a person may bind.
 CAPABILITY_NAMES: Tuple[str, ...] = (
     "telemetry_search",
     "indicator_lookup",
@@ -46,7 +49,7 @@ CAPABILITY_NAMES: Tuple[str, ...] = (
     "topology_legend",
     EMULATION,
 )
-BINDABLE: Tuple[str, ...] = tuple(c for c in CAPABILITY_NAMES if c != EMULATION)
+BINDABLE: Tuple[str, ...] = CAPABILITY_NAMES
 
 Source = Literal["file", "person"]
 
@@ -72,6 +75,13 @@ def validate(capability: Any) -> str:
             f"{capability!r} is not a capability; one of {', '.join(BINDABLE)}"
         )
     return capability
+
+
+def stored_form(capability: str, server: Optional[str]) -> dict:
+    """What a class row stores for a binding to ``capability``."""
+    if capability == EMULATION:
+        return {"emulation": True, "server": server}
+    return {"capability": capability, "server": server}
 
 
 def catalogue_name(server: str, tool: str) -> str:
@@ -146,9 +156,12 @@ def merged(rows: Optional[Dict[str, dict]] = None) -> Dict[str, Binding]:
 
 def from_row(name: str, raw: Optional[dict]) -> Optional[Binding]:
     """A stored row's binding; None for ``{}`` or a capability no longer known."""
-    if not raw or raw.get("capability") not in BINDABLE:
+    if not raw:
         return None
-    return Binding(name, raw.get("server") or None, raw["capability"], "person")
+    capability = EMULATION if raw.get("emulation") is True else raw.get("capability")
+    if capability not in BINDABLE:
+        return None
+    return Binding(name, raw.get("server") or None, capability, "person")
 
 
 def tools_for(capability: str) -> List[Binding]:
@@ -159,3 +172,12 @@ def tools_for(capability: str) -> List[Binding]:
 def servers_for(capability: str) -> List[str]:
     """Each outside server some tool of which answers ``capability``."""
     return list(dict.fromkeys(b.server for b in tools_for(capability) if b.server))
+
+
+def emulators() -> frozenset:
+    """Every tool bound as an emulator now, by catalogue name."""
+    return frozenset(b.tool for b in tools_for(EMULATION))
+
+
+def is_emulator(tool: str) -> bool:
+    return tool in emulators()

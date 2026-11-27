@@ -581,6 +581,17 @@
               }
             ],
             "title": "Capability"
+          },
+          "emulation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emulation"
           }
         },
         "title": "BindingBody",
@@ -5765,6 +5776,11 @@
           "capability": {
             "title": "Capability",
             "type": "string"
+          },
+          "emulation": {
+            "default": false,
+            "title": "Emulation",
+            "type": "boolean"
           },
           "server": {
             "anyOf": [

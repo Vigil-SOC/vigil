@@ -1,13 +1,19 @@
 # Emulators
 
 An emulator is an outside tool that runs one ATT&CK technique on one host and
-reports what it ran. A tool is an emulator because a person marked it under
-**Settings → Limits & autonomy → Emulators**, never because of what it calls
-itself. Every marked tool runs only on the hosts listed there; Vigil refuses a
-call naming any other host before it leaves, and the refusal names the listed
-hosts.
+reports what it ran. A tool is an emulator because it is bound as one, never
+because of what it calls itself: a person binds a tool as an emulator on its
+row under **Settings → Limits & autonomy → Outside tools** (the select beside
+its class, set to Emulator), as they bind any tool to a capability. Atomic Red
+Team's `atomic_red_team_execute` ships bound as an emulator
+(`core/integrations/bindings.yaml`); a person may unbind it there too.
 
-The MITRE analyst holds every marked tool, and Vigil scores what it ran in the
+The hosts every emulator may run on are listed under **Settings → Limits &
+autonomy → Emulators**. Vigil refuses a call naming any other host before it
+leaves, and the refusal names the listed hosts; with no host listed, every call
+is refused.
+
+The MITRE analyst holds every tool bound as an emulator, and Vigil scores what it ran in the
 run's coverage report (`analyze_coverage` with the run's `run_id`). This page is
 the shape a tool answers in for that to work.
 

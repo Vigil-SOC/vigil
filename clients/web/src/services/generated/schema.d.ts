@@ -1677,12 +1677,12 @@ export interface paths {
         get: operations["get_api_autonomy_emulation"];
         /**
          * Put Emulation
-         * @description Mark or unmark emulators, and edit the hosts they may run on.
+         * @description Edit the hosts emulators may run on.
          *
-         *     Adding a mark or a host lets an emulator act where it could not: a
-         *     person's ``ai_autonomy.write``, refused while stopped, as loosening a
-         *     tool's class is. Removing either is ``ai_autonomy.stop``. One trail entry
-         *     names who changed what.
+         *     Adding a host lets an emulator act where it could not: a person's
+         *     ``ai_autonomy.write``, refused while stopped, as loosening a tool's class
+         *     is. Removing one is ``ai_autonomy.stop``. One trail entry names who
+         *     changed what.
          */
         put: operations["put_api_autonomy_emulation"];
         post?: never;
@@ -11647,6 +11647,8 @@ export interface components {
         BindingBody: {
             /** Capability */
             capability?: string | null;
+            /** Emulation */
+            emulation?: boolean | null;
         };
         /** Body_attach_case_document_api_cases__case_id__attachments_post */
         Body_attach_case_document_api_cases__case_id__attachments_post: {
@@ -14271,20 +14273,21 @@ export interface components {
         };
         /**
          * EmulationBody
-         * @description The marked tools and the host list, each replacing what is stored.
+         * @description The host list, replacing what is stored. A host is one hostname: no
+         *     whitespace and no leading ``-``.
          *
-         *     An omitted field stays as it is. A host is one hostname: no whitespace and
-         *     no leading ``-``.
+         *     ``tools`` is read and ignored (#5315): a tool is an emulator by its binding,
+         *     set on its classify row (``PUT /api/v1/autonomy/tools/{name}``).
          */
         EmulationBody: {
             /** Hosts */
             hosts?: string[] | null;
             /** Tools */
-            tools?: string[] | null;
+            tools?: unknown[] | null;
         };
         /**
          * EmulationResponse
-         * @description Which outside tools are emulators, the hosts they may run on, and the defaults.
+         * @description The hosts emulators may run on, and the defaults.
          */
         EmulationResponse: {
             /** Defaults */
@@ -14293,8 +14296,6 @@ export interface components {
             };
             /** Hosts */
             hosts: string[];
-            /** Tools */
-            tools: string[];
         };
         /**
          * EndSignInsRequest
@@ -19646,6 +19647,11 @@ export interface components {
         ToolBinding: {
             /** Capability */
             capability: string;
+            /**
+             * Emulation
+             * @default false
+             */
+            emulation: boolean;
             /** Server */
             server?: string | null;
         };

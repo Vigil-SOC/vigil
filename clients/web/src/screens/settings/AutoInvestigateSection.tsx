@@ -96,16 +96,20 @@ const CLASS_TAG: Record<EffectClass, string> = {
 // The capability select's values beside the capability names (#5312)
 const BIND_NOTHING = ''
 const BIND_SHIPPED = ':shipped'
+// A tool bound to emulation is an emulator (#5315), held to the host list under Emulators
+const EMULATION = 'emulation'
+const capLabel = (c: string) => (c === EMULATION ? 'Emulator' : c)
+const answers = (c: string) => (c === EMULATION ? 'Runs as an emulator' : `Answers ${c}`)
 const bindValue = (t: ToolClass) =>
   t.binding_source === 'file' ? BIND_SHIPPED : (t.binding?.capability ?? BIND_NOTHING)
 // What the tool answers, and whose binding that is
 const bindingNote = (t: ToolClass) => {
   const shipped = t.shipped_binding?.capability
-  if (t.binding_source === 'file') return `Answers ${shipped}, as shipped`
+  if (t.binding_source === 'file' && shipped) return `${answers(shipped)}, as shipped`
   if (t.binding_source !== 'person') return null
-  const was = shipped ? ` (shipped: ${shipped})` : ''
+  const was = shipped ? ` (shipped: ${capLabel(shipped)})` : ''
   // set in Vigil: a person binds; a person or a machine may unbind
-  return t.binding ? `Answers ${t.binding.capability}, bound here${was}` : `Answers nothing, unbound here${was}`
+  return t.binding ? `${answers(t.binding.capability)}, bound here${was}` : `Answers nothing, unbound here${was}`
 }
 
 // A tool as its server lists it (#5300): the description, the input schema collapsed.
@@ -452,10 +456,15 @@ const pendingCopy = (pending: PendingSave): { title: string; body: string } => {
             title: `Put ${pending.name} back on its shipped binding?`,
             body: 'Hunts, investigations and root-cause traces that need its shipped capability hold it again from their next run.',
           }
-        : {
-            title: `Bind ${pending.name} to ${pending.capability}?`,
-            body: `The next hunt, investigation or root-cause trace that needs ${pending.capability} holds it and may call it.`,
-          }
+        : pending.capability === EMULATION
+          ? {
+              title: `Bind ${pending.name} as an emulator?`,
+              body: 'Vigil will refuse its calls on any host not listed under Emulators, send it the list, and keep it out of chat. The red team loop holds it from its next run.',
+            }
+          : {
+              title: `Bind ${pending.name} to ${pending.capability}?`,
+              body: `The next hunt, investigation or root-cause trace that needs ${pending.capability} holds it and may call it.`,
+            }
     case 'tool':
       return pending.to === 'read'
         ? {
@@ -937,9 +946,11 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
         'ok',
         capability == null
           ? `${name} is back on its shipped binding.`
-          : capability
-            ? `${name} now answers ${capability}.`
-            : `${name} answers no capability.`,
+          : capability === EMULATION
+            ? `${name} is now an emulator.`
+            : capability
+              ? `${name} now answers ${capability}.`
+              : `${name} answers no capability.`,
       )
     } catch (err) {
       notify('err', errorText(err, 'Failed to save the tool’s capability.'))
@@ -953,10 +964,10 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
     const shipped = t.shipped_binding?.capability
     const mayBind = canRaise && !machine && !stopped
     const options = [
-      ...(shipped ? [{ value: BIND_SHIPPED, label: `${shipped} · shipped` }] : []),
+      ...(shipped ? [{ value: BIND_SHIPPED, label: `${capLabel(shipped)} · shipped` }] : []),
       { value: BIND_NOTHING, label: 'Nothing' },
       // the shipped capability once, unless a person bound it again by name
-      ...outsideTools.capabilities.filter((c) => c !== shipped || c === current).map((c) => ({ value: c, label: c })),
+      ...outsideTools.capabilities.filter((c) => c !== shipped || c === current).map((c) => ({ value: c, label: capLabel(c) })),
     ].filter((o) => o.value === current || (o.value === BIND_NOTHING ? canLower : mayBind))
     // the server binds only a classified tool
     if (!canLower || t.effect_class == null || options.length < 2) return null
@@ -986,7 +997,7 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
           {t.definition && <ToolDefinition label={t.withdrawn ? 'Now' : undefined} def={t.definition} />}
         </div>
         <span className={`lim-row-tag${t.effect_class && t.effect_class !== 'read_unverified' ? '' : ' fair'}`}>
-          {emulation.data?.tools.includes(t.name) && <span className="lim-emu-mark">Emulator</span>}{' '}
+          {t.binding?.emulation && <span className="lim-emu-mark">Emulator</span>}{' '}
           {t.withdrawn
             ? 'Withdrawn: its definition changed since it was classified. Agents are not offered it until a person classifies it again'
             : t.effect_class

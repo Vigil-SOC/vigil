@@ -334,6 +334,9 @@ EffectClass = Literal["read", "read_unverified", "reversible", "irreversible"]
 class BindingBody(BaseModel):
     # One of GET /capabilities; null or omitted binds nothing.
     capability: Optional[str] = None
+    # True binds the tool as an emulator (#5315), as capability "emulation" does.
+    # A tool has one binding: not with another capability.
+    emulation: Optional[bool] = None
 
 
 class ToolClassBody(BaseModel):
@@ -344,13 +347,16 @@ class ToolClassBody(BaseModel):
     # Vigil holds now is pinned.
     definition_hash: Optional[str] = None
     # The capability it answers (#5312). Omitted leaves it; null puts the shipped
-    # binding back; {} binds nothing; {"capability": name} binds it.
+    # binding back; {} binds nothing; {"capability": name} binds it;
+    # {"emulation": true} binds it as an emulator.
     binding: Optional[BindingBody] = None
 
 
 class ToolBinding(BaseModel):
+    # "emulation" for an emulator, which emulation also says.
     capability: str
     server: Optional[str] = None
+    emulation: bool = False
 
 
 class ToolDefinition(BaseModel):
@@ -388,7 +394,10 @@ class ToolClassEntry(BaseModel):
 
 
 def _binding(b: Optional[bindings.Binding]) -> Optional[ToolBinding]:
-    return ToolBinding(capability=b.capability, server=b.server) if b else None
+    if b is None:
+        return None
+    emulator = b.capability == bindings.EMULATION
+    return ToolBinding(capability=b.capability, server=b.server, emulation=emulator)
 
 
 def _server(name: str, remote: frozenset) -> bool:
@@ -569,6 +578,13 @@ def _requested_binding(
     registry lists the tool under, never split from its name."""
     if body is None:
         return None
+    if body.emulation:
+        if body.capability not in (None, bindings.EMULATION):
+            raise HTTPException(
+                status_code=422,
+                detail="A tool has one binding: an emulator or a capability",
+            )
+        body = BindingBody(capability=bindings.EMULATION)
     if body.capability is None:
         return {}
     try:
@@ -586,4 +602,4 @@ def _requested_binding(
             status_code=409,
             detail="Its server is not connected; connect it to bind the tool",
         )
-    return {"capability": capability, "server": server}
+    return bindings.stored_form(capability, server)

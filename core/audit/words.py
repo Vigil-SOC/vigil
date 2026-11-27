@@ -263,6 +263,7 @@ def _emulation(p: Mapping[str, Any]) -> str:
     parts = [
         f"{verb} {', '.join(p[key])}"
         for key, verb in (
+            # Entries before #5315 also marked tools here.
             ("tools_added", "marked emulator"),
             ("tools_removed", "unmarked emulator"),
             ("hosts_added", "listed host"),
@@ -278,6 +279,8 @@ def _tool_bound(p: Mapping[str, Any]) -> str:
     after = p.get("binding_after")
     if not isinstance(after, dict):  # "shipped"
         return f"Put {tool} back on its shipped binding"
+    if after.get("emulation") is True:
+        return f"Bound {tool} as an emulator"
     if not after.get("capability"):
         return f"Bound {tool} to no capability"
     return f"Bound {tool} to {after['capability']}"
