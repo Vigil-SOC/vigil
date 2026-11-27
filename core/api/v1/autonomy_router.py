@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
@@ -165,6 +166,14 @@ def put_ceiling(
     cap, changing four-eyes, or turning the hold or a factor off is
     ``ai_autonomy.write``.
     """
+    return write_ceiling(body, session, current_user)
+
+
+def write_ceiling(
+    body: CeilingBody, session: Session, current_user: User, *, joined: bool = False
+) -> Optional[CeilingResponse]:
+    """``put_ceiling``'s checks and write. ``joined`` writes in ``session`` and
+    returns nothing: the caller commits, then settles INTENT.md's pending keys."""
     try:
         current = read_ceiling()
     except Exception as exc:
@@ -203,9 +212,10 @@ def put_ceiling(
             user_id=str(current_user.user_id),
             caller_is_service=is_machine_request(current_user),
             lowers_only=lowers,
+            session=session if joined else None,
             **edit,
         )
-        return _view()
+        return None if joined else _view()
     except CeilingRefusal as exc:
         raise _http(exc) from exc
     except CeilingWriteError as exc:
