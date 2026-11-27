@@ -430,7 +430,7 @@ const INTEGRATIONS: IntegrationMetadata[] = [
     functionality_type: 'Log Analysis & SIEM',
     has_ui: true,
     proxy_supported: true,
-    proxy_note: 'Applies to the self-hosted REST client only, not the official Splunk MCP server, which uses the deployment's egress proxy.',
+    proxy_note: 'Applies to the self-hosted REST client only, not the official Splunk MCP server, which uses the deployment egress proxy.',
     fields: [
       {
         name: 'server_url',

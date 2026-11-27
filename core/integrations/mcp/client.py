@@ -84,6 +84,22 @@ def _missing_crowdstrike() -> List[str]:
     return missing
 
 
+# The last HTTP error status a remote server answered, by server name: the SDK
+# reports any non-2xx as "Server returned an error response", which hides a 401.
+_remote_refusals: Dict[str, int] = {}
+
+
+def _describe(e: BaseException, server_name: Optional[str] = None) -> str:
+    """A connect failure as Settings shows it: the runner's own words, else the
+    first error inside a task group (the HTTP transports raise one), by type,
+    with the HTTP status a remote server refused it with."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    msg = str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
+    status = _remote_refusals.pop(server_name, None) if server_name else None
+    return f"{msg} (HTTP {status})" if status else msg
+
+
 @dataclass(frozen=True)
 class RemoteParams:
     """A remote catalog entry as resolved for one connect."""
@@ -125,15 +141,22 @@ def _remote_http_client(params: RemoteParams):
     def var(name: str) -> str:  # lower-case first, as curl and urllib read them
         return env.get(name.lower()) or env.get(name) or ""
 
-    proxy = var("HTTPS_PROXY") or var("ALL_PROXY")
+    proxy = var("HTTPS_PROXY") or var("ALL_PROXY") or None
     if proxy and urllib.request.proxy_bypass_environment(
         parts.hostname, {"no": var("NO_PROXY")}
     ):
         proxy = None
     if proxy and "://" not in proxy:
         proxy = f"http://{proxy}"
+
+    async def note_refusal(response) -> None:
+        if response.status_code >= 400:
+            _remote_refusals[params.name] = response.status_code
+
+    _remote_refusals.pop(params.name, None)
     return httpx2.AsyncClient(
         headers=params.headers,
+        event_hooks={"response": [note_refusal]},
         timeout=httpx2.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
         verify=verify,
         proxy=proxy,
@@ -206,9 +229,7 @@ class PersistentServerSession:
 
             except Exception as e:
                 # The runner's own words, so Settings shows why it refused.
-                self.last_error = (
-                    str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
-                )
+                self.last_error = _describe(e, self.server_name)
                 logger.error(f"Failed to connect to {self.server_name}: {e}")
                 await self._cleanup()
                 return False
@@ -546,9 +567,7 @@ class MCPClient:
             # reason (e.g. "FileNotFoundError: uvx", "ModuleNotFoundError:
             # mcp", "missing env var GITHUB_TOKEN") instead of a
             # generic "Failed to connect".
-            self.last_errors[server_name] = (
-                str(e) if isinstance(e, RunnerError) else f"{type(e).__name__}: {e}"
-            )
+            self.last_errors[server_name] = _describe(e, server_name)
             logger.error(f"Failed to connect to {server_name}: {e}")
             return False
 

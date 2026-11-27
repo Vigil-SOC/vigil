@@ -293,11 +293,14 @@ class MCPService:
     def remote_target(self, server: "MCPServer") -> Tuple[str, Dict[str, str]]:
         """A remote entry's URL and headers, resolved now.
 
-        Against this process's environment and the secret store, so a token
-        saved in Settings after the catalog loaded is the one sent.
+        Through ``get_secret`` (the store, then the environment), the order the
+        dormancy gate reads them in, so a token saved in Settings after the
+        catalog loaded is the one sent. Not the environment first: a save sets
+        ``os.environ`` only in the worker that took it, so another worker's
+        copy of an earlier value would win there.
         """
-        return self._substitute_env_vars(server.url or ""), {
-            k: self._substitute_env_vars(v) for k, v in server.headers.items()
+        return self._substitute_env_vars(server.url or "", {}), {
+            k: self._substitute_env_vars(v, {}) for k, v in server.headers.items()
         }
 
     def reload_server_configs(self) -> None:
