@@ -569,6 +569,23 @@
         "title": "AuditVerification",
         "type": "object"
       },
+      "BindingBody": {
+        "properties": {
+          "capability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability"
+          }
+        },
+        "title": "BindingBody",
+        "type": "object"
+      },
       "BreachedCasesResponse": {
         "properties": {
           "breached_cases": {
@@ -5743,8 +5760,42 @@
         "title": "StatusBreakdownRow",
         "type": "object"
       },
+      "ToolBinding": {
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          }
+        },
+        "required": [
+          "capability"
+        ],
+        "title": "ToolBinding",
+        "type": "object"
+      },
       "ToolClassBody": {
         "properties": {
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BindingBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "definition_hash": {
             "anyOf": [
               {
@@ -5757,25 +5808,54 @@
             "title": "Definition Hash"
           },
           "effect_class": {
-            "enum": [
-              "read",
-              "read_unverified",
-              "reversible",
-              "irreversible"
+            "anyOf": [
+              {
+                "enum": [
+                  "read",
+                  "read_unverified",
+                  "reversible",
+                  "irreversible"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Effect Class",
-            "type": "string"
+            "title": "Effect Class"
           }
         },
-        "required": [
-          "effect_class"
-        ],
         "title": "ToolClassBody",
         "type": "object"
       },
       "ToolClassEntry": {
         "description": "One outside tool. ``effect_class`` is None while it is unclassified or\nwithdrawn.",
         "properties": {
+          "binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binding_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "file",
+                  "person"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Source"
+          },
           "classified_at": {
             "anyOf": [
               {
@@ -5865,6 +5945,16 @@
             "default": false,
             "title": "Remote",
             "type": "boolean"
+          },
+          "shipped_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "withdrawn": {
             "default": false,
@@ -8004,6 +8094,59 @@
           }
         },
         "summary": "Put Ceiling",
+        "tags": [
+          "autonomy"
+        ]
+      }
+    },
+    "/api/v1/autonomy/capabilities": {
+      "get": {
+        "operationId": "get_api_v1_autonomy_capabilities",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Capabilities Api V1 Autonomy Capabilities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Capabilities",
         "tags": [
           "autonomy"
         ]

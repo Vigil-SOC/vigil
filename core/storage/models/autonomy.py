@@ -39,6 +39,11 @@ class ToolEffectClass(Base):
     changed_definition: Mapped[Optional[dict]] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
+    # What capability it answers (#5312, revision 0135). NULL: the shipped
+    # binding applies; {}: a person bound nothing; else {capability, server}.
+    binding: Mapped[Optional[dict]] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(

@@ -182,8 +182,7 @@ def _falcon_host(rows: List[Any]) -> Dict[str, Any]:
 @dataclass(frozen=True)
 class Call:
     """One tool call of a source: the tool's names in preference order, matched
-    against what the server reports (as ``Candidate`` does in
-    ``core/workflows/playbook_resolver.py``), its arguments, and its projection.
+    against what the server reports, its arguments, and its projection.
     ``required`` False: a missing tool or a failed call only leaves its fields out."""
 
     tools: Tuple[str, ...]

@@ -27,6 +27,7 @@ import api, {
   type IngestionJob,
   type IntegrationHealthSource,
   type PlatformDatabaseProxyConfig,
+  type ToolBindingBody,
   type ToolClass,
   type AgentAgreement,
   type StepScoreTally,
@@ -794,9 +795,11 @@ export function useInvestigateWorkflows() {
   return { workflows, phase }
 }
 
-/** Outside tools nobody has confirmed: stored as read_unverified, or exposed and unclassified. */
-export function useUnverifiedTools() {
+/** Every outside tool, those nobody has confirmed first: withdrawn, then unclassified or stored as
+ * read_unverified. With the capabilities a person may bind one to (#5312). */
+export function useOutsideTools() {
   const [tools, setTools] = useState<ToolClass[] | null>(null)
+  const [capabilities, setCapabilities] = useState<string[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const latest = useRef(0)
 
@@ -807,18 +810,19 @@ export function useUnverifiedTools() {
       .tools()
       .then(({ data }) => {
         if (seq !== latest.current) return
-        // a withdrawn tool first: its definition changed since a person classified it
-        setTools(
-          data
-            .filter((t) => t.effect_class == null || t.effect_class === 'read_unverified')
-            .sort((a, b) => Number(b.withdrawn ?? false) - Number(a.withdrawn ?? false)),
-        )
+        const rank = (t: ToolClass) =>
+          t.withdrawn ? 0 : t.effect_class == null || t.effect_class === 'read_unverified' ? 1 : 2
+        setTools([...data].sort((a, b) => rank(a) - rank(b)))
         setPhase('ready')
       })
       .catch(() => seq === latest.current && setPhase('error'))
   }, [])
   useEffect(() => {
     load()
+    autonomyApi.capabilities().then(
+      ({ data }) => setCapabilities(data),
+      () => setCapabilities([]),
+    )
   }, [load])
 
   // refetch after a failure too: a 409 may mean someone stopped meanwhile
@@ -832,8 +836,18 @@ export function useUnverifiedTools() {
     },
     [load],
   )
+  const bind = useCallback(
+    async (name: string, binding: ToolBindingBody | null) => {
+      try {
+        await autonomyApi.bindTool(name, binding)
+      } finally {
+        await load()
+      }
+    },
+    [load],
+  )
 
-  return { tools, phase, classify }
+  return { tools, capabilities, phase, classify, bind }
 }
 
 interface StorageInfo {

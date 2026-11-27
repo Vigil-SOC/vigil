@@ -5126,6 +5126,11 @@
   "nullable": true,
   "type": "timestamp without time zone"
  },
+ "column tool_effect_classes.binding": {
+  "default": null,
+  "nullable": true,
+  "type": "jsonb"
+ },
  "column tool_effect_classes.changed_definition": {
   "default": null,
   "nullable": true,

@@ -1,0 +1,83 @@
+# What each shipped tool answers, by server then the server's own tool name
+# (#5312). Vigil's own tools sit under `vigil` and bind by bare name. A person's
+# binding on a tool's class row (Settings -> Limits & autonomy) replaces the one
+# here. Every bound tool a deployment carries binds; there is no preference
+# order. Server order is the order a capability's tools are held in.
+vigil:
+  lookup_indicators: indicator_lookup
+  search_findings: findings_search
+  # Episodic memory is Vigil's own tier: a deployment carries it or has no history.
+  recall_entity: entity_recall
+  # The case shell (#4199); unbound where no sidecar runs.
+  read_case_shell: shell
+  get_finding: get_finding
+  # Rules declaring a technique and what tested it: where to look, never evidence.
+  analyze_coverage: detection_coverage
+
+# Telemetry. splunk_execute takes earliest, which splunk_nl_search cannot express.
+splunk-selfhosted:
+  splunk_execute: telemetry_search
+elastic:
+  elastic_search_logs: telemetry_search
+# One region per call; a region not allowed answers a pointer, never rows.
+amazon-security-lake:
+  security_lake_query: telemetry_search
+# Third-party servers this repo cannot list: each name is a guess, bound only
+# when the server reports it.
+splunk:
+  run_splunk_search: telemetry_search
+  search: telemetry_search
+  oneshot_search: telemetry_search
+azure-sentinel:
+  query: telemetry_search
+  run_query: telemetry_search
+  search: telemetry_search
+gcp-secops:
+  search_security_events: telemetry_search
+  search: telemetry_search
+crowdstrike:
+  falcon_search_detects: telemetry_search
+  query: telemetry_search
+  search: telemetry_search
+
+# Indicators.
+misp:
+  misp_search_ioc: indicator_lookup
+alienvault-otx:
+  otx_check_ip: indicator_lookup
+virustotal:
+  get_ip_report: indicator_lookup
+
+# OpenCTI's graph, opt-in: held when connected, missed by nothing when not.
+opencti:
+  opencti_search_observable: intel_observable
+  opencti_get_indicator: intel_indicator
+  opencti_search_entities: intel_entities
+  opencti_get_related: intel_relationships
+
+# One account read. Reads only: aad_disable_user is never bound.
+azure-ad:
+  aad_get_user: identity_lookup
+# fctr-id/okta-mcp-server's names at the tag mcp-config.json pins.
+okta:
+  get_okta_user: identity_lookup
+
+# Sandboxes, split by question. Reads only: no submit tool is bound.
+cape-sandbox:
+  cape_search_hash: sandbox_hash_lookup
+  cape_get_report: sandbox_report
+hybrid-analysis:
+  ha_search_hash: sandbox_hash_lookup
+  ha_get_report: sandbox_report
+anyrun:
+  anyrun_search_hash: sandbox_hash_lookup
+  anyrun_get_report: sandbox_report
+
+# A topology graph and the console view it drives, one tool each.
+vstrike:
+  vstrike_network_graph_get: topology_graph
+  vstrike_ui_rightpanel_focus: topology_focus
+  vstrike_ui_legend_apply: topology_legend
+
+opensearch:
+  opensearch_search_logs: telemetry_search

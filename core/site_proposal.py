@@ -625,10 +625,11 @@ def _site_needs() -> List[str]:
 
 
 def _need_servers(needs: List[str]) -> List[str]:
-    """Every outside server a need may bind: a capability's candidates, or the
-    ``{server}`` of a catalogue name."""
+    """Every outside server a need may bind: the servers a capability's bound
+    tools name, or the ``{server}`` of a catalogue name."""
+    from core.integrations.bindings import servers_for
     from core.response.ceiling import own_tool_names
-    from core.workflows.playbook_resolver import CAPABILITIES, NEED_ALIASES
+    from core.workflows.playbook_resolver import CAPABILITY_NAMES, NEED_ALIASES
 
     own = own_tool_names()
     servers: Dict[str, None] = {}
@@ -636,10 +637,8 @@ def _need_servers(needs: List[str]) -> List[str]:
         capability = NEED_ALIASES.get(need, need)
         if need in own:
             continue
-        if capability in CAPABILITIES:
-            for c in CAPABILITIES[capability]:
-                if c.server:
-                    servers[c.server] = None
+        if capability in CAPABILITY_NAMES:
+            servers.update(dict.fromkeys(servers_for(capability)))
         elif "_" in need:
             servers[need.partition("_")[0]] = None
     return list(servers)
@@ -688,7 +687,7 @@ def not_evaluated(registry=None) -> List[Dict[str, str]]:
     from core.integrations.mcp.registry import MCPRegistry
     from core.response.ceiling import is_read, own_tool_names, tool_classes
     from core.workflows.playbook_resolver import (
-        CAPABILITIES,
+        CAPABILITY_NAMES,
         NEED_ALIASES,
         _bound_capabilities,
         _tool_catalogue,
@@ -703,7 +702,7 @@ def not_evaluated(registry=None) -> List[Dict[str, str]]:
         capability = NEED_ALIASES.get(need, need)
         if capability in provided or need in own:
             continue
-        if capability in CAPABILITIES:
+        if capability in CAPABILITY_NAMES:
             reason = f"not connected: no connected source answers {capability}"
         else:  # a catalogue name, {server}_{tool}
             reason = f"not connected: {need.partition('_')[0]} is not connected"

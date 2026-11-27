@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.response.ceiling import asks_first, gated_tools
 from core.workflows.playbook_resolver import (
-    CAPABILITIES,
+    CAPABILITY_NAMES,
     HUNT_CAPABILITIES,
     OPTIONAL_CAPABILITIES,
     UnknownPlaybook,
@@ -199,7 +199,7 @@ def _permissions(
     ]:
         names += [t for t in tools if t not in names]
     # A capability is bound to a tool at run time; it is not a tool name.
-    asking = asks_first(n for n in names if n not in CAPABILITIES)
+    asking = asks_first(n for n in names if n not in CAPABILITY_NAMES)
     rows = []
     for name in names:
         row: Dict[str, Any] = {
@@ -252,7 +252,7 @@ def _compose_pause_note(definition: WorkflowDefinition) -> str:
     grant itself is what parks it.
     """
     names = [str(tool) for needs in phases_needs(definition.phases) for tool in needs]
-    if gated_tools(n for n in names if n not in CAPABILITIES):
+    if gated_tools(n for n in names if n not in CAPABILITY_NAMES):
         return "Direct-action calls pause for approval before they run."
     return "It pauses only at phases marked approval_required."
 

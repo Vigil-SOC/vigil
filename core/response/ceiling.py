@@ -1412,6 +1412,8 @@ APPROVAL_TOOL = "create_approval_action"
 TOOL_CLASSIFIED = "autonomy.tool_classified"
 TOOL_PINNED = "autonomy.tool_pinned"
 TOOL_WITHDRAWN = "autonomy.tool_withdrawn"
+TOOL_BOUND = "autonomy.tool_bound"
+SHIPPED_BINDING = "shipped"
 _SYSTEM = "system"
 
 _own: Optional[frozenset[str]] = None
@@ -1656,6 +1658,33 @@ def store_tool_class(
     )
     if pin is not None:
         _refresh_pins_after_commit(session)
+
+
+def store_tool_binding(
+    session, name: str, before: Optional[dict], after: Optional[dict], actor: str
+) -> None:
+    """Write one tool's stored binding and its trail entry in the caller's
+    transaction (#5312). The row exists: a tool is classified before it binds.
+
+    ``None`` puts the shipped binding back; ``{}`` binds nothing.
+    """
+    from core.auth import trail_events
+    from core.integrations import bindings
+
+    row = session.get(ToolEffectClass, name)
+    row.binding = after
+    session.flush()
+    trail_events.record(
+        session,
+        TOOL_BOUND,
+        actor=actor,
+        tool=name,
+        # The trail drops a null field: name the shipped binding instead.
+        binding_before=SHIPPED_BINDING if before is None else before,
+        binding_after=SHIPPED_BINDING if after is None else after,
+    )
+    # This process reads the change on its next resolve; others within the TTL.
+    event.listen(session, "after_commit", lambda _s: bindings.invalidate(), once=True)
 
 
 # --- Definition pins (#5300) -------------------------------------------------

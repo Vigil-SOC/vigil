@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from core.auth.current_user import get_current_user, is_machine_request
 from core.auth.permissions import deny_unless, permission_gate
 from core.deps import provide_approvals, provide_mcp_registry
+from core.integrations import bindings
 from core.integrations.mcp.registry import (
     MCPRegistry,
     live_mcp_tools,
@@ -42,6 +43,7 @@ from core.response.ceiling import (
     raises_cap,
     read_ceiling,
     resume_ceiling,
+    store_tool_binding,
     store_tool_class,
     tool_definition_hash,
     update_ceiling,
@@ -329,12 +331,26 @@ async def post_release_action(
 EffectClass = Literal["read", "read_unverified", "reversible", "irreversible"]
 
 
+class BindingBody(BaseModel):
+    # One of GET /capabilities; null or omitted binds nothing.
+    capability: Optional[str] = None
+
+
 class ToolClassBody(BaseModel):
-    effect_class: EffectClass
+    # Required for a tool with no class yet (or withdrawn); omitted keeps the class.
+    effect_class: Optional[EffectClass] = None
     # The definition hash the person saw (#5300). On a mismatch the answer is
     # 409 with the current definition; null says none was shown. Omitted, what
     # Vigil holds now is pinned.
     definition_hash: Optional[str] = None
+    # The capability it answers (#5312). Omitted leaves it; null puts the shipped
+    # binding back; {} binds nothing; {"capability": name} binds it.
+    binding: Optional[BindingBody] = None
+
+
+class ToolBinding(BaseModel):
+    capability: str
+    server: Optional[str] = None
 
 
 class ToolDefinition(BaseModel):
@@ -363,6 +379,16 @@ class ToolClassEntry(BaseModel):
     # person classifies it again. The pinned definition is then shown too.
     withdrawn: bool = False
     pinned_definition: Optional[ToolDefinition] = None
+    # The capability it answers in force, and whether that is the shipped file's
+    # or a person's ("person" with no binding: a person bound nothing). The
+    # shipped binding is shown whichever is in force.
+    binding: Optional[ToolBinding] = None
+    binding_source: Optional[Literal["file", "person"]] = None
+    shipped_binding: Optional[ToolBinding] = None
+
+
+def _binding(b: Optional[bindings.Binding]) -> Optional[ToolBinding]:
+    return ToolBinding(capability=b.capability, server=b.server) if b else None
 
 
 def _server(name: str, remote: frozenset) -> bool:
@@ -394,6 +420,9 @@ def _entry(
     remote: frozenset,
 ) -> ToolClassEntry:
     withdrawn, current = _state(row, held)
+    shipped = bindings.shipped().get(name)
+    raw = row.binding if row is not None else None
+    in_force = shipped if raw is None else bindings.from_row(name, raw)
     return ToolClassEntry(
         name=name,
         effect_class=None if row is None or withdrawn else row.effect_class,
@@ -409,7 +438,23 @@ def _entry(
         pinned_hash=row.pinned_hash if row is not None else None,
         withdrawn=withdrawn,
         pinned_definition=row.pinned_definition if withdrawn else None,
+        binding=_binding(in_force),
+        binding_source="person" if raw is not None else ("file" if shipped else None),
+        shipped_binding=_binding(shipped),
     )
+
+
+@router.get("/capabilities", dependencies=_READ, response_model=List[str])
+def list_capabilities() -> List[str]:
+    """The capabilities a person may bind an outside tool to."""
+    return list(bindings.BINDABLE)
+
+
+def _binding_loosens(name: str, after: Optional[dict]) -> bool:
+    """Binding something loosens; {} clears; null loosens when the file binds it."""
+    if after is None:
+        return name in bindings.shipped()
+    return bool(after)
 
 
 def _exposed(registry: MCPRegistry) -> set[str]:
@@ -440,12 +485,15 @@ def put_tool_class(
     current_user: User = Depends(get_current_user),
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> ToolClassEntry:
-    """Set one tool's class. The permission depends on the direction.
+    """Set one tool's class, its binding, or both. The permission depends on
+    the direction.
 
     Loosening, or classifying an unclassified or withdrawn name, is a person's
-    ``ai_autonomy.write`` and is refused while stopped. Tightening is
-    ``ai_autonomy.stop``, which a service account may hold. A person's
-    classification of a remote server's tool pins the definition held now.
+    ``ai_autonomy.write`` and is refused while stopped; so is binding a tool to
+    a capability, or putting back a shipped binding that binds one. Tightening,
+    and binding nothing, is ``ai_autonomy.stop``, which a service account may
+    hold. A person's classification of a remote server's tool pins the
+    definition held now.
     """
     own = name in own_tool_names()
     # The row first: a withdrawn tool is not exposed, but it is still classifiable.
@@ -456,16 +504,30 @@ def put_tool_class(
     held = registry.held_definitions().get(name)
     withdrawn, current = _state(row, held)
     before = None if row is None or withdrawn else row.effect_class
-    after = body.effect_class
-    if after == before:
+    after = body.effect_class or before
+    if after is None:
+        raise HTTPException(
+            status_code=422,
+            detail="effect_class is required: the tool has no class yet",
+        )
+    bind_before = row.binding if row is not None else None
+    bind_after = bind_before
+    if "binding" in body.model_fields_set:
+        bind_after = _requested_binding(name, body.binding, bind_before, registry)
+    reclass = after != before
+    rebind = bind_after != bind_before
+    if not reclass and not rebind:
         return _entry(row, name, held, remote)
     machine = is_machine_request(current_user)
-    if loosens(before, after):
+    if (reclass and loosens(before, after)) or (
+        rebind and _binding_loosens(name, bind_after)
+    ):
         deny_unless(current_user.user_id, "ai_autonomy.write", session)
         if machine:
             raise HTTPException(
                 status_code=403,
-                detail="A service account or API token cannot loosen a tool's class",
+                detail="A service account or API token cannot loosen a tool's class "
+                "or bind it to a capability",
             )
         try:
             stopped = read_ceiling().stopped
@@ -488,6 +550,40 @@ def put_tool_class(
             },
         )
     # Only a person pins: a machine's tightening leaves the pin, and a withdrawal.
-    pin = current if (withdrawn or _server(name, remote)) and not machine else None
-    store_tool_class(session, name, before, after, current_user.principal_id, pin=pin)
+    actor = current_user.principal_id
+    if reclass:
+        pin = current if (withdrawn or _server(name, remote)) and not machine else None
+        store_tool_class(session, name, before, after, actor, pin=pin)
+    if rebind:
+        store_tool_binding(session, name, bind_before, bind_after, actor)
     return _entry(session.get(ToolEffectClass, name), name, held, remote)
+
+
+def _requested_binding(
+    name: str,
+    body: Optional[BindingBody],
+    before: Optional[dict],
+    registry: MCPRegistry,
+) -> Optional[dict]:
+    """The stored form of a requested binding. The server is the one the
+    registry lists the tool under, never split from its name."""
+    if body is None:
+        return None
+    if body.capability is None:
+        return {}
+    try:
+        capability = bindings.validate(body.capability)
+    except bindings.InvalidBinding as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    shipped = bindings.shipped().get(name)
+    server = (
+        registry.tool_servers().get(name)
+        or (before or {}).get("server")
+        or (shipped.server if shipped else None)
+    )
+    if not server:
+        raise HTTPException(
+            status_code=409,
+            detail="Its server is not connected; connect it to bind the tool",
+        )
+    return {"capability": capability, "server": server}

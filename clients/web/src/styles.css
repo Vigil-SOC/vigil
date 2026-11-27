@@ -5209,6 +5209,36 @@
       color: var(--tx3);
    }
 
+   /* What a tool answers (#5312): the note under its class, and the select under its segment */
+   .lim-tool-bound {
+      display: block;
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+      color: var(--tx2);
+   }
+
+   .lim-row.lim-tool .lim-tool-ctl {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      max-width: 100%;
+   }
+
+   .lim-bind {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 100%;
+      font-size: 12px;
+      color: var(--tx2);
+   }
+
+   .lim-bind .drop {
+      width: 260px;
+      min-width: 0;
+   }
+
    /* Emulators: the mark beside a tool's class, and the host list under its row */
    .lim-emu-mark {
       display: inline-block;
@@ -5297,6 +5327,7 @@
       }
 
       .lim-row.lim-wf .lim-row-ctl,
+      .lim-row.lim-tool .lim-tool-ctl,
       .lim-wf-bar {
          align-items: flex-start;
       }
