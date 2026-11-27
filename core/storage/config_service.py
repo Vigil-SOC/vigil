@@ -111,12 +111,14 @@ class ConfigService:
         change_reason: Optional[str] = None,
         *,
         gated: bool = True,
+        session: Optional[Session] = None,
     ) -> bool:
         """
         Set a system configuration value.
 
         ``gated=False`` is for a change that only stops autonomy: it must land
-        during a restore's write pause too.
+        during a restore's write pause too. With ``session``, the write and its
+        audit row join that transaction and the caller commits.
 
         Args:
             key: Configuration key
@@ -128,44 +130,65 @@ class ConfigService:
         Returns:
             True if successful
         """
-        with get_session() as session:
-            config = session.query(SystemConfig).filter_by(key=key).first()
-
-            old_value = None
-            action = "create"
-
-            if config:
-                old_value = config.value
-                config.value = value
-                config.updated_by = self.user_id
-                if description:
-                    config.description = description
-                action = "update"
-            else:
-                config = SystemConfig(
-                    key=key,
-                    value=value,
-                    description=description,
-                    config_type=config_type,
-                    updated_by=self.user_id,
-                )
-                session.add(config)
-
-            # Create audit log
-            self._create_audit_log(
-                session,
-                config_type=config_type,
-                config_key=key,
-                action=action,
-                old_value=old_value,
-                new_value=value,
-                change_reason=change_reason,
-                gated=gated,
+        if session is not None:
+            self._put_system_config(
+                session, key, value, description, config_type, change_reason, gated
             )
-
-            session.commit()
+            session.flush()
+            return True
+        with get_session() as own:
+            action = self._put_system_config(
+                own, key, value, description, config_type, change_reason, gated
+            )
+            own.commit()
             logger.info(f"System config '{key}' {action}d by {self.user_id}")
             return True
+
+    def _put_system_config(
+        self,
+        session: Session,
+        key: str,
+        value: Dict[str, Any],
+        description: Optional[str],
+        config_type: str,
+        change_reason: Optional[str],
+        gated: bool,
+    ) -> str:
+        """Write the row and its audit entry in ``session``; returns the action."""
+        config = session.query(SystemConfig).filter_by(key=key).first()
+
+        old_value = None
+        action = "create"
+
+        if config:
+            old_value = config.value
+            config.value = value
+            config.updated_by = self.user_id
+            if description:
+                config.description = description
+            action = "update"
+        else:
+            config = SystemConfig(
+                key=key,
+                value=value,
+                description=description,
+                config_type=config_type,
+                updated_by=self.user_id,
+            )
+            session.add(config)
+
+        # Create audit log
+        self._create_audit_log(
+            session,
+            config_type=config_type,
+            config_key=key,
+            action=action,
+            old_value=old_value,
+            new_value=value,
+            change_reason=change_reason,
+            gated=gated,
+        )
+        return action
 
     # =========================================================================
     # User Preferences Methods
