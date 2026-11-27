@@ -3897,6 +3897,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sources
+         * @description Declared remote MCP sources (#5302): each one's URL, credential fields
+         *     and where each is set, accepted or pending and what a pending change
+         *     alters, and the rejection if any. Never a header or credential value.
+         */
+        get: operations["get_api_config_sources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/sources/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Sources Pending
+         * @description Accept new or changed declared sources. A person's act, allowed while
+         *     stopped: it widens reach, not autonomy; each new tool still asks first.
+         */
+        post: operations["post_api_config_sources_accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/theme": {
         parameters: {
             query?: never;
@@ -18841,6 +18884,18 @@ export interface components {
             version: 1;
         };
         /**
+         * SourcesAcceptBody
+         * @description The revision, hash and sources the person reviewed; a mismatch is a 409.
+         */
+        SourcesAcceptBody: {
+            /** Hash */
+            hash: string;
+            /** Revision */
+            revision: string;
+            /** Sources */
+            sources: string[];
+        };
+        /**
          * SparedCase
          * @description A Case a run was opened from. That run is not erased.
          */
@@ -26951,6 +27006,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_config_sources: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_config_sources_accept: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourcesAcceptBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

@@ -34,6 +34,9 @@ from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)
 
+# A declared source's stored credential deleted on accept (#5302); never the value.
+SOURCE_CREDENTIAL_DELETED = "source.credential_deleted"
+
 # Databases whose revision includes the trail and whose table is present.
 # The answer never goes back to false for a database, so only a true one is
 # remembered. A stamp with no table is not remembered: the table may arrive.
