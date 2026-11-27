@@ -3476,6 +3476,10 @@ export interface paths {
          * Set Integrations Config
          * @description Set integrations configuration.
          *
+         *     A new id ``<integration-id>-<label>`` with ``instance_of`` adds an instance
+         *     of a launched integration (#5353), checked before anything is written; a
+         *     person's creation copies its base's tool classes and bindings.
+         *
          *     Secret-typed fields (registered in ``core.integrations.integration_secrets``) are
          *     routed to the encrypted secrets store via ``set_secret`` and stripped
          *     from the dict that lands in the DB / JSON file. Empty strings are
@@ -3496,6 +3500,28 @@ export interface paths {
          */
         post: operations["post_api_config_integrations"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/integrations/{integration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Integration Instance
+         * @description Remove an integration instance (#5353): its config row, stored
+         *     credentials, enabled state and ``<id>_`` class rows, each with a trail
+         *     entry. Only an instance: an integration's own row is not removed here.
+         */
+        delete: operations["delete_api_config_integrations_integration_id"];
         options?: never;
         head?: never;
         patch?: never;
@@ -26466,6 +26492,39 @@ export interface operations {
                 "application/json": components["schemas"]["IntegrationsConfig"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_config_integrations_integration_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                integration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
