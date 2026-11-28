@@ -13,6 +13,7 @@ import {
   type FramePayload,
   type TerminalPayload,
   type UnboundPayload,
+  CLOSING,
   DISPOSITIONS,
 } from "../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../contracts/memory.js";
@@ -66,13 +67,13 @@ export function heldOf(kernel: AgentProjection): Held | null {
   return guarded === undefined || reason === null ? null : { ...guarded, reason };
 }
 
-// The word the run concluded on, as held: a dismissal the guard moved reads as what it was
-// moved to. A dismissal no review ever saw (a crash between the two) is not one that stands.
-// Null when the run said none, or said a word that is not one of the six.
+// The word the run concluded on, as held: a closing word the guard moved reads as what it was
+// moved to. One no review ever saw (a crash between the two) is not one that stands.
+// Null when the run said none, or said a word that is not one of DISPOSITIONS.
 export function dispositionOf(kernel: AgentProjection): string | null {
   const said = heldOf(kernel)?.final ?? kernel.conclusion?.value["disposition"];
   const word = (DISPOSITIONS as readonly unknown[]).includes(said) ? (said as string) : null;
-  return kernel.review === null && (word === "benign" || word === "false_positive") ? "needs_review" : word;
+  return kernel.review === null && word !== null && CLOSING.includes(word) ? "needs_review" : word;
 }
 
 export function agentProjection(runId: string, events: readonly Envelope[]): AgentProjection {

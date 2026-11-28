@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
-import { CONFIDENCES, DISPOSITIONS } from "../contracts/events.js";
+import { CLOSING, CONFIDENCES, DISPOSITIONS } from "../contracts/events.js";
 
 // A plugin is a directory holding plugin.yaml; its skills come from the repo's one library,
 // core/skills/library, resolved against the package: dist/skills in the image, else three levels up.
@@ -99,10 +99,10 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
   if (isStructured(conclusion) && conclusion.disposition_field !== undefined) {
     const field = conclusion.disposition_field;
     const allowed = ((conclusion.schema["properties"] as Record<string, { enum?: unknown }>)[field]?.enum ?? []) as unknown[];
-    // Both, when the enum holds both; a guard may not name a value outside the enum.
-    const dismissals = ["benign", "false_positive"].filter((one) => allowed.includes(one));
-    if (dismissals.length > 0 && (guard?.field !== field || !dismissals.every((one) => guard.guarded.includes(one)))) {
-      throw new SpecError(`${where}: ${field} can say ${dismissals.join(" or ")}, which can close a case, so it needs a guard on ${field} whose guarded holds ${dismissals.join(" and ")}`);
+    // Each the enum holds; a guard may not name a value outside the enum.
+    const closing = CLOSING.filter((one) => allowed.includes(one));
+    if (closing.length > 0 && (guard?.field !== field || !closing.every((one) => guard.guarded.includes(one)))) {
+      throw new SpecError(`${where}: ${field} can say ${closing.join(" or ")}, which can close a case, so it needs a guard on ${field} whose guarded holds ${closing.join(" and ")}`);
     }
     // An escalation guard reviews every alarm the enum can say, or an unreviewed one slips past it.
     if (escalation_guard?.field === field) {
@@ -234,7 +234,7 @@ function guardOf(value: unknown, conclusion: ConclusionSpec, where: string): Gua
     }
   }
   // A held dismissal must land somewhere that keeps the case open.
-  if (field === conclusion.disposition_field && (fallback === "benign" || fallback === "false_positive")) {
+  if (field === conclusion.disposition_field && CLOSING.includes(fallback)) {
     throw new SpecError(`${where}: guard.fallback on ${field} may not be ${fallback}, which can close the case`);
   }
   // A fallback is written with no review of its own, so it may not claim an attack either.
