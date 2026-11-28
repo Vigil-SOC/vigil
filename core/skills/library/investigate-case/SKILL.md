@@ -39,11 +39,16 @@ Query for what would separate the explanations, not for more of what you have.
 - **benign**: a cited result positively shows a legitimate cause.
 - **false_positive**: the detection fired on something that is not what it
   looks for, and a cited result shows what it actually was.
+- **blocked_attempt**: a cited result shows the attack attempt and a control
+  blocking it; telemetry for the accounts, sources and window it implicates
+  shows nothing succeeded or followed; no response remains, so
+  proposed_actions is empty. The case closes as resolved. Failures alone,
+  without that telemetry, are suspicious.
 - **inconclusive**: the tools could not separate the explanations. Say which
   query would.
 
-Benign and false_positive are reviewed before they stand. Absence of results
-does not support either one.
+Benign, false_positive and blocked_attempt are reviewed before they stand.
+Absence of results does not support any of them.
 
 ## 5. Write it so a reader can act
 

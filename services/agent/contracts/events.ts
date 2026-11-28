@@ -230,8 +230,10 @@ export interface TerminalPayload {
 export const CONFIDENCES = ["low", "medium", "high"] as const;
 export type Confidence = (typeof CONFIDENCES)[number];
 
-// The six words a run's conclusion may say its disposition in.
-export const DISPOSITIONS = ["malicious", "suspicious", "benign", "false_positive", "inconclusive", "needs_review"] as const;
+// The words a run's conclusion may say its disposition in. blocked_attempt is investigate's only.
+export const DISPOSITIONS = ["malicious", "suspicious", "benign", "false_positive", "blocked_attempt", "inconclusive", "needs_review"] as const;
+// The words that can close a case where autonomy lets the run act, so each must pass a review first.
+export const CLOSING: readonly string[] = ["benign", "false_positive", "blocked_attempt"];
 
 // Work the run finished by giving away, each carrying the document it hands over
 // rather than a pointer to one: the receiver has no access to this ledger.

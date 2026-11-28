@@ -1,7 +1,8 @@
 """Step confidence (#5265): one score for a step an investigation takes on its own.
 
 A step is a dismissal (the run concluded benign or false_positive and the case is
-closed, or held for a person) or a containment the run proposed. The score is
+closed, or held for a person), a blocked attempt (closed as resolved, or held),
+or a containment the run proposed. The score is
 worked out from stored records only: no model call and nothing per vendor.
 
 The rule, version 1. Three factors, each a number from 0 to 1 or unknown:
@@ -16,7 +17,7 @@ The rule, version 1. Three factors, each a number from 0 to 1 or unknown:
   and probe data. Only people's determinations count: ``analyst`` is how many
   findings a person judged, ``false_person`` how many of those the person called
   not real. A dismissal agrees with "not real" (``false_person``), a containment
-  with "real" (``analyst - false_person``). The value is the 95% Wilson lower
+  or blocked attempt with "real" (``analyst - false_person``). The value is the 95% Wilson lower
   bound of agreeing out of ``analyst``; nobody judged gives 0.
 - **Blind spots.** The agent counts the calls that the estate failed (timeout,
   unavailable, backend error) to a tool answering a required need, where no
@@ -52,6 +53,8 @@ from sqlalchemy import select
 RULE_VERSION = 1
 DISMISSAL = "dismissal"
 CONTAINMENT = "containment"
+# A real attack that failed (#5364): agrees with "real", as a containment does.
+BLOCKED_ATTEMPT = "blocked_attempt"
 FACTORS = ("precedent", "blind_spots", "run_quality")
 # Display only: nothing reads the band to decide.
 BANDS = ((0.8, "high"), (0.5, "medium"), (0.0, "low"))

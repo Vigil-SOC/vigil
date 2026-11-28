@@ -78,6 +78,14 @@ system: |
   When nothing rules the benign explanation out, answer suspicious and say what
   would settle it.
 
+  Answer blocked_attempt when a real attack attempt failed and nothing is left
+  to do: a cited result shows the hostile attempt and a control blocking or
+  failing it, and telemetry for the accounts, sources and window it implicates
+  shows no success, no bypass and no follow-on activity. Like benign and
+  false_positive it can close the case, as resolved, so it is reviewed first.
+  Failures alone, without that telemetry, are suspicious. A run that proposes
+  containment has said a response remains: that is not blocked_attempt.
+
 skills: [investigate-case, ai-agent-activity]
 
 # The hypothesis record is required: what the agent believes goes on it with
@@ -92,7 +100,8 @@ conclusion:
   open_questions_field: gaps
   # Read off the terminal when the verdict is scored against the case's closure (analytics_service.py).
   confidence_field: confidence
-  # Sent as the guard leaves it; benign or false_positive closes the case where autonomy lets the run act (run_bridge_router.py).
+  # Sent as the guard leaves it; benign or false_positive closes the case as a false positive, and
+  # blocked_attempt as resolved, where autonomy lets the run act (run_bridge_router.py).
   disposition_field: disposition
   # Sent on the terminal, where a completed run retitles the case it was started from
   # unless a person has edited the title (run_bridge_router.py).
@@ -119,7 +128,7 @@ conclusion:
         maxLength: 80
       disposition:
         type: string
-        enum: [malicious, suspicious, benign, false_positive, inconclusive, needs_review]
+        enum: [malicious, suspicious, benign, false_positive, blocked_attempt, inconclusive, needs_review]
       confidence:
         type: string
         enum: [low, medium, high]
@@ -150,8 +159,9 @@ conclusion:
             reason: { type: string, description: Why the evidence calls for it. }
 
 # Dismissing a case is cheap to say and expensive to say wrongly: a run that
-# found nothing, or was talked out of what it found, reads as benign. So a
-# benign or false_positive answer stands only when a reviewer that holds no
+# found nothing, or was talked out of what it found, reads as benign. Closing
+# one as a blocked attempt is the same claim from the other side: that nothing
+# got through. So a benign, false_positive or blocked_attempt answer stands only when a reviewer that holds no
 # tools upholds it over at least one real cited result, and the cited results
 # that found something come from at least two capabilities other than the
 # case's own record (its finding and files, which whoever triggered the alert
@@ -160,7 +170,7 @@ conclusion:
 # as needs_review for a person.
 guard:
   field: disposition
-  guarded: [benign, false_positive]
+  guarded: [benign, false_positive, blocked_attempt]
   fallback: needs_review
   min_sources: 2
   # OpenCTI is uncounted too: its four capabilities could otherwise supply both
@@ -168,7 +178,10 @@ guard:
   uncounted: [shell, get_finding, entity_recall, intel_observable, intel_indicator,
               intel_entities, intel_relationships]
   reviewer_prompt: |
-    The agent wants to close this case as benign or a false positive. Closing a
+    The agent wants to close this case as benign, a false positive, or a
+    blocked attempt; the answer under review says which.
+
+    For benign or false_positive: closing a
     real attack this way is the costly mistake. Holding a well-grounded benign
     case for a person is a cost too, not extra safety.
 
@@ -192,6 +205,24 @@ guard:
     cited result points the other way: it shows malicious activity, or it
     contradicts a fact the dismissal rests on, such as the host, account, time
     window or process.
+
+    For blocked_attempt: the case closes as resolved, a real attack that failed,
+    with no response left to do. Closing an attack that in fact got through is
+    the costly mistake.
+
+    Uphold only when cited results show three things: the hostile attempt
+    itself; its failure or block by a control, such as a denied sign-in, a
+    blocked connection or a quarantined file; and telemetry for the implicated
+    accounts, sources and window showing no successful access, no bypass and no
+    follow-on activity.
+
+    Answer insufficient when any of the three rests on an empty or partial
+    search, on the detector's label, severity or a finding's triage verdict, or
+    when proposed_actions is not empty: a run that proposes containment has said
+    a response remains. Failures alone, with no telemetry on what followed, are
+    not enough. Overturn when a cited result shows a success or follow-on
+    activity: a sign-in that worked, a session opened, the source reaching other
+    hosts, or the payload running.
 
 # An alarm is reviewed too: a malicious answer, and the containment it
 # proposes, stands only when the record names a fitting benign explanation and a

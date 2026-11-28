@@ -17,6 +17,7 @@ from core.auth import tool_principal
 from core.auth.permissions import builtin_reader_request
 from core.auth.tool_principal import Claims
 from core.cases.agent_closure import TITLE_EDITED, activity_actor
+from core.cases.closure import ClosureCategory, FalsePositiveCause
 from core.deps import provide_approvals, provide_mcp_registry, provide_workflow_runs
 from core.integrations.mcp.registry import MCPRegistry
 from core.integrations.pagerduty.page import page_proposed_containment
@@ -26,6 +27,7 @@ from core.response.checkpoints import (
     raise_for_checkpoint,
     withdraw_for_run,
 )
+from core.response.step_confidence import BLOCKED_ATTEMPT, DISMISSAL
 from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_session
 from core.storage.schemas.base import _iso_utc
@@ -104,8 +106,8 @@ class TerminalUpdate(BaseModel):
     # Loose on purpose: each item is checked on its own, so one malformed proposal
     # is dropped rather than refusing the terminal that carries the rest.
     proposed_actions: List[Any] = Field(default_factory=list)
-    # The run's verdict as its guard left it. A free string: only benign and
-    # false_positive act, and anything else leaves the case as it is.
+    # The run's verdict as its guard left it. A free string: only the words in
+    # CLOSES act, and anything else leaves the case as it is.
     disposition: Optional[str] = None
     # A short title for the case, naming what the run found. Loose like the rest:
     # blank or absent leaves the title as it is.
@@ -1003,9 +1005,64 @@ def _retitle_case(case_id: str, run_id: str, title: Optional[str]) -> None:
         logger.exception("could not apply the title of %s to case %s", run_id, case_id)
 
 
-# The verdicts that dismiss a case. Both close it as a false positive, where the run
-# may act: the alert that opened it was not the attack it looked like.
-DISMISSALS = {"benign", "false_positive"}
+# The verdicts that close a case where the run may act: (category, false-positive
+# cause, step label, what the activity calls the close). A dismissal closes it as a
+# false positive, the alert not the attack it looked like; ``benign`` was real,
+# authorised activity, so ``expected``, while ``false_positive`` names no cause.
+# A blocked attempt was a real attack that failed: resolved, with no cause.
+CLOSES: Dict[str, Tuple[ClosureCategory, Optional[FalsePositiveCause], str, str]] = {
+    "benign": (
+        ClosureCategory.FALSE_POSITIVE,
+        FalsePositiveCause.EXPECTED,
+        DISMISSAL,
+        "Closed as expected activity: the investigation concluded benign",
+    ),
+    "false_positive": (
+        ClosureCategory.FALSE_POSITIVE,
+        None,
+        DISMISSAL,
+        "Closed as a false positive: the investigation concluded false_positive",
+    ),
+    "blocked_attempt": (
+        ClosureCategory.RESOLVED,
+        None,
+        BLOCKED_ATTEMPT,
+        "Closed as resolved: the investigation verified a blocked attempt",
+    ),
+}
+
+
+def _outstanding_response(case_id: str) -> Optional[str]:
+    """Why response work is left on the case: a pending ask or an approved action
+    not yet carried out, the run's own just-filed proposals included. Read only."""
+    from core.cases.agent_closure import service_session
+    from core.response.approval_service import (
+        ActionStatus,
+        _row_to_pending,
+        on_case,
+    )
+    from core.storage.models import ApprovalAction
+
+    with service_session() as session:
+        rows = session.query(ApprovalAction).filter(
+            ApprovalAction.status.in_(
+                (ActionStatus.PENDING.value, ActionStatus.APPROVED.value)
+            )
+        )
+        actions = on_case([_row_to_pending(row) for row in rows], case_id)
+    if not actions:
+        return None
+    pending = sum(a.status == ActionStatus.PENDING.value for a in actions)
+    approved = len(actions) - pending
+    said = [
+        f"{n} {noun}{'' if n == 1 else 's'}{tail}"
+        for n, noun, tail in (
+            (pending, "pending ask", ""),
+            (approved, "approved action", " not yet carried out"),
+        )
+        if n
+    ]
+    return f"response work remains on the case: {' and '.join(said)}"
 
 
 def _already_closed(case_id: str) -> bool:
@@ -1026,7 +1083,6 @@ def _already_closed(case_id: str) -> bool:
 def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
     from core.cases.agent_closure import service_session
     from core.cases.case_workflow_service import CaseWorkflowService
-    from core.cases.closure import DISMISSAL_CAUSES, ClosureCategory
     from core.response.ceiling import (
         BarHeld,
         close_held,
@@ -1036,22 +1092,35 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
         workflow_bar,
         workflow_of,
     )
-    from core.response.step_confidence import DISMISSAL, quote, safe_score
+    from core.response.step_confidence import quote, safe_score
     from core.storage.models import Case
 
     disposition = (update.disposition or "").strip().lower()
-    if disposition not in DISMISSALS:
+    if disposition not in CLOSES:
         return
+    category, cause, step, closed_text = CLOSES[disposition]
     # close_case overwrites a standing false_positive close, an analyst's
     # included, so a case closed already, by anyone, is left as it is, and
     # with nothing said about leaving it open.
     if _already_closed(case_id):
         return
     # Scored whatever the tier (#5275); the workflow's bar reads it last (#5276).
-    step_score = safe_score(DISMISSAL, case_id, update.standing())
+    step_score = safe_score(step, case_id, update.standing())
     quoted = quote(step_score)
+    held: Any = None
+    # A blocked attempt says no response remains; work left on the case, or
+    # proposed by this run, says otherwise. The asks themselves stand untouched.
+    if category is ClosureCategory.RESOLVED:
+        if update.proposed_actions:
+            held = "the run proposed a response, so one remains"
+        else:
+            try:
+                held = _outstanding_response(case_id)
+            except Exception:  # noqa: BLE001 — unread, the claim is unchecked
+                logger.exception("could not read the response work on case %s", case_id)
+                held = "the response work on the case could not be read"
     # Closing is a reversible act; under Assist a person decides.
-    held = close_held(
+    held = held or close_held(
         run_id,
         lambda: finding_keys(case_id=case_id),
         (step_score or {}).get("value"),
@@ -1062,7 +1131,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
             step_score,
             {"check": "held_by_bar", "reason": held, "bar": held.bar},
         )
-        record_bar_hold(held, DISMISSAL, case_id, run_id)
+        record_bar_hold(held, step, case_id, run_id)
     elif held:
         _store_step_score(run_id, step_score, {"check": "held", "reason": held})
     if held:
@@ -1074,6 +1143,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
             {
                 "run_id": run_id,
                 "disposition": disposition,
+                "closure_category": category.value,
                 "reason": held,
                 "step_score": quoted,
             },
@@ -1091,11 +1161,10 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
             if case is None or case.status == "closed":
                 return
             # A cause only where the disposition names one; omitted, it stores null.
-            cause = DISMISSAL_CAUSES.get(disposition)
             CaseWorkflowService().close_case(
                 session,
                 case_id,
-                closure_category=ClosureCategory.FALSE_POSITIVE,
+                closure_category=category,
                 closed_by=run_id,
                 closure_notes=update.summary or None,
                 by_model=True,
@@ -1103,15 +1172,14 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
                 **({"false_positive_cause": cause.value} if cause else {}),
             )
         _store_step_score(run_id, step_score, {"check": "closed", "bar": passed})
-        recorded = "expected activity" if cause else "a false positive"
         _add_activity(
             case_id,
             "agent_run_closed",
-            f"Closed as {recorded}: the investigation concluded {disposition}",
+            closed_text,
             {
                 "run_id": run_id,
                 "disposition": disposition,
-                "closure_category": ClosureCategory.FALSE_POSITIVE.value,
+                "closure_category": category.value,
                 "false_positive_cause": cause.value if cause else None,
                 "step_score": quoted,
             },
@@ -1122,7 +1190,7 @@ def _close_dismissed(case_id: str, run_id: str, update: TerminalUpdate) -> None:
         )
 
 
-# The dismissal's score and what the close check did, once on the run's row. A
+# The close's score and what the close check did, once on the run's row. A
 # score that could not be worked out is stored as null beside the check.
 def _store_step_score(
     run_id: str, step_score: Optional[Dict[str, Any]], check: Dict[str, Any]
