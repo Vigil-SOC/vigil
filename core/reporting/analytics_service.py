@@ -732,7 +732,8 @@ _CLOSURE_VERDICTS = text("""
 # 95% two-sided Wilson interval. z is the standard normal 0.975 quantile.
 _WILSON_Z = 1.959963984540054
 
-_REAL = {"malicious", "suspicious"}
+# A blocked attempt is a real claim that was stopped, never a dismissal (#5365).
+_REAL = {"malicious", "suspicious", "blocked_attempt"}
 _NOT_REAL = {"benign", "false_positive"}
 _CONFIDENCES = ("low", "medium", "high")
 
@@ -822,10 +823,11 @@ def _after_hold() -> Dict[str, int]:
 
 def step_score_tally(
     db: Session, start_time: datetime, end_time: datetime, readable=None
-) -> Dict[str, Dict[str, Any]]:
-    """Each workflow's dismissals in the window, from ``workflow_runs.step_score`` (#5276).
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Each workflow's scored steps in the window, from ``workflow_runs.step_score`` (#5276),
+    keyed by the stored step (a row without one is an older dismissal).
 
-    ``bands``: scored dismissals by band, unscored as unknown. ``held_by_bar``
+    ``bands``: scored runs by band, unscored as unknown. ``held_by_bar``
     and ``passed_bar``: those a bar held, and those that closed past one.
     ``held_by_autonomy``: held by the tier, stop, the lock or a crown jewel.
     ``after_hold``: how each kind of hold's cases stand now: still open, or
@@ -850,10 +852,11 @@ def step_score_tally(
     )
     if readable is not None:
         query = query.where(readable)
-    out: Dict[str, Dict[str, Any]] = {}
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for workflow_id, score, status, category, channel in db.execute(query):
-        tally = out.setdefault(
-            workflow_id,
+        steps = out.setdefault(workflow_id, {})
+        tally = steps.setdefault(
+            score.get("step") or "dismissal",
             {
                 "bands": {"high": 0, "medium": 0, "low": 0, "unknown": 0},
                 "held_by_bar": 0,

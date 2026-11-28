@@ -101,6 +101,8 @@ _NOT_REAL = tuple(
     c.value for c in ClosureCategory if closure_says_real(c.value) is False
 )
 _DISMISSED = ("agent_run_closed", "agent_run_left_open")
+# Only a dismissal word is one: an agent closing a blocked attempt said it was real.
+_DISMISSAL_WORDS = ("benign", "false_positive")
 # A run that ends in a window can have started any time before it: a hunt can
 # park for up to 30 days, be extended and park again, with its start time set
 # once. So runs are read by when they ended, and the start time bounds them only
@@ -396,7 +398,8 @@ def _investigation(
     real = and_(judged, closure.closure_category.in_(_REAL))
     not_real = and_(judged, closure.closure_category.in_(_NOT_REAL))
     origin = aliased(Case)
-    # Matched by the run's id, so reading both Cases cannot pick up another run's.
+    # Matched by the run's id, so reading both Cases cannot pick up another run's,
+    # and by a dismissal disposition (in these details since #2557).
     dismissed = or_(
         *(
             func.coalesce(held.activities, func.jsonb_build_array()).op("@>")(
@@ -405,12 +408,15 @@ def _investigation(
                         "activity_type",
                         literal(kind),
                         "details",
-                        func.jsonb_build_object("run_id", runs.c.run_id),
+                        func.jsonb_build_object(
+                            "run_id", runs.c.run_id, "disposition", literal(word)
+                        ),
                     )
                 )
             )
             for held in (Case, origin)
             for kind in _DISMISSED
+            for word in _DISMISSAL_WORDS
         )
     )
     # A null outcome (the console ended the run) or a turn cap is not completed.

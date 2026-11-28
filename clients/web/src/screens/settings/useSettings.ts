@@ -753,8 +753,8 @@ export interface InvestigateWorkflow {
   id: string
   name: string
   agreement: WorkflowAgreement | undefined
-  /** Its dismissals' step scores and holds over the same 30 days. */
-  steps: StepScoreTally | undefined
+  /** Its step scores and holds over the same 30 days, by step. */
+  steps: Record<string, StepScoreTally> | undefined
 }
 
 /** Investigate-kind workflows, the only ones with their own tier, with their 30-day agreement. */

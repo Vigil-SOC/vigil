@@ -1013,8 +1013,8 @@ export interface CaseVerdict {
 
 const ALARMS = ['malicious', 'suspicious']
 const DISMISSALS = ['benign', 'false_positive']
-// The words that challenge a dismissal: a run that found something, or was itself held.
-const OBJECTIONS = ['malicious', 'suspicious', 'needs_review']
+// The words that challenge a dismissal: a run that found something (or stopped it), or was itself held.
+const OBJECTIONS = ['malicious', 'suspicious', 'blocked_attempt', 'needs_review']
 
 /**
  * The one word every run on the case stands behind, or null before one can be said. Runs come NEWEST
