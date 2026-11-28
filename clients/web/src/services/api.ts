@@ -1109,7 +1109,7 @@ export interface AfterHold {
   by_agent: number
 }
 
-/** One workflow's dismissals in the window, from workflow_runs.step_score (#5276). */
+/** One workflow's scored runs of one step in the window, from workflow_runs.step_score (#5276). */
 export interface StepScoreTally {
   bands: { high: number; medium: number; low: number; unknown: number }
   held_by_bar: number
@@ -1121,7 +1121,8 @@ export interface StepScoreTally {
 export interface AgentAgreement {
   overall?: AgreementTally
   by_workflow: WorkflowAgreement[]
-  step_scores: Record<string, StepScoreTally>
+  /** By workflow, then by stored step: dismissal (also every row without one), blocked_attempt, or any other. */
+  step_scores: Record<string, Record<string, StepScoreTally>>
 }
 
 export const analyticsApi = {

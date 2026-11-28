@@ -43,6 +43,7 @@ import {
   type ToolClass,
 } from '../../services/api'
 import { errorText } from '../../shared/errorText'
+import { wordDisplay } from '../cases/caseFold'
 
 // Raising any of these needs a confirm; lowering applies at once. Settings also
 // guards stale_threshold, which Setup's profile picker never changes.
@@ -408,16 +409,26 @@ function heldLine(label: string, n: number, after: AfterHold): string | null {
   return `${label} ${n}: ${parts.join(', ')}`
 }
 
-/** The workflow's 30 days of dismissals: scores by band, then what each hold left for people. */
-function stepLines(steps: StepScoreTally | undefined): string[] {
+const STEP_LABELS: Record<string, string> = { dismissal: 'Dismissals', blocked_attempt: 'Blocked attempts' }
+
+/** The workflow's 30 days per step (dismissals first, then blocked attempts, then any other): scores by band, then what each hold left for people. */
+function stepLines(steps: Record<string, StepScoreTally> | undefined): string[] {
   if (!steps) return []
-  const { high, medium, low, unknown } = steps.bands
-  return [
-    `Dismissals in 30 days · ${high} high · ${medium} medium · ${low} low · ${unknown} unscored`,
-    steps.passed_bar || steps.held_by_bar ? `Passed the bar ${steps.passed_bar}` : null,
-    heldLine('Held by the bar', steps.held_by_bar, steps.after_hold.bar),
-    heldLine('Held by autonomy', steps.held_by_autonomy, steps.after_hold.autonomy),
-  ].filter((line): line is string => line != null)
+  const order = Object.keys(STEP_LABELS)
+  const rank = (step: string) => (order.includes(step) ? order.indexOf(step) : order.length)
+  return Object.keys(steps)
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .flatMap((step) => {
+      const tally = steps[step]
+      const { high, medium, low, unknown } = tally.bands
+      return [
+        `${STEP_LABELS[step] ?? wordDisplay(step)} in 30 days · ${high} high · ${medium} medium · ${low} low · ${unknown} unscored`,
+        tally.passed_bar || tally.held_by_bar ? `Passed the bar ${tally.passed_bar}` : null,
+        heldLine('Held by the bar', tally.held_by_bar, tally.after_hold.bar),
+        heldLine('Held by autonomy', tally.held_by_autonomy, tally.after_hold.autonomy),
+      ]
+    })
+    .filter((line): line is string => line != null)
 }
 
 /** The ceiling stores a naive UTC stamp; without an offset a browser reads it as local. */
@@ -1279,8 +1290,9 @@ export default function AutoInvestigateSection({ notify, openChat }: SectionProp
             </span>
           )}
           {replayed && <span className="lim-wf-model">{replayed}</span>}
-          {steps.map((line) => (
-            <span className="lim-wf-model" key={line}>
+          {steps.map((line, i) => (
+            // Two steps can share a hold line's text, so the index keys it.
+            <span className="lim-wf-model" key={i}>
               {line}
             </span>
           ))}
