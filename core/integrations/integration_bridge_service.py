@@ -79,6 +79,26 @@ def base_of(integration_id: str) -> Optional[str]:
     return base
 
 
+def launched_server(base: str) -> Optional[str]:
+    """The one catalogue server ``base``'s descriptor launches (not a ``url``).
+
+    Not always the descriptor id (``elastic-siem`` launches ``elastic``). None
+    when there is no such server or more than one.
+    """
+    from core.integrations._base.descriptor import get_descriptor
+
+    descriptor = get_descriptor(base or "")
+    if descriptor is None:
+        return None
+    entries = catalog_entries()
+    launched = [
+        n
+        for n in descriptor.mcp_server_names
+        if n in entries and "url" not in entries[n]
+    ]
+    return launched[0] if len(launched) == 1 else None
+
+
 def instances(rows: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """Each saved instance -> its base: rows whose ``instance_of`` matches their id."""
     if rows is None:
@@ -131,16 +151,31 @@ def instances_allowed(base: str) -> Tuple[bool, Optional[str]]:
     """Whether ``base`` offers a second instance, and why not when it doesn't."""
     from core.integrations._base.descriptor import get_descriptor
 
-    if get_descriptor(base) is None:
+    descriptor = get_descriptor(base)
+    if descriptor is None:
         return False, f"{base} has no descriptor"
-    entry = catalog_entries().get(base)
-    if entry is None:
-        return False, f"{base} has no catalogue server named {base}"
-    if "url" in entry:
+    entries = catalog_entries()
+    servers = [n for n in descriptor.mcp_server_names if n in entries]
+    if not servers:
+        return False, f"{base} has no catalogue server"
+    server = launched_server(base)
+    if server is None:
+        if all("url" in entries[n] for n in servers):
+            return False, (
+                f"{base} is reached at a URL, not launched: add another as a "
+                "declared source"
+            )
         return False, (
-            f"{base} is reached at a URL, not launched: add another as a "
-            "declared source"
+            f"{base} launches more than one server, so an instance's is ambiguous"
         )
+    if len(servers) > 1:
+        # Splunk: an instance would copy splunk-selfhosted only, and its
+        # federation source takes no instance.
+        return False, (
+            f"{base} is served by {', '.join(servers)}; an instance would copy "
+            f"only {server}"
+        )
+    entry = entries[server]
     values = [
         str(v) for k, v in (entry.get("env") or {}).items() if not k.startswith("_")
     ]

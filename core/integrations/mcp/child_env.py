@@ -187,7 +187,10 @@ def stdio_env(server, project_root: str) -> Dict[str, str]:
     if any(_IN_REPO_ARG.fullmatch(arg) for arg in server.args):
         extra += _IN_REPO_VARS
     # An instance (#5353) runs its base's launch, with what that launch needs.
-    launched = getattr(server, "instance_of", None) or server.name
+    from core.integrations.integration_bridge_service import launched_server
+
+    base = getattr(server, "instance_of", None)
+    launched = (launched_server(base) if base else None) or server.name
     if launched.startswith("gcp-") or launched == "aws-security":
         extra += _CLOUD_FILE_VARS
     for name in extra:
